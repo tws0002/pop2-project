@@ -1,5 +1,5 @@
 # Portal: Origins [Part 2] Environment
-Portal: Origins [Part 2] is a Senior Studio short film that is currently in
+[Portal](http://www.kickstarter.com/projects/msmmotionpictures/portal-origins-part-2) is a Senior Studio short film that is currently in
 production at SCAD (Savannah College of Art and Design). The
 Pipeline/the_LATEST folder contains the entire pipeline. All other folders are
 included simply to make the pipeline deployable so that hooks and directory
