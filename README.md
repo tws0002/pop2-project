@@ -14,10 +14,10 @@ able to set environment variables was to create .bat (Windows)/.sh (Linux)
 files for every application that we needed to use. Even basic users can set
 variables on execution so it seemed like the best way to do it at the time. All
 of the .sh files used in the project are located under
-[*conf_SCRIPTS*](Pipeline/the_LATEST/latest_CONFIG/conf_SCRIPTS) and, at the start of the
-project, I gave out the files to everyone in the group so, whenever there was a
-new update to the pipeline, all the user needs to do is restart their program
-and it'll source the the_LATEST and all of its files.
+[*conf_SCRIPTS*](Pipeline/the_LATEST/latest_CONFIG/conf_SCRIPTS) and, at the
+start of the project, I gave out the files to everyone in the group so,
+whenever there was a new update to the pipeline, all the user needs to do is
+restart their program and it'll source the the_LATEST and all of its files.
 
 ## On Developing
 At any given time in the project, I keep one folder for the_LATEST and another
@@ -32,24 +32,26 @@ That way, no one from outside of the production will use and potentially break
 the tools or any of our software.
 
 Currently, registration is done through a simple .json file located at
-*"Pipeline/the_LATEST/latest_CONFIG/conf_DATA/crew_sheet.json"* but in the
-future, we'd like to switch to a Google docs sheet to make the process a bit
-more secure. Additionally, each user has a config file under the convention of
-*"Pipeline/the_LATEST/latest_CONFIG/conf_DATA/users/$USER.json"* where $USER is
-their username on the Windows/Linux system. Once both criteria are filled, the
-user can now start working within the environment
+[*conf_DATA/crew_sheet.json"*](Pipeline/the_LATEST/latest_CONFIG/conf_DATA/crew_sheet.json)
+but in the future, we'd like to switch to a Google docs sheet to make the
+process a bit more secure. Additionally, each user has a config file under the
+convention of
+[*users/$USER.json*](Pipeline/the_LATEST/latest_CONFIG/conf_DATA/users/$USER.json)
+where $USER is their username on the Windows/Linux system. Once both criteria
+are filled, the user can now start working within the environment
 
 ## Application Registration Support
 Any program that must be run is checked against a list of allowed applications
 for the given project. If the file doesn't exist in the list, the environment
 exits, forcing people to move to the next version (We had issues with people
 not wanting to get off of Maya 2015). The file in question is located at
-*"Pipeline/the_LATEST/latest_CONFIG/supportedApplications.json"*
+[*supportedApplications.json*](Pipeline/the_LATEST/latest_CONFIG/supportedApplications.json)
+
 
 ## Misc. Offline Configuration Data
-In *"Pipeline/the_LATEST/latest_CONFIG/conf_DATA/project_config.json"*, there
-are the names of files/folders that the environment sources into constants.py
-whenever an application within the environment starts up.
+In [*conf_DATA/project_config.json*](Pipeline/the_LATEST/latest_CONFIG/conf_DATA/project_config.json),
+there are the names of files/folders that the environment sources into
+constants.py whenever an application within the environment starts up.
 
 ### Misc. Offline Configuration Data Future Improvements
 I'd like to replace this file and all hard-coding with a .json file that can
@@ -59,16 +61,17 @@ and adjust more easily to changes in the folder/file structure
 ## Notable Files/Modules
 ### constants.py
 Located in
-*"Pipeline/the_LATEST/sys_PY/py_MODULES/constants/model/constants.py"*, this
-file initializes the logger which is used for nearly every application in the
-environment, as well as checks for user registration, application registration,
-and hard-codes many environment variables. Later on in development,
-constants.py was also used to interpret variables being passed in from the
-.bat/.sh files as well. This module ties together the environment, as a whole.
+[*constants.py*](Pipeline/the_LATEST/sys_PY/py_MODULES/constants/model/constants.py),
+this file initializes the logger which is used for nearly every application
+in the environment, as well as checks for user registration, application
+registration, and hard-codes many environment variables. Later on in
+development, constants.py was also used to interpret variables being passed
+in from the .bat/.sh files as well. This module ties together the environment,
+as a whole.
 
 ### checkout.py
 Located in
-*"Pipeline/the_LATEST/sys_PY/py_MODULES/fileio/controller/checkout.py"*,
+[*fileio/controller/checkout.py*](Pipeline/the_LATEST/sys_PY/py_MODULES/fileio/controller/checkout.py),
 checkout.py is used to validate the lock/edit status of files over the SCAD's
 *"collaborative space"* network. In short, since there's no way to guarantee
 that two or more people aren't both editing or revising the same file at once,
@@ -98,8 +101,8 @@ implemented in the pipeline. More on that in the manager.py section
 
 ### manager.py
 Located in
-*"Pipeline/the_LATEST/sys_PY/py_MODULES/fileio/controller/manager.py"*, the
-manager.py is the actual implementation of the save/open/close methods for
+[*fileio/controller/manager.py*](Pipeline/the_LATEST/sys_PY/py_MODULES/fileio/controller/manager.py),
+the manager.py is the actual implementation of the save/open/close methods for
 files over the network. Notice - the module is written in pure Python. (Note: I
 originally had it in my head to use application-specific modules here so
 there's some left-over methods but the methods that don't use Maya/Nuke/Houdini
@@ -110,11 +113,13 @@ This function raises custom errors that are defined in the globerror.py module
 to determine various actions that the script should take. For example, raising
 IOValidationError will cause the script to exit prematurely and in
 
-mayamanager.py (*"Pipeline/the_LATEST/latest_MAYA/maya_SCRIPTS"*)
+[*latest_MAYA/maya_SCRIPTS*](Pipeline/the_LATEST/latest_MAYA/maya_SCRIPTS)
 
-nukemanager.py (*"Pipeline/the_LATEST/latest_NUKE/nuke_SCRIPTS"*)
+[*mayamanager.py*](Pipeline/the_LATEST/latest_MAYA/maya_SCRIPTS/mayamanager.py)
 
-houmanager.py (*"Pipeline/the_LATEST/latest_HOU/hou_SCRIPTS"*)
+[*nukemanager.py*](Pipeline/the_LATEST/latest_NUKE/nuke_SCRIPTS/nukemanager.py)
+
+[*houmanager.py*](Pipeline/the_LATEST/latest_HOU/hou_SCRIPTS/houmanager.py)
 
 all have methods that use try/except to catch the exception while the function
 is executing and then, depending on whether or not manager.py instructs the
@@ -124,8 +129,9 @@ application, the system is kept granular at the application level and coded
 in pure-python at the implementation level
 
 manager.py also has a few methods for querying data over SCAD's network, which
-are all hosted in network.py in
-*"Pipeline/the_LATEST/sys_PY/py_MODULES/network/controller/network.py"*.
+are all hosted in
+[*network.py*](Pipeline/the_LATEST/sys_PY/py_MODULES/network/controller/network.py)
+in *"Pipeline/the_LATEST/sys_PY/py_MODULES/network/controller/network.py"*.
 Everything that requires communication with the network is placed here.
 
 ## More Info
