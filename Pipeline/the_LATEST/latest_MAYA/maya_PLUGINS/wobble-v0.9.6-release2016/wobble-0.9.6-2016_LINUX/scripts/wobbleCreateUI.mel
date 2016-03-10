@@ -1,0 +1,252 @@
+/*
+    wobblwCreateUI.mel
+    
+    UI creation plugin load callback
+  
+    Copyright (C) 2006-2015 Felix Ulber
+
+    version 2.1
+	new maya 2016 menu structure
+    
+	last change: 27.09.2015
+*/
+
+proc createFeShelfWbl ()
+{
+	if (`shelfLayout -q -exists feTools` != 1 )
+	{
+	   optionVar -intValue feWobbleShelf 1;
+	   addNewShelfTab "feTools";
+	   addWobbleShelfButtons();
+	}
+	else if (`optionVar -exists feWobbleShelf` != 1 )
+	{
+	   optionVar -intValue feWobbleShelf 1;
+	   addWobbleShelfButtons();
+	}
+}
+
+proc addWobbleShelfButtons()
+{
+   shelfButton -l "wobble" -annotation ("Create a noise deformer") -image ("wobble.png")  -command "deformer -type wobble" -p feTools feTShelfWobble;
+}
+
+proc createWobbleRTC()
+{
+    if (!`runTimeCommand -exists Wobble`)
+    {
+        runTimeCommand -default true
+    	-annotation ("Select object(s) to deform")
+    	-category   ("Deform")
+    	-command    ("performWobble 0")
+    	Wobble;
+    }
+
+    if (!`runTimeCommand -exists WobbleOptions`)
+    {
+    	runTimeCommand -default true
+    	-annotation ("Wobble options")
+    	-category   ("Deform")
+    	-command    ("performWobble 1")
+    	WobbleOptions;
+    }
+    
+    if (!`runTimeCommand -exists ArtPaintWobbleWeightsTool`)
+    {
+        runTimeCommand -default true
+    	-annotation ("Paint wobble weights tool")
+    	-category   ("Deform")
+    	-command    ("artAttrWobbleToolScript 4")
+    	ArtPaintWobbleWeightsTool;
+    }
+
+    if (!`runTimeCommand -exists ArtPaintWobbleWeightsToolOptions`)
+    {
+    	runTimeCommand -default true
+    	-annotation ("Paint wobble weights tool options")
+    	-category   ("Deform")
+    	-command    ("artAttrWobbleToolScript 3")
+    	ArtPaintWobbleWeightsToolOptions;
+    }
+}
+
+proc int checkForMenu(string $menu) {
+
+	int $numItems = `menu -q -ni $menu`;
+    
+    if ($numItems == 0) {
+        // Try to build the menu
+        string $pmCmd = `menu -q -pmc $menu`;
+        catch(eval($pmCmd));
+        $numItems = `menu -q -ni $menu`;
+    }
+	return $numItems;
+}
+
+proc wobbleCreateMenuItems() {
+
+	menuItem    -l "Wobble"
+                -image      "wobble.png"
+                -c "performWobble 0"
+                -annotation "Select items to deform"
+                wobbleItem;
+
+	menuItem    -optionBox true
+                -c "performWobble 1"
+                wobbleDialogItem;
+}
+
+proc wobblePaintMenuItems() {
+
+	menuItem 	-l "Paint Wobble Weights"
+				-image "wobble.png"
+				-annotation "Change weights on selected wobble"
+				-c "ArtPaintWobbleWeightsTool"
+				wobblePaintItem;
+
+    // noch nicht ganz klar, wie
+  	menuItem    -optionBox true
+                -annotation "Change weights on selected wobble"
+                -c "ArtPaintWobbleWeightsToolOptions"
+                wobblePaintDialogItem;
+}
+
+proc createWobbleBackupMenu() {
+    if (!`menu -q -ex feToolsMenu`)
+        menu -l "feTools" -aob 1 -p "MayaWindow" feToolsMenu;
+    setParent -m feToolsMenu;
+    wobbleCreateMenuItems();
+    wobblePaintMenuItems();
+}
+
+global proc wobbleCreateUI()
+{
+	// unterscheide maya versionen!
+	string $versionString = `about -v`;
+	int $version = (int)$versionString;
+	
+	if ($version < 2016) {
+		createWobbleMayaPre2016Menu();
+	} else {
+		createWobbleMayaNewMenu();
+	}
+}	
+
+global proc createWobbleMayaNewMenu() 
+{
+	
+	global string $gMainDeformMenu;
+	global string $gRigDeformationsMenu;
+	
+    createWobbleRTC();
+    
+    int $success = 0;
+    
+	if (`menu -exists $gMainDeformMenu`)
+	{
+        //menuItem -divider true -dividerLabel  (uiRes("m_ChaDeformationsMenu.kDeformEdit"));
+        //menuItem -divider true -dividerLabel  (uiRes("m_ChaDeformationsMenu.kDeformCreate"));
+        //menuItem -divider true -dividerLabel  (uiRes("m_ChaDeformationsMenu.kDeformPaintWeights"));
+
+        int $numItems = `checkForMenu($gMainDeformMenu)`;
+        if ($numItems != 0) {
+            setParent -menu $gMainDeformMenu;
+            menuItem -divider true -dividerLabel  "Wobble" wobbleDividerItem;
+            wobbleCreateMenuItems();
+            wobblePaintMenuItems();
+            $success = 1;
+        }
+    } 
+        
+    if (`menu -exists $gRigDeformationsMenu`)
+	{
+        $numItems = `checkForMenu($gRigDeformationsMenu)`;
+        if ($numItems != 0) {
+            setParent -menu $gRigDeformationsMenu;
+            menuItem -divider true -dividerLabel  "Wobble" wobbleDividerItem;
+            wobbleCreateMenuItems();
+            wobblePaintMenuItems();
+            $success = 1;
+        }
+    } 
+    
+    if (!$success) {
+        warning "Could not find any Deformers menu, now creating extra menu.";
+        createWobbleBackupMenu();
+    }
+}
+
+global proc createWobbleMayaPre2016Menu() 
+{
+	
+	global string $gMainDeformationsMenu;
+    global string $gMainEditDeformationsMenu;
+	
+    createWobbleRTC();
+    
+    int $success = 0;
+    
+	if (`menu -exists $gMainDeformationsMenu`)
+	{
+		int $numItems = checkForMenu($gMainDeformationsMenu);
+		
+		if( $numItems != 0 )
+		{
+			setParent -m $gMainDeformationsMenu;
+            menuItem -divider true wobbleDividerItem;
+            wobbleCreateMenuItems();
+            if (`menu -exists $gMainEditDeformationsMenu`) {
+            
+                $numItems = checkForMenu($gMainEditDeformationsMenu);
+                
+                // fragwürdig, oder zumnidest noch vereinheitlichen
+                if( $numItems != 0 )
+                {
+                    setParent -m $gMainEditDeformationsMenu;
+                    menuItem -divider true wobbleDividerItem;
+                    wobblePaintMenuItems();
+                    $success = 1;
+                }
+            }
+        }        
+    } 
+    
+    if (!$success) {
+        warning "Could not find Create/Edit Deformers menu, now creating extra menu.";
+        createWobbleBackupMenu();
+    }
+}
+
+global proc string artAttrWobbleToolScript( 
+	int $setToTool
+)
+{
+    //string $tool = "artAttrWobbleContext";
+    string $tool = "artAttrContext";
+    
+    // Paint Weight Tool.
+    makePaintable -attrType "multiFloat" -sm "deformer" "wobble" "weights";
+    makePaintable -activateAll false;
+    makePaintable -activate true "wobble" "weights";
+    
+//???
+    // Set the filter label.
+    setArtAttrFilterLabel( `format -s "wobble" "Filter: ^1s"` );
+    
+// ????
+    // Create a tool if it does not exists.
+	if( ! `artAttrCtx -exists $tool` ) {
+		rememberCtxSettings `artAttrCtx -i1 "attrPaint.png" -whichTool "general" $tool`;
+	}
+    
+    setToolTo $tool;
+    
+    if( 3 == $setToTool ) {
+		toolPropertyWindow;
+	}
+	else if( 4 != $setToTool ) {
+//!!!
+		warning( "" );
+	}
+	return $tool;
+}

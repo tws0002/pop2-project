@@ -1,0 +1,75 @@
+//Maya ASCII 2013 scene
+//Name: IES_XArrow.ma
+//Last modified: Tue, Sep 17, 2013 03:39:09 PM
+//Codeset: UTF-8
+requires maya "2013";
+requires "RenderMan_for_Maya" "5.5b2";
+requires "stereoCamera" "10.0";
+currentUnit -l centimeter -a degree -t film;
+fileInfo "application" "maya";
+fileInfo "product" "Maya 2013";
+fileInfo "version" "2013 x64";
+fileInfo "cutIdentifier" "201202220220-825135";
+fileInfo "osv" "Mac OS X 10.8.4";
+createNode transform -n "group1";
+createNode transform -n "IES_XArrow" -p "group1";
+	setAttr ".t" -type "double3" 0 9.0000000000000018 0 ;
+	setAttr ".r" -type "double3" -90 0 0 ;
+	setAttr ".s" -type "double3" 0.51721865468735073 0.51721865468735073 0.51721865468735073 ;
+createNode RMSGeoAreaLight -n "IES_XArrowShape" -p "IES_XArrow";
+	addAttr -ci true -sn "nts" -ln "notes" -dt "string";
+	addAttr -ci true -h true -sn "rman__torattr___customLightShader" -ln "rman__torattr___customLightShader" 
+		-dt "string";
+	setAttr -k off ".v";
+	setAttr ".shape" -type "string" "sphere";
+	setAttr ".intensity" 15.5;
+	setAttr ".temperature" -1;
+	setAttr ".iesprofile" -type "string" "/Users/dsisson/dsisson/dms/marketing/demos/RMS4/sourceimages/IES_profiles/XArrow.IES";
+	setAttr ".nts" -type "string" "LIGHT TEMPERATURE GUIDE\n1,700 K\t. . . . . . Match Light\n1,850 K . . . . . . Candle Light & Sunset/rise\n2,700 to 3,300 K  . Incandescent Lamp\n3,000 K . . . . . . Soft Fluorescent Lamp\n3,200 K\t. . . . . . Studio Lamp & Photoflood\n3,350 K\t. . . . . . Studio CP Light\n4,100 K\t. . . . . . Moonlight\n5,000 K\t. . . . . . Horizon Daylight\n5,000 K . . . . . . Daylight Fluorescent Lamp\n5,500–6,000 K . . . Vertical Daylight & Camera Flash\n6,200 K\t. . . . . . Xenon Short-Arc Lamp\n6,500 K\t. . . . . . Overcast Daylight\n5,500–10,500 K\t. . LCD Screen\n15,000–27,000 K\t. . Clear Blue Poleward Sky";
+	setAttr ".rman__torattr___customLightShader" -type "string" "RenderManLight1";
+createNode partition -n "mtorPartition";
+	addAttr -ci true -sn "rgcnx" -ln "rgcnx" -at "message";
+	addAttr -ci true -sn "sd" -ln "slimData" -dt "string";
+	addAttr -ci true -sn "sr" -ln "slimRIB" -dt "string";
+	addAttr -ci true -sn "rd" -ln "rlfData" -dt "string";
+	setAttr ".sr" -type "string" "";
+select -ne :time1;
+	setAttr ".o" 1;
+	setAttr ".unw" 1;
+select -ne :renderPartition;
+	setAttr -s 5 ".st";
+select -ne :initialShadingGroup;
+	setAttr ".ro" yes;
+select -ne :initialParticleSE;
+	setAttr ".ro" yes;
+select -ne :defaultShaderList1;
+	setAttr -s 5 ".s";
+select -ne :lightList1;
+select -ne :postProcessList1;
+	setAttr -s 2 ".p";
+select -ne :defaultRenderingList1;
+select -ne :renderGlobalsList1;
+select -ne :defaultRenderGlobals;
+	setAttr ".ren" -type "string" "renderMan";
+	setAttr ".cpe" yes;
+select -ne :defaultResolution;
+	setAttr ".w" 1024;
+	setAttr ".h" 1024;
+	setAttr ".pa" 1;
+	setAttr ".dar" 1;
+select -ne :defaultLightSet;
+	setAttr -s 2 ".dsm";
+select -ne :defaultViewColorManager;
+	setAttr ".ip" 2;
+select -ne :hardwareRenderGlobals;
+	setAttr ".ctrs" 256;
+	setAttr ".btrs" 512;
+select -ne :defaultHardwareRenderGlobals;
+	setAttr ".fn" -type "string" "im";
+	setAttr ".res" -type "string" "ntsc_4d 646 485 1.333";
+select -ne :ikSystem;
+	setAttr -s 4 ".sol";
+connectAttr ":defaultRenderGlobals.msg" "mtorPartition.rgcnx";
+connectAttr "IES_XArrowShape.ltd" ":lightList1.l" -na;
+connectAttr "IES_XArrow.iog" ":defaultLightSet.dsm" -na;
+// End of IES_XArrow.ma

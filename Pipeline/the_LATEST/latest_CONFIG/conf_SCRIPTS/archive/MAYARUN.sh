@@ -1,0 +1,3 @@
+export PROJECT_DIR="/home/$USER/mount/collaborative/portal-origins-part-2"
+export PIPELINE_DIR="/home/$USER/mount/collaborative/portal-origins-part-2/Pipeline/the_LATEST"
+$PIPELINE_DIR/latest_MAYA/latest_MAYARUN.sh
