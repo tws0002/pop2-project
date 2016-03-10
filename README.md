@@ -113,8 +113,6 @@ This function raises custom errors that are defined in the globerror.py module
 to determine various actions that the script should take. For example, raising
 IOValidationError will cause the script to exit prematurely and in
 
-[*latest_MAYA/maya_SCRIPTS*](Pipeline/the_LATEST/latest_MAYA/maya_SCRIPTS)
-
 [*mayamanager.py*](Pipeline/the_LATEST/latest_MAYA/maya_SCRIPTS/mayamanager.py)
 
 [*nukemanager.py*](Pipeline/the_LATEST/latest_NUKE/nuke_SCRIPTS/nukemanager.py)
