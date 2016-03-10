@@ -1,1 +1,0 @@
-/home/selecaotwo/Dropbox/Private/my_PROJECT/proj_POP2/Pipeline/the_LATEST/latest_DOCS/master_documentation_page/hdrprocess/hdrprocessdocumentation.rst
