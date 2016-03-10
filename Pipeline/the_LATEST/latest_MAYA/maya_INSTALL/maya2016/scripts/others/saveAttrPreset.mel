@@ -1,0 +1,272 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//
+//  Creation Date:  2001 
+//
+//<doc>
+//<name saveAttrPreset>
+//
+//<synopsis>
+//		saveAttrPreset nodeName presetName autoRename
+//
+//<returns>
+//		The path to the created preset file.	
+//
+//<description>
+//		Saves the current settings of a node as 
+//		an attribute preset. If autoRename is on, it will
+//		automatically try to generate a new name if the presetName
+//		exists. If autoRename is off, it will prompt whether or
+//		not to overwrite the file.
+//
+//<examples>
+//      saveAttrPreset fluidShape1 "fluffy" true;
+//      saveAttrPreset brush1 "myPaintBrush" false;
+//</doc>
+
+
+proc string processString( string $inputStr )
+//
+//	Description:
+//		This proc will process the input string for output as an
+//		arg in a "blendAttr" command.
+//		Mainly, this proc changes all occurrences of carriage
+//		returns and line feeds to "\r" and "\n" respectively.
+//
+{
+	string $attr = $inputStr;
+	
+	// Use "substitute" repeatedly until there are no more 
+	// substitutions.
+	//
+	int $numChecks = size($attr);
+	int $i = 0;
+	for( ; $i < $numChecks; $i ++ ) {
+		string $tmp  = `substitute "\n" $attr "\\n"`;
+		$tmp  = `substitute "\r" $tmp "\\r"`;
+		if( $tmp == $attr ) {
+		 	break; 	// no more substitutions necessary
+		} else {
+			$attr = $tmp;
+			// there were some substitutions here, 
+			// so keep trying to substitute
+		}
+	}
+    $attr = `substituteAllString $attr "\"" "\\\""`;
+    $attr = `substituteAllString $attr "\'" "\\\'"`;
+	return $attr;
+}
+
+proc string[] getAttrsToPublish( string $nodeName, string $listAttrString)
+{
+	string $atrs[];
+	string $cmd = ($listAttrString+" "+$nodeName); 
+	$atrs = eval($cmd);
+	
+	if (`container -q -isContainer $nodeName`)
+	{
+		string $pubAttrs[] = `container -q -ba $nodeName`;
+		int $pubCount = size($pubAttrs);
+		for ($pp = 1; $pp < $pubCount; $pp += 2) {
+			$cmd = ($listAttrString+" "+$nodeName+"."+$pubAttrs[$pp]);
+			string $testAttr[] = eval($cmd);
+			if (size($testAttr) == 1 &&
+				$testAttr[0] == $pubAttrs[$pp]) {
+				$atrs[size($atrs)] = $pubAttrs[$pp];
+			}
+		}
+	}
+	return $atrs;
+}
+
+global proc string createAttrPreset( string $nodeName )
+{
+	if( !`objExists $nodeName` ){
+		return "";
+	}
+
+	// leave requires command commented out, it may reset defaults inappropriately
+	// but keep the version info around in case we need it later
+	string $nType = `nodeType $nodeName`;
+	string $reslt = "// requires maya \"" + `about -file`  + "\";\n";
+	$reslt = $reslt + "startAttrPreset( \"" + $nType + "\" );\n";
+	// string $atrs[] = `listAttr -k -w -s -m $nodeName`;
+
+	// first do string attributes if any
+	string $atrs[];
+	//int $count = 0;
+
+	string $listStringAttrs = "listAttr -multi -read -write -visible -hasData";
+	$atrs = getAttrsToPublish($nodeName,$listStringAttrs);
+
+	for ($atr in $atrs) 
+	{
+		string $objAt = $nodeName + "." + $atr;
+		if( objExists($objAt)  ){
+			string $type = "";
+			// TODO: The following line generates
+			// a warning message for message attrs
+			// The -sl flag should suppress this, but
+			// it is not for some reason.
+			string $tCmd = "getAttr -sl -type \""+$objAt+"\"";
+			$type = eval( $tCmd );
+			if( "string" == $type)
+			{
+                // Bug 123944: skip strings that have null data
+                // for compatibility with previous behaviour of
+                // getAttr -type on string attributes.
+                if (size(`listAttr -hasNullData $objAt`) == 0)
+                {
+                   string $vCmd = "getAttr \"" + $objAt + "\"";
+				   string $str = eval( $vCmd );
+				   $str = processString( $str );
+				   $reslt = $reslt +"blendAttrStr \"" + $atr + "\" \"" + $str + "\"; ";
+    		   	   $reslt = $reslt + "\n";
+                }
+			}
+		}
+	}
+
+	// next do scalar attributes..floats, ints, bools & enums
+	// treating them all as floats
+	string $listNumericalAttrs = "listAttr -multi -write -scalar -visible -hasData";
+	$atrs = getAttrsToPublish($nodeName,$listNumericalAttrs);
+	
+	for ($atr in $atrs) 
+	{
+		if( !validNodeTypeAttrForCurrentPreset( `nodeType $nodeName`, $atr ) )
+		{
+			continue;
+		}
+
+		string $gAtr = "getAttr \"" + $nodeName +"." + $atr + "\"";
+		$reslt = $reslt + "blendAttr \"" + $atr + "\" " + eval($gAtr) + "; ";
+		// $count++;
+		// if( $count > 2 ) {
+		// 	$count = 0;
+			$reslt = $reslt + "\n";
+		//}
+	}
+	$reslt = $reslt + "endAttrPreset();\n";
+	return $reslt;
+}
+
+global proc string saveAttrPreset( string $node, string $presetName, int $autoRename)
+{
+	if (`about -evalVersion`) {
+		// Because fopen and fprint are disabled in PLE, 
+		// saveAttrPreset is not supported.
+		warning ((uiRes("m_saveAttrPreset.kSaveAttrPresetWarning")));
+		return "";
+	}
+
+	if( !`objExists $node` ){
+		return "";	
+	}
+	string $psetCommand = createAttrPreset( $node );
+	// build the path to the output directory for the current node type
+	string $ntype = `nodeType $node`;
+	string $ppath = `internalVar -userPrefDir`;
+	$ppath = substitute( "/prefs", $ppath, "");
+	$ppath  = $ppath + "presets/attrPresets"; // presets??
+	if( !`file -q -ex $ppath` ){
+		// create Preset dir
+		sysFile -makeDir $ppath;
+	}
+	$ppath = $ppath + "/" + $ntype;
+	if( !`file -q -ex $ppath` ){
+		// create Directory for current node type
+		sysFile -makeDir $ppath;
+	}
+	// strip out .mel if specified
+	$presetName = `substitute ".mel" $presetName ""`;
+	// strip out any spaces
+	$presetName = substituteAllString( $presetName, " ", "" );
+	string $outPath = $ppath + "/" + $presetName + ".mel";
+
+	if( `file -q -ex $outPath` ){
+		
+		string $doReplace = (uiRes("m_saveAttrPreset.kAutoRename"));
+		string $no = (uiRes("m_saveAttrPreset.kNo"));
+		if(!$autoRename) {
+			$doReplace = `confirmDialog -message (uiRes("m_saveAttrPreset.kFileExists"))
+						  -button (uiRes("m_saveAttrPreset.kYes")) -button $no -button $doReplace -defaultButton $doReplace`;
+		}
+		if( $doReplace == $no ){
+			return "";
+		}
+		if( $doReplace == (uiRes( "m_saveAttrPreset.kAutoRename" )) ) {
+			// rename file
+			// Note: if there are more than 100 presets with the same base name,
+			// we just keep overwriting the same file.
+			int $overwrite = 1;
+			int $i;
+	
+			// remove numbers( hopefully trailing numbers )
+			$presetName = `substitute "[0-9]" $presetName ""`;
+			$presetName = `substitute "[0-9]" $presetName ""`;
+			for( $i = 1; $i < 100; $i++ )
+			{
+				$outPath = $ppath + "/" + $presetName + $i + ".mel";
+				if( `file -q -ex $outPath` == 0 )
+				{
+					$overwrite = 0;
+					break;
+				}
+			}
+			if( $overwrite ){
+				string $warningMsg = (uiRes("m_saveAttrPreset.kOverwritingWarning"));
+				warning( `format -s $presetName $warningMsg` );
+			} else {
+				string $warningMsg = (uiRes("m_saveAttrPreset.kRenamingWarning")) ;
+				warning( `format -s $presetName -s $i $warningMsg` );
+			}
+		}
+	}
+    
+    int $validIO;    
+    int $fileId = `fopen $outPath "w"`;
+    $validIO = $fileId != 0;
+    if($validIO)
+    {
+        fprint $fileId $psetCommand;
+        fclose $fileId;
+    }
+
+if($validIO)
+{
+    if( `window -exists attrPresetEditWin` ) {
+        // if that window exists, then this proc must also exist
+        updateAPEWinNodetype($ntype);
+    }
+}
+else
+{
+    string $errrorMsg = (uiRes("m_saveAttrPreset.kSaveAttrPresetError"));
+    error (`format -s $outPath $errrorMsg`);
+    $outPath = "";
+}
+    
+	return $outPath;
+}

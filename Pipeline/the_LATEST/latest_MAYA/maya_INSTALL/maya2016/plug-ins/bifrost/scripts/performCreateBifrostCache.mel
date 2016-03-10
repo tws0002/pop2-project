@@ -1,0 +1,693 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  2005
+//
+//  Description:
+//		This script provides an option box dialog for the Bifrost cache.
+//
+//
+
+global string $gBifrostCacheSceneNameForPrefs = "";
+
+proc string[] pluginCacheFormats()
+{
+	string $formats[] = {"bif"};	// Built in format
+
+	string $plugins[] = `pluginInfo -q -ls`;	// Get all loaded plugins
+	for( $i = 0; $i < size($plugins); $i++ )
+	{
+		// BIFROST_TODO - look for bifrost export format plugisn.
+		string $pluginFormats[] = `pluginInfo -q -cacheFormat $plugins[$i]`;
+		appendStringArray( $formats, $pluginFormats, size( $pluginFormats ));
+	}
+	
+
+	return $formats;
+}
+
+proc string[] pluginCompressionFormats( string $cacheFormat )
+{
+	string $compFormats[] = {};
+	switch ($cacheFormat)
+	{
+	case "bif":	// Built in cache format
+		appendStringArray(
+			$compFormats,
+			{ 	(uiRes("m_performCreateBifrostCache.kCompressionSimple")),
+				(uiRes("m_performCreateBifrostCache.kCompressionFloat")),
+				(uiRes("m_performCreateBifrostCache.kCompressionQuantization")) },
+			3
+		);
+		break;
+	}
+	return $compFormats;
+}
+
+// This string is used as an optionVar value for the cache
+// directory when we want to indicate that the preference is to
+// use the current project's data directory. The file
+// works the same way, with the default being to use the name of the
+// selected object.
+//
+global string $gCacheCurrentProject = "CurrentProject";
+global string $gBifrostCacheAutomaticName = "Automatic";
+
+global proc bifrostCacheSetDirOptionVar()
+//
+// Set the optionVar based on the user's entry in the option box
+//
+{
+	global string $gCacheCurrentProject;
+	global string $gBifrostCacheSceneNameForPrefs;
+ 
+	if ( `textFieldGrp -q -en cacheDir` )
+	{
+		string $value = `textFieldGrp -q -tx cacheDir`;
+		if ( $value != "" )
+		{
+			verifyWorkspaceFileRule( "bifrostCache", "cache/bifrost" );
+			string $currentProj = (`workspace -q -rd` + `workspace -q -fre  "bifrostCache"` + "/" );
+			if ($currentProj == $value) {
+				$value = $gCacheCurrentProject;
+			}
+			optionVar -sv bifrostCacheDirName $value;
+			$gBifrostCacheSceneNameForPrefs = `file -q -loc`;
+		}
+		else
+		{
+			optionVar -sv bifrostCacheDirName $gCacheCurrentProject;
+		}
+	}
+}
+
+global proc int cacheSetDirectory( string $dir, string $type )
+{
+	textFieldGrp -e -tx $dir cacheDir;
+	bifrostCacheSetDirOptionVar();
+	return 1;
+}
+
+global proc cacheBrowseForFolder()
+{
+	string $cmd = "cacheSetDirectory ";
+	string $action = (uiRes("m_performCreateBifrostCache.kSetDir"));
+	string $startInDir;
+	$startInDir = `textFieldGrp -q -tx cacheDir`;
+	if ( size( $startInDir ) == 0 )
+	{
+		$startInDir = `internalVar -uwd`;
+	}
+
+	if ( `file -q -ex $startInDir` ) {
+		workspace -dir $startInDir;
+	}
+
+	fileBrowser( $cmd, $action, "", 4 );
+}
+
+global proc disableBifrostDiskCacheAttrs(string $parent) {
+	setParent $parent;
+	int $showStartEnd = `radioButtonGrp -query -sl bifrostCacheTimeRange3`;
+
+	if( $showStartEnd ) {
+		floatFieldGrp -e -enable true bifrostCacheStartEndTime;
+	} else {
+		floatFieldGrp -e -enable false bifrostCacheStartEndTime;
+	}
+}
+
+global proc bifrostCacheFormatChanged() 
+//
+// Menu callback
+//
+{
+	$value = `optionMenuGrp -q -v formatMenu`;
+	optionVar -sv bifrostCacheFormat $value;
+}
+
+global proc bifrostCompressionFormatChanged() 
+//
+// Menu callback
+//
+{
+	$cacheFormat = `optionMenuGrp -q -v formatMenu`;
+	$compFormat = `optionMenuGrp -q -v compFormatMenu`;
+	int $index = stringArrayFind( $compFormat, 0, `pluginCompressionFormats $cacheFormat` );
+	if ( $index >= 0 ) {
+		optionVar -iv bifrostCompressionFormat $index;
+	} else {
+		error (uiRes("m_performCreateBifrostCache.kBadCompressionFormat"));
+	}
+}
+
+global proc bifrostCacheNameChanged()
+//
+// User has specified a cache name, so we no longer need to
+// update based on selected objects
+//
+{
+	if( !`textFieldGrp -exists cacheName` ) return;
+
+	// Make sure the cache name in option var can't be
+	// cleared. It must remain set to gBifrostCacheAutomaticName
+	string $name = `textFieldGrp -query -text cacheName`;
+	if( $name == "" ) return;
+	
+	// Since this is called on every Add, make sure the
+	// cache name was actually modified.
+	//
+	global string $gBifrostCacheAutomaticName;
+	string $optName = `optionVar -q bifrostCacheName`;
+	if( $optName == $gBifrostCacheAutomaticName ) {
+		string $autoName = getAutomaticBifrostCacheName("");
+		if( $name == $autoName ) return;
+	}
+
+	global string $gBifrostCacheSceneNameForPrefs;
+	optionVar -sv bifrostCacheName $name;
+	$gBifrostCacheSceneNameForPrefs = `file -q -loc`;
+}
+
+global proc setBifrostCacheName() 
+//
+// Sets the name of the cache based on the object name. If more than
+// one object selected, and user hasn't given us a prefix,
+//
+{
+	global string $gBifrostCacheAutomaticName;
+	string $name = `optionVar -q bifrostCacheName`;
+	if ($name == $gBifrostCacheAutomaticName) {	
+		$name = getAutomaticBifrostCacheName("");
+	}
+	textFieldGrp -e -text $name cacheName;
+}
+
+
+proc setOptionVars(int $forceFactorySettings)
+{
+	global string $gCacheCurrentProject;
+	global string $gBifrostCacheAutomaticName;
+	global string $gBifrostCacheSceneNameForPrefs;	
+	string $currSceneName = `file -q -loc`;
+	if ($currSceneName != $gBifrostCacheSceneNameForPrefs) {
+		// We only want the cache name and directory name prefs to exist
+		// for the time that the scene is opened. We don't want them
+		// to be saved for the next session or next scene.
+		//
+		optionVar -rm bifrostCacheDirName; optionVar -rm bifrostCacheName;
+	}
+	if( $forceFactorySettings || !`optionVar -exists bifrostCacheTimeRange`)
+		optionVar -intValue bifrostCacheTimeRange 2;
+
+	if( $forceFactorySettings || !`optionVar -exists bifrostCacheWriteMode`)
+		optionVar -intValue bifrostCacheWriteMode 2;
+
+	if( $forceFactorySettings || !`optionVar -exists bifrostCacheStartTime`)
+		optionVar -floatValue bifrostCacheStartTime 1;
+
+	if( $forceFactorySettings || !`optionVar -exists bifrostCacheEndTime`)
+		optionVar -floatValue bifrostCacheEndTime 10;
+
+	if( $forceFactorySettings || !`optionVar -exists bifrostCacheFormat`)
+		optionVar -stringValue bifrostCacheFormat "bif";
+
+	if( $forceFactorySettings || !`optionVar -exists bifrostCompressionFormat`)
+		optionVar -intValue bifrostCompressionFormat 0;
+
+	if( $forceFactorySettings || !`optionVar -exists bifrostCacheDirName`) {
+		optionVar -sv bifrostCacheDirName "CurrentProject";
+	}
+
+	if( $forceFactorySettings || !`optionVar -exists bifrostCacheName` ) {
+		optionVar -stringValue bifrostCacheName $gBifrostCacheAutomaticName;
+	}
+
+}
+
+global proc bifrostCacheSetup (string $parent, int $forceFactorySettings)
+{
+	global string $gCacheCurrentProject;
+	setOptionVars($forceFactorySettings);
+	setParent $parent;
+	
+	string $cacheFormat = `optionVar -q bifrostCacheFormat`;
+	optionMenuGrp -e -v $cacheFormat formatMenu;
+
+	int $compFormatIndex = `optionVar -q bifrostCompressionFormat`;
+	string $formats[] = pluginCompressionFormats( $cacheFormat );
+	string $compressionFormat = $formats[$compFormatIndex];
+	optionMenuGrp -e -v $compressionFormat compFormatMenu;
+
+	int $timeOpt = `optionVar -query bifrostCacheTimeRange`;
+	if ($timeOpt == 1) {
+		radioButtonGrp -e -sl 1 bifrostCacheTimeRange1;
+	} else if ($timeOpt == 2) {
+		radioButtonGrp -e -sl 1 bifrostCacheTimeRange2;
+	} else {
+		radioButtonGrp -e -sl 1 bifrostCacheTimeRange3;
+	}
+	int $writeOpt = `optionVar -query bifrostCacheWriteMode`;
+	if ($writeOpt == 2) {
+		radioButtonGrp -e -sl 1 bifrostCacheWriteMode2;
+	} else {
+		radioButtonGrp -e -sl 1 bifrostCacheWriteMode3;
+	}
+
+
+	// bifrostCacheDirName
+	int $import = 0;
+	verifyWorkspaceFileRule( "bifrostCache", "cache/bifrost" );
+	string $dirToUse = cacheGetCurrentDir("bifrostCache", "bifrostCacheDirName", $gCacheCurrentProject, $import );
+	textFieldGrp -e -tx $dirToUse cacheDir;
+
+	setBifrostCacheName();
+
+	floatFieldGrp -e 
+		-v1 `optionVar -query bifrostCacheStartTime` 
+		-v2 `optionVar -query bifrostCacheEndTime` 
+		bifrostCacheStartEndTime;
+		
+	disableBifrostDiskCacheAttrs $parent;
+}
+
+global proc bifrostCacheCallback(string $parent, int $doIt, string $action)
+{
+	int $timeMode = 1;
+
+	if( `radioButtonGrp -q -sl bifrostCacheTimeRange1` ) {
+		$timeMode = 1;
+	}
+	else if( `radioButtonGrp -q -sl bifrostCacheTimeRange2` ) {
+		$timeMode = 2;
+	}
+	else if( `radioButtonGrp -q -sl bifrostCacheTimeRange3` ) {
+		$timeMode = 3;
+	}
+	optionVar -iv bifrostCacheTimeRange $timeMode;
+
+
+	int $writeMode = 2;
+
+	if( `radioButtonGrp -q -sl bifrostCacheWriteMode2` ) {
+		$writeMode = 2;
+	}
+	else if( `radioButtonGrp -q -sl bifrostCacheWriteMode3` ) {
+		$writeMode = 3;
+	}
+	optionVar -iv bifrostCacheWriteMode $writeMode;
+
+
+
+	optionVar -fv bifrostCacheStartTime 
+		`floatFieldGrp -q -v1 bifrostCacheStartEndTime`;
+
+	optionVar -fv bifrostCacheEndTime
+		`floatFieldGrp -q -v2 bifrostCacheStartEndTime`;
+		
+	if ($doIt)
+	{
+	    bifrostCacheNameChanged();
+		hideOptionBox;
+		string $cmd = ("performCreateBifrostCache 0 "+$action);
+		// use evalDeferred so that the option box will get hidden before
+		// the cache is created
+		evalDeferred $cmd;
+	}
+}
+
+proc createBifrostCacheOptions(string $action)
+{
+        global string $gCacheCurrentProject;
+	// Name of the command for this option box 
+	//
+	string $commandName = "bifrostCache";
+
+	// Build the option box "methods"
+	//
+	string $callback = ($commandName + "Callback ");
+	string $setup = ($commandName + "Setup");
+	
+	//  STEP 1:  Get the option box.
+	//  ============================
+	//
+	//  The value returned is the name of the layout to be used as
+	//  the parent for the option box UI.
+	//
+	string $layout = getOptionBox();
+	setParent $layout;
+
+	//  STEP 2:  Pass the command name to the option box.
+	//  =================================================
+	//
+	//  Any default option box behaviour based on the command name is set
+	//  up with this call.  For example, updating the 'Help' menu item with
+	//  the name of the command.
+	//
+	setOptionBoxCommandName($commandName);
+
+	//  STEP 3:  Activate the default UI template.
+	//  ==========================================
+	//
+	//  Activate the default UI template so that the layout of this
+	//  option box is consistent with the layout of the rest of the
+	//  application.
+	//
+	setUITemplate -pushTemplate DefaultTemplate;
+
+    //  STEP 4: Create option box contents.
+	//  ===================================
+	//
+	//  This, of course, will vary from option box to option box.
+		   
+	//  Turn on the wait cursor.
+	//
+	waitCursor -state 1;
+
+	tabLayout -scr true -tv false;
+
+	string $parent = `columnLayout -adjustableColumn 1`;
+
+	//	Create the widgets for this option box
+	//
+
+	// Directory name
+	//
+	rowLayout -nc 3
+		-cw3 400 5 50
+		-adjustableColumn 1
+		-cal 1 "both"
+		-cal 2 "both"
+		-cal 3 "left"
+		-ct3 "both" "both" "left";
+
+		// bifrostCacheDirName
+		int $import = 0;
+		verifyWorkspaceFileRule( "bifrostCache", "cache/bifrost" );
+		string $dirToUse = cacheGetCurrentDir("bifrostCache", "bifrostCacheDirName", $gCacheCurrentProject, $import );
+		textFieldGrp
+			-label (uiRes("m_performCreateBifrostCache.kCacheDirectory"))
+			-tx $dirToUse
+			-cc ( "bifrostCacheSetDirOptionVar" )
+			-adjustableColumn 2
+			cacheDir;
+		separator -w 5 -style "none";
+		symbolButton -image "navButtonBrowse.png" 
+			-c ( "cacheBrowseForFolder" )
+				cacheDirBrowser;
+	setParent ..;
+
+	// Cache Name
+	//
+
+	textFieldGrp
+		-label (uiRes("m_performCreateBifrostCache.kCacheName"))
+		-enable true 
+		-cc ("bifrostCacheNameChanged")
+	cacheName;
+		
+	
+
+	setBifrostCacheName();
+
+	//	
+	//	Cache Format
+	//
+
+	string $cacheFormatList[] = `pluginCacheFormats`;
+
+	int $selection = 1;	// Corresponds to default entry of "bif"
+	if(!`optionVar -exists bifrostCacheFormat` || !stringArrayContains(`optionVar -q bifrostCacheFormat`, $cacheFormatList))
+		optionVar -stringValue bifrostCacheFormat "bif";
+
+	string $optionSelection = `optionVar -query bifrostCacheFormat`;
+	int $optionFound = false;
+
+	string $tabForm = `columnLayout -adj true`;
+	optionMenuGrp
+		-l (uiRes("m_performCreateBifrostCache.kBifrostCacheFormat"))
+		-cc ( "bifrostCacheFormatChanged" )
+		 formatMenu;
+
+	for( $nth = 0; $nth < size($cacheFormatList); $nth++ ) 
+	{
+		menuItem -l $cacheFormatList[$nth];
+		if( $cacheFormatList[$nth] == $optionSelection )
+		{
+			$optionFound = true;
+			$selection = $nth + 1;		// Add 1 since menus are indexed 1-based
+		}
+	}
+
+	if( $optionFound == false )
+	{
+		warning( (uiRes("m_performCreateBifrostCache.kNoFormatPlugin")) );
+	}
+
+	optionMenuGrp -e -sl $selection formatMenu;
+
+	//
+	// Compression Format
+	//
+	separator -h 5 -style "none";
+
+	frameLayout -collapsable false -label (uiRes("m_performCreateBifrostCache.kFormatSpecificOptions"));
+		separator -style "none";
+		optionMenuGrp -label (uiRes("m_performCreateBifrostCache.kCompressionFormat")) -cc ( "bifrostCompressionFormatChanged" ) compFormatMenu;	
+		string $compressionFormatList[] = `pluginCompressionFormats $optionSelection`;
+	
+		int $selection = 0;	// Corresponds to default entry of "Simple"
+		if(!`optionVar -exists bifrostCompressionFormat`)
+			optionVar -intValue bifrostCompressionFormat 0;
+	
+		int $compFormatIndex = `optionVar -query bifrostCompressionFormat`;
+		string $optionSelection = $compressionFormatList[$compFormatIndex];
+		int $optionFound = false;
+	
+		for( $nth = 0; $nth < size($compressionFormatList); $nth++ ) 
+		{
+			menuItem -l $compressionFormatList[$nth];
+			if( $compressionFormatList[$nth] == $optionSelection )
+			{
+				$optionFound = true;
+				$selection = $nth + 1;		// Add 1 since menus are indexed 1-based
+			}
+		}
+	
+		if( $optionFound == false )
+		{
+			warning( (uiRes("m_performCreateBifrostCache.kNoCompFormatPlugin")) );
+		}
+	
+		separator -style "none";
+		setParent ..;
+
+	separator -h 5 -style "none";
+	
+    // Time range to cache
+    //
+	radioButtonGrp 
+		-label (uiRes("m_performCreateBifrostCache.kCacheTimeRange")) -nrb 1
+		-l1 (uiRes("m_performCreateBifrostCache.kRenderSettings"))
+		-cc ( "disableBifrostDiskCacheAttrs " + $parent )
+		bifrostCacheTimeRange1;
+
+	radioButtonGrp 
+		-label "" -nrb 1
+		-scl bifrostCacheTimeRange1
+		-cc ( "disableBifrostDiskCacheAttrs " + $parent )
+		-l1 (localizedUIComponentLabel("Time Slider"))
+		bifrostCacheTimeRange2;
+
+	radioButtonGrp 
+		-label "" -nrb 1
+		-scl bifrostCacheTimeRange1
+		-l1 (uiRes("m_performCreateBifrostCache.kStartEnd"))
+		-cc ( "disableBifrostDiskCacheAttrs " + $parent )
+		bifrostCacheTimeRange3;
+	
+	floatFieldGrp -label (uiRes("m_performCreateBifrostCache.kStartEndGrp")) -nf 2 
+		bifrostCacheStartEndTime;
+	
+	separator -h 5 -style "none";
+
+    // Write mode - overwrite entire range, or just fill in/append missing frames
+    //
+	radioButtonGrp 
+		-label (uiRes("m_performCreateBifrostCache.kCacheWriteMode")) -nrb 1
+		-l1 (uiRes("m_performCreateBifrostCache.kWriteAll"))
+		-cc ( "disableBifrostDiskCacheAttrs " + $parent )
+		bifrostCacheWriteMode2;
+
+	radioButtonGrp 
+		-label "" -nrb 1
+		-scl bifrostCacheWriteMode2
+		-cc ( "disableBifrostDiskCacheAttrs " + $parent )
+		-l1 (uiRes("m_performCreateBifrostCache.kReadWrite"))
+		bifrostCacheWriteMode3;
+	
+	separator -h 5 -style "none";
+
+
+
+	//	Turn off the wait cursor.
+	//
+	waitCursor -state 0;
+	
+	//	Step 5: Deactivate the default UI template.
+	//  ===========================================
+	//
+	setUITemplate -popTemplate;
+
+	//	Step 6: Customize the buttons.  
+	//	==============================
+	//
+	//	Provide more descriptive labels for the buttons.  This is not 
+	//	necessary, but in some cases, for example, a button labelled 
+	//	'Create' may be more meaningful to the user than one labelled
+	//	'Apply'.
+	//
+	//  Disable those buttons that are not applicable to the option box.
+	//
+	//	Attach actions to those buttons that are applicable to the option
+	//	box.  Note that the 'Close' button has a default action attached 
+	//	to it that will hide the window.  If a a custom action is
+	//	attached to the 'Close' button then be sure to call the 'hide the
+	//	option box' procedure within the custom action so that the option
+	//	box is hidden properly.
+
+	//	'Apply' button.
+	//
+	string $applyBtn = getOptionBoxApplyBtn();
+	string $buttonName =  (uiRes("m_performCreateBifrostCache.kAddCache"));
+	button -edit -label $buttonName
+		-command ($callback + " " + $parent + " " + 1 + " " + $action)
+		$applyBtn;
+
+	//  'Save' button.
+	//
+    string $saveBtn = getOptionBoxSaveBtn();
+    button -edit 
+        -command ($callback + " " + $parent + " " + 0 + " " + $action +"; hideOptionBox")
+        $saveBtn;
+
+	// 'Reset' button
+	string $resetBtn = getOptionBoxResetBtn();
+	int $resetToDefaults = 1;
+	button -edit 
+		-command ($setup + " " + $parent + " " + $resetToDefaults)
+		$resetBtn;
+
+	//	Step 7: Set the option box title.
+	//	=================================
+	//
+	string $optionTitle =  (uiRes("m_performCreateBifrostCache.kAddOptions"));
+	setOptionBoxTitle($optionTitle);
+
+	//	Step 8: Customize the 'Help' menu item text.
+	//	============================================
+	//
+	
+	setOptionBoxHelpTag( "CreateBifrostCache" );
+	
+	//	Step 9: Set the current values of the option box.
+	//	=================================================
+	//
+	eval ($setup + " " + $parent + " " + 0);
+	
+	//	Step 10: Show the option box.
+	//	=============================
+	//
+	showOptionBox();
+}
+
+//
+//  Procedure Name:
+//      assembleCmd
+//
+//  Description:
+//		Construct the command that will apply the option box values.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+proc string assembleCmd(string $action)
+{
+	global string $gCacheCurrentProject;
+	global string $gBifrostCacheAutomaticName;
+
+	string $directory = `optionVar -query bifrostCacheDirName`;
+	if ($directory == $gCacheCurrentProject) {
+		$directory = "";
+	}
+
+	bifrostCacheNameChanged(); 	// If the user doesn't hit enter after changing
+								// cache name on windows, callback is not triggered.
+	string $fileName = `optionVar -query bifrostCacheName`;
+	if ($fileName == $gBifrostCacheAutomaticName) {
+		$fileName = "";
+	}
+	
+	string $prefix = 0;
+	if( `optionVar -exists bifrostCacheUsePrefix`) {
+		if ("" != $fileName) {
+			$prefix = `optionVar -q bifrostCacheUsePrefix`;
+		}
+	}
+
+	int $inherit = 0;
+
+	return( "doCreateBifrostCache 3 { \"" + `optionVar -query bifrostCacheTimeRange` + "\", " +
+			"\"" + `optionVar -query bifrostCacheStartTime` + "\", " +
+			"\"" + `optionVar -query bifrostCacheEndTime` +  "\", " +
+			"\"" + $directory + "\"," +
+			"\"" + $fileName + "\"," +
+			"\"" + `optionVar -q bifrostCacheFormat` + "\"," +
+			"\"" + `optionVar -q bifrostCompressionFormat` + "\"," +
+			"\"" + `optionVar -q bifrostCacheWriteMode` + "\"" +
+			" } " );
+}
+
+global proc string performCreateBifrostCache( int $action, string $createMode )
+{
+	string $cmd = "";
+	switch( $action ) {
+		case 0:
+			setOptionVars(false);
+			$cmd = assembleCmd($createMode);
+			evalEcho($cmd);
+			break;
+		case 1:
+			createBifrostCacheOptions($createMode);
+			break;
+		case 2:
+			setOptionVars(false);
+			$cmd = assembleCmd($createMode);
+			break;
+	}
+	return $cmd;
+}
+

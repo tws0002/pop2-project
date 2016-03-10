@@ -1,0 +1,313 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  October, 2000
+//
+//	Procedure Name:
+//		autoCreateCharacter
+//
+//	Description:
+//		Automatically create a character that contains the animated channels of 
+//		the object. If the animated channels are already in a character,
+//		return the name of the existing character. If the animated channels
+//		are not in a character, but the object is in a character, add the
+//		channels to the existing character.
+//
+//	Input Arguments:
+//	$version: The version of this option box.  Used to know how to 
+//	interpret the $args array.
+//		"1" : $name
+//  
+//	$args
+//	Version 1: no args
+//	Version 2:
+//		$args[0] = $hierarchy: whether to include the hierarchy when
+//				creating the character
+//	Version 3:
+//		$args[1] = $clipType: animation, expression, constraint, or all
+//
+//	Return Value:
+//		New character name
+//
+proc int
+nodeCanBeInCharacter(string $obj)
+//
+// Check whether the node is one that a user would typically want
+// in a character. Nodes such as clips, blends, constraints should
+// typically not be in a character since they cause DG loops.
+//
+{
+	if (nodeType($obj) == "animClip") {
+		return false;
+	}
+	if (nodeType($obj) == "character") {
+		return false;
+	}
+	string $isBlend[] = `ls -type animBlend $obj`;
+	if (size($isBlend) > 0) {
+		return false;
+	}
+	string $isConstraint[] = `ls -type constraint $obj`;
+	if (size($isConstraint) > 0) {
+		return false;
+	}
+	return true;
+}
+
+global proc string autoCreateCharacter( string $version,
+										string $args[] )
+{
+	string $newCharacter = "";
+	string $membersToAdd[];
+	string $existingChars[];
+	string $otherChars[];	
+	int $memberCount = 0;
+	int $chCount = 0;	
+	string $obj, $ch;
+	int $ii;
+
+	// check what is selected
+	//
+	string $sel[] = `ls -sl`;;
+	string $selInit[];
+	if (size($sel) == 0) {
+		error( (uiRes("m_autoCreateCharacter.kNothingIsSelectedErr")) );
+		return "";
+	}
+
+	// the hierarchy option was introduced in the 2nd version of this script
+	//
+	int    $versionNo   = $version;
+	int    $hierarchy = 0;
+	string $clipType = "animation";
+	if ($versionNo >= 2) {
+		$hierarchy = $args[0];
+	}
+	if ($versionNo >= 3) {
+		$clipType = $args[1];
+	}
+
+	if ($hierarchy) {
+		select -hi $sel;
+		$selInit = $sel;
+		$sel = `ls -sl`;
+	}
+
+	// loop through the selected objects to find the animated channels
+	// and the existing characters on the selected objects
+	//
+	for ($obj in $sel) {
+		if (! nodeCanBeInCharacter($obj)) {
+			continue;
+		}
+		
+		// animation
+		//
+		string $animCrvPlugs[];
+		string $animCrvNodes[];
+		string $redirectPlugs[];
+		string $redirectNodes[];
+		string $pbPlugs[];
+		string $pbNodes[];
+		if ($clipType == "animation" || $clipType == "all") {
+			$animCrvPlugs = `listConnections -type animCurve -skipConversionNodes true -plugs true -d false -s true -c true $obj`;
+			$animCrvNodes = `listConnections -type animCurve -skipConversionNodes true -plugs false -d false -s true -c true $obj`;
+			$redirectPlugs = `listConnections -type characterOffset -skipConversionNodes true -plugs true -d false -s true -c true $obj`;
+			$redirectNodes = `listConnections -type characterOffset -skipConversionNodes true -plugs false -d false -s true -c true $obj`;
+			$pbPlugs = `listConnections -type pairBlend -skipConversionNodes true -plugs true -d false -s true -c true $obj`;
+			$pbNodes = `listConnections -type pairBlend -skipConversionNodes true -plugs false -d false -s true -c true $obj`;
+		}
+
+		// constraints
+		//
+		string $constraintPlugs[];
+		string $constraintNodes[];
+		if ($clipType == "constraint" || $clipType == "all") {
+			$constraintPlugs = `listConnections -type constraint -skipConversionNodes true -plugs true -d false -s true -c true $obj`;
+			$constraintNodes = `listConnections -type constraint -skipConversionNodes true -plugs false -d false -s true -c true $obj`;
+		}
+
+		// expressions
+		//
+		string $exprPlugs[];
+		string $exprNodes[];
+		if ($clipType == "expression" || $clipType == "all") {
+			$exprPlugs = `listConnections -type expression -skipConversionNodes true -plugs true -d false -s true -c true $obj`;
+			$exprNodes = `listConnections -type expression -skipConversionNodes true -plugs false -d false -s true -c true $obj`;
+		}
+		string $chars[] = `listConnections -s false -d true -type character $obj`;
+
+		// Coalesce all the different lists into one list
+		
+		int $iAnim = 0;
+		string $animPlugs[];
+		string $animNodes[];
+
+		int $n_animCrv = size($animCrvPlugs);
+		for ($ii = 0; $ii < $n_animCrv; $ii += 2)
+		{
+			// Strip out set driven key nodes
+			string $animIn[] = `listConnections -s true -d false $animCrvNodes[$ii+1]`;
+			if (0 == size($animIn))
+			{
+				$animPlugs[$iAnim] = $animCrvPlugs[$ii];
+				$animNodes[$iAnim] = $animCrvNodes[$ii];
+				$iAnim++;
+				$animPlugs[$iAnim] = $animCrvPlugs[$ii+1];
+				$animNodes[$iAnim] = $animCrvNodes[$ii+1];
+				$iAnim++;
+			}
+		}
+		int $n_constraint = size($constraintPlugs);
+		for ($ii = 0; $ii < $n_constraint; $ii += 2)
+		{
+			// Strip out self referencing constraint node connections
+			if ($constraintNodes[$ii+1] != $obj)
+			{
+				$animPlugs[$iAnim] = $constraintPlugs[$ii];
+				$animNodes[$iAnim] = $constraintNodes[$ii];
+				$iAnim++;
+				$animPlugs[$iAnim] = $constraintPlugs[$ii+1];
+				$animNodes[$iAnim] = $constraintNodes[$ii+1];
+				$iAnim++;
+			}
+		}
+
+		int $n_expr = size($exprPlugs);
+		for ($ii = 0; $ii < $n_expr; $ii++)
+		{
+			$animPlugs[$iAnim] = $exprPlugs[$ii];
+			$animNodes[$iAnim] = $exprNodes[$ii];
+			$iAnim++;
+		}
+
+		int $n_redirect = size($redirectPlugs);
+		for ($ii = 0; $ii < $n_redirect; $ii++)
+		{
+			$animPlugs[$iAnim] = $redirectPlugs[$ii];
+			$animNodes[$iAnim] = $redirectNodes[$ii];
+			$iAnim++;
+		}
+
+		int $n_pb = size($pbPlugs);
+		for ($ii = 0; $ii < $n_pb; $ii++)
+		{
+			$animPlugs[$iAnim] = $pbPlugs[$ii];
+			$animNodes[$iAnim] = $pbNodes[$ii];
+			$iAnim++;
+		}
+
+		// First find the animatable plugs
+		//
+		int $n_anim = size($animPlugs);
+		for ($ii = 0; $ii < $n_anim; $ii += 2) {
+			$membersToAdd[$memberCount++] = $animPlugs[$ii];
+			for ($ch in $chars) {
+				if (`character -isMember $ch $animPlugs[$ii]`) {
+					$existingChars[$chCount++] = $ch;
+					break;
+				}
+			}
+		}
+		for ($ch in $chars) {
+			$otherChars[size($otherChars)] = $ch;
+		}
+	}
+	
+	string $existingResult[];
+	$existingResult = AWRemoveDuplicateStringsFromStringArray($existingChars);
+	int $sizeExisting = size($existingResult);
+	string $errMsg = (uiRes("m_autoCreateCharacter.kMoreThanOneCharErr"));
+	if ($sizeExisting == 0) {
+		// none of the attributes were already in a character
+		//
+		string $otherResult[];
+		$otherResult = AWRemoveDuplicateStringsFromStringArray($otherChars);
+		if (size($otherResult) == 1) {
+			// but one or more of the selected objects were in a character
+			// so we will use the existing character
+			//
+			$sizeExisting = 1;
+			$existingResult[0] = $otherResult[0];
+		} else if (size($membersToAdd) > 0) {
+			// create a new character
+			//
+			// first pick a name for the character
+			//
+			string $chName = "";
+			string $shNames[] = `ls -sl -shortNames`;
+			for ($obj in $membersToAdd) {
+				string $memShort[] = `ls -o -shortNames $obj`;
+				string $currName = ($memShort[0]+"Ch");
+				if ($chName == "" || ($currName == $chName)) {
+					$chName = $currName;
+				} else {
+					$chName = "multiCh";
+				}
+			}
+
+			$newCharacter = `character -name $chName -empty`;
+			character -e -add $newCharacter $membersToAdd;
+		} else {
+			if ($hierarchy) {
+				// replace the selection
+				//
+				select -r $selInit;
+			}
+			
+			if (size($otherResult) > 0) {
+				error($errMsg);
+			} else {
+				if ($clipType == "animation" || $clipType == "all") {
+					error( (uiRes("m_autoCreateCharacter.kNoAnimatedChannelsErr")) );
+				} else if ($clipType == "expression") {
+					error( (uiRes("m_autoCreateCharacter.kNoExpressionsFoundErr")) );
+				} else if ($clipType == "constraint") {
+					error( (uiRes("m_autoCreateCharacter.kNoConstraintsFoundErr")) );
+				}
+			}
+		}
+	}
+
+	if ($hierarchy) {
+		// replace the selection
+		//
+		select -r $selInit;
+	}
+	
+	if ($sizeExisting == 1) {
+		// use the existing character, add any of the attributes that
+		// are not already in the character to this character
+		//
+		$newCharacter = $existingResult[0];
+		for ($obj in $membersToAdd) {
+			if (! `character -isMember $newCharacter $obj`) {
+				character -e -add $newCharacter $obj;
+			}
+		}
+	} else if ($sizeExisting > 1) {
+		error($errMsg);
+	}
+
+	return $newCharacter;
+}

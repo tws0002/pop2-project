@@ -1,0 +1,116 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//	Procedure Name:
+//		doImportAtomOfflineFile
+//
+//	Description:
+//		This mel script is used to import an .editMA file as part of the
+//		atom import process.
+//
+//	Input Arguments:
+//	$version: The version of this script.  Used to know how to 
+//	interpret the $args array. Currently supported versions are:
+//		Version 1: Maya 2013
+//			$options[0]: .editMA file name
+//
+proc string findConstraintOutput(string $constraint)
+{
+	string $outputs[];
+	string $outputAttrs[] = { ".constraintRotateX",
+							  ".constraintTranslateX",
+							  ".constraintRotateY",
+							  ".constraintTranslateY",
+							  ".constraintRotateZ",
+							  ".constraintTranslateZ" };
+	for ($attr in $outputAttrs) {
+		if (`objExists ($constraint+$attr)`) {
+			$outputs = `listConnections -s 1 -d 0 ($constraint+$attr)`;
+			if (size($outputs) > 0) {
+				break;
+			}
+		}
+	}
+
+	string $result;
+	if (size($outputs) == 0) {
+		$outputs = `listConnections -s 1 -d 0 -type transform $constraint`;
+		for ($output in $outputs) {
+			if ($output != $constraint) {
+				$result = $output;
+				break;
+			}
+		}
+	} else {
+		$result = $outputs[0];
+	}
+	return $result;
+}
+
+global proc doImportAtomOfflineFile(int $version, string $options[])
+{
+	string $filename = $options[0];
+	if (0 == `filetest -f $filename`) {
+		string $skippingOfflineFile = (uiRes("m_doImportAtomOfflineFile.kSkippingOfflineFile"));
+		string $infoMsg = `format -s $filename $skippingOfflineFile`;
+		print($infoMsg);
+		return;
+	}
+	
+	// Create a temporary reference where we will load the offline file
+	//
+	string $tmpdir = `internalVar -utd`;
+	if (0 == `filetest -d $tmpdir`) {
+		$tmpdir = dirname($filename);
+	}
+	string $tmpObj = `createNode pairBlend`;
+	select -r $tmpObj;
+	string $td = `internalVar -userTmpDir`;
+	string $tmpFile = `file -f -exportAsReference -ns "tmpOfflineForAtom" -type "mayaAscii" ($td+"tmpOfflineForAtom.ma")`;
+	string $refNode = `referenceQuery -rfn $tmpFile`;
+	string $refNS = `referenceQuery -ns $refNode`;
+	
+	string $importCmd = "file -import -type \"editMA\" -namespace \"importAtom\" ";
+	$importCmd += " -applyTo \"";
+	$importCmd += ($refNode+"\" ");
+	$importCmd += (" \""+$filename+"\"");
+	evalEcho $importCmd;
+
+	// Find all dependency nodes recursively through any namespaces
+	string $importedNodes[] = `namespaceInfo -listOnlyDependencyNodes -recurse "importAtom"`;
+	string $constraints[] = `ls -type constraint $importedNodes`;
+	for ($constraint in $constraints) {
+		string $output = findConstraintOutput($constraint);
+		if (size($output) > 0) {
+			select -replace $constraint $output;
+			parent;
+		}
+	}
+	namespace -removeNamespace "importAtom" -mergeNamespaceWithRoot;
+	namespace -removeNamespace "tmpOfflineForAtom" -mergeNamespaceWithRoot;
+
+	string $rmCmd = ("file -force -removeReference -referenceNode "+$refNode);
+	catchQuiet(`eval $rmCmd`);
+	if (`filetest -f $tmpFile`) {
+		sysFile -del $tmpFile;
+	}
+}

@@ -1,0 +1,160 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// Get a list of shaders connected to a given object.
+// 
+// 1) If the "parse full" argument is specified to be "true",
+// than the output format is:
+//
+// "<shaderName 1>" "<assigned parts of object>"
+// "<shaderName 2 >" "<assigned parts of object>"
+// ...
+// "<shaderName N>" "<assigned parts of object>"
+//
+// 2) If the "parse full" argument is specified to be "false",
+// than the output format is:
+//
+// "<shaderName 1>" "<shaderName 2>" ... <"shaderName N">
+//
+// where N is the number of shaders being used by the object
+//
+// Last Updated : 08/23/00
+//
+
+global proc string[] getConnectedShaders(string $object, int $parseFull)
+{
+	string $shaders[];
+	
+	if (size($object) == 0)
+		return $shaders;
+	
+	// Check to see if we have a shape selected.
+	// If so take pick walk up until we hit a transform.
+	// This avoids a lot of hassle later on...
+	//
+	if ($parseFull) {
+		string $nType[] = `ls -showType $object`;
+		while ($nType[1] != "transform") {
+			string $temp[] = `listRelatives -p $object`;
+			$object = $temp[0];
+			// This would be bad...
+			if (size($object) == 0) {
+				warning ((uiRes("m_getConnectedShaders.kNoTransform")));
+				return $shaders;
+			}
+			$nType = `ls -showType $object`;
+		}
+	}
+	
+	// Find out the shading groups belonging to the object.
+	// Note: This command's -ets does not really extend
+	// to the shape if a the tranform is grouped at a higher 
+	// level. 
+	//
+	string $shadingGroups[] = `listSets -type 1 -ets -object $object`;
+	int $numShaders = `size($shadingGroups)`;
+	if ($numShaders == 0) {
+		warning ((uiRes("m_getConnectedShaders.kNoShaders")));
+		return $shaders;
+	}
+	
+	//print ("Shaders are: \n");
+	//print $shadingGroups;
+	//print ("\n");
+	
+	// Just return the shader list, without the associated object items
+	if ($parseFull == 0) {
+		return $shadingGroups;
+	}
+	
+	// For each shading group, find out which objects use this shading group
+	int $i;
+	int $stringPos = 0;
+	
+	string $objectMembers;
+	for ($i =0; $i<$numShaders; $i++) {
+		
+		
+		string $shaderName = $shadingGroups[$i];
+		//print("**** Testing shader " + $shaderName + "\n");
+		
+		string $setMembers[] = `sets -q $shaderName`;
+		$objectMembers = "";
+		int $numMembers = `size($setMembers)`;
+		
+		// This if statement should always be true,
+		// but add this test just in case for paranoia.
+		if ($numMembers) {
+			
+			string $realMembers = "";
+			
+			// Scan through the shading group member list,
+			// and find out which ones actually belong
+			// the object we are interested in.
+			// Stuff the result into a single string $realMembers;
+			for ($j=0; $j<$numMembers; $j++) {
+				
+				string $member = $setMembers[$j];
+				string $buffer[];
+				int $numTokens = `tokenize $member "." $buffer`;
+				
+				// This should work in most cases if you
+				// are doing interactive selection.
+				// If you select the shape versus the 
+				// transform, than we could be in trouble here.
+				// But we have weeded out that possibility at the
+				// top of this routine.
+				//print ("Compare " + $buffer[0] + " against: " + $object + "\n");
+				if ($buffer[0] == $object) {
+					
+					// Add the item to the shader list
+					$realMembers += " " + $member;
+				}
+				else {
+					// Try comparing the child
+					string $nType[] = `ls -showType $object`;
+					if ($nType[1] == "transform") {
+						string $temp[] = `listRelatives -c $object`;
+						
+						//print ("Compare child " + $buffer[0] + " against: " + $temp[0] + "\n");
+						if ($buffer[0] == $temp[0]) {
+							
+							// Add the item to the shader list
+							$realMembers += " " + $member;
+						}
+					}
+				}
+			}
+			
+			if (size($realMembers) != 0) {
+				$shaders[$stringPos] = $shaderName;
+				$stringPos++;
+				$shaders[$stringPos] = $realMembers;
+				$stringPos++;
+			}
+		}
+	}
+	
+	return $shaders;
+}
+
+

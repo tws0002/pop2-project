@@ -1,0 +1,296 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+global proc OpenBrowserTestPage() {
+	global int $browserCommunicationIE;
+	print((uiRes("m_BrowserSetupAssistant.kLoadingTestPage")));
+	string $url = `getenv MAYA_LOCATION`;
+	
+	if(`about -mac`) {
+		$url += "/../..";
+	}
+	
+	if(`about -windows` && $browserCommunicationIE) {
+		$url += "/ExternalWebBrowser/Examples/InternetExplorer/TestIE.htm";
+	} else {
+		$url += "/ExternalWebBrowser/Examples/OtherBrowser/Test.html";
+	}
+	
+	showHelp -a $url;
+}
+
+global proc SetupMayaCommandPort() {
+	global string $dialogTitle;
+
+
+	// This is command port name the test page expects
+	string $portName = "commandportDefault"; 
+	
+	if(`commandPort -query $portName`) {
+		// Make sure Maya opens port by default at startup.
+		optionVar -iv "commandportOpenByDefault" 1;
+	} else {
+		// Try to open it...
+		commandPort -name $portName;
+		if(!`commandPort -query $portName`) {
+			error(`format -stringArg $portName (uiRes("m_BrowserSetupAssistant.kErrorOpeningCommandPort"))`);
+			return;
+		}
+	}
+
+	print(`format -stringArg $portName (uiRes("m_BrowserSetupAssistant.kSuccessfullyOpenedCommandPort"))`);
+	
+	
+	if(`about -linux`) {
+		string $answer;
+		string $cancel = (uiRes("m_BrowserSetupAssistant.kLinuxCancel"));
+		string $default = (uiRes("m_BrowserSetupAssistant.kLinuxContinue"));
+		string $message = (uiRes("m_BrowserSetupAssistant.kLinuxMelURL"));
+		
+		$answer = `confirmDialog
+						-title $dialogTitle
+						-messageAlign "left"
+						-message $message
+						-button $default
+						-button $cancel
+						-defaultButton $default
+						-cancelButton $cancel
+						`;
+		if($answer == $cancel) {
+			return;
+		}
+	}
+	
+	OpenBrowserTestPage();
+}
+
+proc SetupBrowserCommunicationMac()
+{
+	global string $dialogTitle;
+
+	// On MacOS X, all that needs to be done is to install browser plugin into "Internet Plug-Ins" folder.
+	// The only option available is to install it for all users (system level) or current user level.
+	
+	string $answer;
+	string $cancel = (uiRes("m_BrowserSetupAssistant.kMacCancel"));
+	string $default = (uiRes("m_BrowserSetupAssistant.kMacCurrentUser"));
+	string $message = (uiRes("m_BrowserSetupAssistant.kMacInstallType"));
+	$message += (uiRes("m_BrowserSetupAssistant.kMacInstallType1"));
+	$message += (uiRes("m_BrowserSetupAssistant.kMacInstallType2"));
+	
+	$answer = `confirmDialog
+					-title $dialogTitle
+					-message $message
+					-button $cancel
+					-button (uiRes("m_BrowserSetupAssistant.kMacAllUsers"))
+					-button $default
+					-defaultButton $default
+					-cancelButton $cancel
+					`;
+	if($answer == $cancel) {
+		return;
+	}
+	
+	
+	string $src = `getenv MAYA_LOCATION`;
+	$src += "/../../ExternalWebBrowser/MacOS/McpPlugIn.plugin";
+	
+	string $dst = "/Library/Internet\\ Plug-Ins";
+	
+	// Install plugin
+	if($answer == $default) {
+		// Install for current user
+		$dst = `getenv HOME` + $dst;
+	}
+	print(`format -stringArg $dst (uiRes("m_BrowserSetupAssistant.kMacInstallInstallingPluginInto"))`);	
+	system("cp -rf " + $src + " " + $dst);
+
+	// Verify that the plug-in is there
+	string $test = "/Library/Internet Plug-Ins/McpPlugIn.plugin";
+	if($answer == $default) {
+		$test = `getenv HOME` + $test;
+	}
+	
+	if(`filetest -d $test` == 0) {
+		error((uiRes("m_BrowserSetupAssistant.kMacInstallError")));
+		return;
+	}
+	
+	SetupMayaCommandPort();
+}
+
+global proc int installPlugin(string $dst, string $fileType)
+{
+	string $src = `getenv MAYA_LOCATION`;
+	if(`about -windows`) {
+		$src += "/ExternalWebBrowser/Windows/PlugIn/npmcpplugin.dll";
+
+		print(`format -stringArg $dst (uiRes("m_BrowserSetupAssistant.kWindowsInstallingInto"))`);	
+		sysFile -copy ($dst+"/npmcpplugin.dll") $src;
+		
+		// Verify that the plug-in is there
+		if(`filetest -f ($dst+"/npmcpplugin.dll")` == 0) {
+			error((uiRes("m_BrowserSetupAssistant.kWindowsInstallError")));
+			return 1;
+		}
+
+	} else if(`about -linux`) {
+		$src += "/ExternalWebBrowser/Linux/libmcpplugin.so";
+
+		print(`format -stringArg $dst (uiRes("m_BrowserSetupAssistant.kLinuxInstallingInto"))`);	
+		sysFile -copy ($dst+"/libmcpplugin.so") $src;
+		
+		// Verify that the plug-in is there
+		if(`filetest -f ($dst+"/libmcpplugin.so")` == 0) {
+			error((uiRes("m_BrowserSetupAssistant.kLinuxInstallError")));
+			return 1;
+		}
+		SetupMayaCommandPort();
+
+	} else {
+		error((uiRes("m_BrowserSetupAssistant.kWrongPlatform")));
+	}
+
+	return 1;
+}
+
+global proc SetupBrowserCommunicationWindows()
+{
+	global string $dialogTitle;
+	global int $browserCommunicationIE;
+	
+	$browserCommunicationIE = true;
+	
+	// On Windows, we need to register COM object that will handle mel urls and 
+	// command port interface from Internet Explorer.
+	// If user wants to use other browser, we need to install plugin for it.
+	
+	string $answer;
+	string $cancel = (uiRes("m_BrowserSetupAssistant.kWindowsCancel"));
+	string $default = (uiRes("m_BrowserSetupAssistant.kWindowsInternetExplorer"));
+	string $message = (uiRes("m_BrowserSetupAssistant.kWindowsBrowserType"));
+	$message += (uiRes("m_BrowserSetupAssistant.kWindowsBrowserType1"));
+	
+	$answer = `confirmDialog
+					-title $dialogTitle
+					-message $message
+					-button $default
+					-button (uiRes("m_BrowserSetupAssistant.kWindowsOtherBrowser"))
+					-button $cancel
+					-defaultButton $default
+					-cancelButton $cancel
+					`;
+	if($answer == $cancel) {
+		return;
+	}
+	
+	// Install plugin
+	if($answer != $default) {
+		// Install for other browser
+		$browserCommunicationIE = false;
+		fileBrowserDialog -mode 4 -fileCommand "installPlugin" 
+						-actionName (uiRes("m_BrowserSetupAssistant.kWindowsPluginFolder"));
+	}
+	
+	// Register COM object
+	string $cmd = `getenv SYSTEMROOT`;
+	$cmd = fromNativePath($cmd);
+	$cmd += "/system32/regsvr32.exe /s \"";
+	$dllPath = `getenv MAYA_LOCATION`;
+	$dllPath += "/ExternalWebBrowser/Windows/COM/MayaCmdCOM.dll\"";
+	$cmd += $dllPath;
+	print(`format -stringArg $cmd (uiRes("m_BrowserSetupAssistant.kWindowsRegisteringComObject"))`);
+	print(`system($cmd)`);	
+	
+	SetupMayaCommandPort();
+}
+
+global proc SetupBrowserCommunicationLinux()
+{
+	// On Linux, we need to install plugin for browser.
+	fileBrowser("installPlugin", "Browser plug-ins", "directory", 4);
+		
+	// file browser is modeless on Linux, so we call SetupMayaCommandPort from callback.	
+}
+
+global proc BrowserSetupAssistant()
+{
+	global string $dialogTitle;
+	global int $browserCommunicationIE = false;
+
+	$dialogTitle = (uiRes("m_BrowserSetupAssistant.kBrowserSetupAssistant"));
+	
+	string $answer;
+	string $cancel = (uiRes("m_BrowserSetupAssistant.kCancel"));
+	string $default = (uiRes("m_BrowserSetupAssistant.kInstallAutomatically"));
+	string $message = (uiRes("m_BrowserSetupAssistant.kMessage"));
+	
+	$answer = `confirmDialog
+					-title $dialogTitle
+					-message $message
+					-button $default
+					-button (uiRes("m_BrowserSetupAssistant.kInstallManually"))
+					-button $cancel
+					-defaultButton $default
+					-cancelButton $cancel
+					`;
+
+	if($answer == $cancel) {
+		return;
+	}
+	
+	if($answer != $default) {
+		// Show docs page with instructions and quit
+		showHelp -docs "General/Install_the_Maya_Web_browser_plugin.html";
+		return;
+	}
+	
+	$default = (uiRes("m_BrowserSetupAssistant.kContinue"));
+	$message = (uiRes("m_BrowserSetupAssistant.kQuitBrowser"));
+	
+	$answer = `confirmDialog
+					-title $dialogTitle
+					-message $message
+					-button $default
+					-button $cancel
+					-defaultButton $default
+					-cancelButton $cancel
+					`;
+
+	if($answer == $cancel) {
+		return;
+	}
+	
+	if(`about -macOS`) {
+		print((uiRes("m_BrowserSetupAssistant.kDetectedMacOSX")));
+		SetupBrowserCommunicationMac();
+	} else if(`about -windows`) {
+		print((uiRes("m_BrowserSetupAssistant.kDetectedWindows")));
+		SetupBrowserCommunicationWindows();
+	} else if(`about -linux`) {
+		print((uiRes("m_BrowserSetupAssistant.kDetectedLinux")));
+		SetupBrowserCommunicationLinux();
+	} else {
+		error((uiRes("m_BrowserSetupAssistant.kUnrecognizedOS")));
+		return;
+	}
+}
+

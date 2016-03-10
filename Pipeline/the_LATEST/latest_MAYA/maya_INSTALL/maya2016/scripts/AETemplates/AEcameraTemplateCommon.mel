@@ -1,0 +1,804 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Procedure Name:
+//      AEcameraTemplateCommon
+//
+//  Description:
+//      Creates the attribute editor controls for a mono or stereo camera.
+//
+//  Input Arguments:
+//      nodeName
+//
+//  Return Value:
+//      None.
+//
+
+
+proc float AEcalculateFOV( string $focalStr, string $horStr )
+{
+	float $focal = `getAttr $focalStr`;
+	float $aperture = `getAttr $horStr`;
+
+	float $fov = (0.5 * $aperture) / ($focal * 0.03937);
+	$fov = 2.0 * atan ($fov);
+	$fov = 57.29578 * $fov;
+
+    return $fov;
+}
+
+global proc AEfovNew( string $focalStr, string $horStr )
+{
+	setUITemplate -pst attributeEditorTemplate;
+	floatSliderGrp -label (uiRes("m_AEcameraTemplateCommon.kAngleofView"))
+        	-precision 2
+        	-min 1.0 -max 165.0
+        	fovGrp;
+	setUITemplate -ppt;
+
+    AEfovReplace($focalStr, $horStr);
+}
+
+global proc AEfovReplace( string $focalStr, string $horStr )
+{
+    string $fovGrpFullPath = `floatSliderGrp -q -fpn fovGrp`;
+	floatSliderGrp -e
+        -cc ("AEadjustFocal " + $focalStr + " " + $horStr + " " + $fovGrpFullPath)
+        -value (AEcalculateFOV($focalStr, $horStr))
+         $fovGrpFullPath;
+
+    scriptJob -parent $fovGrpFullPath -replacePrevious
+        -attributeChange $focalStr ("AEadjustFOV " + $focalStr + " " + $horStr + " " + $fovGrpFullPath);
+
+    scriptJob -parent $fovGrpFullPath
+        -attributeChange $horStr ("AEadjustFOV " + $focalStr + " " + $horStr + " " + $fovGrpFullPath);
+}
+
+global proc AEadjustFOV( string $focalStr, string $horStr, string $fovGrpFullPath)
+{
+    float $fov = AEcalculateFOV($focalStr, $horStr);
+    floatSliderGrp -e -value $fov $fovGrpFullPath;
+}
+
+global proc AEadjustFocal( string $focalStr, string $horStr, string $fovGrpFullPath)
+{
+	float $fov = `floatSliderGrp -q -value $fovGrpFullPath`;
+	float $aperture = `getAttr $horStr`;
+	float $focal = tan (0.00872665 * $fov);
+	$focal = (0.5 * $aperture) / ($focal * 0.03937);
+
+	setAttr $focalStr $focal;
+}
+
+global proc AEcameraClipNew( string $clippingPlanesPlug )
+{
+    checkBoxGrp
+        -label ""
+        -label1 (uiRes("m_AEcameraTemplateCommon.kAutoRenderClipPlane"))
+        -numberOfCheckBoxes 1
+        clip;
+
+    AEcameraClipReplace( $clippingPlanesPlug );
+}
+
+global proc AEcameraClipReplace( string $clippingPlanesPlug )
+{
+    int $value = `getAttr $clippingPlanesPlug`;
+
+    checkBoxGrp -e
+        -value1 $value
+        -changeCommand ("setAttr "+$clippingPlanesPlug+" #1")
+        clip;
+}
+
+//
+//  Procedure Name:
+//      AEcameraFilmAspectNew
+//
+//  Description:
+//      Procedure to create the film aspect control. This procedure is
+//      called when the film aspect control is first created.
+//
+global proc AEcameraFilmAspectNew( string $hfa, string $vfa )
+{
+	setUITemplate -pst attributeEditorTemplate;
+	floatSliderGrp -label (uiRes("m_AEcameraTemplateCommon.kFilmAspectRatio"))
+        	-precision 2
+        	-min 0.01 -max 10.0
+        	filmAspect;
+	setUITemplate -ppt;
+
+    AEcameraFilmAspectReplace($hfa, $vfa);
+}
+
+//
+//  Procedure Name:
+//      AEcameraFilmAspectReplace
+//
+//  Description:
+//      Procedure to update the film aspect control. This procedure is
+//      called when a new camera is swapped into the attribute editor.
+//
+global proc AEcameraFilmAspectReplace( string $hfa, string $vfa )
+{
+    float $value = `getAttr $hfa` / `getAttr $vfa`;
+
+    string $filmAspectFullPath = `floatSliderGrp -q -fpn filmAspect`;
+	floatSliderGrp -e
+        -cc ("setAttr "+$hfa+" ((`getAttr "+$vfa+"`)*#1)")
+        -value $value
+        $filmAspectFullPath;
+
+    scriptJob -parent $filmAspectFullPath -replacePrevious
+        -attributeChange $hfa ("AEcameraFilmbackModified " + $hfa + " " + $vfa + " " + $filmAspectFullPath);
+
+    scriptJob -parent $filmAspectFullPath 
+        -attributeChange $vfa ("AEcameraFilmbackModified " + $hfa + " " + $vfa + " " + $filmAspectFullPath);
+}
+
+
+global proc cameraCheckOrthographic ( string $nodeName )
+{
+	string $nodeAttr = $nodeName + ".orthographic";
+	int $value = `getAttr $nodeAttr`;
+
+	if ( $value == 1 ) {
+		editorTemplate -dimControl $nodeName "orthographicWidth" false;
+	} else {
+		editorTemplate -dimControl $nodeName "orthographicWidth" true;
+	}
+}
+
+//
+//  Procedure Name:
+//      AEcameraFilmbackModified
+//
+//  Description:
+//      The user has modified the film aperture or squeeze ratio, the
+//      film aspect ratio and option menu are updated.
+//
+global proc AEcameraFilmbackModified( string $hfa, string $vfa, string $filmAspectFullPath)
+{
+	float $fHfa = `getAttr $hfa`;
+	float $fVfa = `getAttr $vfa`;
+    floatSliderGrp -e -value ($fHfa / $fVfa) $filmAspectFullPath;
+}
+
+//
+//  Procedure Name:
+//      AEdgmModified
+//
+//	Description:
+//		If display gate shaded is turned off then
+//		turn off the display gate color slider and opacity slider
+//
+global proc AEdgmModified( string $nodeName )
+{
+	int $value = `getAttr ($nodeName + ".displayGateMask")`;
+	if( $value == 0 ) {
+        editorTemplate -dimControl $nodeName "displayGateMaskColor" true;
+        editorTemplate -dimControl $nodeName "displayGateMaskOpacity" true;
+	} else {
+        editorTemplate -dimControl $nodeName "displayGateMaskColor" false;
+        editorTemplate -dimControl $nodeName "displayGateMaskOpacity" false;
+	}
+}
+
+//
+//  Procedure Name:
+//      AEdofModified
+//
+//	Description:
+//		If dof turned off, turn off focus distance + fstop too.
+//
+global proc AEdofModified( string $nodeName )
+{
+	if( `getAttr ($nodeName + ".depthOfField")` == 0 ) {
+		editorTemplate -dimControl $nodeName "focusDistance" true;
+		editorTemplate -dimControl $nodeName "fStop" true;
+        editorTemplate -dimControl $nodeName "focusRegionScale" true;
+	} else {
+		editorTemplate -dimControl $nodeName "focusDistance" false;
+		editorTemplate -dimControl $nodeName "fStop" false;
+        editorTemplate -dimControl $nodeName "focusRegionScale" false;
+	}
+}
+
+//
+//  Procedure Name:
+//      AEdepthTypeModified
+//
+//	Description:
+//		If depthType is closest visible depth (0), then turn on
+//			transparencyBasedDepth,
+//			threshold,
+//
+global proc AEdepthTypeModified( string $nodeName )
+{
+		string $nodeAttr = $nodeName + ".depthType";
+		int $value = `getAttr $nodeAttr`;
+
+		if ( $value == 0 ) {
+			//
+			// closestVisibleDepth
+			editorTemplate -dimControl $nodeName "transparencyBasedDepth" false;
+			AEtransBasedDepthModified $nodeName;
+		} else {
+			editorTemplate -dimControl $nodeName "transparencyBasedDepth" true;
+			editorTemplate -dimControl $nodeName "threshold" true;
+		}
+}
+
+//
+//  Procedure Name:
+//      AEtransBasedDepthModified
+//
+//	Description:
+//		If transparencyBasedDepth turned off, turn off
+//			threshold,
+//
+global proc AEtransBasedDepthModified( string $nodeName )
+{
+	if (`getAttr ($nodeName + ".transparencyBasedDepth")` == 0 ) {
+		editorTemplate -dimControl $nodeName "threshold" true;
+	} else {
+		editorTemplate -dimControl $nodeName "threshold" false;
+	}
+}
+
+global proc AEcameraNodeCountNew( string $plug )
+//
+// Description:
+//
+//
+{
+	string $buffer[];
+	tokenize( $plug, ".", $buffer );
+	string $camera = $buffer[0];
+
+	optionMenuGrp -label (uiRes("m_AEcameraTemplateCommon.kControls")) aeCameraNodeCount;
+
+	menuItem -label (uiRes("m_AEcameraTemplateCommon.kCamera"))  cameraNodeCount1;
+	menuItem -label (uiRes("m_AEcameraTemplateCommon.kCameraandAim"))  cameraNodeCount2;
+	menuItem -label (uiRes("m_AEcameraTemplateCommon.kCameraAimandUp"))  ;
+
+	AEcameraNodeCountReplace( $plug );
+}
+
+global proc AEcameraNodeCountReplace( string $plug )
+//
+// Description:
+//
+//
+{
+	string $buffer[];
+	tokenize( $plug, ".", $buffer );
+	string $camera = $buffer[0];
+
+    string $lookAt = getCameraNode( "lookAt", $camera );
+    string $up = getCameraNode( "up", $camera );
+
+    string $nodeCountFullPath = `optionMenuGrp -q -fpn aeCameraNodeCount`;
+	optionMenuGrp -e -cc ("AEchangeCameraNodeCount " + $camera + " " + $nodeCountFullPath )
+		 $nodeCountFullPath;
+
+	int $nodeCount = 1;
+	if( $lookAt != "" ) $nodeCount++;
+	if( $up != "" ) $nodeCount++;
+
+	optionMenuGrp -e -sl $nodeCount $nodeCountFullPath;
+}
+
+global proc AEchangeCameraNodeCount( string $camera, string $nodeCountFullPath )
+//
+// Description:
+//
+//
+{
+	// cameraMakeNode doesn't work properly if you call it with
+	// a camera shape and not the transform above the camera shape.
+	//
+	if( `objectType -isa "camera" $camera` ) {
+		string $parents[] = `listRelatives -parent -path $camera`;
+		$camera = $parents[0];
+	}
+
+	int $count = `optionMenuGrp -q -sl $nodeCountFullPath`;
+	$camera = `cameraMakeNode $count $camera`;
+
+	// cameraMakeNode destroys the current selection list, replacing
+	// it with only the camera and its associated lookAt and up, if
+	// applicable.
+	//
+	// Since this make the attrEd refocus and redraw, we'll put
+	// just the camera back on the selection list.
+	//
+	select -r $camera;
+}
+
+global proc AEcameraBackgroundColorNew( string $plug )
+//
+// Description:
+//	Creates the control which represents the camera background color.
+//	The control does not have a map button because mapping a texture to the
+//	background color is not supported.
+//
+{
+	attrColorSliderGrp
+		-label (uiRes("m_AEcameraTemplateCommon.kBackgroundColor"))
+		-showButton false
+		cameraBackgroundColorCtrl;
+
+	AEcameraBackgroundColorReplace( $plug );
+}
+
+global proc AEcameraBackgroundColorReplace( string $plug )
+//
+// Description:
+//	Hooks up the camera background color attribute to the control which
+//	represents it.
+//
+{
+	attrColorSliderGrp
+		-edit
+		-attribute $plug
+		cameraBackgroundColorCtrl;
+}
+
+global proc AEcameraDisplayGateMaskOpacityNew( string $plug )
+//
+// Description:
+//	Creates the control which represents the camera's gate display opacity.
+//	Either the film or resolution gate.
+//	The control does not have a map button because mapping a texture to the
+//	gate display opacity is not supported.
+//
+{
+	floatSliderGrp
+		-label (uiRes("m_AEcameraTemplateCommon.kDisplayGateMaskOpacity"))
+		cameraDisplayGateMaskOpacityCtrl;
+
+	AEcameraDisplayGateMaskOpacityReplace( $plug );
+}
+
+global proc AEcameraDisplayGateMaskOpacityReplace( string $plug )
+//
+// Description:
+//	Hooks up the camera gate display opacity attribute to the control which
+//	represents it.
+//
+{
+    float $value = `getAttr $plug`;
+
+	floatSliderGrp -e
+        -value $value
+        -cc ("setAttr "+$plug+" #1" )
+		cameraDisplayGateMaskOpacityCtrl;
+}
+
+global proc AEcameraDisplayGateMaskColorNew( string $plug )
+//
+// Description:
+//	Creates the control which represents the camera's gate display color.
+//	Either the film or resolution gate.
+//	The control does not have a map button because mapping a texture to the
+//	gate display color is not supported.
+//
+{
+	attrColorSliderGrp
+		-label (uiRes("m_AEcameraTemplateCommon.kDisplayGateMaskColor"))
+		-showButton false
+		cameraDisplayGateMaskColorCtrl;
+
+	AEcameraDisplayGateMaskColorReplace( $plug );
+}
+
+global proc AEcameraDisplayGateMaskColorReplace( string $plug )
+//
+// Description:
+//	Hooks up the camera gate diaply color attribute to the control which
+//	represents it.
+//
+{
+	attrColorSliderGrp
+		-edit
+		-attribute $plug
+		cameraDisplayGateMaskColorCtrl;
+}
+
+global proc dimShake( string $nodeName )
+// if the shakeEnabled attribute is off, then
+// dim the controls for it.  If it is on, then
+// enable the controls for it.
+{
+	int $shakeEnabled = `getAttr( $nodeName + ".shakeEnabled")`;
+	if(0 == $shakeEnabled)
+	{
+		editorTemplate -dimControl $nodeName "shake" 1;
+		editorTemplate -dimControl $nodeName "horizontalShake" 1;
+		editorTemplate -dimControl $nodeName "verticalShake" 1;
+	}else{
+		editorTemplate -dimControl $nodeName "shake" 0;
+		editorTemplate -dimControl $nodeName "horizontalShake" 0;
+		editorTemplate -dimControl $nodeName "verticalShake" 0;
+	}
+}
+
+global proc dimShakeOverscan( string $nodeName )
+// if the shakeOverscanEnabled attribute is off, then
+// dim the controls for it.  If it is on, then
+// enable the controls for it.
+{
+	int $shakeOverscanEnabled = `getAttr( $nodeName + ".shakeOverscanEnabled")`;
+	if(0 == $shakeOverscanEnabled)
+	{
+		editorTemplate -dimControl $nodeName "shakeOverscan" 1;
+	}else{
+		editorTemplate -dimControl $nodeName "shakeOverscan" 0;
+	}
+}
+
+global proc cameraCheckPanZoom(string $nodeName)
+{
+    int $panZoomEnabled = `getAttr($nodeName + ".panZoomEnabled")`;
+    if ($panZoomEnabled == 0) {
+        editorTemplate -dimControl $nodeName "pan" 1;
+        editorTemplate -dimControl $nodeName "zoom" 1;
+        editorTemplate -dimControl $nodeName "renderPanZoom" 1;
+    } else {
+        editorTemplate -dimControl $nodeName "pan" 0;
+        editorTemplate -dimControl $nodeName "zoom" 0;
+        editorTemplate -dimControl $nodeName "renderPanZoom" 0;
+    }
+}
+
+global proc AEcameraPrecompTemplateFilePathNew (string $fileAttribute)
+{
+    setUITemplate -pst attributeEditorTemplate;
+    rowLayout
+        -numberOfColumns 3
+        -annotation (uiRes("m_AEcameraTemplateCommon.kCameraPrecompAnno"));
+    text -label (uiRes("m_AEcameraTemplateCommon.kCameraPrecompTempName"))
+        -annotation (uiRes("m_AEcameraTemplateCommon.kCameraPrecompAnno"));
+    textField
+		-annotation (uiRes("m_AEcameraTemplateCommon.kCameraPrecompAnno"))
+		cameraPrecompTemplateNameField;
+    symbolButton -image "navButtonBrowse.png"
+        -annotation (uiRes("m_AEcameraTemplateCommon.kCameraPrecompAnno"))
+		browser;
+    setParent ..;
+    setUITemplate -ppt;
+
+    AEcameraPrecompTemplateFilePathReplace $fileAttribute;
+}
+
+global proc AEcameraPrecompTemplateFilePathReplace (string $fileAttribute)
+{
+
+    string $tokenArray[];
+    tokenize($fileAttribute, ".", $tokenArray);
+    string $cameraShapeNode = $tokenArray[0];
+    string $attributeName = $tokenArray[1];
+    string $fileAttr = "";
+
+    python("from maya.app.stereo import stereoCameraRig");
+
+    int $isMono = python("stereoCameraRig.rigRoot('"+$cameraShapeNode+"') == ''");
+    if ( $isMono )
+    {
+        //mono camera
+        $fileAttr = $fileAttribute;
+    }
+    else
+    {
+	//camera rig
+	string $centerCamera = python("stereoCameraRig.centerCam('"+$cameraShapeNode+"')");
+	$fileAttr = $centerCamera + "." + $attributeName ;
+    }
+
+    connectControl -fileName cameraPrecompTemplateNameField $fileAttr;
+    string $command = "AEcameraPrecompTemplateFilePathCB " + $fileAttr;
+    button
+        -edit
+        -command
+        ("AEfileCameraPrecompTempBrowser \"" + $command + "\"" ) browser;
+}
+
+global proc int AEcameraPrecompTemplateFilePathCB(string $fileAttribute,
+                                                  string $fileName,
+                                                  string $fileType)
+{
+
+    setAttr $fileAttribute -type "string" $fileName;
+    string $currentDir = `workspace -q -dir`;
+    retainWorkingDirectory ($currentDir);
+
+    return true;
+}
+
+global proc AEfileCameraPrecompTempBrowser( string $cmd )
+{
+    fileBrowser ($cmd, (uiRes("m_AEcameraTemplateCommon.kOpen")), "", 0);
+}
+
+
+//
+//  Procedure Name:
+//      errAttrLocked
+//
+//  Description:
+//      Print the error message if an attribute is locked or connected.
+//
+global proc errAttrLocked(string $attrName)
+{
+     string $message = (uiRes("m_AEcameraTemplateCommon.kErrAttrLocked"));
+     $message = `format -s $attrName $message`;
+	 error $message;
+}
+
+
+//
+//  Procedure Name:
+//      lockFrustum
+//
+//  Description:
+//      Disable display frustum properties for stereo camera.
+//
+global proc lockFrustum(string $nodeName)
+{
+	python("from maya.app.stereo import stereoCameraRig");
+	string $rigRoot = python( "stereoCameraRig.rigRoot('"+$nodeName+"')"); 
+	if( $rigRoot!= "" ){
+		
+		string $nearClipAttr = $nodeName + ".displayCameraNearClip";
+		setAttr -l true $nearClipAttr;
+		
+		string $farClipAttr = $nodeName + ".displayCameraFarClip";
+		setAttr -l true $farClipAttr;
+		
+		string $frustumAttr = $nodeName + ".displayCameraFrustum";
+		setAttr -l true $frustumAttr;
+		
+	}
+}
+
+
+//
+//  Procedure Name:
+//      AEcameraTemplate
+//
+global proc AEcameraTemplateCommon ( string $nodeName, int $isStereo )
+{
+	AEswatchDisplay $nodeName;
+
+	editorTemplate -beginScrollLayout;
+	editorTemplate -beginLayout (uiRes("m_AEcameraTemplateCommon.kCameraAttributes"))  -collapse 0;
+
+		editorTemplate -callCustom 	AEcameraNodeCountNew
+									AEcameraNodeCountReplace $nodeName;
+
+		editorTemplate -callCustom "AEfovNew" "AEfovReplace"
+					"focalLength"
+					"horizontalFilmAperture";
+		editorTemplate -addControl "focalLength";
+		editorTemplate -addControl "cameraScale";
+		editorTemplate -callCustom "AEcameraClipNew" "AEcameraClipReplace"
+					"bestFitClippingPlanes";
+		editorTemplate -suppress   "clippingPlanes";
+		editorTemplate -addControl "nearClipPlane";
+		editorTemplate -addControl "farClipPlane";
+	editorTemplate -endLayout;
+
+	if ($isStereo) {
+		editorTemplate -beginLayout (uiRes("m_AEcameraTemplateCommon.kStereo")) -collapse 0;
+			editorTemplate -addControl "stereo";
+			editorTemplate -addControl "interaxialSeparation";
+			editorTemplate -addControl "zeroParallax";
+			editorTemplate -beginLayout (uiRes("m_AEcameraTemplateCommon.kStereoAdjust")) -collapse 1;
+				editorTemplate -addControl "toeInAdjust";
+				editorTemplate -addControl "filmOffsetRightCam";
+				editorTemplate -addControl "filmOffsetLeftCam";
+			editorTemplate -endLayout;
+
+			editorTemplate -beginLayout (uiRes("m_AEcameraTemplateCommon.kDisplayControls")) -collapse 1;
+				editorTemplate -addControl "displayNearClip";
+				editorTemplate -addControl "displayFarClip";
+				editorTemplate -addControl "displayFrustum";
+
+				editorTemplate -addSeparator;
+
+				editorTemplate -addControl "zeroParallaxPlane";
+				editorTemplate -addControl "zeroParallaxColor";
+				editorTemplate -addControl "zeroParallaxTransparency";
+
+				editorTemplate -addSeparator;
+
+				editorTemplate -addControl "safeViewingVolume";
+				editorTemplate -addControl "safeVolumeColor";
+				editorTemplate -addControl "safeVolumeTransparency";
+
+				editorTemplate -addSeparator;
+
+				editorTemplate -addControl "safeStereo";
+			editorTemplate -endLayout;
+		editorTemplate -endLayout;
+		
+		lockFrustum($nodeName);
+	}
+	
+	if (!$isStereo){
+		editorTemplate -beginLayout (uiRes("m_AEcameraTemplateCommon.kFrustumDisplayControls")) -collapse 1;
+			editorTemplate -beginNoOptimize;
+			editorTemplate -l (uiRes("m_AEcameraTemplateCommon.kDisplayCameraNearClip")) -addControl "displayCameraNearClip"
+            lockFrustum
+            ;
+			editorTemplate -l (uiRes("m_AEcameraTemplateCommon.kDisplayCameraFarClip")) -addControl "displayCameraFarClip"
+            lockFrustum
+            ;
+			editorTemplate -l (uiRes("m_AEcameraTemplateCommon.kDisplayCameraFrustum")) -addControl "displayCameraFrustum"
+            lockFrustum
+            ;
+			editorTemplate -endNoOptimize;
+		editorTemplate -endLayout;
+	}
+
+	editorTemplate -beginLayout (uiRes("m_AEcameraTemplateCommon.kFilmBack"))  -collapse 0;
+		editorTemplate -callCustom "AEcameraFilmbackNew" "AEcameraFilmbackReplace"
+					"horizontalFilmAperture"
+					"verticalFilmAperture"
+					"lensSqueezeRatio";
+		editorTemplate -l (uiRes("m_AEcameraTemplateCommon.kCameraApertureInInch")) -addControl "cameraAperture";
+        editorTemplate -callCustom "AEcameraFilmApertureNew" "AEcameraFilmApertureReplace" 
+					"horizontalFilmAperture" 
+                    "verticalFilmAperture";
+        editorTemplate -callCustom
+            "AEcameraFilmAspectNew" "AEcameraFilmAspectReplace"
+            "horizontalFilmAperture" "verticalFilmAperture";
+		editorTemplate -addControl "lensSqueezeRatio";
+		editorTemplate -addSeparator;
+
+        editorTemplate -label (uiRes("m_AEcameraTemplateCommon.kFitResolutionGate"))  -addControl "filmFit";
+		editorTemplate -addControl "filmFitOffset";
+		editorTemplate -addControl "filmOffset";
+
+		editorTemplate -addSeparator;
+
+		editorTemplate -addControl "shakeEnabled" "dimShake";
+		editorTemplate -addControl "shake";
+		editorTemplate -addControl "shakeOverscanEnabled" "dimShakeOverscan";
+		editorTemplate -addControl "shakeOverscan";
+
+		editorTemplate -suppress "stereoHorizontalImageTranslateEnabled";
+		editorTemplate -suppress "stereoHorizontalImageTranslate";
+
+		editorTemplate -addSeparator;
+
+		editorTemplate -addControl "preScale";
+
+		editorTemplate -addControl "filmTranslate";
+
+		editorTemplate -addControl "filmRollPivot";
+		editorTemplate -addControl "filmRollValue";
+		editorTemplate -addControl "filmRollOrder";
+		editorTemplate -suppress   "filmRollControl";
+
+		editorTemplate -addControl "postScale";
+		editorTemplate -suppress   "postProjection";
+
+	editorTemplate -endLayout;
+
+    editorTemplate -beginLayout (uiRes("m_AEcameraTemplateCommon.kDepthofField")) ;
+        editorTemplate -annotation (uiRes("m_AEcameraTemplateCommon.kDepthOfFieldAnno"))
+						-addControl "depthOfField" "AEdofModified";
+        editorTemplate -addControl "focusDistance";
+        editorTemplate -addControl "fStop";
+        editorTemplate -addControl "focusRegionScale";
+    editorTemplate -endLayout;
+
+	editorTemplate -beginLayout (uiRes("m_AEcameraTemplateCommon.kOutputSettings")) ;
+		editorTemplate -addControl "renderable";
+		editorTemplate -addControl "image";
+		editorTemplate -addControl "mask";
+		editorTemplate -addControl "depth";
+        editorTemplate -addControl "depthType" "AEdepthTypeModified";
+		editorTemplate -addControl "transparencyBasedDepth" "AEdepthTypeModified";
+		editorTemplate -addControl "threshold";
+		editorTemplate -suppress "imageName";
+        editorTemplate -callCustom
+                        "AEcameraPrecompTemplateFilePathNew"
+                        "AEcameraPrecompTemplateFilePathReplace"
+                        "cameraPrecompTemplate";
+	editorTemplate -endLayout;
+
+	editorTemplate -beginLayout (uiRes("m_AEcameraTemplateCommon.kEnvironment")) ;
+		editorTemplate -callCustom
+				"AEcameraBackgroundColorNew"
+				"AEcameraBackgroundColorReplace"
+				"backgroundColor";
+		editorTemplate -callCustom "AEcameraImagePlaneNew" "AEcameraImagePlaneReplace"
+					"imagePlane"
+					"horizontalFilmAperture"
+					"verticalFilmAperture";
+	editorTemplate -endLayout;
+
+	editorTemplate -beginLayout (uiRes("m_AEcameraTemplateCommon.kSpecialEffects")) ;
+        editorTemplate -addControl "shutterAngle";
+		editorTemplate -suppress "useExploreDepthFormat";
+	editorTemplate -endLayout;
+
+	editorTemplate -beginLayout (uiRes("m_AEcameraTemplateCommon.kDisplayOptions")) ;
+		editorTemplate -beginNoOptimize;
+		editorTemplate -addControl "displayFilmGate";
+		editorTemplate -addControl "displayResolution";
+
+		editorTemplate -addControl "displayGateMask" "AEdgmModified";
+		editorTemplate -callCustom
+					"AEcameraDisplayGateMaskOpacityNew"
+					"AEcameraDisplayGateMaskOpacityReplace"
+					"displayGateMaskOpacity";
+		editorTemplate -callCustom
+					"AEcameraDisplayGateMaskColorNew"
+					"AEcameraDisplayGateMaskColorReplace"
+					"displayGateMaskColor";
+
+		editorTemplate -addControl "displayFieldChart";
+		editorTemplate -addControl "displaySafeAction";
+		editorTemplate -addControl "displaySafeTitle";
+		editorTemplate -addControl "displayFilmPivot";
+		editorTemplate -addControl "displayFilmOrigin";
+		editorTemplate -addControl "overscan";
+
+        editorTemplate -beginLayout (uiRes("m_AEcameraTemplateCommon.kPanZoomOptions")) -collapse 0;
+            editorTemplate -addControl "panZoomEnabled" "cameraCheckPanZoom";
+            editorTemplate -addControl "pan";
+            editorTemplate -addControl "zoom";
+            editorTemplate -addControl "renderPanZoom";
+        editorTemplate -endLayout;
+
+		editorTemplate -endNoOptimize;
+	editorTemplate -endLayout;
+
+	editorTemplate -beginLayout (uiRes("m_AEcameraTemplateCommon.kMovementOptions")) ;
+		editorTemplate -label (uiRes("m_AEcameraTemplateCommon.kUndoableMovements"))  -addControl "journalCommand";
+		editorTemplate -addControl "centerOfInterest";
+		editorTemplate -addControl "tumblePivot";
+		editorTemplate -addControl "usePivotAsLocalSpace";
+		editorTemplate -addControl "bookmarks";
+	editorTemplate -endLayout;
+
+	editorTemplate -beginLayout (uiRes("m_AEcameraTemplateCommon.kOrthographicViews")) ;
+		editorTemplate -addControl "orthographic" "cameraCheckOrthographic";
+		editorTemplate -addControl "orthographicWidth";
+	editorTemplate -endLayout;
+
+	AEshapeTemplate $nodeName;
+
+	//suppressed Attributes
+	editorTemplate -suppress "motionBlur";
+	editorTemplate -suppress "homeCommand";
+	editorTemplate -suppress "stereoHorizontalImageTranslateEnabled";
+	editorTemplate -suppress "stereoHorizontalImageTranslate";
+
+editorTemplate -addExtraControls;
+editorTemplate -endScrollLayout;
+
+}

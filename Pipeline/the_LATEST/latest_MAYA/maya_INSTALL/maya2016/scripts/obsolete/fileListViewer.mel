@@ -1,0 +1,344 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  2 October 1996
+//
+//  Description:
+//      Creates a window that displays the file references.
+//
+
+global string $_selectedFile[];
+
+//
+// Callback functions.
+//
+
+global proc refreshViewCallback ()
+{
+	sceneViewer -e -fr sceneView;
+}
+
+global proc fileSelected ()
+{
+	global string $_selectedFile[];
+	string $activeFile;
+	
+	$_selectedFile = `sceneViewer -q -si sceneView`;
+	
+	if (size($_selectedFile) == 1
+				&& size($_selectedFile[0]) > 0
+				&& `file -q -ex $_selectedFile[0]`) {
+		
+		$activeFile = `file -q -a $_selectedFile[0]`;
+		if ($activeFile == $_selectedFile[0]) {
+			checkBoxGrp -e -v1 true -v2 false fileActiveCheckBox;
+		} else {
+			checkBoxGrp -e -v1 false -v2 true fileActiveCheckBox;
+		}
+
+		text -e -l $_selectedFile[0] fileNameValue;
+		string $fileType[] = `file -q -type $_selectedFile[0]`;
+		if (size($fileType) > 0) {
+			text -e -l $fileType[0] fileTypeValue;
+		} else {
+			text -e -l "Unknown" fileTypeValue;
+		}
+
+		string $subType = `file -q -st $_selectedFile[0]`;
+		text -e -l $subType fileSubTypeValue;
+
+		int $writable = `file -q -w $_selectedFile[0]`;
+		if ($writable) {
+			text -e -l "Writable" fileIOValue;
+		} else {
+			text -e -l "Read Only" fileIOValue;
+		}
+		int $modified = `file -q -mf $_selectedFile[0]`;
+		if ($modified) {
+			text -e -l "Modified" fileStatusValue;
+		} else {
+			text -e -l "Not Modified" fileStatusValue;
+		}
+
+		string $clashName = `file -q -namespace $_selectedFile[0]`;
+		text -e -l $clashName fileRenamePrefixValue;
+	} else {
+		// Nothing selected.
+
+		string $notAvailable = "N/A";
+		checkBoxGrp -e -v1 false -v2 false fileActiveCheckBox;
+		text -e -l $notAvailable fileTypeValue;
+		text -e -l $notAvailable fileSubTypeValue;
+		text -e -l $notAvailable fileIOValue;
+		text -e -l $notAvailable fileStatusValue;
+		text -e -l $notAvailable fileNameValue;
+		text -e -l $notAvailable fileRenamePrefixValue;
+	}
+}
+
+
+proc performActivate ( int $doActivate )
+{
+	global string $_selectedFile[];
+
+	if ($doActivate) {
+		file -a $_selectedFile[0];
+		string $activeFile = `file -q -a`;
+		if ($activeFile == $_selectedFile[0]) {
+			checkBoxGrp -e -va2 true false fileActiveCheckBox;
+		} else {
+			confirmDialog -m ("Couldn't activate file "+$_selectedFile[0]) 
+				-b "OK" -db "OK"
+				-parent referenceEditorWindow;
+			checkBoxGrp -e -va2 false true fileActiveCheckBox;
+		}
+	} else {
+		// deactivate.
+		string $fileList[] = `file -q -l`;
+		file -a $fileList[0];
+		if ($fileList[0] != $_selectedFile[0]) {
+			checkBoxGrp -e -va2 false true fileActiveCheckBox;
+		} else {
+			checkBoxGrp -e -va2 true false fileActiveCheckBox;
+		}
+	}
+
+}
+
+global proc activateCallback ()
+{
+	global string $_selectedFile[];
+
+	if (size($_selectedFile) == 1 && size($_selectedFile[0]) > 0) {
+		int $doActivate = `checkBoxGrp -q -v1 fileActiveCheckBox`;
+		performActivate($doActivate);
+	} else {
+		checkBoxGrp -e -va2 false false fileActiveCheckBox;
+	}
+}
+
+
+
+global proc deactivateCallback ()
+//
+//	Deactivate the currently selected file.
+//	Since 1 file must always be active, then make the root file active.
+//
+{
+	global string $_selectedFile[];
+
+	if (size($_selectedFile) == 1 && size($_selectedFile[0]) > 0) {
+		int $doActivate = `checkBoxGrp -q -v2 fileActiveCheckBox`;
+		performActivate(!$doActivate);
+	} else {
+		checkBoxGrp -e -va2 false false fileActiveCheckBox;
+	}
+}
+
+global proc selectCallback ()
+{
+	global string $_selectedFile[];
+	if (size($_selectedFile) == 1 && size($_selectedFile[0]) > 0) {
+		file -sa $_selectedFile[0];
+	}
+}
+
+global proc moveToCallback ()
+{
+	global string $_selectedFile[];
+	if (size($_selectedFile) == 1 && size($_selectedFile[0]) > 0) {
+		file -ms $_selectedFile[0];
+	}
+}
+
+global proc removeCallback ()
+{
+	global string $_selectedFile[];
+	if (size($_selectedFile) == 1 && size($_selectedFile[0]) > 0) {
+		string $result = `confirmDialog -t "Remove Reference"
+							-m ("Removing the Reference to "
+									+$_selectedFile[0]+" is Not Undoable.")
+									-b "Remove" -b "Cancel" -db "Cancel"`;
+		if ($result == "Remove") {
+			file -rr $_selectedFile[0];
+			$_selectedFile[0] = "";
+			fileSelected();
+		}
+	}
+}
+
+global proc createReference ( )
+{
+	// The projectViewer already does this so lets just use it's code.
+	projectViewer "Reference";
+}
+
+
+global proc importReference ( )
+{
+	global string $_selectedFile[];
+	if (size($_selectedFile) == 1 && size($_selectedFile[0]) > 0) {
+		file -ir $_selectedFile[0];
+	}
+}
+
+global proc int doExportAsReference ( string $theFile, string $fileType )
+//
+//	Description:
+//		This code is used to create a reference file from a
+//		selection in the current scene. 
+//
+//	Note:
+//		There is currently no options associated with this action so
+//		we must use the currently set Export Selected options. Note that
+//		we cannot ignore history during this operation. This case is
+//		handled in the export code.
+//
+{
+	int $fileExists = `file -q -ex $theFile`;
+
+	if ($fileExists && !(`about -win)) {
+		string $result = `confirmDialog -m "File Exists. Overwrite?" 
+			-b "Yes" -b "Cancel" -db "Cancel" -parent projectViewerWindow`;
+		if ($result == "Cancel") {
+			return false;
+		} 
+	}
+
+	if ($fileType == "") {
+		$fileType = "mayaBinary";
+	}
+
+	string $fileOptions;
+	string $translatorOptions = ($fileType+"Options");
+	if (`optionVar -exists $translatorOptions`) {
+		// Post the new options.
+		$fileOptions = `optionVar -q $translatorOptions`;
+	} 
+
+	file -f -op $fileOptions -typ $fileType -er $theFile;
+
+	return true;
+}
+
+global proc exportAsReference ( )
+{
+	string $saveType = "mayaAscii";
+	string $wsName = `workspace -q -fn`;
+
+	if (`optionVar -exists defaultFileReferenceType`) {
+		$saveType = `optionVar -q defaultFileReferenceType`;
+	}
+	setWorkingDirectory $wsName $saveType "scene";
+
+	fileBrowser "doExportAsReference"  "Export Reference" $saveType 1;
+}
+
+global proc fileListViewer ( )
+{
+	if (`window -ex referenceEditorWindow`) {
+		if (`window -q -i referenceEditorWindow`) {
+			// restore the window.
+			window -e -i false referenceEditorWindow;
+		}
+
+		if (`window -q -vis referenceEditorWindow`) {
+			// Bring the window to the front.
+			showWindow referenceEditorWindow;
+		}
+
+	} else {
+		window -mb 1 
+			-t "Reference Editor" 
+			-iconName "References"
+			-wh 600 240 referenceEditorWindow;
+
+		// Create the menu.
+		menu -p referenceEditorWindow 
+			-l "File"
+			-familyImage "menuIconFile.xpm";
+		menuItem -l "Create Reference..." -c "createReference" fl_createMenuItem;
+		menuItem -l "Import Reference" -c "importReference" fl_importMenuItem;
+		menuItem -l "Export Selected as Reference..." -c "exportAsReference" fl_exportMenuItem;
+		menuItem -l "Remove Reference" -c "removeCallback" fl_removeMenuItem;
+		menuItem -l "Select Reference Contents" -c "selectCallback"
+							fl_selectMenuItem;
+
+		// Create Window contents.
+		int $numDivisions = 100;
+
+		formLayout fileViewer;
+			sceneViewer -ec "fileSelected" -sc "fileSelected" -h 200 sceneView;
+			frameLayout -l "File Particulars" -cll true -cl false fileInfoFrame;
+				formLayout -nd $numDivisions fileInfoForm;
+					text -l "Name:" fileNameLabel;
+					text fileNameValue;
+					text -l "Type:" fileTypeLabel;
+					text fileTypeValue;
+					text -l "Sub-Type:" fileSubTypeLabel;
+					text fileSubTypeValue;
+					text -l "Status:" fileStatusLabel;
+					text fileStatusValue;
+					text -l "I/O:" fileIOLabel;
+					text fileIOValue;
+					text -l "Rename Prefix:" fileRenamePrefixLabel;
+					text fileRenamePrefixValue;
+					checkBoxGrp -l "Active:" -ncb 2 -cw3 90 75 75
+						-la2 "True" "False"
+						-cal 1 left
+						-cc1 activateCallback
+						-cc2 deactivateCallback
+						fileActiveCheckBox;
+					
+			setParent fileViewer;
+
+
+
+		formLayout -e 
+			-af fileNameLabel left 0 -af fileNameLabel top 0
+			-ap fileNameValue left 0 15 -af fileNameValue top 0
+			-af fileTypeLabel left 0 -ac fileTypeLabel top 0 fileNameLabel
+			-ap fileTypeValue left 0 15 -ac fileTypeValue top 0 fileNameLabel
+			-ap fileSubTypeLabel left 0 50  -ac fileSubTypeLabel top 0 fileNameLabel
+			-ap fileSubTypeValue left 0 70 -ac fileSubTypeValue top 0 fileNameLabel
+			-af fileStatusLabel left 0 -ac fileStatusLabel top 0 fileSubTypeLabel
+			-ap fileStatusValue left 0 15 -ac fileStatusValue top 0 fileSubTypeLabel
+			-ap fileIOLabel left 0 50  -ac fileIOLabel top 0 fileSubTypeLabel
+			-ap fileIOValue left 0 70 -ac fileIOValue top 0 fileSubTypeLabel
+			-af fileActiveCheckBox left 0 -ac fileActiveCheckBox top 0 fileStatusLabel
+			-ap fileRenamePrefixLabel left 0 50  -ac fileRenamePrefixLabel top 0 fileIOLabel
+			-ap fileRenamePrefixValue left 0 70 -ac fileRenamePrefixValue top 0 fileIOLabel
+			fileInfoForm;
+			
+		formLayout -e 
+			-af sceneView top 0 -af sceneView left 0 -af sceneView right 0
+			-ac sceneView bottom 5 fileInfoFrame
+			-af fileInfoFrame left 0 -af fileInfoFrame bottom 0
+			-af fileInfoFrame right 0
+			fileViewer;
+	}
+
+	fileSelected;	// This will set everything up.
+	
+	showWindow referenceEditorWindow;
+}

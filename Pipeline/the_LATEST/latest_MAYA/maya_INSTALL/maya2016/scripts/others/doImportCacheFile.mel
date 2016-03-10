@@ -1,0 +1,285 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Mar, 2006
+//
+//	Procedure Name:
+//		doImportCacheFile
+//
+//	Description:
+//		Import a cache file from disk and connect it to an object
+//
+
+
+proc string removePreString(string $origString, string $token)
+{
+	string $buffer[];
+	int $count = tokenize($origString,$token,$buffer);
+	return $buffer[$count-1];
+}
+
+proc string matchChannelStart(string $channels[], string $name)
+{
+	int $result = -1;
+	int $channelCount = size($channels);	
+	for ($ii = 0; $ii < $channelCount; $ii++) {
+		if (startsWith($channels[$ii],$name)) {
+			$result = $ii;
+			break;
+		}
+	}
+	return $result;
+}
+
+proc int matchChannelWithoutPreString(string $channels[],
+									  string $origString, string $token)
+{
+	string $newChannels[];
+	int $channelCount = size($channels);	
+	for ($ii = 0; $ii < $channelCount; $ii++) {
+		$newChannels[$ii] = removePreString($channels[$ii],$token);
+	}
+	string $name = removePreString($origString,$token);
+	int $result = matchChannelStart($newChannels,$name);
+	return $result;
+}
+
+proc int getAttrsForChannels(string $channels[], string $attrs[], string $obj)
+									 
+{
+	// assume that there's one of each channel in the cache
+	// and the object has all the attrs - we're only using it for this
+	// case at the moment
+	int $channelCount = size($channels);
+	string $interp;	
+	for ($ii = 0; $ii < $channelCount; $ii++) {
+		$interp = removePreString($channels[$ii], "_");
+		$attrs[$ii] = ($obj + "." + $interp);
+	}
+	return $channelCount;
+
+}
+
+proc string findChannelForObject(int $index,
+								 string $channels[],
+								 string $obj)
+{
+	string $result = $channels[$index];
+	int $channelCount = size($channels);
+	if ($channelCount == 1) {
+		return $result;
+	}
+
+	int $foundMatch = matchChannelStart($channels,$obj);
+	if ($foundMatch == -1) {
+		$foundMatch = matchChannelWithoutPreString($channels,$obj,":");
+		if ($foundMatch == -1) {
+			$obj = removePreString($obj,":");
+			$foundMatch = matchChannelWithoutPreString($channels,$obj,"|");
+		}
+		if ($foundMatch == -1) {
+			$obj = removePreString($obj,"|");
+			$foundMatch = matchChannelWithoutPreString($channels,$obj,":");
+		}
+	}
+	
+	if ($foundMatch != -1) {
+		$result = $channels[$foundMatch];
+	}
+	
+	if ($foundMatch == -1) {
+		string $format = (uiRes("m_doImportCacheFile.kNoChannelNameMatch"));
+		string $warnMsg = `format -stringArg $result -stringArg $obj $format`;
+		warning($warnMsg);
+	}
+
+	return $result;
+}
+
+
+global proc int 
+doImportCacheFile(string $fileName, string $fileType,string $geometries[],string $channelNames[])
+//
+// Import the specified file.
+//
+{
+	if ($fileName == "") {
+		error((uiRes("m_doImportCacheFile.kNoFileSpecified")));
+		return 0;
+	}
+
+	string $channels[] = `cacheFile -fileName $fileName -q -channelName`;
+	
+	// first check for existing cacheFile on this node
+	//
+	string $sel[];
+	if(size($geometries) <=0)
+		$sel = `getGeometriesToCache`;
+	else
+		$sel = $geometries;
+		
+	if(size($channelNames) > 0) {
+	    if (size($channelNames) != size($sel))
+	    {
+	        string $errMsg = (uiRes("m_doImportCacheFile.kChannelGeometryMismatch"));		
+		    error($errMsg);
+		    return 0;
+	    }
+	}
+		
+	int $count = size($sel);
+	if ($count > size($channels)) {
+		string $format = (uiRes("m_doImportCacheFile.kTooFewChannels"));
+		string $channelCount = size($channels);
+		string $selCount = $count;
+		string $errMsg = `format -stringArg $channelCount -stringArg $selCount $format`;
+		error($errMsg);
+	}
+
+
+	string $currObj = $sel[0];
+	string $nBase = findTypeInHistory($currObj,"nBase",0,1);
+	string $hsys= findTypeInHistory($currObj,"hairSystem",0,1);
+	string $attachAttrs[];
+	int $multiChannel = 0;
+	
+	if( (size($channels) > $count)) {
+		// if there are more channels than objects, we probably need a bunch of connections
+		// (unless its nParticles, in which case it will just be one fat connection)
+		// if an nCloth cache has more than just postions, we should connect the other attrs
+		// and nHair  has a bunch of connections (fluids are done separately because of 
+		// more complex attribute matching problems)
+		if(size($nBase)) {
+			if (nodeType ($nBase) == "nCloth") {
+				$multiChannel = 1;
+				$currObj = $nBase; 
+			}
+		}
+		if (size($hsys)) {
+			$multiChannel = 1;
+			$currObj = $hsys; 
+		}
+		if($multiChannel) {
+			$multiChannel = getAttrsForChannels($channels, $attachAttrs, $currObj);
+		}
+	}
+
+	if (!$multiChannel) {
+	    for ($ii = 0; $ii < $count; $ii++) {
+		string $currObj = $sel[$ii];
+		string $existingCaches[] = findExistingCaches($currObj);		
+		string $channelToUse;
+		if(size($channelNames) > 0) 
+		{
+		    $channelToUse = $channelNames[$ii];
+		}
+		else 
+		{
+		    $channelToUse = findChannelForObject($ii,$channels,$currObj);
+		}
+		
+		if (size($existingCaches) == 0) {
+			string $inputPointsAttr;
+			string $inputRangeAttr;
+			
+			// first decide if it is an ncloth or a geometry cache
+			//
+			string $nBase = findTypeInHistory($currObj,"nBase",0,1);
+			if (size($nBase)) {
+				$inputPointsAttr = ($nBase+".positions");
+				$inputRangeAttr = ($nBase+".playFromCache");
+			} else{
+				int $wantTweakNode = false;
+				string $newNode = createHistorySwitch($currObj, $wantTweakNode);
+				$switchNode = `rename $newNode "cacheSwitch#"`;
+				setAttr ($switchNode+".ihi") 0;
+				$inputPointsAttr = ($switchNode+".inp[0]");
+				$inputRangeAttr = ($switchNode + ".playFromCache");
+			}
+			string $attachCmd = ( "cacheFile -attachFile -fileName \"" + $fileName + "\"" );
+			$attachCmd += (" -ia "+$inputPointsAttr);
+			$attachCmd += (" -channelName "+$channelToUse);
+			string $cacheFile = `eval $attachCmd`;
+			connectAttr ($cacheFile+".inRange") $inputRangeAttr;
+
+			if (size($nBase)) {
+				if (nodeType ($nBase) == "nParticle"){
+                                	connectAttr -f ($cacheFile+".outCacheArrayData") ($nBase + ".cacheArrayData");
+                       		}
+			}
+			
+		} else {
+			string $cacheBlend[] = `cacheFileCombine -q -ln $currObj`;
+			if (size($cacheBlend) == 0) {
+				cacheFileCombine $currObj;
+				$cacheBlend = `cacheFileCombine -q -ln $currObj`;
+			}
+			string $createCmd = ("cacheFile -createCacheNode -fileName \"" + $fileName + "\"" );
+			$createCmd += (" -channelName "+$channelToUse);
+			string $cacheFile = `eval $createCmd`;
+			cacheFileCombine -e -connectCache $cacheFile $cacheBlend[0];
+		}
+	    }
+	
+	} else {
+		// we assume we're just dealing with one object with multiple connections
+		// currently hair system, or nCloth with velocity/internalState
+		string $existingCaches[] = findExistingCaches($currObj);
+		if (size($existingCaches) == 0) {
+			string $inputRangeAttr = ($currObj + ".playFromCache");
+				
+			string $attachCmd = ( "cacheFile -attachFile -fileName \"" + $fileName + "\"" );
+	
+			string $chn;
+			for ($chn in $channels)
+			{
+				$attachCmd += (" -channelName "+$chn);
+			}
+			for ($chn in $attachAttrs)
+			{
+				$attachCmd += (" -ia "+$chn);
+			}
+			string $cacheFile = `eval $attachCmd`;
+			connectAttr ($cacheFile+".inRange") $inputRangeAttr;
+
+		} else {
+			string $cacheBlend[] = `cacheFileCombine -q -ln $currObj`;
+			if (size($cacheBlend) == 0) {
+				cacheFileCombine $currObj;
+				$cacheBlend = `cacheFileCombine -q -ln $currObj`;
+			}
+			string $createCmd = ("cacheFile -createCacheNode -fileName \"" + $fileName + "\"" );
+			for ($chn in $channels)
+				$createCmd += (" -channelName " + $chn);
+			string $cacheFile = `eval $createCmd`;
+			string $combineCmd = "cacheFileCombine -e -keepWeights -connectCache " + $cacheFile;
+			for ($chn in $channels)
+				$combineCmd += (" -channelName " + $chn);
+			$combineCmd += (" "+$cacheBlend[0]);
+			eval $combineCmd;
+		}
+	}
+	
+	return 1;
+}
+

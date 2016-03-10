@@ -1,0 +1,308 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// Description:
+//  Scripts to assign shaders to geometry that was created by the
+//  to geometry node.
+//
+
+global proc string[] TGgroupNodes( string $cnv )
+//
+// Description:
+//  Returns all groupId nodes current attached to the converter node.
+//
+{
+	string $groupNodes[];
+	int $segCount = `getAttr ($cnv + ".segmentCount")`;
+	int $i;
+
+	for ( $i = 0; $i < $segCount; $i ++ ) {
+		string $segPlug = ($cnv + ".segGroupIds[" + $i + "]");
+		string $groupIds[] = `listConnections $segPlug`;
+		if ( size( $groupIds ) != 1 ) {
+			$groupNodes[$i] = "";
+			continue;
+		}
+
+		$groupNodes[$i] = $groupIds[0];
+	}
+
+	return $groupNodes;
+}
+
+global proc int[] TGgroupMappings( string $cnv, string $mesh )
+//
+// Description:
+//  Given a converter node and a corresponding mesh node. This
+//  MEL routine attempts to find out how the group id nodes, which
+//  are used to determine which faces map to which segment, map
+//  to the mesh.  This is used to do shader assignment later.
+//
+//  Specifically, given a segment on the converter how does that
+//  segment map to the groupObjectId on the mesh. Example:
+//
+{
+	int $indices[];
+	int $segCount = `getAttr ($cnv + ".segmentCount")`;
+	int $i;
+
+	for ( $i = 0; $i < $segCount; $i ++ ) {
+		string $segPlug = ($cnv + ".segGroupIds[" + $i + "]");
+		string $groupIds[] = `listConnections $segPlug`;
+		if ( size( $groupIds ) != 1 ) {
+			string $msg = (uiRes("m_textureToGeomApplyColor.kMissingId"));
+			warning( `format -stringArg $i $msg` );
+			$indices[$i] = -1;
+			continue;
+		}
+
+		string $gid = $groupIds[0];
+		string $groupConn[] = `listConnections -plugs true ($gid + ".groupId")`;
+		string $conn;
+		int $index = -1;
+		for ( $conn in $groupConn ) {
+			if ( startsWith( $conn, $mesh ) ) {
+				string $m =
+					match( "objectGroups\\[[0-9]+\\].objectGroupId", $conn );
+				if ( $m != "" ) {
+					string $strIdx = match( "[0-9]+", $m );
+					$index = $strIdx;
+				}
+			}
+		}
+		$indices[$i] = $index;
+	}
+
+	return $indices;
+}
+
+proc string hasConnectionToShader( string $mesh, int $index )
+//
+// Description:
+//  If this mesh has a connection to a shader on the specified index
+//  then return the name of the shader that is on that index.
+//
+{
+	string $con = ($mesh + ".instObjGroups[0].objectGroups[" + $index + "]");
+	string $conList[] = `listConnections -type "shadingEngine" $con`;
+
+	if ( size($conList) == 0 ) {
+		return "";
+	}
+
+	return $conList[0];
+}
+
+proc int isShader( string $shader )
+//
+// Description:
+//  If the given $shader string is an existing shader then return
+//  1. Otherwise, 0.
+//
+{
+	if ( !`objExists $shader` ) {
+		string $msg = (uiRes("m_textureToGeomApplyColor.kNoTemplate"));
+		warning(`format -stringArg $shader $msg`);
+		return 0;
+	}
+
+	string $types[] = `listNodeTypes "shader/surface"`;
+	for ( $type in $types ) {
+		string $materialArray[] = `ls -exactType $type`;
+		for ( $material in $materialArray ) {
+			if ( $material == $shader ) {
+				return 1;
+			}
+		}
+	}
+
+	string $msg = (uiRes("m_textureToGeomApplyColor.kTemplateNotFound"));
+	warning(`format -stringArg $shader $msg`);
+	return 0;
+}
+
+proc string createShader( string $cnv, string $mesh, string $group, int $map )
+{
+	string $template = "";
+	string $shader;
+	if ( objExists ($cnv + ".shaderTemplate") ) {
+		$template = getAttr ($cnv + ".shaderTemplate");
+	}
+
+	if ( $template != "" && $template != "lambert1"
+		 && isShader( $template ) ) {
+		string $dup[] = `duplicate $template`;
+		$shader = `rename $dup[0] ($cnv + "Shader" + $map)`;
+	} else {
+		$shader =
+			`shadingNode -asShader "lambert" -n ($cnv + "Shader" + $map)`;
+	}
+
+	string $name = `sets -empty -renderable true -n ($cnv + "SG" + $map)`;
+	string $iobj = ($mesh + ".instObjGroups[0].objectGroups[" + $map + "]");
+
+	connectAttr
+		($name + ".memberWireframeColor")
+		($iobj + ".objectGrpColor");
+
+	connectAttr -na $iobj ($name + ".dagSetMembers");
+	connectAttr -na ($group + ".message") ($name + ".groupNodes");
+	connectAttr -f ($shader + ".outColor") ($name + ".surfaceShader");
+
+	return $shader;
+}
+
+proc assignShader( string $cnv, string $shader, int $index )
+{
+	if ( nodeType( $shader ) == "shadingEngine" ) {
+		string $actShader[] = `listConnections ($shader + ".surfaceShader")`;
+		if ( size( $actShader ) == 1 ) {
+			$shader = $actShader[0];
+		} else {
+			return;
+		}
+	}
+
+	string $type = nodeType( $shader );
+	if ( `getClassification -satisfies "shader/surface" $type` ) {
+		string $cnvColor = ($cnv + ".outColorData[" + $index + "].outColor");
+		string $cnvAlpha = ($cnv + ".outColorData[" + $index + "].outAlpha");
+		float $color[] = `getAttr $cnvColor`;
+		float $alpha = `getAttr $cnvAlpha`;
+
+		setAttr ($shader + ".color") $color[0] $color[1] $color[2];
+		setAttr ($shader + ".transparency") $alpha $alpha $alpha;
+	}
+}
+
+proc string[] textureConverterMeshes( string $node )
+{
+	string $conn[] = `listConnections ($node + ".output")`;
+	return $conn;
+}
+
+proc addTexture( string $node, string $file )
+{
+	string $meshes[] = textureConverterMeshes( $node );
+
+	if ( size($meshes) == 0 ) {
+		warning( (uiRes("m_textureToGeomApplyColor.kNoMeshes")) );
+	}
+
+	string $name = ($node + "Shader");
+	string $lambert = `shadingNode -asShader lambert -n $name`;
+
+	string $mesh;
+	for ( $mesh in $meshes ) {
+		assignSG $lambert $mesh;
+	}
+
+	string $texture = `shadingNode -asUtility file`;
+	string $place2d = `shadingNode -asUtility place2dTexture`;
+
+	connectAttr -f ($place2d + ".coverage") ($texture + ".coverage");
+	connectAttr -f ($place2d + ".translateFrame") ($texture + ".translateFrame");
+	connectAttr -f ($place2d + ".rotateFrame") ($texture + ".rotateFrame");
+	connectAttr -f ($place2d + ".mirrorU") ($texture + ".mirrorU");
+	connectAttr -f ($place2d + ".mirrorV") ($texture + ".mirrorV");
+	connectAttr -f ($place2d + ".stagger") ($texture + ".stagger");
+	connectAttr -f ($place2d + ".wrapU") ($texture + ".wrapU");
+	connectAttr -f ($place2d + ".wrapV") ($texture + ".wrapV");
+	connectAttr -f ($place2d + ".repeatUV") ($texture + ".repeatUV");
+	connectAttr -f ($place2d + ".offset")  ($texture + ".offset");
+	connectAttr -f ($place2d + ".rotateUV") ($texture + ".rotateUV");
+	connectAttr -f ($place2d + ".noiseUV") ($texture + ".noiseUV");
+	connectAttr -f ($place2d + ".vertexUvOne") ($texture + ".vertexUvOne");
+	connectAttr -f ($place2d + ".vertexUvTwo") ($texture + ".vertexUvTwo");
+	connectAttr -f ($place2d + ".vertexUvThree") ($texture + ".vertexUvThree");
+	connectAttr -f ($place2d + ".vertexCameraOne") ($texture + ".vertexCameraOne");
+	connectAttr ($place2d + ".outUV") ($texture + ".uv");
+	connectAttr ($place2d + ".outUvFilterSize") ($texture + ".uvFilterSize");
+	connectAttr -force ($texture + ".outColor") ($lambert + ".color");
+
+	connectAttr ($node + ".imageFile") ($texture + ".fileTextureName");
+}
+
+global proc string[] selectTextureToGeomFaces( string $textureToGeom, int $index )
+{
+	string $conn[] = textureConverterMeshes( $textureToGeom );
+	if ( size($conn) == 0 ) {
+		return $conn;
+	}
+
+	int $faces[] = getAttr ($textureToGeom + ".outSegFace[" + $index + "]");
+	int $face;
+ 	for ( $face in $faces ) {
+		string $con;
+		for ( $con in $conn ) {
+			select -add ($con + ".f[" + $face + "]");
+		}
+	}
+
+	return $conn;
+}
+
+proc addShaders( string $textureToGeom, string $mesh )
+//
+// Description:
+//  Add shaders by using the segment color information on
+//  the textureToGeometry node. Assign these shaders to the
+//  first instance of the given mesh.
+//
+{
+	int $mappings[] = TGgroupMappings( $textureToGeom, $mesh );
+	string $groups[] = TGgroupNodes( $textureToGeom );
+	int $mapCount = size($mappings);
+
+	int $i;
+	for ( $i = 0; $i < $mapCount; $i++ ) {
+		if ( $mappings[$i] == -1 ) {
+			continue;
+		}
+
+		string $con = hasConnectionToShader( $mesh, $mappings[$i] );
+		if ( $con == "" ) {
+			string $shader =
+				createShader($textureToGeom, $mesh, $groups[$i], $mappings[$i]);
+			assignShader( $textureToGeom, $shader, $i );
+		} else {
+			assignShader( $textureToGeom, $con, $i );
+		}
+	}
+}
+
+global proc textureToGeomApplyColor( string $textureToGeom, string $file,
+									 string $mesh, string $type )
+//
+// Description:
+//  Applies the actual shaders to the segmented geometry. Two types of
+//  assignment can happen:
+//   'texture' : just assigns a texture to the geometry.
+//   'shaders' : creates shaders for each individual segment.
+//
+{
+	if ( $type == "texture" ) {
+		addTexture( $textureToGeom, $file );
+	} else if ( $type == "shaders" ) {
+		addShaders( $textureToGeom, $mesh );
+	}
+}

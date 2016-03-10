@@ -1,0 +1,891 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//	Rendering Diagnostics...
+//		FileName: renderChecker.mel
+//		Usage: "renderChecker #triangles_limit",
+//		   where #triangles_limit is what you consider to be a high
+//		   tessellation count; we recommend 10000.
+//
+//	Maya Limitations.
+//	This script searches for the following scenarios specific to Maya3.0:
+//		- motion blur limitations
+//		- output image file format restrictions
+//		- byframe of 0 causing hang
+//		- fractional byframe requiring modify ext
+//		- no renderable cameras or weird combination
+//		- 2d blur with colored background will have artifacts
+//		- large far/near clipping plane values cause artifacts
+//		- reflection gets incorrect normal when bumped
+//		- instanced light not work too well
+//		- zero-scale items not rendered
+//
+//	The following Warnings may be issued:
+//		- no lights warning
+//		- composite rendering warning
+//		- RT global flag on but no real RT being requested
+//		- RT shadows turned on but RT global flag is not
+//		- small filter value warning
+//		- misuse of the "useMaximumRes" attribute causing flickering
+//		- file texture name delimited by "." warning
+//		- bump map does not work with file texture's advanced filtering
+//		- missing file texture warning
+//		- SG with no ports connected
+//		- object with no SG associated
+//		- screen-space tessellation resulting in flicker
+//		- dangling volume primitives (fog/glow)
+//		- shadow map reuse may be dangerous due to autofocus
+//		- shader glow flicker with auto-exposure turned on
+//
+//	Warnings for the following scenarios which affect Performance:
+//		- suggestion of using 2d motion blur instead of 3d motion blur
+//		- RT warning, and RT limits
+//		- high shading sample warning
+//		- high visibility sample warning
+//		- lots of textures not using file caching warning
+//		- inefficient use of layered shader causing slowdown
+//		- avoid RT shadows
+//		- avoid large filter size values for shadow map
+//		- avoid large shadow map resolution
+//		- output objects with high tessellation count (nurbs + subdivs)
+//		- degree 1 tessellation suggestion
+//
+
+global string $renderableCamera;
+
+global proc renderChecker(int $numTri)
+{
+	print "\n";
+	print (uiRes("m_renderChecker.kStarting"));
+	print (uiRes("m_renderChecker.kKnownProbs"));
+	print "--------------------------\n";
+	maya1_0_bugs_diagnostic();
+	print "\n";
+
+	print (uiRes("m_renderChecker.kWarnings"));
+	print "--------\n";
+	warning_diagnostic();
+	print "\n";
+
+	print (uiRes("m_renderChecker.kImplications"));
+	print "-------------------------\n";
+	performance_diagnostic($numTri);
+	print "\n\n";
+	print (uiRes("m_renderChecker.kDiagComplete"));
+}
+
+global proc maya1_0_bugs_diagnostic()
+{
+	string $renderQuality[] = `listConnections defaultRenderGlobals.qual`;
+
+	if (`getAttr defaultRenderGlobals.mb` &&
+		`getAttr ($renderQuality[0] + ".ert")`)
+	{
+		print (uiRes("m_renderChecker.kBlurRaytrace"));
+	}
+
+	if (`getAttr defaultRenderGlobals.mb`)
+	{
+		print (uiRes("m_renderChecker.kBlur"));
+	}
+
+	int $format = `getAttr defaultRenderGlobals.outf`;
+	if ($format != 7 && $format != 10)
+	{
+		if ($format == 3 || $format == 4)
+		{
+			print (uiRes("m_renderChecker.kTiff"));
+		}
+
+		if ($format == 12)
+		{
+			print (uiRes("m_renderChecker.kQuantel"));
+		}
+
+		if ($format == 11)
+		{
+			print (uiRes("m_renderChecker.kCineon"));
+		}
+
+		if ($format == 0 || $format == 8 || $format == 9)
+		{
+			print (uiRes("m_renderChecker.kNoMask"));
+		}
+	}
+
+    if (`getAttr defaultRenderGlobals.an` && `getAttr defaultRenderGlobals.bfs` == 0.0)
+    {
+        print (uiRes("m_renderChecker.kStepZero"));
+    }
+
+	if (`getAttr defaultRenderGlobals.an` && `getAttr defaultRenderGlobals.me` == 0 &&
+		`getAttr defaultRenderGlobals.bfs` > -1.0 && `getAttr defaultRenderGlobals.bfs` < 1.0)
+	{
+		print (uiRes("m_renderChecker.kFractional"));
+	}
+
+
+	int $gotRenderableCamera = 0;
+	string $allCameras[] = `ls -ca`;
+	global string $renderableCamera;
+	for ($i = 0; $i < size($allCameras); $i++)
+	{
+		if (`getAttr ($allCameras[$i] + ".rnd")`)
+		{
+			$gotRenderableCamera = 1;
+			$renderableCamera = $allCameras[$i];
+			if (`getAttr ($allCameras[$i] + ".img")` == 0) {
+				string $fmt = (uiRes("m_renderChecker.kNoColor"));
+				print `format -s $allCameras[$i] $fmt`;
+			}
+			if (`getAttr ($allCameras[$i] + ".bfc")` == 0 &&
+			    `getAttr ($allCameras[$i] + ".fcp")` / `getAttr ($allCameras[$i] + ".ncp")` > 100000.0)
+			{
+				string $fmt = (uiRes("m_renderChecker.kNearFar"));
+				print `format -s $allCameras[$i] $fmt`;
+			}
+		}
+	}
+	if ($gotRenderableCamera == 0)
+		print (uiRes("m_renderChecker.kNoCamera"));
+
+	if (`getAttr defaultRenderGlobals.mb` && `getAttr defaultRenderGlobals.mbt` == 0) 
+	{
+		for ($i = 0; $i < size($allCameras); $i++)
+		{
+			if (`getAttr ($allCameras[$i] + ".rnd")`)
+			{
+				if (`getAttr ($allCameras[$i] + ".colr")` != 0 ||
+					`getAttr ($allCameras[$i] + ".colg")` != 0 ||
+					`getAttr ($allCameras[$i] + ".colb")` != 0) 
+				{
+					print (uiRes("m_renderChecker.kBlurColor"));
+					break;
+				}
+			}
+		}
+	}
+
+	string $allShaders[] = `ls -materials`;
+	for ($i = 0; $i < size($allShaders); $i++)
+    {
+		string $ntype = `nodeType $allShaders[$i]`;
+		if ($ntype == "blinn" || $ntype == "phong" || $ntype == "phongE" || $ntype == "lambert" || $ntype == "anisotropic")
+		{
+			string $bump[] = `listConnections ($allShaders[$i] + ".n")`;
+			string $refl[] = `listConnections ($allShaders[$i] + ".c")`;
+			string $refl2[];
+			if ($ntype != "lambert")
+				$refl2 = `listConnections ($allShaders[$i] + ".rc")`;
+			if (size($bump) != 0 && size($refl) != 0 && size($refl2) != 0)
+			{
+				$ntype = `nodeType $refl[0]`;
+				if ($ntype == "envBall" || $ntype == "envChrome" || 
+					$ntype == "envCube" || $ntype == "envSky") 
+				{
+					string $fmt = (uiRes("m_renderChecker.kBumpEnv"));
+					print `format -s $allShaders[$i] $fmt`;
+				}
+			}
+		}
+	}
+
+	string $allLights[] = `ls -lights`;
+	for ($i = 0; $i < size($allLights); $i++)
+    {
+		string $ntype = `nodeType $allLights[$i]`;
+		if ($ntype == "spotLight" || $ntype == "pointLight" || $ntype == "volumeLight" || $ntype == "areaLight")
+		{
+			string $transf[] = `ls -dag -ap ($allLights[$i])`; 
+			if (size($transf) > 1)
+			{
+				string $fmt = (uiRes("m_renderChecker.kInstancedLight"));
+				print `format -s $allLights[$i] $fmt`;
+			}
+		}
+	}
+
+	zeroScale_problem();
+}
+
+
+global proc warning_diagnostic()
+{
+	string $renderQuality[] = `listConnections defaultRenderGlobals.qual`;
+	string $rez[] = `listConnections defaultRenderGlobals.res`;
+
+	string $lights[] = `ls -lights`;
+	if( size($lights) == 0 
+	&&( `getAttr defaultRenderGlobals.enableDefaultLight` == 0 ) )
+	{		
+		print (uiRes("m_renderChecker.kNoLights"));
+	}
+	
+	if (`getAttr defaultRenderGlobals.comp`)
+	{
+		print (uiRes("m_renderChecker.kCompRender"));
+	}	
+	
+	int    $i;
+	string $allShapes[] = `ls -dag -typ shape`;
+	if (`getAttr ($renderQuality[0] + ".ert")`)
+	{
+		if (`getAttr ($renderQuality[0] + ".rfl")` == 0)
+			print (uiRes("m_renderChecker.kNoReflect"));
+		if (`getAttr ($renderQuality[0] + ".rfr")` == 0)
+			print (uiRes("m_renderChecker.kNoRefract"));
+		if (`getAttr ($renderQuality[0] + ".sl")` == -1)
+			print (uiRes("m_renderChecker.kNoShadow"));
+		
+		int    $gotERT = 0;
+	    for ($i = 0; $i < size($allShapes); $i++) 
+		{
+	        string $type = `objectType $allShapes[$i]`;
+	        switch ($type) 
+			{
+                case "subdiv":
+	            case "nurbsSurface":
+	            case "mesh":
+	            case "polymesh":
+	            case "particle":
+					if (`getAttr ($allShapes[$i] + ".visibleInReflections")` ||
+						`getAttr ($allShapes[$i] + ".visibleInRefractions")`)
+						$gotERT = 1;
+					break;
+			}
+			if ($gotERT) break;
+		}
+		string $allLights[] = `ls -lights`;
+		for ($i = 0; $i < size($allLights); $i++)
+		{
+			if (`getAttr ($allLights[$i] + ".urs")`)
+				$gotERT = 1;
+		}
+		if ($gotERT == 0)
+			print (uiRes("m_renderChecker.kNoRayMarks"));
+	}
+	else
+	{
+		int $gotRTshadows = 0;
+		string $allLights[] = `ls -lights`;
+		for ($i = 0; $i < size($allLights); $i++)
+		{
+			if (`getAttr ($allLights[$i] + ".urs")`)
+				$gotRTshadows = 1;
+		}
+		if ($gotRTshadows)
+		{
+			print (uiRes("m_renderChecker.kNoRayShadows"));
+		}
+	}
+	
+	int $i;
+	string $allTextures[] = `ls -textures`;
+	for ($i = 0; $i < size($allTextures); $i++)
+	{
+		if (`nodeType $allTextures[$i]` == "file" && `getAttr ($allTextures[$i] + ".f")` < 0.1)
+		{
+			string $fmt = (uiRes("m_renderChecker.kSmallFilter"));
+			print `format -s $allTextures[$i] $fmt`;
+			if (`getAttr ($allTextures[$i] + ".ft")` != 1) {
+				print (uiRes("m_renderChecker.kNonMipMap"));
+			}
+		}
+		if (`nodeType $allTextures[$i]` == "file" && `getAttr ($allTextures[$i]
+															   + ".umr")`)
+		{
+			string $fmt = (uiRes("m_renderChecker.kUseMaxRes"));
+			print `format -s $allTextures[$i] -s $allTextures[$i] $fmt`;
+
+		}
+		if (`nodeType $allTextures[$i]` == "file" && `getAttr ($allTextures[$i] + ".ufe")`)
+		{
+			string $tmp[];
+			string $filename = `getAttr ($allTextures[$i] + ".ftn")`;
+			tokenize ($filename, ".", $tmp);
+			if (size ($tmp) > 2)
+			{
+				string $fmt = (uiRes("m_renderChecker.kFileTexture"));
+				print `format -s $allTextures[$i] $fmt`;
+			}
+		}
+		if (`nodeType $allTextures[$i]` == "file")
+		{
+			int $resolutionX = `getAttr ($allTextures[$i] + ".outSizeX")`;
+			int $resolutionY = `getAttr ($allTextures[$i] + ".outSizeY")`;
+			if ($resolutionX == 0 || $resolutionY == 0)
+			{
+				string $fmt = (uiRes("m_renderChecker.kMissingTexture"));
+				print `format -s $allTextures[$i] $fmt`;
+			}
+		}
+	}
+
+
+    string $sets[] = `ls -sets`;
+    for ($i = 0; $i < size($sets); $i++) 
+	{
+        if (`sets -q -renderable $sets[$i]`) 
+		{
+			string $ss[] = `listConnections ($sets[$i] + ".surfaceShader")`;
+			string $vs[] = `listConnections ($sets[$i] + ".volumeShader")`;
+			if (size($ss) == 0 && size($vs) == 0) {
+				string $fmt = (uiRes("m_renderChecker.kNoPort"));
+				print `format -s $sets[$i] $fmt`;
+			}
+		}
+	}
+	
+    string $activeObjects[] = `ls -sl`;
+	int $firsttime = 1;
+    for ($i = 0; $i < size($allShapes); $i++)
+    {
+        string $type = `objectType $allShapes[$i]`;
+        switch ($type)
+        {
+            case "subdiv":
+            case "mesh":
+            case "polymesh":
+            case "renderCone":
+            case "renderSphere":
+            case "directedDisc":
+                int $j;
+				string $sets[] = `listConnections ($allShapes[$i] + ".iog")`;
+                for ($j = 0; $j < size($sets); $j++)
+                    if (`objectType ($sets[$j])` == "shadingEngine" &&
+						`sets -q -renderable ($sets[$j])`) break;
+				if ($j == size($sets))
+				{
+					if ($firsttime == 1)
+					{
+						$firsttime = 0;
+					}
+					select -r $allShapes[$i];
+					string $shadingGroup[] = `ls -sl -type shadingEngine`;
+					if (size($shadingGroup) == 0)
+					{
+						if ( $type == "renderCone" || $type == "renderSphere" || $type == "directedDisc" )
+						{
+							string $fmt = (uiRes("m_renderChecker.kNoGroup"));
+							print `format -s $allShapes[$i] $fmt`;
+						}
+						else
+						{
+							string $fmt = (uiRes("m_renderChecker.kNoGroup2"));
+							print `format -s $allShapes[$i] $fmt`;
+						}
+					}
+				}
+				break;
+
+            case "nurbsSurface":
+            case "particle":
+				int $j;
+				string $sets[] = `listConnections ($allShapes[$i] + ".iog")`;
+				for ($j = 0; $j < size($sets); $j++)
+					if (`objectType ($sets[$j])` == "shadingEngine" &&
+						`sets -q -renderable ($sets[$j])`) break;
+				if ($j == size($sets))
+				{
+					string $fmt = (uiRes("m_renderChecker.kNoGroup3"));
+					print `format -s $allShapes[$i] $fmt`;
+				}
+
+				if (`attributeQuery -exists -node $allShapes[$i] modeU`)
+                {
+					if (`getAttr ($allShapes[$i] + ".modeU")` == 4 ||
+						`getAttr ($allShapes[$i] + ".modeV")` == 4)
+					{
+						string $fmt = (uiRes("m_renderChecker.kScreenSpace"));
+						print `format -s $allShapes[$i] $fmt`;
+					}
+				}
+				break;
+		}
+	}
+
+	volumeGeomTest();
+
+	string $allStrokes[] = `ls -type stroke`;
+	global string $renderableCamera;
+	if (size($allStrokes) != 0) {
+		// There are Paint Effects strokes in the scene.
+		// First, check if the depth type on the camera is ideally suited to Paint Effects.
+		if (`getAttr ($renderableCamera + ".depthType")` == 0) {
+			if (`getAttr ($renderableCamera + ".transparencyBasedDepth")` == 0) {
+				string $fmt = (uiRes("m_renderChecker.kClosestDepth"));
+				print `format -s $renderableCamera -s $renderableCamera $fmt`;
+			}
+		}
+		// Secondly, check that the lights in the scene do not have Mid-dist or raytracing shadows enabled.
+		string $allLights[] = `ls -lights`;
+		for ($i = 0; $i < size($allLights); $i++)
+		{
+			string $ntype = `nodeType $allLights[$i]`;
+			if ($ntype == "spotLight" || $ntype == "pointLight" || $ntype == "volumeLight" || $ntype == "directionalLight")
+			{
+				// These light types can have depth mapped shadows.
+				if (`getAttr ($allLights[$i] + ".useDepthMapShadows")`) {
+					if (`getAttr($allLights[$i] + ".useMidDistDmap")`) {
+						string $fmt = (uiRes("m_renderChecker.kMidDistDmap"));
+						print `format -s $allLights[$i] $fmt`;
+					}
+				}
+			}
+			if (`getAttr( $allLights[$i] + ".useRayTraceShadows")`) {
+				string $fmt = (uiRes("m_renderChecker.kRayTraceShadows"));
+				print `format -s $allLights[$i] $fmt`;
+			}
+		}
+		if (`getAttr ("defaultRenderGlobals.onlyRenderStrokes")`) {
+			print (uiRes("m_renderChecker.kStrokes"));
+			string $depthFile = `getAttr ("defaultRenderGlobals.strokesDepthFile")`;
+			if ($depthFile == "") {
+				print (uiRes("m_renderChecker.kSourceDepth"));
+			}
+		}
+	}
+
+	
+    for ($i = 0; $i < size($lights); $i++)
+    {
+        string $ntype = `nodeType $lights[$i]`;
+        if ($ntype == "directionalLight" || $ntype == "spotLight" || 
+			$ntype == "pointLight" || $ntype == "volumeLight" || $ntype == "areaLight")
+        {
+			if (`getAttr ($lights[$i] + ".useDmapAutoFocus")` && 
+				`getAttr ($lights[$i] + ".reuseDmap")` &&
+				`getAttr ($lights[$i] + ".useDepthMapShadows")`)
+			{
+				string $fmt = (uiRes("m_renderChecker.kAutoFocus"));
+				print `format -s $lights[$i] $fmt`;
+			}
+		}
+	}
+
+	// Warning about glow flicker with auto-exposure on.
+	int $autoExposureOn = 0;
+	string $shaderGlowNode[] = `ls -type shaderGlow`;
+	for ($i = 0; $i < size($shaderGlowNode); $i++)
+	{
+		if (`getAttr ($shaderGlowNode[$i] + ".autoExposure")`) 
+		{
+			$autoExposureOn = 1;
+			break;
+		}
+	}
+	if ($autoExposureOn)
+	{
+		int $glowFlickerWarning = 0;
+		string $shaders[] = `ls -mat`;
+		for ($i = 0; $i < size($shaders); $i++)
+		{
+			if (`attributeQuery -exists -node $shaders[$i] glowIntensity` &&
+				`getAttr ($shaders[$i] + ".glowIntensity")` > 0.0)
+			{
+				$glowFlickerWarning = 1;
+				break;
+			}
+		}
+		if ($glowFlickerWarning)
+		{
+			print (uiRes("m_renderChecker.kGlow"));
+		}
+	}
+	
+	
+	if ($firsttime == 0)
+	{
+	    select -r $activeObjects;
+	}
+}
+
+
+global proc performance_diagnostic(int $numTri)
+{
+	string $renderQuality[] = `listConnections defaultRenderGlobals.qual`;
+	string $rez[] = `listConnections defaultRenderGlobals.res`;
+
+	if (`getAttr defaultRenderGlobals.mb` &&
+		`getAttr defaultRenderGlobals.mbt` == 1)
+	{
+		print (uiRes("m_renderChecker.kMotionBlur3d"));
+	}
+
+	if (`getAttr ($renderQuality[0] + ".ert")`)
+	{
+		print (uiRes("m_renderChecker.kRayOn"));
+        if (`getAttr ($renderQuality[0] + ".rfl")` > 2)
+		{
+			print (uiRes("m_renderChecker.kHighReflection"));
+		}
+	}
+
+	if (`getAttr ($renderQuality[0] + ".ss")` > 3)
+	{
+		print (uiRes("m_renderChecker.kHighSample"));
+	}
+	
+	if (`getAttr defaultRenderGlobals.mb` &&
+		`getAttr ($renderQuality[0] + ".mvs")` > 2)
+	{
+		print (uiRes("m_renderChecker.kHighVis"));
+	}
+
+    int $i;
+	int $numFileTextures = 0;
+    string $allTextures[] = `ls -textures`;
+    for ($i = 0; $i < size($allTextures); $i++)
+    {
+		if (`nodeType $allTextures[$i]` == "file" && `getAttr ($allTextures[$i] + ".uca")` == 0)
+			$numFileTextures = $numFileTextures + 1;
+	}
+	if ($numFileTextures > 20)
+	{
+		print (uiRes("m_renderChecker.kFileTextures"));
+	}
+
+
+	string $shadingGroup[] = `ls -type shadingEngine`;
+	for ($i = 0; $i < size($shadingGroup); $i++)
+	{
+		string $members[] = `sets -query $shadingGroup[$i]`;
+		if (size($members) > 0)
+		{
+			string $shaderls[] = `listConnections ($shadingGroup[$i] + ".surfaceShader")`;
+			if (size($shaderls) != 0 &&
+				`nodeType $shaderls[0]` == "layeredShader")
+			{
+				string $fmt = (uiRes("m_renderChecker.kLayered"));
+				print `format -s $shaderls[0] $fmt`;
+			}
+		}
+	}
+
+
+    string $allLights[] = `ls -lights`;
+    for ($i = 0; $i < size($allLights); $i++)
+    {
+        if (`getAttr ($allLights[$i] + ".urs")`)
+        {
+			string $fmt = (uiRes("m_renderChecker.kRayShadExp"));
+			print `format -s $allLights[$i] $fmt`;
+        }
+        if (`attributeQuery -exists -node $allLights[$i] dms` &&
+			`getAttr ($allLights[$i] + ".dms")`) 
+        {
+			if (`getAttr ($allLights[$i] + ".fs")` > 5)
+			{
+            	string $fmt = (uiRes("m_renderChecker.kHighFilter"));
+				print `format -s $allLights[$i] $fmt`;
+			}
+			if (`getAttr ($allLights[$i] + ".dr")` > 1024)
+			{
+				string $fmt = (uiRes("m_renderChecker.kHighMapRes"));
+				print `format -s $allLights[$i] $fmt`;
+			}
+        }
+    }
+
+
+    string $allShapes[] = `ls -g -ap`;
+    int $hasDefaultNurbTessellation = 0;
+    for ($i = 0; $i < size($allShapes); $i++)
+    {
+        if (`objectType $allShapes[$i]` == "nurbsSurface") {
+			tessellationCount ($allShapes[$i], $numTri);
+            
+            // Does the scene contain at least one nurb surface with default
+            // tessellation? If the tessellation was automatically set,
+            // explicit tessellation is enabled.
+
+            if (! `getAttr ($allShapes[$i]+".explicitTessellationAttributes")`) {
+                $hasDefaultNurbTessellation = 1;
+            }
+        }
+
+		if (`objectType $allShapes[$i]` == "subdiv") {
+			int $ofc = `getAttr ($allShapes[$i] + ".ofc")`;
+			int $sc = `getAttr ($allShapes[$i] + ".sc")`;
+			int $d = `getAttr ($allShapes[$i] + ".d")` - 1;
+			if ($d < 0) $d = 0;
+			int $powResult = `pow 4 $d`;
+			int $subdivCount = 2 * $ofc * $powResult * $sc * $sc;
+			if (`getAttr ($allShapes[$i] + ".featureDisplacement")`) {
+				string $sets[] = `listConnections ($allShapes[$i] + ".iog")`;
+				for ($j = 0; $j < size($sets); $j++) {
+					if (`objectType ($sets[$j])` == "shadingEngine" &&
+						`sets -q -renderable ($sets[$j])`) {
+						string $displ[] = `listConnections ($sets[$j] + 
+												".displacementShader")`;
+						if (size($displ) > 0) {
+							int $srate = `getAttr ($allShapes[$i] + ".dsr")`;
+							$subdivCount = ($subdivCount * $srate * $srate) / 2.0;
+							break;
+						}
+					}
+				}
+			}
+			if ($subdivCount > $numTri) {
+				string $fmt = (uiRes("m_renderChecker.kHighTess"));
+				print `format -s $allShapes[$i] -s $subdivCount $fmt`;
+			}
+		}
+	}
+
+    // Is there at least one surface with default tessellation ?
+
+    if ($hasDefaultNurbTessellation) {
+        // The user probably hasn't run "Set NURBS Tessellation".
+
+        print (uiRes("m_renderChecker.kNurbsTess"));
+    }
+
+	print (uiRes("m_renderChecker.kOptimize"));
+}
+
+
+global proc tessellationCount (string $nodeName, int $numTri)
+{
+    string $nodeAttrNumberU = $nodeName + ".numberU";
+    string $nodeAttrNumberV = $nodeName + ".numberV";
+    string $nodeAttrModeU = $nodeName + ".modeU";
+    string $nodeAttrModeV = $nodeName + ".modeV";
+    string $nodeAttrSpansU = $nodeName + ".spansU";
+    string $nodeAttrSpansV = $nodeName + ".spansV";
+	string $nodeAttrExpert = $nodeName + ".eta";
+	string $nodeAttrFactU  = $nodeName + ".nufa";
+	string $nodeAttrFactV  = $nodeName + ".nvfa";
+	string $nodeAttrCurvTol = $nodeName + ".cvto";
+	string $nodeAttrEdgeSm = $nodeName + ".ues";
+    int    $valueU = `getAttr $nodeAttrNumberU`;
+    int    $valueV = `getAttr $nodeAttrNumberV`;
+    int    $modeU  = `getAttr $nodeAttrModeU`;
+    int    $modeV  = `getAttr $nodeAttrModeV`;
+    int    $spansU = `getAttr $nodeAttrSpansU`;
+    int    $spansV = `getAttr $nodeAttrSpansV`;
+	int	   $expert = `getAttr $nodeAttrExpert`;
+	float  $factU  = `getAttr $nodeAttrFactU`;
+	float  $factV  = `getAttr $nodeAttrFactV`;
+	int	   $curvTol = `getAttr $nodeAttrCurvTol`;
+	int	   $edgeSm = `getAttr $nodeAttrEdgeSm`;
+
+    int    $number = 0;
+	int	   $minimal_subdiv = 0;
+
+	if (!$expert)
+	{
+		if ($factU <= 1.5 && $factV <= 1.5) $minimal_subdiv = 1;
+
+		$factU = $factU * (float)$spansU;
+		$factV = $factV * (float)$spansV;
+		$number = $factU * $factV * 2.0;
+	}
+    else if ($modeU == 4 || $modeV == 4) 
+	{
+        // If the mode is 4, we will really use mode 2 internally,
+        // and it is tough to estimate what number will be set, but
+        // we know the minimum.
+        $number = $spansU * $spansV * 2; // At a minimum.
+    } 
+	else 
+	{
+        if ($modeU == 1 || $modeU == 2) 
+		{
+            $number = $valueU;
+        }
+        if ($modeU == 3) 
+		{
+            $number = $spansU * $valueU;
+        }
+        if ($modeV == 1 || $modeV == 2) 
+		{
+            $number = $number * $valueV;
+        }
+        if ($modeV == 3) 
+		{
+            $number = $number * ($spansV * $valueV);
+        }
+        $number = $number * 2; // Each quadrilateral is split into 2 triangles.
+    }
+
+	if ($edgeSm) $number = $number * 2;
+
+    if (`getAttr ($nodeName + ".featureDisplacement")`) {
+		int $j;
+        string $sets[] = `listConnections ($nodeName + ".iog")`;
+        for ($j = 0; $j < size($sets); $j++) {
+            if (`objectType ($sets[$j])` == "shadingEngine" &&
+                `sets -q -renderable ($sets[$j])`) {
+                string $displ[] = `listConnections ($sets[$j] + 
+                                        ".displacementShader")`;
+                if (size($displ) > 0) {
+                    int $srate = `getAttr ($nodeName + ".dsr")`;
+                    $number = ($number * $srate * $srate) / 2.0;
+                    break;
+                }
+            }
+        }
+    }
+
+	if ($number > $numTri)
+	{
+		string $fmt = (uiRes("m_renderChecker.kReduceTess"));
+		print `format -s $nodeName -s $number $fmt`;
+	}
+
+	if (`getAttr ($nodeName + ".du")` == 1 || `getAttr ($nodeName + ".dv")` == 1)
+	{
+		if (!$expert)
+		{
+			if (!$minimal_subdiv)
+			{
+				string $fmt = (uiRes("m_renderChecker.kDegreeOne"));
+				print `format -s $nodeName $fmt`;
+			}
+		}
+		else
+		{
+			if (($modeU == 3 && ($valueU > 1 || $valueV > 1)) ||
+				($modeU == 1 && ($valueU > $spansU+1 || $valueV > $spansV+1)))
+			{
+				string $fmt = (uiRes("m_renderChecker.kDegreeOne2"));
+				print `format -s $nodeName $fmt`;
+			}
+		}
+	}
+}
+
+
+global proc zeroScale_problem()
+{
+    string $globals[] = `ls -head 1 -renderGlobals`;
+    string $optimizeInstancesAttr = $globals[0] + ".optimizeInstances";
+    int $optimizeInstances = `getAttr $optimizeInstancesAttr`;
+
+    if ($optimizeInstances) 
+	{
+        string $allTransforms[] = `ls -transforms`;
+
+        for ($transform in $allTransforms) 
+		{
+            float $tScale[] = `xform -q -r -s $transform`;
+            int $finished = false;
+            for ($i=0; $i < 3 && !$finished; $i++) 
+			{
+                if ($tScale[$i] <= .0002 && $tScale[$i] >= -.0002) 
+				{
+                    $finished = true;
+					string $fmt = (uiRes("m_renderChecker.kZeroScale"));
+					print `format -s $transform $fmt`;
+                }
+            }
+        }
+    }
+}
+
+
+//
+// check for the case where lightGlow/Fog geometry is being computed in the rendering
+// but no glow/fog effects will show up in the final image.
+//  
+global proc volumeGeomTest() 
+{
+	// get all the lightGlow node
+	string $allLightGlow[] = `ls -type opticalFX`;
+	int $i;
+	for ($i = 0; $i < size($allLightGlow); $i++)
+	{
+		//
+		// We check for all opticalFX.message connections:
+		//
+		//    if the glowVisibility is connected to some shape and 
+		//    if that shape belongs to some shadingGroup and
+		//    if none of the message connections is made to the postProcessList1
+		//
+		// then we have the case, where the geometry will be processed for visibility
+		// and yet no lightGlow will show up in the final image!
+		//
+		string $geomShape[] = `listConnections -sh true ($allLightGlow[$i] + ".glowVisibility")`;
+		string $lightName[] = `listConnections ($allLightGlow[$i] + ".glowVisibility")`;
+		if ($geomShape[0] != "") 
+		{
+			//
+			// there is a geometry representing glowVisibility
+			//
+			string $sets[] = `listConnections ($geomShape[0] + ".iog")`;
+			int $j;
+			for ($j = 0; $j < size($sets); $j++)
+				if (`objectType ($sets[$j])` == "shadingEngine" &&
+					`sets -q -renderable ($sets[$j])`) break;
+
+			if ($j != size($sets))
+			{
+				//
+				// the glow geometry belongs to some shadingGroup, it will be rendered!
+				//
+				// now make sure one of lightGlow.message is connected to postPorcessList1
+				//
+				string $msgConnections[] = `listConnections ($allLightGlow[$i] + ".message")`;
+				int $activeGlow = 0;
+				for ($j = 0; $j<size($msgConnections) && ($activeGlow==0); $j++) {
+					//
+					// determine if the lightGlow is active by checking if it is connected 
+					if ($msgConnections[$j] == "postProcessList1")
+						$activeGlow = 1;
+				}
+				if ($activeGlow==0) {
+             		string $fmt = (uiRes("m_renderChecker.kLightGlow"));
+					print `format -s $allLightGlow[$i] -s $lightName[0] $fmt`;
+				}
+			}
+		}
+		else 
+		{
+			string $fmt = (uiRes("m_renderChecker.kNoGeom"));
+			print `format -s $allLightGlow[$i] $fmt`;
+
+		}
+	}
+
+	//
+	// OK, now get all the renderSphere, renderCone, and directedDisc and make sure
+	// They are not just dangling there.
+	string $miscShapes[] = `ls -type renderCone -type renderSphere -type directedDisc`;
+	for ($i = 0; $i < size($miscShapes); $i++)
+	{
+		string $connectedNodes[] = `listConnections $miscShapes[$i]`;
+		int $numConnected = size($connectedNodes);
+		for ($j = 0; $j < $numConnected; $j++) {
+			string $nodeType = `objectType $connectedNodes[$j]`;
+			switch ($nodeType) 
+			{
+				case "shadingEngine":
+					if ($numConnected < 2) {
+						string $fmt = (uiRes("m_renderChecker.kResidue"));
+						print `format -s $miscShapes[$i] $fmt`;
+					}
+					break;
+			}
+		}
+	}
+}

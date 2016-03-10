@@ -1,0 +1,160 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  2006 
+//
+//  Description:
+//     edit a specified ramp attribute 
+//		
+//
+
+
+global string $gEditColorGradientWidgetName = "";
+global string $gEditGradientWidgetName = "";
+global proc editRampSetVertical( string $rampWidget, string $win, int $vertical )
+{
+	int $v = `gradientControl -q -vl $rampWidget`;
+	if( $v != $vertical ){
+		gradientControl -e -vl $vertical $rampWidget;
+		int $h = `window -q -height $win`;
+		int $w = `window -q -width $win`;
+		if( ($h > $w) != $vertical ){
+			window -e -height $w -width $h $win; // swap width+height
+		} else {
+			if( $vertical ){
+				$w -= 10;
+			} else {
+				$h -= 10;
+			}
+			window -e -height $h -width $w $win; // force refresh 
+		}
+	}
+	optionVar -iv "editRampIsVertical" $vertical;
+}
+
+global proc editRampAttributeDeleted(string $winName)
+{
+	if( `window -ex $winName` )
+	{
+		string $cmd = "deleteUI \"" + $winName + "\"";
+		evalDeferred($cmd);
+	}
+}
+
+/*
+global proc editRampWinResizeCallback( string $win, string $form, string $interp, string $scc, string $spc, string $gc, string $verticalButton ){
+		// adjust controls to best fit on a resize
+		int $h = `window -q -height $win`;
+		int $w = `window -q -width $win`;
+}
+*/
+
+global proc editRampAttribute( string $nodeAttr )
+{
+	global string $gEditColorGradientWidgetName;
+	global string $gEditGradientWidgetName;
+	string $buffer[];
+	tokenize($nodeAttr, ".", $buffer);
+	string $attr = $buffer[size($buffer) - 1];
+	string $colEntryName = ($nodeAttr + "[0]." + $attr + "_ColorR");
+	int $isColor = `objExists $colEntryName`;
+	string $winName;
+	if( $isColor ){
+		$winName = "rampAttributeEditor";
+	} else {
+		$winName = "gradientAttributeEditor";
+	}
+	int $isVertical = false;
+	if( !`optionVar -exists "editRampIsVertical"` ){
+		optionVar -iv "editRampIsVertical" $isVertical;
+	} else {
+		if( $isColor ){
+			$isVertical = `optionVar -q "editRampIsVertical"`; 
+		}
+	}
+	string $rampWidget = ($winName + "Control");
+	if( `window -ex $winName` ){
+		if( $isColor ){
+			$rampWidget = $gEditColorGradientWidgetName;
+		} else {
+			$rampWidget = $gEditGradientWidgetName;
+		}
+		gradientControl -e -at $nodeAttr $rampWidget;
+		window -e -title $nodeAttr $winName;
+	} else {
+		$winName= `window -ret -widthHeight 640 200 -title $nodeAttr $winName`;
+		string $form = `formLayout`;
+ 
+	
+		string $gc = `gradientControl -snc 0 -sp 0 -vl $isVertical -at $nodeAttr $rampWidget`;
+		if( $isColor ){
+			$gEditColorGradientWidgetName = $gc;
+		} else {
+			$gEditGradientWidgetName = $gc;
+		}
+		string $spc =  `attrFieldSliderGrp -label (uiRes("m_editRampAttribute.kSelectedPosition"))
+					-cw 1 110 -cw 2 56 -cw 3 1 -cw 4 24`;
+		string $scc;
+		string $verticalButton;
+		if( $isColor ){
+			$scc = `attrColorSliderGrp -label (uiRes("m_editRampAttribute.kSelectedColor"))
+					-cw4 100 56 100 25 -cal 1 "right"`;
+			$verticalButton = `checkBox -label (uiRes("m_editRampAttribute.kVertical"))
+				-w 70
+				-v $isVertical
+				-onc ("editRampSetVertical "+$gc+" "+$winName+" true")
+				-ofc ("editRampSetVertical "+$gc+" "+$winName+" false")`;
+		} else {
+			$scc = `attrFieldSliderGrp -label (uiRes("m_editRampAttribute.kSelectedValue"))
+					-cw 1 100 -cw 2 56 -cw 3 1 -cw 4 24`;
+		}
+ 		string $interp = `attrEnumOptionMenuGrp -label (uiRes("m_editRampAttribute.kInterpolation"))
+					-cw2 85 95 -cal 1 "right"`;
+		gradientControl -e -spc $spc $gc;  
+		gradientControl -e -scc $scc $gc;  
+		gradientControl -e -sic $interp $gc;  
+		formLayout -edit
+			-attachForm $interp "bottom" 1
+			-attachForm $interp "left" 5
+			-attachForm $scc "bottom" 1
+			-attachControl $scc "left" 3 $interp
+			-attachForm $spc "bottom" 1
+			-attachControl $spc "left" 10 $scc
+			-attachForm $gc "left" 0
+			-attachForm $gc "right" 0
+			-attachForm $gc "top" 0
+			-attachControl $gc "bottom" 2 $spc
+		$form;
+		if( $isColor ){
+			formLayout -edit
+				-attachControl $verticalButton "left" 15 $spc
+				-attachForm $verticalButton "bottom" 1
+				$form;
+		}
+		setParent ..;
+	}
+	showWindow $winName;
+
+	string $callbackProc = ("editRampAttributeDeleted(\"" + $winName + "\")");
+	scriptJob -parent $winName -attributeDeleted $nodeAttr $callbackProc;
+}

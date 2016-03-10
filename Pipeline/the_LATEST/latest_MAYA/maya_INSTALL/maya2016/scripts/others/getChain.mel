@@ -1,0 +1,231 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//<doc>
+//<name getChain>
+//
+//<synopsis>
+//		getChain shapeNodeName
+//
+//<returns>
+//		string[]		chain		: String array, one entry for each deformer.
+//
+//<description>
+//		Returns the deformers that deform the given geometry. For example
+//		if we have the following deformer chain created using the "before" ordering
+//		and call getChain("pCubeShape1")
+//
+//			pCubeShape1Orig->bend1->cluster1->pCubeShape1
+//
+//		then this procedure will return three entries:
+//
+//			string[0] = "bend1"<br>
+//			string[1] = "cluster1"<br>
+//			string[2] = "tweak1"<br>
+//
+//		Notes:
+//		<ul>
+//		<li>The deformers which deform the shape are the "upstream" deformer nodes.
+//			If you call getChain("pCubeShape1Orig") you get an empty result because
+//			the shape pCubeShape1Orig has no upstream deformers.</li>
+//		<li>Any chains that are returned will only contain those deformers up to
+//			the closest upstream shape node. Using other ordering modes than "before"
+//			tends to introduce intermediate shape nodes in the chain and you will
+//			subsequently obtain short deformer chains in your queries.</li>
+//		</ul>
+//
+//<flags>
+//		string $shapeNodeName : name of the shape node for which we wish to query the deformer chain for.
+//
+//<examples>
+//	string $cube[] = `polyCube`;
+//	nonLinear -before -type bend;
+//	select $cube[0];
+//	cluster -before;
+//	getChain( $cube[0] );
+//	// Result: bend1 cluster1 tweak1
+//
+//</doc>
+//
+
+proc string[]		getNextDeformers(string $deformer, int $dir)
+// Description:
+//		Returns the next deformers immediately upstream (or downstream,
+// depending on $dir) of `deformer'. Note: assumes that the chain is
+// threaded via groupParts nodes.
+//
+// Parameters:
+//		string		$deformer	: (in)	Deformer to query.
+//		int			$dir		: (in)	Direction to search. True for
+//										destinations (downstream), false
+//										for sources (upstream).
+//
+{
+	string	$next[];
+	int		$dest = $dir;			// Search dest
+	int		$src = ( 0 == $dir );	// Search sources
+
+	string $gp[] = `listConnections -d $dest -s $src -type "groupParts" $deformer`;
+	for ( $g in  $gp ) {
+		string $dfm[] = `listConnections -d $dest -s $src -type geometryFilter $g`;
+		for ( $d in  $dfm ) {
+			int	$found = false;
+			for ( $n in  $next ) {
+				if ( $n == $d ) {
+					$found = true;
+					break;
+				}
+			}
+			if ( !$found ) {
+				$next[size( $next )] = $d;
+			}
+		}
+	}
+
+	return( $next );
+}
+
+global proc string[] getChain(string $obj)
+// Description:
+//		Returns the deformers that deform $obj.
+//
+// Parameters:
+//		string			$obj		: (in)	Name of the node to find the
+//											deformers deforming it.
+//
+{
+    string $deformers[];
+    string $shape = "";
+    string $shapeWithPath;
+    string $hiddenShape = "";
+    string $hiddenShapeWithPath;
+    string $cpTest[] = `ls -type controlPoint $obj`;
+    if (size($cpTest)) {
+        $shape = $obj;
+    } else {
+        string $rels[] = `listRelatives $obj`;
+        for ($rel in $rels) {
+            $cpTest = `ls -type controlPoint ($obj+"|"+$rel)`;
+            if (0 == size($cpTest)) {
+                continue;
+            }
+            int $io = `getAttr ($obj+"|"+$rel+".io")`;
+            if ($io) {
+                continue;
+            }
+
+            int $visible = `getAttr ($obj+"|"+$rel+".v")`;
+            if (! $visible) {
+                $hiddenShape = $rel;
+                $hiddenShapeWithPath = ($obj+"|"+$rel);
+                continue;
+            }
+
+            $shape = $rel;
+            $shapeWithPath = ($obj+"|"+$rel);
+            break;
+        }
+    }
+
+    if ($shape == "") {
+        if ($hiddenShape == "") {
+            return $deformers;
+        } else {
+            $shape = $hiddenShape;
+            $shapeWithPath = $hiddenShapeWithPath;
+        }
+    }
+
+	// Find all deformers that deform $shape. This list will be in the
+	// order that the "ls" command returns, and not necessarily in the
+	// order the deformer chain applies in.
+	//
+    string $wtGeoms[] = `ls -type geometryFilter`;
+    for ($d in $wtGeoms) {
+        string $geom[] = `deformer -q -g $d`;
+        for ($g in $geom) {
+            if ($g == $shape || $g == $shapeWithPath) {
+                $deformers[size($deformers)] = $d;
+            }
+        }
+    }
+
+	// Sort the list in the order the deformers are connected in. Since we
+	// obtained the list using "deformer -q -g" the list should be a
+	// linear chain of deformers in arbitrary order.
+	//
+	if ( size( $deformers ) > 1 ) {
+		string $tmp[];
+		int $i, $j;
+
+		// Find the endmost deformer and place at the end of $tmp.
+		//
+		for ( $i = 0; $i < size( $deformers ); $i++ ) {
+			string $next[] = getNextDeformers( $deformers[$i], true );
+			if ( size( $next ) == 0 ) {
+				break;
+			}
+		}
+		if ( $i < size( $deformers ) ) {
+			$j = size( $deformers ) - 1;
+			$tmp[$j] = $deformers[$i];
+			$deformers[$i] = "";
+
+			// For each entry in $deformers find the downstream deformer
+			// and place in $tmp. Continue until all deformers have been
+			// ordered.
+			//
+			while ( $j >= 0 ) {
+				string $next[] = getNextDeformers( $tmp[$j], false );
+				int $found = false;
+				for ( $n in $next ) {
+					for ( $i = 0; $i < size( $deformers ); $i++ ) {
+						if ( $deformers[$i] == $n ) {
+							$j--;
+							$tmp[$j] = $n;
+							$deformers[$i] = "";
+							$found = true;
+						}
+					}
+				}
+				if ( !$found ) {
+					// If we get here, the deformer chain was not hooked
+					// up in the way we expect, so break out of this loop.
+					//
+					break;
+				}
+			}
+
+			// If any entries remaining in $deformers add them to $tmp.
+			//
+			for ( $d in $deformers ) {
+				if ( $d != "" ) {
+					$j--;
+					$tmp[$j] = $d;
+				}
+			}
+			$deformers = $tmp;
+		}
+	}
+
+    return $deformers;
+}

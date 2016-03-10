@@ -1,0 +1,21 @@
+import maya
+
+maya.stringTable['y_xgPointGeneratorTab.kPointFileFolder'] = u'Point File Folder'
+maya.stringTable['y_xgPointGeneratorTab.kEditAnn'] = u'Edit the points by interactive brush context.'
+maya.stringTable['y_xgPointGeneratorTab.kCloseAnn'] = u'Close this window\nwithout saving any\npoints.'
+maya.stringTable['y_xgPointGeneratorTab.kSave'] = u'Save && Close'
+maya.stringTable['y_xgPointGeneratorTab.kRevertToLastSavedAnn'] = u'Load the last-saved points\nfile and use its points'
+maya.stringTable['y_xgPointGeneratorTab.kPrimitiveLocations'] = u'Primitive Locations'
+maya.stringTable['y_xgPointGeneratorTab.kToolDescription'] = u'Click or brush on a model to specify where primitives should be created.\nSpecified point will be stored in an external file.'
+maya.stringTable['y_xgPointGeneratorTab.kClear'] = u'Clear'
+maya.stringTable['y_xgPointGeneratorTab.kSaveNCloseAnn'] = u'Save the displayed\npoints to the file and\nclose this window.'
+maya.stringTable['y_xgPointGeneratorTab.kPrimitiveLocations2'] = u'Primitive Locations'
+maya.stringTable['y_xgPointGeneratorTab.kPointDirAnn2'] = u'Specify a folder to hold the point location file.\nFor most cases, use the default.'
+maya.stringTable['y_xgPointGeneratorTab.kPointDirAnn'] = u'Specify a folder to hold the point location file.\nFor most cases, use the default.'
+maya.stringTable['y_xgPointGeneratorTab.kCancel'] = u'Close'
+maya.stringTable['y_xgPointGeneratorTab.kClearAnn'] = u'Clear the points in the\nview. (Does not affect\nsaved points.)'
+maya.stringTable['y_xgPointGeneratorTab.kEditExtraPoints'] = u'Specify Points Tool'
+maya.stringTable['y_xgPointGeneratorTab.kPoint'] = u'Point'
+maya.stringTable['y_xgPointGeneratorTab.kEdit'] = u'Specify Points...'
+maya.stringTable['y_xgPointGeneratorTab.kLoad'] = u'Revert to Last Saved'
+

@@ -1,0 +1,775 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// hikDefinitionOperations.mel
+//
+// Description:
+//		Contains methods that perform skeleton definition operations.
+//		These methods could trigger UI updates in any part of the
+//		unified character context.
+//
+
+///////////////////////////////////////////////////////////////////
+// Local Methods...
+///////////////////////////////////////////////////////////////////
+
+proc int canLockCharacterization()
+{
+	return hikIsCharacterizationInValidOrWarningState();
+}
+
+proc LockSkeletonDefinition()
+{
+	if ( ! hikIsCharacterizationToolUICmdPluginLoaded() )
+		return;
+			
+	// Get the button lock state and set the attribute
+	string $currentCharacterName = hikGetCurrentCharacter();
+	if ( size($currentCharacterName) > 0 )
+	{
+		if( `referenceQuery -isNodeReferenced $currentCharacterName` )
+		{
+			warning (uiRes("m_hikDefinitionOperations.kLockReferencedCharacterWarning"));
+		}
+		else
+		{
+			int $newLockState = ! hikIsDefinitionLocked( $currentCharacterName );
+			hikCharacterLock( $currentCharacterName, $newLockState, 1 );
+		}
+	}
+	
+	// Update the button states -- the lock may have failed
+	hikUpdateDefinitionButtonState();
+}
+
+proc float getRollValue(string $pCharacter, string $rollType,float $default)
+{
+	float $roll = $default;
+	string $rollSk = hikGetSkNode($pCharacter,hikGetNodeIdFromName( $rollType ));
+	if ($rollSk == "") {
+		$roll = 1.0;
+	}
+	return $roll;
+}
+
+//
+// Characterize : Read Stance Pose from Skeleton and write it in Character Node
+//
+proc adjustPropertyStateParams( string $pCharacter )
+{
+	if( !hikIsDefinitionLocked( $pCharacter ) )
+		return;
+		
+	// Parameters adjustments based on current characterisation as in
+	// MotionBuilder
+	//
+	string $propertyState = hikGetProperty2StateFromCharacter( $pCharacter );
+	
+	if( $propertyState != "" )
+	{
+		float $rollVal = getRollValue($pCharacter, "LeftForeArmRoll",0.4);
+		setAttr ($propertyState+".LeftForeArmRollEx") $rollVal;
+		$rollVal = getRollValue($pCharacter, "RightForeArmRoll",0.4);
+		setAttr ($propertyState+".RightForeArmRollEx") $rollVal;
+		$rollVal = getRollValue($pCharacter, "LeftArmRoll",0.4);
+		setAttr ($propertyState+".LeftArmRollEx") $rollVal;
+		$rollVal = getRollValue($pCharacter, "RightArmRoll",0.4);
+		setAttr ($propertyState+".RightArmRollEx") $rollVal;
+
+		setAttr ($propertyState+".leftElbowRoll") 0.0;
+		setAttr ($propertyState+".rightElbowRoll") 0.0;
+		setAttr ($propertyState+".leftShoulderRoll") 0.0;
+		setAttr ($propertyState+".rightShoulderRoll") 0.0;
+
+		$rollVal = getRollValue($pCharacter, "LeftUpLegRoll",0.4);
+		setAttr ($propertyState+".LeftUpLegRollEx") $rollVal;
+		$rollVal = getRollValue($pCharacter, "LeftLegRoll",0.8);
+		setAttr ($propertyState+".LeftLegRollEx") $rollVal;
+		$rollVal = getRollValue($pCharacter, "RightLegRoll",0.8);
+		setAttr ($propertyState+".RightLegRollEx") $rollVal;
+		$rollVal = getRollValue($pCharacter, "RightUpLegRoll",0.4);
+		setAttr ($propertyState+".RightUpLegRollEx") $rollVal;
+
+		setAttr ($propertyState+".leftHipRoll") 0.0;
+		setAttr ($propertyState+".rightHipRoll") 0.0;
+		setAttr ($propertyState+".leftKneeRoll") 0.6;
+		setAttr ($propertyState+".rightKneeRoll") 0.6;
+							  
+		// Adjust Contacts positions
+		float $tX =	`getAttr ($pCharacter+".LeftFootTx")` - `getAttr($pCharacter+".LeftUpLegTx")`;
+		float $tY =	`getAttr ($pCharacter+".LeftFootTy")` - `getAttr($pCharacter+".LeftUpLegTy")`;
+		float $tZ =	`getAttr ($pCharacter+".LeftFootTz")` - `getAttr($pCharacter+".LeftUpLegTz")`;
+
+		float $tLen = sqrt( $tX*$tX + $tY*$tY + $tZ*$tZ );
+
+
+		//FEET
+		float $footBottomToAnkle = `getAttr($pCharacter+".LeftFootTy")`;
+
+		if( $footBottomToAnkle < 0 )
+		{
+			// Feet seem to be below the floor floor
+			// Issue a warning and guess a better footBottomToAnkle value because that value plays a major role in retargetting setups
+			$footBottomToAnkle = 0; 
+
+			if(hikGetSkNode($pCharacter,hikGetNodeIdFromName( "LeftToeBase" )) != "")
+			{
+				$footBottomToAnkle = `getAttr($pCharacter+".LeftFootTy")` - `getAttr($pCharacter+".LeftToeBaseTy")`;
+			}
+
+			warning((uiRes("m_hikDefinitionOperations.kCharacterizationBadFootHeight")));
+		}
+		 
+		$footBottomToAnkle = abs( $footBottomToAnkle ); 
+		setAttr ( $propertyState+".FootBottomToAnkle" ) $footBottomToAnkle;
+		
+		//Check if we have a toe..
+		float $footLength;
+		
+		if( hikGetSkNode($pCharacter,hikGetNodeIdFromName( "LeftToeBase" )) != "" )
+		{
+			$footLength = 2.0*(`getAttr($pCharacter+".LeftToeBaseTz")` - `getAttr($pCharacter+".LeftFootTz")`);
+			$footLength = abs( $footLength );
+		}
+		else
+		{
+			$footLength = $tLen/3.0; 
+		}
+
+		// Basic mode
+		//
+		setAttr ( hikGetSrcOnEffector( $propertyState+".CtrlPullLeftFoot" ) ) 0.0;
+		setAttr ( hikGetSrcOnEffector( $propertyState+".CtrlPullRightFoot" ) ) 0.0;
+		
+		setAttr ( $propertyState+".FootBackToAnkle" ) ($footLength/4);
+		setAttr ( $propertyState+".FootMiddleToAnkle" ) ($footLength/2);
+		setAttr ( $propertyState+".FootFrontToMiddle" ) ($footLength/4);
+		setAttr ( $propertyState+".FootInToAnkle" ) ($footLength/4);
+		setAttr ( $propertyState+".FootOutToAnkle" ) ($footLength/4);
+
+		//HAND
+
+		float $handHeight = $tLen/25.0;
+		
+		setAttr ( $propertyState+".HandBottomToWrist" ) (($handHeight>0.5)?$handHeight:0.5);
+		setAttr ( $propertyState+".HandBackToWrist" ) 0.01;
+
+		// Basic mode
+		//
+		setAttr ( hikGetSrcOnEffector( $propertyState+".CtrlChestPullLeftHand" ) ) 0.0;
+		setAttr ( hikGetSrcOnEffector( $propertyState+".CtrlChestPullRightHand" ) ) 0.0;
+
+		//Check of we have a finger..
+		float $handLength;
+		
+		if( hikGetSkNode($pCharacter,hikGetNodeIdFromName( "LeftFingerBase" )) != "" )
+		{
+			$handLength = 2.0*(`getAttr($pCharacter+".LeftHandTx")` - `getAttr($pCharacter+".LeftFingerBaseTx")`);
+			$handLength = abs( $handLength );
+		}
+		else
+		{
+			$handLength = $footLength*0.66; 
+		}
+
+		setAttr ( $propertyState+".HandMiddleToWrist" ) ($handLength/2);
+		setAttr ( $propertyState+".HandFrontToMiddle" ) ($handLength/2);
+		setAttr ( $propertyState+".HandInToWrist" ) ($handLength/2);
+		setAttr ( $propertyState+".HandOutToWrist" ) ($handLength/2);
+
+
+		//Finger tips
+		float $fingerFffectorSize = $tLen*.0125;
+		
+		for( $side in { "Left", "Right" } )
+		{
+			for( $member in { "Foot", "Hand" } )
+			{
+				for( $finger in { "Thumb", "Index", "Middle", "Ring", "Pinky", "ExtraFinger" } )
+				{
+					setAttr ( $propertyState+"."+$side+$member+$finger+"Tip" ) $fingerFffectorSize;					
+				}
+			}
+		}
+	}
+}
+
+proc DeleteSkeletonDefinition()
+{
+	if ( ! hikIsCharacterizationToolUICmdPluginLoaded() )
+		return;
+
+	int $isReference = false;
+	string $currentCharacter = hikGetCurrentCharacter();
+
+	if ( size( $currentCharacter ) > 0 )
+	{
+		$isReference = `referenceQuery -isNodeReferenced $currentCharacter`;
+	}
+
+	if ( $isReference )
+	{
+		warning (uiRes("m_hikDefinitionOperations.kDeleteReferencedCharacterWarning"));
+	}
+	else
+	{
+		// Before asking the user if they would like to delete the definition
+		// get the retargeter connected to the current character
+		string $retargeter = RetargeterGetName( $currentCharacter );
+
+		// Next proceed with the definition deletion.
+		characterizationToolUICmd -edit -deletecurrentchar;
+
+		// Since the user may decide to abort the above operation, only delete the 
+		// retargeter if the definition no longer exists but the named retargeter is 
+		// still in the scene.
+		if ( hikHasDefinition( $currentCharacter ) == false &&
+			 RetargeterExists( $retargeter ) )
+			 RetargeterDelete( $retargeter );
+	}
+}
+
+// Return the characters associated with this bone
+proc string[] getCharactersThatShareBone( string $boneName )
+{
+	string $characterList[];
+	clear( $characterList );
+	
+	if ( size( $boneName ) > 0 )
+	{
+		$characterList = `listConnections ( $boneName + ".Character" )`;
+	}
+	return $characterList;
+}
+
+// Return the characters associated with the skeleton of the character
+// parameter
+proc string[] getCharactersUsedByMySkeleton( string $characterName, int $removeCharacterName )
+{
+	string $characterList[];
+	clear( $characterList );
+
+	if ( size( $characterName ) > 0 )
+	{
+		string $lSKNodes[] = hikGetSkeletonNodes( $characterName );
+		string $node;
+		for ( $node in $lSKNodes )
+		{
+			string $list[] = getCharactersThatShareBone( $node );
+			if ( size($list) > 0 )
+				$characterList = stringArrayCatenate( $characterList, $list );
+		}
+	}
+	
+	string $characterListNoDups[];
+	clear( $characterListNoDups );
+	if ( size($characterList) > 0 )
+	{
+		$characterListNoDups = stringArrayRemoveDuplicates( $characterList );
+		if ( $removeCharacterName )
+		{
+			string $removalList[];
+			$removalList[0] = $characterName;
+			$characterListNoDups = stringArrayRemove( $removalList, $characterListNoDups );
+		}
+	}
+	
+	return $characterListNoDups;
+}
+
+// This function returns true is we successfully set the lock or false otherwise.
+proc int characterLockNode( string $pCharacter, int $pLock, int $pValidateAndSaveStance )
+{
+	int $isLock = hikIsDefinitionLocked( $pCharacter );
+
+	// If its already set, we consider this a success
+	if ( $pLock == $isLock )
+	{
+		return true;
+	}
+
+	if( $pLock )
+	{
+		if ( $pValidateAndSaveStance && !canLockCharacterization() )
+		{
+			string $kTitleLabel		=  (uiRes("m_hikDefinitionOperations.kLockTitleDialog"));
+			string $kMessageLabel	=  (uiRes("m_hikDefinitionOperations.kLockMessageDialog"));
+			string $kDismissLabel		=  (uiRes("m_hikDefinitionOperations.kLockNoDialog"));
+			string $result = `confirmDialog -title $kTitleLabel -message $kMessageLabel
+								-button $kDismissLabel -defaultButton $kDismissLabel
+								-cancelButton $kDismissLabel -dismissString $kDismissLabel`;
+			return false;
+		}
+		
+		if ( $pValidateAndSaveStance )
+		{
+			// Capturing the actual pose only if pose saving is enabled
+			hikReadStancePoseTRSOffsets( $pCharacter );
+		}
+	}
+	else
+	{
+		// Delete the Rig and all of its input
+		string $lDstControlRig = hikGetControlRig($pCharacter);
+		if( $lDstControlRig != "" )
+		{
+			string $kTitleLabel		=  (uiRes("m_hikDefinitionOperations.kTitleDialog"));
+			string $kMessageLabel	=  (uiRes("m_hikDefinitionOperations.kMessageDialog"));
+			string $kNoLabel		=  (uiRes("m_hikDefinitionOperations.kNoDialog"));
+			string $kYesLabel		=  (uiRes("m_hikDefinitionOperations.kYesDialog"));
+			string $title = $kTitleLabel + $pCharacter;
+			string $result = `confirmDialog -title $title -message $kMessageLabel
+								-button $kYesLabel -button $kNoLabel -defaultButton $kNoLabel
+								-cancelButton $kNoLabel -dismissString $kNoLabel`;
+			if ( $result == $kYesLabel )
+			{
+				int $error = hikDeleteControlRig( );
+				if ( $error == 3 )
+				{
+					warning (uiRes("m_hikDefinitionOperations.kReferencedRigDeleteWarning"));
+				}
+				else
+				{
+					hikUpdateCustomRigUI;
+				}
+			}
+			else
+			{
+				// Do nothing
+				//
+				return false;
+			}
+		}
+	}
+
+	// Update the lock state
+	setAttr ( $pCharacter + ".InputCharacterizationLock" ) $pLock;
+
+	if( $pLock )
+	{
+	    hikPostCharacterisationStep(  $pCharacter );
+	    adjustPropertyStateParams( $pCharacter );
+		
+		int $i;
+		string $node;
+		for ( $i = 0; $i < hikGetNodeCount(); $i++ )
+		{
+			$node = hikGetSkNode( $pCharacter, $i );
+			if ( size( $node ) == 0 )
+				continue;
+
+			// Silent catch was added in order to continue processing
+			// when the keyable attribute is set in a reference file 
+			// which throws an error. See bug #350194
+			catchQuiet( `setAttr -k off -cb true ( $node + ".visibility" )` );
+		}
+	}
+	
+	if ( ! $pValidateAndSaveStance )
+	{
+		// Go to inactive stance input
+		hikSetInactiveStanceInput( $pCharacter );
+	}
+	else
+	{
+		hikSetStanceInput( $pCharacter );
+		hikEnableCharacter( $pCharacter, 2 /* Disable but dont dirty skeleton transforms */ );
+
+	}
+	
+
+	return true;
+}
+
+proc updateLockingStates(int $pLock )
+{
+	if( `dockControl -exists hikCharacterControlsDock` )
+		hikUpdateCustomRigUI;
+}
+
+
+///////////////////////////////////////////////////////////////////
+// Global Methods...
+///////////////////////////////////////////////////////////////////
+
+global proc hikCreateDefinition()
+{
+	// Create the new character -- pass in the name hint
+	hikCreateCharacter( "Character1" );
+
+	hikUpdateCharacterList();	// update the character list
+	hikSelectDefinitionTab();	// select and update appropriate tab
+}
+
+global proc int hikCheckDefinitionLocked(string $character)
+// Description:
+//		Returns 1 if the definition is locked or if we were able
+//		to lock automatically. Return 0 otherwise.
+//
+{
+	if( hikIsDefinitionLocked($character) )
+		return 1;
+
+	// TODO: find a better way to ensure the characterization widget
+	// is up-to-date. Needed to verify validity of definition.
+	hikUpdateDefinitionUI;
+
+	// Note: lower-level method will popup confirmDialog if definition
+	// was invalid and could not be locked
+	hikToggleLockDefinition();
+
+	return hikIsDefinitionLocked($character);
+}
+
+global proc hikToggleLockDefinition()
+{
+	// ensure that the definition tab (and the characterize
+	// ui is up-to-date) since that's how we query if a defintion
+	// is valid. This can be called from the skeleton generator
+	// tab too, so can't assume it's already up-to-date.
+	// TODO: is it possible to have this logic accessible directly??
+	// seems weird to have to refresh another tab's ui to get this
+	// info
+	hikUpdateDefinitionUI();
+	
+	LockSkeletonDefinition();
+
+	// unlocking the definition should always set the source to none
+	if( !hikIsDefinitionLocked(hikGetCurrentCharacter()) ) {
+		hikSetCurrentSource("");
+		hikUpdateSourceList();
+	}
+
+	// update the lock icon
+	hikUpdateDefinitionButtonState();
+
+	// we could have locked from the skeleton
+	// generator tab so update that too. If 
+	// the tab is not visible, this method 
+	// won't do anything
+	hikUpdateSkeletonUI();
+	hikUpdateCurrentSkeleton();
+										
+}
+
+
+
+global proc hikDeleteDefinition()
+{
+	DeleteSkeletonDefinition();
+
+	hikUpdateCharacterList();	// update the unified character context's list
+	hikUpdateContextualUI();
+	
+	// we are also changing the current tab
+	hikOnSwitchContextualTabs( );
+}
+
+global proc hikRenameDefinition()
+{
+	string $title = (uiRes("m_hikDefinitionOperations.kRename"));
+	string $msg = (uiRes("m_hikDefinitionOperations.kEnterName"));
+	string $cancel = (uiRes("m_hikGlobalUtils.kCancel"));
+	string $ok = (uiRes("m_hikGlobalUtils.kOK"));
+
+	string $currentName = hikGetCurrentCharacter();
+	string $result = `promptDialog
+						-title $title
+						-message $msg
+						-text $currentName
+						-button $ok -button $cancel
+						-defaultButton $ok
+						-cancelButton $cancel
+						-dismissString $cancel`;
+
+	if( $result != $ok )
+		return;
+
+	string $newName = `promptDialog -query -text`;
+	if( size($newName) <= 0)
+		return;
+
+	// TODO: use a nameField above to handle the rename directly
+	$newName = `rename $currentName $newName`;
+	hikSetCurrentCharacter($newName);
+
+	hikRenameConnectedNodes( $newName, 0 /* rigOnly */, "", $currentName);
+
+	if ( hikIsCharacterizationToolUICmdPluginLoaded() )
+	{
+		hikUpdateCharacterList();
+		hikUpdateSourceList();
+		hikUpdateContextualUI();
+	}
+}
+
+global proc hikHIKDefinition()
+{
+	string $currCharacter = hikGetCurrentCharacter( );
+	if( size( $currCharacter ) )
+	{
+		hikSelectCurrentCharacter( $currCharacter );
+		AttributeEditor;
+	}
+}
+
+global proc hikEditDefinition()
+{
+	string $currCharacter = hikGetCurrentCharacter( );
+	if( size( $currCharacter ) )
+	{
+		string $prop2StateNode = hikGetProperty2StateFromCharacter( $currCharacter );
+		if( size( $prop2StateNode ) )
+		{
+			select $prop2StateNode;
+			AttributeEditor;
+		}
+	}
+}
+
+global proc hikResetDefinition()
+{
+	string $currCharacter = hikGetCurrentCharacter( );
+	if( size( $currCharacter ) )
+	{
+		string $prop2StateNode = hikGetProperty2StateFromCharacter( $currCharacter );
+		if( size( $prop2StateNode ) )
+		{
+			ResetProperty2State $prop2StateNode;
+			adjustPropertyStateParams( $currCharacter );
+		}
+	}
+}
+
+global proc hikMirrorMatching()
+{
+	if ( ! hikIsCharacterizationToolUICmdPluginLoaded() )
+		return;
+
+	characterizationToolUICmd -edit -mirrormatch;
+
+	// Update the button states
+	hikUpdateDefinitionButtonState();
+}
+
+// TODO: is this the same as HIK Definition??
+global proc hikNameMatching()
+{
+	if ( ! hikIsCharacterizationToolUICmdPluginLoaded() )
+		return;
+
+	characterizationToolUICmd -edit -mapbones;
+
+	// TODO: do we need this? It's not in the current characterization tool
+	//hikUpdateDefinitnionButtonState();
+}
+
+global proc hikConfigureMirrorMatching()
+{
+
+	if ( ! hikIsCharacterizationToolUICmdPluginLoaded() )
+		return;
+
+	characterizationToolUICmd -edit -configuremirrormatch;
+}
+
+global proc hikMapBones()
+{
+
+	if ( ! hikIsCharacterizationToolUICmdPluginLoaded() )
+		return;
+
+	characterizationToolUICmd -edit -mapbones;
+}
+
+global proc hikExtractMapTemplate()
+{
+	
+	if ( ! hikIsCharacterizationToolUICmdPluginLoaded() )
+		return;
+
+	characterizationToolUICmd -edit -extractmapping;
+}
+
+global proc hikExportDefinition()
+{
+	if ( ! hikIsCharacterizationToolUICmdPluginLoaded() )
+		return;
+
+	characterizationToolUICmd -edit -saveCharacterization;
+}
+
+
+
+global proc hikDefinitionUpdateBones()
+{
+	if ( ! hikIsCharacterizationToolUICmdPluginLoaded() )
+		return;
+
+	// You don't know which characters are new so rebuild
+	// all of them
+	string $characters[] = hikGetSceneCharacters();
+	string $character;
+	for ( $character in $characters )
+	{
+		hikRebuildBoneAssignments($character);
+	}
+	// Update the component with the current name
+	$character = hikGetCurrentCharacter();
+	characterizationToolUICmd -edit -setcurrentcharname $character;
+}
+
+global proc hikDefinitionUpdateCharacterLists()
+{
+	if ( ! hikIsCharacterizationToolUICmdPluginLoaded() )
+		return;
+		
+	// Update the character list
+	string $characters[] = hikGetSceneCharacters();
+	string $charList = stringArrayToString($characters, ";");
+	characterizationToolUICmd -edit -characterlist $charList; 
+	// Then set the current character after
+	string $character = hikGetCurrentCharacter();
+	characterizationToolUICmd -edit -setcurrentcharname $character;
+}
+
+global proc hikPostCharacterisationStep( string $pCharacter )
+{
+	// Non descructive call, will esure that the character node has the proper node network assumed
+	// by the mayaHIK implementation
+	string $propertyState = hikGetProperty2StateFromCharacter($pCharacter);
+
+	if( $propertyState == "" )
+	{
+		$propertyState = hikCreatePropertyState();	
+		connectAttr ($propertyState+".message") ($pCharacter+".propertyState"); 
+		adjustPropertyStateParams( $pCharacter );
+	}
+
+	hikGetOrBuildSolverNode( $pCharacter );
+}
+
+// The following function is used to lock/unlock the characterization of a node. 
+// Locking of a character is very complex so here are some notes to try and explain
+// what is happening:
+//
+// Each HIKCharacterNode has an attribute InputCharacterizationLock for storing
+// and retrieving the lock state.  This attribute is a boolean. The function
+// hikIsDefinitionLocked() is used for retrieving lock state. 
+//
+// Locking a character has a number of requirements:
+// 1. We can only lock if the Characterization plug-in tells us that we have a valid
+// characterization.  
+// 2. We assume we have a valid characterization if we are importing an fbx file.
+// The parameter pValidateAndSaveStance is set to true if we are importing an fbx
+// so that we avoid this check.  We also assume that our stance is valid and that
+// we don't need to save it.
+// 3. Locking sets the new stance pose so we must save the TRS of the skeleton into
+// the HIKCharacterNode. We do this by calling ReadStancePoseTRSOffsets().
+// 4. If we are locked, then the Characterization tool should be reading the TRS
+// from the HIKCharacterNode rather than the scene.  This avoids moving from a 
+// valid to a warning state in the characterization.
+// 5. Its possible for a single Skeleton to be shared by several characterizations.
+// Locking one of these characterizations should unlock the others
+//
+// Unlocking a character has a number of requirements:
+// 1. If there is a rig associated with the Character, we delete the rig after 
+// prompting the user.
+// 2. We then put the character into the stance pose
+//
+// If the lock/unlock is successful we need to inform the HIK controls to update
+// their UI state.  This is done in the updateLockingStates() call.
+//
+global proc hikCharacterLock( string $pCharacter, int $pLock, int $pValidateAndSaveStance )
+{
+	int $isLock = hikIsDefinitionLocked( $pCharacter );
+	
+	if ( $pLock == $isLock )
+	{
+		return;
+	}
+	
+	if ( $pLock )
+	{
+		// Find any characters which share the skeleton of pCharacter and unlock
+		// them if the user permits it
+		string $characterList[] = getCharactersUsedByMySkeleton( $pCharacter, true );
+		if ( size($characterList) > 0 )
+		{
+			string $character;
+			for ( $character in $characterList )
+			{
+				if ( hikIsDefinitionLocked( $character ) )
+				{
+					string $kTitleLabel		=  (uiRes("m_hikDefinitionOperations.kExistingDefinitionTitleDialog"));
+					string $kMessageLabel	=  (uiRes("m_hikDefinitionOperations.kExistingDefinitionMessageDialog"));
+					string $kNoLabel		=  (uiRes("m_hikDefinitionOperations.kExistingDefinitionNoDialog"));
+					string $kYesLabel		=  (uiRes("m_hikDefinitionOperations.kExistingDefinitionYesDialog"));
+					string $result = `confirmDialog -title $kTitleLabel -message ( $character + $kMessageLabel )
+										-button $kYesLabel -button $kNoLabel -defaultButton $kNoLabel
+										-cancelButton $kNoLabel -dismissString $kNoLabel`;
+					if ( $result == $kYesLabel )
+					{
+						// Unlock
+						if ( ! characterLockNode( $character, false, false ) )
+							return;
+					}
+					else
+					{
+						return;
+					}
+				}
+			}
+		}
+	}
+	
+	if ( ! characterLockNode( $pCharacter, $pLock, $pValidateAndSaveStance ) )
+		return;
+
+	// For other controls
+	updateLockingStates( $pLock );
+}
+
+
+
+
+///////////////////////////////////////////////////////////////////
+// Script jobs
+///////////////////////////////////////////////////////////////////
+
+// File New callback
+global int $characterizeFileNewScriptJobId = -1;
+
+if($characterizeFileNewScriptJobId < 0)
+{
+	$characterizeFileNewScriptJobId = `scriptJob -e "deleteAll" "hikDefinitionFileNewCallback;"`;
+}
+
+// Post scene open callback : works with open, import and reference.
+// For the reference case, this trigger is called after all child 
+// references have been read.
+global int $characterizeFilePostSceneReadJobId = -1;
+
+if($characterizeFilePostSceneReadJobId < 0)
+{
+	$characterizeFilePostSceneReadJobId = `scriptJob -e "PostSceneRead" "hikDefinitionPostSceneReadCallback;"`;
+}

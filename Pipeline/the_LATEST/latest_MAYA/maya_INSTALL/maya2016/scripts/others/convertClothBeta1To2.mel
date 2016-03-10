@@ -1,0 +1,99 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+// THIS SCRIPT IS TO CONVERT NCLOTH ATTRIBUTES after loading a Maya8.5 Beta1 file into Beta2. 
+// It will not work for cuts other than Maya 8.5 Beta 2
+
+proc convertIter( string $obj, string $attr, float $oldDefault, float $newDefault, string $iter )
+{
+	string $objAt = ($obj + "." + $attr);
+	float $val = getAttr( $objAt );
+	if( $val == $newDefault ){
+		$val = $oldDefault;
+	}
+	int $i = getAttr( $obj + "." + $iter );
+	$val = $val * (float)$i;
+	setAttr ($objAt) $val;
+}
+
+global proc convertClothBeta1To2()
+{
+	string $solvers[] = `ls -type nucleus`;
+	string $solver;
+	int $airIter = 4;
+	float $lift = 0;
+	float $drag = 0;
+	float $dragOffset = 0;
+	for( $solver in $solvers ){
+		$airIter = getAttr( $solver + ".numAirEffectIterations" );
+		$lift = getAttr( $solver + ".lift" );
+		$drag = getAttr( $solver + ".drag" );
+		$dragOffset = getAttr( $solver + ".dragOffset" );
+		if( $drag > 0.0 || $lift > 0.0 ){
+			setAttr( $solver + ".airDensity" ) 0.1;
+		}
+		int $cIter = getAttr ($solver + ".numObjectCollisionIterations");
+		int $iter = getAttr ($solver + ".numIterations");
+		if( $iter > $cIter ){
+			$cIter = $iter;
+		}
+		setAttr ($solver + ".maxCollisionIterations") $cIter;
+		setAttr ($solver + ".subSteps") `getAttr($solver + ".numSubcycles")`;
+	}
+	$drag = $drag * (float) $airIter;
+	$lift = $lift * (float) $airIter;
+	string $cloths[] = `ls -type nCloth`;
+	string $cloth;
+	for( $cloth in $cloths ){
+		setAttr ($cloth + ".selfCollideWidthScale") `getAttr ($cloth + ".selfCollisionThicknessScale")`;
+		setAttr ($cloth + ".restitutionTension") `getAttr ($cloth + ".linksTension")`;
+		setAttr ($cloth + ".evaluationOrder") `getAttr ($cloth + ".newStretchModel")`;
+		setAttr ($cloth + ".maxSelfCollisionIterations") `getAttr ($cloth + ".numSelfCollisionIterations")`;
+
+		convertIter ( $cloth, "stretchResistance",1.0,20.0,"numStretchIter" );
+		float $stretch = getAttr( $cloth + ".stretchResistance");
+		setAttr ($cloth + ".compressionResistance") $stretch;
+		convertIter ( $cloth, "shearResistance",0,0,"numShearIter" );
+		convertIter ( $cloth, "bendResistance",0.02,0.1,"numBendIter" );
+		convertIter ( $cloth, "rigidity",0,0,"numRigidityIterations" );
+		convertIter ( $cloth, "deformResistance",0,0,"numRigidityIterations" );
+		convertIter ( $cloth, "damp",0,0,"numDampingIterations" );
+		setAttr ($cloth + ".drag") $drag;
+		setAttr ($cloth + ".lift") $lift;
+		setAttr ($cloth + ".tangentialDrag") $dragOffset;
+		int $pModel = getAttr( $cloth + ".pressureMethod" );
+		float $pStrength = getAttr ($cloth + ".pressureStrength");
+		if( $pModel == 0 ){
+			float $pressure = getAttr($cloth + ".pressure");
+			setAttr ($cloth + ".pressure") ($pressure * $pStrength);
+			setAttr ($cloth + ".incompressibility") 1.0;
+		} else {
+			setAttr ($cloth + ".incompressibility") ($pStrength * $airIter);
+		}
+	}
+	string $constraints[] = `ls -type dynamicConstraint`;
+	string $constraint;
+	for( $constraint in $constraints ){
+		convertIter ( $constraint, "strength",1.0, 20.0,"iterations" );
+		convertIter ( $constraint, "tangentStrength",0.5, 10.0,"iterations" );
+		convertIter ( $constraint, "bendStrength",1.0, 20.0,"iterations" );
+	}
+}

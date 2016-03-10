@@ -1,0 +1,1481 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+global proc AEhwShader_NoOp( string $sNodeAttr )
+{
+}
+
+////////////////////////////////////////////////////////////////////////
+//                 Direction/Position Vector Controls                 //
+////////////////////////////////////////////////////////////////////////
+
+// Callback to create 1st level popup menu items for direction/position vector
+global proc AEhwShader_MatrixPopup( int    $iLayout,
+                                         string $sAttrName )
+{                                      
+    string $sNodeName = AEhwShader_beginCallback( $iLayout );
+
+    string $sControlRel = "hwShaderMatrix_" + $sAttrName;
+    string $sControlAbs = `setParent $sControlRel`;
+    string $sPopupAbs   = $sControlAbs + "|dirPopup";
+    popupMenu -e -deleteAllItems $sPopupAbs;
+    setParent -menu $sPopupAbs;
+
+    string $sCmd = "AEhwShader_MatrixPopup2 " +
+                     $iLayout + " " +
+                     $sAttrName + " ";
+
+    string $saSubmenus[] = { "Lights", "Cameras", "Locators", "Selected" };
+    string $sSubmenu;
+    int    $iSubmenu;
+    for ( $sSubmenu in $saSubmenus )
+    {
+        menuItem -l $sSubmenu
+                 -subMenu 1
+                 -postMenuCommand ( $sCmd + $iSubmenu )
+                 -postMenuCommandOnce 1
+                 ( "sub" + $iSubmenu );
+        setParent -menu ..;
+        ++$iSubmenu;
+    }
+
+    menuItem -divider 1;
+    $sCmd = "AEhwShader_ConnectVector " +        // (in hwShader_util.mel)
+                $sNodeName + "." +
+                $sAttrName + " ";
+    menuItem -l "Disconnect"
+             -c ( $sCmd + "\"\"" );
+}                                      // AEhwShader_MatrixPopup
+
+
+// Callback to create 2nd level popup menu items 
+global proc AEhwShader_MatrixPopup2( int    $iLayout,
+                                          string $sAttrName,
+                                          int    $iSubmenu )
+{                                      
+    string $sNodeName = AEhwShader_beginCallback( $iLayout );
+
+    string $sControlRel = "hwShaderMatrix_" + $sAttrName;
+    string $sControlAbs = `setParent $sControlRel`;
+    string $sSubmenuAbs = $sControlAbs + "|dirPopup|sub" + $iSubmenu;
+    setParent -menu $sSubmenuAbs;
+
+    string $sCmd = "AEhwShader_ConnectVector " +
+                       $sNodeName + "." +
+                       $sAttrName + " ";
+    string $shapes[];
+    string $shape;
+
+    switch ( $iSubmenu )
+    {
+        case 0:                        // Lights
+            $shapes = `ls -type light`;
+            break;
+
+        case 1:                        // Cameras 
+            $shapes = `listCameras -perspective`;
+            $shapes = sort( $shapes );
+            for ( $shape in $shapes )
+                menuItem -l $shape
+                         -c ( $sCmd + $shape );
+            menuItem -divider 1;
+            $shapes = `listCameras -orthographic`;
+            break;
+
+        case 2:                        // Locators
+            $shapes = `ls -type locator`;
+            break;
+
+        case 3:                        // Selected
+            $shapes = `ls -sl`;
+            break;
+    }
+
+    // Filter the node and/or attribute names.
+    string $saMenuItems[];
+    for ( $shape in $shapes )
+        if ( !catch( $shape = AEhwShader_MatrixFilter( $shape ) ) &&
+             $shape != "" )
+            hwShader_appendUnique( $saMenuItems, $shape );
+    $saMenuItems = sort( $saMenuItems );
+
+    // Create menu items.
+    string $sMenuItem;
+    for ( $sMenuItem in $saMenuItems )
+        menuItem -l $sMenuItem
+                 -c ( $sCmd + $sMenuItem );
+
+    if ( !`popupMenu -q -numberOfItems $sSubmenuAbs` )
+        menuItem -l " (None) "
+                 -parent $sSubmenuAbs
+                 -enable 0;
+}                                      // AEhwShader_MatrixPopup2
+
+
+// Decide which selection items to include in direction/position vector popup menu.
+global proc string AEhwShader_MatrixFilter( string $sSelectionItem )
+{
+    string $sNode = `match "^[^.]*" $sSelectionItem`;
+
+    // node
+    if ( $sSelectionItem == $sNode )
+    {                     
+        // For instanced objects, show only the first instance because
+        //   Maya doesn't provide worldMatrix[i] for i > 0.  (Maya bug)
+        string $sa[] = `listRelatives -allParents -path $sNode`;
+        if ( size( `ls -shapes $sNode` ) )
+            $sNode = $sa[0];
+        else if ( size( `ls -typ dagNode $sNode` ) )
+        {
+            if ( size( $sa ) > 1 )
+                $sNode = $sa[0] + "|" + `substitute ".*|" $sNode ""`;    
+        }
+        else
+            $sNode = "";
+        return $sNode;
+    }                     
+
+    // node.attr
+    else
+    {
+        string $sAttr = `match "[^.]*$" $sSelectionItem`;
+        string $saConnectable[] = `listAttr -read -scalar -connectable $sSelectionItem`;
+        if ( size( $saConnectable ) == 1 )      // e.g. { "translateX" }
+        {
+            string $saParent[] = `attributeQuery -node $sNode -listParent $sAttr`;
+            if ( !size( $saParent ) )
+                return "";
+            $sAttr = $saParent[0];
+            $sSelectionItem = $sNode + "." + $sAttr;
+            $saConnectable = `listAttr -read -scalar -connectable $sSelectionItem`;
+        }
+        if ( size( $saConnectable ) == 3 )      // e.g. { "translateX", "translateY", "translateZ" }
+        {
+            string $saChildren[] = `attributeQuery -node $sNode -listChildren $sAttr`;
+            if ( size( $saChildren ) != 3 )     
+                return "";
+            int $i;
+            for ( $i = 0; $i < 3; ++$i )
+                if ( $saChildren[ $i ] != $saConnectable[ $i ] )
+                    return "";
+            return $sSelectionItem;
+        }
+    }
+    return "";
+}                                      // AEhwShader_MatrixFilter
+
+
+// Callback when user changes the text in direction/position vector text field.
+global proc AEhwShader_MatrixText( int $iLayout, string $sAttrName, string $sText )
+{                                      
+    string $sNodeName = AEhwShader_beginCallback( $iLayout );
+    string $sCmd;
+
+    // If new text appears to be valid, make the requested connection.
+    if ( $sText == "" )
+        $sText = "\"\"";
+    else if ( catch( $sText = AEhwShader_MatrixFilter( $sText ) ) )
+        $sText = "";
+
+    if ( $sText != "" )
+    {
+        $sCmd = "AEhwShader_ConnectVector " +
+                    $sNodeName + "." + $sAttrName +
+                    " " + $sText + ";\n";
+        print ( $sCmd );
+        evalDeferred $sCmd;
+        // On undo/redo, Maya will display our AEhwShader_ConnectVector
+        // command to show what was undone/redone, only if it is invoked
+        // via "evalDeferred".  We could call AEhwShader_ConnectVector
+        // directly, but then what Maya displays on undo/redo would be the
+        // invocation of the present function, AEhwShader_MatrixText,
+        // which is not as informative for the user.  And because this is
+        // deferred, the call below to AEhwShader_MatrixUpdate must
+        // be deferred too so it will happen afterwards.
+    }
+
+    // Update text field to show the result.
+    $sCmd = "AEhwShader_MatrixUpdate " + $iLayout + " " + $sAttrName;
+    evalDeferred $sCmd;
+}                                      // AEhwShader_MatrixText
+
+
+// Callback to update UI after direction/position connection is made or broken.
+global proc AEhwShader_MatrixUpdate( int    $iLayout,
+                                          string $sAttrName )
+{
+    string $sNodeName = AEhwShader_beginCallback( $iLayout );
+
+    // Did node or attribute go away while our deferred
+    // execution via "evalDeferred" was pending?
+    if ( $sNodeName == "" ||
+         !size( `listAttr -st $sAttrName $sNodeName` ) )
+        return;
+
+    // Call me back when a connection to this attr is made or broken.
+    string $sControlRel = "hwShaderMatrix_" + $sAttrName;
+    string $plug = $sNodeName + "." + $sAttrName;
+    string $sArg = $iLayout + " " + $sAttrName;
+    string $sCmd = "AEhwShader_MatrixUpdate " + $sArg;
+    $sCmd = "evalDeferred \"" + $sCmd + "\"";
+    scriptJob -parent $sControlRel
+              -replacePrevious
+              -killWithScene
+              -runOnce 1
+              -compressUndo 1
+              -connectionChange $plug $sCmd;
+
+    // What is the attribute connected to?
+    string $connectedTo = "";
+    string $connections[] = `listConnections -s 1 -d 0 $plug`;
+    if (size($connections) > 0)
+    {
+        $connections = `listConnections -s 1 -d 0 -p 1 $plug`;
+        $connectedTo = $connections[0];
+    }
+
+    // Show name of connected node.
+    textFieldGrp -e -text $connectedTo
+                    $sControlRel;
+
+    // Don't need popup menu items anymore.  Zap 'em.
+    string $sControlAbs = `setParent $sControlRel`;
+    string $sPopupAbs   = $sControlAbs + "|dirPopup";
+    popupMenu -e -deleteAllItems $sPopupAbs;
+}                                      // AEhwShader_MatrixUpdate
+
+
+global proc AEhwShader_ConnectVector( string $plug, string $item )
+{
+    string $conns[] = `listConnections -s 1 -d 0 -p 1 $plug`;
+    string $connectedTo;
+    if (size($conns) > 0) {
+        $connectedTo  = $conns[0];
+    }
+    if ($item == $connectedTo) {
+        // No changes, we're done.
+        //
+        return;
+    }
+
+	// We're connecting to something else, so first disconnect any
+	// existing connection
+	//
+    if (size($conns) > 0) 
+        disconnectAttr $connectedTo $plug;
+
+    // First figure out if we are connecting to one of the light or
+    // camera nodes or if we are connecting to a specific attribute
+    // somewhere.
+    //
+    if (gmatch($item, "*.*")) 
+    {
+        // We are connecting to a specific attribute.  
+        //
+        connectAttr -force $item $plug;
+    }
+	else if( $item != "")
+	{    
+		// Ok, we are connecting to one of the lights or cameras from the
+		// optionMenu.  Connect the specified item to the plug, blowing away
+		// any existing connection.
+		//
+		string $srcM = $item + ".wm[0]";    // Note: only the first instance works.
+											//   (Maya bug: wm[1] etc. don't exist)
+		connectAttr $srcM $plug;
+	}
+}                                      // AEhwShader_ConnectVector
+
+
+////////////////////////////////////////////////////////////////////////
+//                       File browser controls                        //
+////////////////////////////////////////////////////////////////////////
+
+// Create controls for a file name attribute. 
+global proc AEhwShader_fileNameControls( string $sAttrName,
+                                           string $sLabel,
+                                           string $sAnnotation,
+                                           string $sFileClassification,
+										   string $sFileFilter,
+                                           string $projectDir )
+{
+    global int $gAEhwShader_iLayout; // IN: AE template instance id
+
+    // Label
+    text -l $sLabel -ann $sAnnotation;
+
+    // Text field
+    textField -ann $sAnnotation tfFileName;
+
+    // Button to invoke file browser dialog
+    string $sArgs = $gAEhwShader_iLayout +
+                        " " + $sAttrName +
+                        " " + $sFileClassification +
+						" \"" + $sFileFilter + "\" " +
+                        " \"" + $projectDir + "\" ";
+    symbolButton -image "navButtonBrowse.png" 
+                 -c ( "AEhwShader_fileBrowser " + $sArgs )
+                 -ann $sAnnotation;
+}                                      // AEhwShader_fileNameLayout
+
+
+// Callback on button click to invoke file browser dialog.
+global proc AEhwShader_fileBrowser( int    $iLayout,
+                                      string $sAttrName,
+                                      string $sFileClassification,
+									  string $sFileFilter,
+                                      string $projectDir )
+{
+    // Retrieve the node name.
+    string $sNodeName = AEhwShader_beginCallback( $iLayout );
+
+    // Determine initial directory for file browser.
+    string $sWorkspace = `workspace -q -fn`;
+    setWorkingDirectory $sWorkspace $sFileClassification "Shaders";
+
+    // Start in current file's directory if possible. 
+    string $sStartingdir = `getAttr ( $sNodeName + "." + $sAttrName )`;
+    $sStartingdir = `match ".*/" $sStartingdir`; 
+    
+    // If there isn't a current directory, use the project dir 
+    if( $sStartingdir == "")
+		$sStartingdir = $sWorkspace + $projectDir;
+
+    // Invoke the file browser dialog.
+    string $file[] = `fileDialog2 -cap (uiRes("m_AEhwShaderTemplate.kOpen")) -dir $sStartingdir -fm 1 -ff $sFileFilter`;
+    int $n = size($file);
+    for ( $i=0; $i<$n; $i++ )
+    {
+        if ( size($file[$i]) == 0 )
+            continue;
+
+        string $path = $file[$i];
+
+        // ... strip the QT's .* postfix
+        //     OS native dialog does not have the .* postfix if the filter is * or *.*
+        if ( endsWith($path, ".*") )
+        {
+            $path = substring($path, 1, size($path)-2);
+        }
+
+        // ... get the full path to the file
+        $path = fromNativePath( $path );
+
+        AEhwShader_fileChoice  $iLayout $sAttrName $path;
+    }
+}                                      // AEhwShader_fileBrowser
+
+// Callback when user clicks the "Open" button in the file browser
+//   dialog, or changes the text in the file name text field.
+global proc AEhwShader_fileChoice( int    $iLayout,
+                                     string $sAttrName,
+                                     string $sFile )
+{
+    // Retrieve the node name.
+    string $sNodeName = AEhwShader_beginCallback( $iLayout );
+
+    // Set attribute.
+    string $sCmd = "setAttr -type \"string\" " +
+                    $sNodeName + "." + $sAttrName +
+                    " \"" + $sFile + "\";\n";
+    print ( $sCmd );
+    evalDeferred $sCmd;
+    // Oddly, upon undo/redo, Maya will display our setAttr
+    // command to show what was undone/redone, only if we use
+    // evalDeferred to execute the setAttr.  Otherwise undo/redo
+    // would display the AEhwShader_fileChoice invocation,
+    // which is not as interesting for the user.  
+}                                      // AEhwShader_fileChoice
+
+
+//////////////////////////////////////////////////////////////////////////
+// BASIC SHADER PARAMETER CONTROLS
+//////////////////////////////////////////////////////////////////////////
+
+// Layout a boolean attribute (code borrowed from AEnewBooleanGroup.mel)
+//
+global proc string AEhwShader_BoolLayout( string $plug, string $uiName, string $annotation )
+{
+    string $createdControl = `formLayout`;
+    checkBoxGrp -ncb 1
+                -ann $annotation
+                valueFld;
+    checkBoxGrp -e -l1 $uiName valueFld;
+    formLayout -e
+	    -af valueFld top 0
+	    -af valueFld left 0
+	    -af valueFld right 0
+	    -af valueFld bottom 0
+	    $createdControl;
+    connectControl -in 2 valueFld $plug;
+    setParent ..;
+    return $createdControl;
+}
+
+// Layout an integer attribute (code borrowed from AEnewInt.mel)
+//
+global proc string AEhwShader_IntLayout( string $plug, string $uiName, string $annotation )
+{
+    return `attrFieldSliderGrp -l $uiName
+                               -ann $annotation
+                               -hideMapButton 1
+                               -attribute $plug`;
+}
+
+// Layout an enum attribute (code borrowed from AEnewEnum.mel)
+//
+global proc string AEhwShader_EnumLayout( string $plug, string $uiName, string $annotation )
+{
+    return `attrEnumOptionMenuGrp -l $uiName
+                               -ann $annotation
+                               -attribute $plug`;
+}
+// Layout a float attribute (code borrowed from AEnewFloat.mel)
+//
+global proc string AEhwShader_FloatLayout( string $plug, string $uiName, string $annotation )
+{
+    return `attrFieldSliderGrp -l $uiName
+                               -ann $annotation
+                               -hideMapButton 1
+                               -attribute $plug`;
+}
+
+// Layout a string attribute (code borrowed from AEnewString.mel)
+//
+global proc string AEhwShader_StringLayout( string $plug, string $uiName, string $annotation )
+{
+    string $createdControl = `textFieldGrp -l $uiName -ann $annotation`;
+    connectControl -index 2 $createdControl $plug;
+    return $createdControl;
+}
+
+// Layout a vector2 attribute
+//
+global proc string AEhwShader_Vector2Layout( string $plug, string $uiName, string $annotation )
+{
+    string $cName = "Vec2";
+    string $createdControl;
+    $createdControl = `columnLayout -adj true`;
+    floatFieldGrp -l $uiName
+                  -ann $annotation
+                  -numberOfFields 2
+                  -cw3 132 100 100
+                  $cName;
+	connectControl -index 2 $cName ($plug+"X");
+	connectControl -index 3 $cName ($plug+"Y");
+    setParent ..;
+    return $createdControl;
+}
+
+// Layout a vector3 attribute
+//
+global proc string AEhwShader_Vector3Layout( string $plug, string $uiName, string $annotation )
+{
+    string $cName = "Vec3";
+    string $createdControl;
+    $createdControl = `columnLayout -adj true`;
+    floatFieldGrp -l $uiName
+                  -ann $annotation
+                  -numberOfFields 3
+                  $cName;
+	connectControl -index 2 $cName ($plug+"X");
+	connectControl -index 3 $cName ($plug+"Y");
+	connectControl -index 4 $cName ($plug+"Z");
+    setParent ..;
+    return $createdControl;
+}
+
+// Layout a vector4 attribute
+//
+global proc string AEhwShader_Vector4Layout( string $plug, string $uiName, string $annotation )
+{
+    string $cName = "Vec4";
+    string $createdControl;
+    $createdControl = `columnLayout -adj true`;
+    floatFieldGrp -l $uiName
+                  -ann $annotation
+                  -numberOfFields 4
+                  -cw5 144 50 50 50 50
+                  $cName;
+	connectControl -index 2 $cName ($plug+"X");
+	connectControl -index 3 $cName ($plug+"Y");
+	connectControl -index 4 $cName ($plug+"Z");
+	connectControl -index 5 $cName ($plug+"W");
+    setParent ..;
+    return $createdControl;
+}
+
+// Layout a color3 attribute (code borrowed from AEnewColor.mel)
+//
+global proc string AEhwShader_Color3Layout( string $plug, string $uiName, string $annotation )
+{
+    return `attrColorSliderGrp -l $uiName
+                               -ann $annotation
+                               -showButton 0
+                               -attribute $plug`;
+}                                   
+
+// Layout a color4 attribute 
+//
+global proc string AEhwShader_Color4Layout( string $plug, string $uiName, string $annotation )
+{
+    // The first 3 elements are in  ($plug + "RGB") so we can use a standard colour widget
+    string $createdControl = `columnLayout -adj true`;
+    attrColorSliderGrp -l $uiName
+                       -ann ( $annotation + "(rgb)" )
+                       -showButton 0
+                       -attribute ($plug + "RGB");
+
+    // The 4th element will be in ($plug + "A");
+    attrFieldSliderGrp -l "(alpha)"
+                       -ann ( $annotation + "(a)" )
+                       -hideMapButton 1
+                       -attribute ( $plug + "A" );
+
+    separator -style none;
+    setParent ..;
+    return $createdControl;
+}
+
+// Layout a texture attribute
+global proc string AEhwShader_TextureLayout( string $plug, string $uiName, string $annotation )
+{	
+	// Textures are specified as file texture nodes
+	//
+	return `attrNavigationControlGrp -l $uiName 
+									-ann $annotation 
+									-attribute $plug`;
+}                                      // AEhwShader_TextureLayout
+
+// Layout a direction or position vector attribute
+//
+global proc string AEhwShader_MatrixLayout( string $plug, string $uiName, string $annotation )
+{
+    global int $gAEhwShader_iLayout;      // IN: AE template instance id
+
+    // Create the control.
+    //   We pass the attribute name to our callback procedures by
+    //   embedding it in the control name.
+    string $sAttrName   = `substitute "^[^.]*\\." $plug ""`;
+    string $sArg        = $gAEhwShader_iLayout + " " + $sAttrName;
+    string $sControlRel = "hwShaderMatrix_" + $sAttrName;
+    string $controlAbsAnn = `format -stringArg $annotation (uiRes("m_AEhwShaderTemplate.kRmbTo"))` ;	
+    string $sControlAbs = 
+        `textFieldGrp -l $uiName
+                      -cc ( "AEhwShader_MatrixText " + $sArg + " \"#1\"" )
+		      -ann $controlAbsAnn
+                      $sControlRel`;
+
+    // Create popup menu.
+    string $s = `popupMenu -postMenuCommand ( "AEhwShader_MatrixPopup " + $sArg )
+                           dirPopup`;
+
+    // Set the text of the control.
+    evalDeferred ( "AEhwShader_MatrixUpdate " + $sArg );
+
+    return $sControlAbs;
+}                                      // AEhwShader_MatrixLayout
+
+// Layout an attribute that is not to be displayed.
+global proc string AEhwShader_SuppressLayout( string $plug, string $uiName, string $annotation )
+{
+    return "";
+}                                      // AEhwShader_SuppressLayout
+
+
+
+////////////////////////////////////////////////////////////////////////
+//                                               //
+////////////////////////////////////////////////////////////////////////
+
+
+// Return list of shape nodes that use the given shader node.
+global proc string[] hwShader_listShapes( string $shaderNode )
+{
+    string $saResult[];
+    string $saSearch[] = { $shaderNode };
+    for ( $shaderNode in $saSearch )
+    {
+        string $s;
+        string $sa[];
+
+        // Skip if not a shader node.
+        $s  = `nodeType $shaderNode`;
+        $sa = `getClassification $s`;
+        if ( !size( $sa ) )
+        {}
+
+        // If shading group, append member node names to result array.
+        else if ( $sa[ 0 ] == "shadingEngine" )
+        {
+            $sa = `sets -q -nodesOnly $shaderNode`;
+            for ( $s in $sa )
+                hwShader_appendUnique( $saResult, $s );
+        }
+
+        // Visit downstream nodes.
+        else
+        {
+            $sa = `listConnections -d 1 -s 0 $shaderNode`;
+            for ( $s in $sa )
+                hwShader_appendUnique( $saSearch, $s );
+        }
+    }
+    return $saResult;
+}                                      // hwShader_listShapes
+
+
+// Append item to string array if not already present.
+global proc hwShader_appendUnique( string $sa[], string $sNewItem )
+{
+    string $s;
+    for ( $s in $sa )
+        if ( $s == $sNewItem )
+            return;
+    $sa[ size( $sa ) ] = $sNewItem;
+}                                      // hwShader_appendUnique
+
+
+// Given a shape node, find its UV set names and append them to $uvSets 
+// (if not already present).
+global proc hwShader_collectUVSetNames( string $shapeNode, string $uvSets[] )
+{
+    string $sa[] = `polyUVSet -q -allUVSets $shapeNode`;
+    string $sSet;
+    for ( $sSet in $sa )
+        hwShader_appendUnique( $uvSets, $sSet );
+}                                      // hwShader_collectUVSetNames
+
+
+// Return list of UV set names existing on one or more of the given mesh nodes.
+global proc string[] hwShader_listUVSets( string $meshNames[] )
+{
+    string $uvSets[];
+    string $meshName;
+    for ( $meshName in $meshNames )
+        hwShader_collectUVSetNames( $meshName, $uvSets );
+    return sort( $uvSets );
+}                                      // hwShader_listUVSets
+
+
+// Given a shape node, find its Color set names and append them to $uvSets 
+// (if not already present).
+global proc hwShader_collectColorSetNames( string $shapeNode, string $uvSets[] )
+{
+    string $sa[] = `polyColorSet -q -allColorSets $shapeNode`;
+    string $sSet;
+    for ( $sSet in $sa )
+        hwShader_appendUnique( $uvSets, $sSet );
+}                                      // hwShader_collectColorSetNames
+
+
+// Return list of Color set names existing on one or more of the given mesh nodes.
+global proc string[] hwShader_listColorSets( string $meshNames[] )
+{
+    string $uvSets[];
+    string $meshName;
+    for ( $meshName in $meshNames )
+        hwShader_collectColorSetNames( $meshName, $uvSets );
+    return sort( $uvSets );
+}                                      // hwShader_listColorSets
+
+
+////////////////////////////////////////////////////////////////////////
+//                   Uniform Parameter Layout                         //
+////////////////////////////////////////////////////////////////////////
+
+// Create "Shader Data" layout, or recycle an
+//   existing layout for use with another hwShader node.
+global proc AEhwShader_uniformParameterLayout( string $sNodeAttr )
+{
+    global int $gAEhwShader_iLayout; // IN: AE template instance id
+    global int $gAEhwShader_bNew;    // IN: true => build new controls 
+
+    // No action needed if our layout is already associated with the given node.
+    if ( !$gAEhwShader_bNew )
+        return;
+
+    // Find or create layout.
+    setUITemplate -pst attributeEditorTemplate;
+    string $sLayoutRel = "hwShaderUniformLayout";
+    string $sLayoutAbs = `setParent -q` + "|" + $sLayoutRel;
+    int $bReuse = `layout -exists $sLayoutAbs`;
+    if ( $bReuse )
+        setParent $sLayoutRel;
+    else
+        columnLayout -adj 1
+                     -visible 0
+                     $sLayoutRel;
+
+    AEhwShader_uniformParameterUpdate( $gAEhwShader_iLayout, $bReuse, 0 );
+
+
+   // Clean up and make the layout visible.
+    setParent ..;                
+    setUITemplate -ppt;
+    layout -e -visible 1 $sLayoutRel;
+
+
+    // Update text fields when value of the attribute is changed.
+    string $cmd = "AEhwShader_uniformParameterUpdate " + $gAEhwShader_iLayout + " 1 0";
+    scriptJob -parent hwShaderUniformLayout
+              -replacePrevious
+              -killWithScene
+              -compressUndo 1
+              -attributeChange $sNodeAttr $cmd;
+}  
+
+
+// Create or update the vertex attribute fields.
+global proc AEhwShader_uniformParameterUpdate( int $iLayout, int $bReuse, int $nShow )
+{
+    string $s;
+
+    // Find our layout and get the hwShader node name.
+    string $sNodeName = AEhwShader_beginCallback( $iLayout );
+    setParent hwShaderUniformLayout;
+
+    // Delete old controls.
+    string $sLayoutRel = "hwShaderUniformParameterLayout";
+	string $sLayoutAbs = `setParent -q` + "|" + $sLayoutRel;
+    if( `layout -exists $sLayoutAbs`)
+        deleteUI $sLayoutAbs;
+
+    // Create a column layout to hold the new controls.
+    setUITemplate -pst attributeEditorTemplate;
+    columnLayout -adj 1 -visible 0 $sLayoutRel;
+
+    // Get the list of uniform parameters on this shader
+    string $sNodeAttr = $sNodeName + ".uniformParameters";
+    string $uniformParameterList[] = `getAttr $sNodeAttr`;
+    int $nShaderData = size( $uniformParameterList );
+    $iShaderData = 0;
+    for ( ; $iShaderData < $nShaderData; ++$iShaderData)
+    {
+        AEhwShader_buildUniform( $sNodeName, $uniformParameterList[ $iShaderData]);
+    }  // loop over shader parameters
+    
+    // Clean up and make the layout visible.
+    setParent ..;  
+    setUITemplate -ppt;
+    layout -e -visible 1 $sLayoutRel;
+}                                      // AEhwShader_uniformParameterUpdate
+
+// Build UI for one of the dynamic parameters of the shader.
+//   Returns the control or layout name, or "".
+global proc string AEhwShader_buildUniform( string $node, string $attr )
+{
+	string $name = `getAttr ($node + "." + $attr + "_Name")`; 
+	string $plug = $node + "." + $attr;
+	string $type = `getAttr ($node + "." + $attr + "_Type")`; 
+	string $annotation = "";
+
+	// Use UI Nice Name if exists.
+	// Note that we use addAttr to query the nice name override.
+	string $uiName = `addAttr -q -niceName $plug`;
+	if( size($uiName) == 0 ) $uiName = $name; 
+
+	if( `attributeQuery -n $node -h $attr` ==  0)
+	{
+		// Create controls depending on parameter type.
+		switch ( $type )
+		{
+			case "bool":    return AEhwShader_BoolLayout( $plug, $uiName, $annotation );    
+			case "int":     return AEhwShader_IntLayout( $plug, $uiName, $annotation );     
+			case "enum":     return AEhwShader_EnumLayout( $plug, $uiName, $annotation );
+			case "float":   return AEhwShader_FloatLayout( $plug, $uiName, $annotation );   
+			case "string":  return AEhwShader_StringLayout( $plug, $uiName, $annotation );  
+			case "float2x1":  return AEhwShader_Vector2Layout( $plug, $uiName, $annotation ); 
+			case "float1x2":  return AEhwShader_Vector2Layout( $plug, $uiName, $annotation ); 
+			case "float3x1":  return AEhwShader_Vector3Layout( $plug, $uiName, $annotation ); 
+			case "float1x3":  return AEhwShader_Vector3Layout( $plug, $uiName, $annotation ); 
+			case "float4x1":  return AEhwShader_Vector4Layout( $plug, $uiName, $annotation ); 
+			case "float1x4":  return AEhwShader_Vector4Layout( $plug, $uiName, $annotation ); 
+			case "color3x1":  return AEhwShader_Color3Layout( $plug, $uiName, $annotation ); 
+			case "color1x3":  return AEhwShader_Color3Layout( $plug, $uiName, $annotation ); 
+			case "color4x1":  return AEhwShader_Color4Layout( $plug, $uiName, $annotation ); 
+			case "color1x4":  return AEhwShader_Color4Layout( $plug, $uiName, $annotation ); 
+			case "texture":  return AEhwShader_TextureLayout( $plug, $uiName, $annotation ); 
+			case "time":
+			case "Other":
+			case "Unknown": return AEhwShader_SuppressLayout( $plug, $uiName, $annotation );
+			default:        
+				if ( `match "matrix" $type` != "") return AEhwShader_MatrixLayout( $plug, $uiName, $annotation ); 
+		}
+	}
+
+    // Unrecognized/unsupported type
+    return AEhwShader_SuppressLayout( $plug, $uiName, $annotation );
+}
+
+
+
+////////////////////////////////////////////////////////////////////////
+//                   Varying Parameter Layout                         //
+////////////////////////////////////////////////////////////////////////
+
+// Create "Surface Data" layout, or recycle an
+//   existing layout for use with another hwShader node.
+global proc AEhwShader_varyingParameterLayout( string $sNodeAttr )
+{
+    global int $gAEhwShader_bNew;    // IN: true => build new controls 
+    global int $gAEhwShader_iLayout; // IN: AE template instance id
+
+    // No action needed if our layout is already associated with the given node.
+    if ( !$gAEhwShader_bNew )
+        return;
+
+    // Find or create layout.
+    setUITemplate -pst attributeEditorTemplate;
+    string $sLayoutRel = "hwShaderVaryingLayout";
+    string $sLayoutAbs = `setParent -q` + "|" + $sLayoutRel;
+    int $bReuse = `layout -exists $sLayoutAbs`;
+    if ( $bReuse )
+        setParent $sLayoutRel;
+    else
+        columnLayout -adj 1
+                     -visible 0
+                     $sLayoutRel;
+
+    // Create or update the controls.
+    AEhwShader_varyingParameterUpdate( $gAEhwShader_iLayout, $bReuse, 0 );
+
+    // Clean up and make the layout visible.
+    setParent ..;                
+    setUITemplate -ppt;
+    layout -e -visible 1 $sLayoutRel;
+
+    // Update text fields when value of the attribute is changed.
+    string $cmd = "AEhwShader_varyingParameterUpdate " +
+                    $gAEhwShader_iLayout + " 1 0";
+    scriptJob -parent $sLayoutRel
+              -replacePrevious
+              -killWithScene
+              -compressUndo 1
+              -attributeChange $sNodeAttr $cmd;
+}                                      // AEhwShader_varyingParameterLayout
+
+
+// Create or update the vertex attribute fields.
+global proc AEhwShader_varyingParameterUpdate( int $iLayout, int $bReuse, int $nShow )
+{
+    string $s;
+
+    // Find our layout and get the hwShader node name.
+    string $sNodeName = AEhwShader_beginCallback( $iLayout );
+    setParent hwShaderVaryingLayout;
+
+    // Create layout for vertex attribute fields, or reuse existing layout.
+    setUITemplate -pst attributeEditorTemplate;
+    if ( $bReuse )
+        setParent clSurfaceData;
+    else
+        columnLayout -adj 1 clSurfaceData;
+
+	// Get the list of varying parameters on this shader
+	string $varyingParameterList[] = getAttr ($sNodeName + ".varyingParameters");
+    int $nSurfaceData = size( $varyingParameterList );
+    $iSurfaceData = 0;
+    for ( ; $iSurfaceData < $nSurfaceData; ++$iSurfaceData)
+    {
+        // Control & menu names 
+        string $sControlRel = "vp" + $iSurfaceData;
+        string $sControlAbs = `setParent -q` + "|" + $sControlRel;
+        string $sPopupRel   = "vpPopup";
+        string $sPopupAbs   = $sControlAbs + "|" + $sPopupRel;
+
+        // Get vertex attribute specification to be displayed in the text field.
+        string $sourceAttr = $sNodeName + "." + $varyingParameterList[ $iSurfaceData] + "_Source";
+        string $sSurfaceDataName = getAttr( $sNodeName + "." + $varyingParameterList[ $iSurfaceData] + "_Name");
+        string $sSurfaceDataValue = getAttr( $sourceAttr);
+
+	string $annotation = (uiRes("m_AEhwShaderTemplate.kUseRMBToSelectSource"));
+	if (`match "TexCoord" $sSurfaceDataName` != "")
+		$annotation = (uiRes("m_AEhwShaderTemplate.kUseRMBToSelectSourceUV"));
+        if ( `control -exists $sControlAbs` )
+		{
+			// Reuse existing field
+            textFieldGrp -e
+                         -editable true
+						 -label $sSurfaceDataName
+			 -ann $annotation
+                         -text $sSurfaceDataValue
+                         $sControlRel;
+            popupMenu -e -deleteAllItems $sPopupAbs;
+		}
+		else
+        {
+			// Create new text field.
+			$s = "AEhwShader_varyingParameterText " +
+					$iLayout + " " + $iSurfaceData + " \"#1\"";
+			textFieldGrp -label $sSurfaceDataName
+						 -ann $annotation
+						 -cc $s
+						 -editable true
+						 -text $sSurfaceDataValue 
+						 $sControlRel;
+
+			$s = "AEhwShader_varyingParameterPopup " + $iLayout + " " + $iSurfaceData;
+			popupMenu -postMenuCommand $s
+					  $sPopupRel;
+		}
+		
+		// And sync them up so that our AE field updates when the attribute changes value
+		// (either because we changed it throught the popup menu, or it was changed externally)
+		connectControl -index 2 $sControlRel $sourceAttr;
+    }                                  // loop over vertex attributes
+    
+    // Delete any superfluous controls left over from the previous shader
+    for( ;;)
+    {
+        string $sControlRel = "vp" + $iSurfaceData;
+		string $sControlAbs = `setParent -q` + "|" + $sControlRel;
+        if ( !`control -exists $sControlAbs` )
+			break;			
+        deleteUI $sControlRel;
+        $iSurfaceData++;
+	}    
+    
+	setParent ..;                      // end of clSurfaceData
+
+	////////////////////////////
+	// Default Texture Layout //
+	////////////////////////////
+
+	if ( $bReuse )
+	{
+        setParent clDefaultTextureData;
+	}
+    else
+	{
+        frameLayout -l (uiRes("m_AEhwShaderTemplate.kDefaultTextureData")) -cl 0 -cll 1 flDefaultTextureData;
+		columnLayout -adj 1 clDefaultTextureData;
+	}
+
+	string $parent = `setParent -q`;
+
+	// Parse the list of varying parameters on this shader
+    $iSurfaceData = 0;
+    for ( ; $iSurfaceData < $nSurfaceData; ++$iSurfaceData)
+    {
+        // Control & menu names 
+        string $sControlRel = "dt" + $iSurfaceData;
+        string $sControlAbs = $parent + "|" + $sControlRel;
+
+        // Get vertex attribute specification to be displayed in the text field.
+		string $paramName = $varyingParameterList[ $iSurfaceData];
+        string $sourceAttr = $sNodeName + "." + $paramName + "_Source";
+		string $defaultTexAttr = $sNodeName + "." + $paramName + "_DefaultTexture";
+        string $sSurfaceDataName = getAttr( $sNodeName + "." + $paramName + "_Name");
+        string $sSurfaceDataValue = getAttr( $sourceAttr);
+		string $defaultTextureAnnotation = (uiRes("m_AEhwShaderTemplate.kDefaultTextureDataTip"));
+		string $buffer[];
+		tokenize $sSurfaceDataValue ":" $buffer;
+		if( $buffer[0] == "uv" )
+		{
+			if ( `control -exists $sControlAbs` )
+			{
+				// Reuse existing field
+				string $items[] = `optionMenuGrp -q -ils $sControlAbs`;
+				string $item;
+				for( $item in $items )
+				{
+					deleteUI $item;
+				}
+				optionMenuGrp -e
+							 -label $sSurfaceDataName
+							 -ann $defaultTextureAnnotation
+							 $sControlAbs;
+				setParent $sControlAbs;
+			}
+			else
+			{
+				// Recreate new text field.
+				$s = "AEhwShader_defaultTextureOptionMenu( " + $iLayout + "," + $iSurfaceData + ")";
+				$sControlAbs = `optionMenuGrp -label $sSurfaceDataName
+							 -ann $defaultTextureAnnotation
+							 -cc $s
+							 $sControlRel`;
+			}
+
+			// Create a scriptJob to keep our AE field in sync with the attr.
+			string $jobScript = "AEhwShader_defaultTextureUpdate(" + $iLayout + "," + $iSurfaceData + ")";
+			scriptJob -rp -p $sControlAbs -ac $defaultTexAttr $jobScript;
+
+			// Create an empty menuItem to designate an unassigned
+			// default texture.
+			menuItem -p ($sControlAbs + "|OptionMenu") -l "";
+
+			// Check for UVLinks
+			string $nodeType = `objectType $sNodeName`;
+			string $uvLinksProc = "AE" + $nodeType + "_uvLinks";
+			string $uvLinks[];
+			if( `exists $uvLinksProc` )
+			{
+				$uvLinksProc += "(\"" + $sNodeName + "\",\"" + $paramName + "\")";
+				$uvLinks = eval($uvLinksProc);
+			}
+
+			if( size($uvLinks) )
+			{
+				// We have UVLinks, so only populate the list of textures
+				// defined by the UVLinks.
+				int $i = 0;
+				for( ; $i < size($uvLinks); $i++ )
+				{
+					menuItem -p ($sControlAbs + "|OptionMenu") -l $uvLinks[$i];
+				}
+			}
+			else
+			{
+				// Add the list of uniform texture parameters on this shader
+				string $sNodeAttr = $sNodeName + ".uniformParameters";
+				string $uniformParameterList[] = `getAttr $sNodeAttr`;
+				int $nShaderData = size( $uniformParameterList );
+				$iShaderData = 0;
+				for ( ; $iShaderData < $nShaderData; ++$iShaderData)
+				{
+					string $attr = $uniformParameterList[ $iShaderData];
+					string $uiName = `getAttr ($sNodeName + "." + $attr + "_Name")`; 
+					string $type = `getAttr ($sNodeName + "." + $attr + "_Type")`;
+					if( $type == "texture" )
+					{
+						menuItem -p ($sControlAbs + "|OptionMenu") -l $uiName;
+					}
+				}  // loop over uniform parameters
+			}
+			
+			// Initial sync of the AE field to the attribute. The scriptJob attached to
+			// the optionMenuGrp will handle the remaining syncs. connectControl does not
+			// behave well with optionMenuGrp's that is accessed by -value.
+			AEhwShader_defaultTextureUpdate( $iLayout, $iSurfaceData );
+			
+			setParent clDefaultTextureData;
+		}
+		else
+		{
+			// Delete excess non-UV controls.
+			//
+			if ( `control -exists $sControlAbs` )
+			{
+				deleteUI $sControlAbs;
+			}
+		}
+	}	// loop over vertex attributes
+    
+    // Delete any superfluous controls left over from the previous shader
+    for( ;;)
+    {
+        string $sControlRel = "dt" + $iSurfaceData;
+        string $sControlAbs = $parent + "|" + $sControlRel;
+        if ( !`control -exists $sControlAbs` )
+			break;			
+        deleteUI $sControlAbs;
+        $iSurfaceData++;
+	}    
+    
+	setParent ..;						// end of clDefaultTextureData
+	setParent ..;						// end of flDefaultTextureData
+
+    // Clean up.
+    setUITemplate -ppt;
+}                                      // AEhwShader_varyingParameterUpdate
+
+
+
+
+// Callback to create SurfaceData popup menu items
+global proc AEhwShader_varyingParameterPopup( int $iLayout, int $iSurfaceData )
+{                                      
+    string $sNodeName = AEhwShader_beginCallback( $iLayout );
+    
+    setParent clSurfaceData;
+
+    string $sControlRel = "vp" + $iSurfaceData;
+    string $sControlAbs = `setParent -q` + "|" + $sControlRel;
+    string $sPopupRel   = "vpPopup";
+    string $sPopupAbs   = $sControlAbs + "|" + $sPopupRel;
+
+    popupMenu -e -deleteAllItems $sPopupAbs;
+    setParent -menu $sPopupAbs;
+
+    string $cmd = "AEhwShader_varyingParameterChoice " + $sNodeName + " " + $iLayout + " " + $iSurfaceData + " ";
+
+    // UV sets
+    string $shapeNodes[] = hwShader_listShapes( $sNodeName );  // (in hwShader_util.mel)
+    string $uvSets[] = hwShader_listUVSets( $shapeNodes );
+    string $tangent;
+    string $binormal;
+    int $numUvSets = size( $uvSets );
+    if ( !$numUvSets )
+    {
+        $uvSets = { "map1" };
+        $numUvSets = 1;
+    }
+    int $i;
+    for ( $i=0; $i<$numUvSets; $i++)
+    {
+        string $uvSet = $uvSets[$i];
+        menuItem -l $uvSet -c ($cmd + "\"uv:" + $uvSet + "\"");
+        $tangent = "tangent:"+$uvSet;
+        menuItem -l $tangent  -c ($cmd + $tangent);
+        $binormal = "binormal:"+$uvSet;
+        menuItem -l $binormal -c ($cmd + $binormal);
+        if ($i != ($numUvSets-1))
+            menuItem -divider 1;        
+    }
+
+    // Colour sets
+    if( `exists polyColorSet` )	// Backward compatibility
+    {
+		string $colorSets[] = hwShader_listColorSets( $shapeNodes );
+		if ( size($colorSets))
+		    menuItem -divider 1;
+		string $colorSet;
+		for ( $colorSet in $colorSets )
+			menuItem -l $colorSet -c ($cmd + "\"color:" + $colorSet + "\"");
+	}
+
+    // Normal
+    menuItem -divider 1;
+    menuItem -l "position"   -c ($cmd + "position");
+    menuItem -l "normal"   -c ($cmd + "normal");
+    menuItem -divider 1;
+    menuItem -l "  (empty)  " -c ($cmd + "\"\"");
+}                                      // AEhwShader_varyingParameterPopup
+
+
+// Callback when user chooses an item from SurfaceData popup menu 
+global proc AEhwShader_varyingParameterChoice( string $sNodeName, int $iLayout, int $iSurfaceData, string $choice )
+{                                      
+    string $varyingParameterList[] = `getAttr( $sNodeName + ".varyingParameters")`;
+    string $varyingParameter = $varyingParameterList[ $iSurfaceData];
+    string $sourceAttr = $sNodeName + "." + $varyingParameter + "_Source";
+	string $sSet = "setAttr -type \"string\" " + $sNodeName + "." + $varyingParameter + "_Source" + " \"" + $choice +"\";\n";
+	$sSet += "AEhwShader_varyingParameterUpdate(" + $iLayout + ",1,0);\n";
+    print ( $sSet );
+    evalDeferred $sSet;                // use evalDeferred so Maya will display
+                                       //   the setAttr command on undo/redo
+}                                      // AEhwShader_varyingParameterChoice
+
+
+// Callback when user changes the text in SurfaceData text field 
+global proc AEhwShader_varyingParameterText( int $iLayout, int $iSurfaceData, string $sText )
+{                                      
+    string $sNodeName = AEhwShader_beginCallback( $iLayout );
+    AEhwShader_varyingParameterChoice( $sNodeName, $iLayout, $iSurfaceData, $sText );
+}                                      // AEhwShader_varyingParameterText
+
+
+// Callback when user changes the selection in DefaultTexture option menu.
+global proc AEhwShader_defaultTextureOptionMenu( int $iLayout, int $iSurfaceData )
+{                                      
+    string $sNodeName = AEhwShader_beginCallback( $iLayout );
+    string $varyingParameterList[] = `getAttr( $sNodeName + ".varyingParameters")`;
+    string $varyingParameter = $varyingParameterList[ $iSurfaceData];
+	string $defaultTexAttr = $sNodeName + "." + $varyingParameter + "_DefaultTexture";
+
+	string $sControlRel = "dt" + $iSurfaceData;
+	string $sControlAbs = `optionMenuGrp -q -fpn $sControlRel`;
+
+	string $choice = `optionMenuGrp -q -v $sControlAbs`;
+	string $sSet = "setAttr -type \"string\" " + $defaultTexAttr + " \"" + $choice + "\";\n";
+	print ( $sSet );
+	evalDeferred $sSet;
+}                                      // AEhwShader_varyingParameterText
+
+
+// Callback when the DefaultTexture attribute changes.
+global proc AEhwShader_defaultTextureUpdate( int $iLayout, int $iSurfaceData )
+{
+	string $sNodeName = AEhwShader_beginCallback( $iLayout );
+    string $varyingParameterList[] = `getAttr( $sNodeName + ".varyingParameters")`;
+    string $varyingParameter = $varyingParameterList[ $iSurfaceData];
+	string $defaultTexAttr = $sNodeName + "." + $varyingParameter + "_DefaultTexture";
+	
+	string $value = `getAttr $defaultTexAttr`;
+
+	string $sControlRel = "dt" + $iSurfaceData;
+	string $sControlAbs = `optionMenuGrp -q -fpn $sControlRel`;
+	
+	if( catchQuiet(`optionMenuGrp -e -v $value $sControlAbs`) )
+	{
+		// The value does not exist in the optionMenuGrp.
+		// Default to the empty menuItem.
+		optionMenuGrp -e -sl 1 $sControlAbs;
+	}
+}
+
+
+
+////////////////////////////////////////////////////////////////////////
+//                         "Extra Attributes"                         //
+////////////////////////////////////////////////////////////////////////
+
+// Find the "Extra Attributes" frameLayout and hide it.
+global proc AEhwShader_suppressExtraNew()
+{
+    string $sExtraParent = `setParent ..`;
+    string $sa[] = `layout -q -ca $sExtraParent`;
+    string $sExtra;
+    // Bug 261197: label string may be localized, look up the localized value 
+    // Beware, the resource format or id could change some day. 
+    string $extraLabel = `uiRes("s_TPStemplateStrings.rExtraAttributes")`;
+    for ( $sExtra in $sa )
+    {
+        if ( `objectTypeUI -isType frameLayout $sExtra` &&
+             `frameLayout -q -l $sExtra` == $extraLabel )
+        {
+            frameLayout -e -manage 0 $sExtra;
+            break;
+        }
+    }
+}                                      // AEhwShader_suppressExtraNew
+
+global proc AEhwShader_suppressExtraReplace()
+{
+}                                      // AEhwShader_suppressExtraReplace
+
+// When a shader file is loaded, our plug-in defines dynamic
+// attributes for the shader parameters specified in the file.
+// We create our own Attribute Editor controls for those
+// attributes.  Therefore we do not need the controls that
+// Maya creates automatically under "Extra Attributes". 
+// Getting rid of the unwanted controls is not that easy.
+// - For dynamic attribute names known when AEhwShaderTemplate
+//   is called, we use "editorTemplate -suppress".  That is
+//   good because it avoids the overhead of creating the surplus
+//   controls.  But upon (re)loading a shader, generally Maya
+//   does not call AEhwShaderTemplate again; so we don't get a
+//   chance to "editorTemplate -suppress" the newly defined
+//   attributes.  We could force AEhwShaderTemplate to be 
+//   called again for the main AE window, but there is no 
+//   comparable solution for tear-off ("Copy Tab") windows.
+// - Omitting "editorTemplate -addExtraControls" was tried with
+//   unsatisfactory results.  Due to a bug in Maya 5.0, Maya 
+//   would create the controls anyway, all overlaid on the same
+//   pixels, trashing the upper portion of the AE layout.
+// - It is possible to find and delete the "Extra Attributes"
+//   layout or the controls within it, but then Maya crashes.
+// So here's what we do:  Immediately after the "Extra Attributes"
+// layout is created, we find it and hide it.  Although Maya still
+// creates unnecessary controls for any dynamic attributes that we
+// don't manage to suppress, those controls won't be visible.
+
+
+
+////////////////////////////////////////////////////////////////////////
+//                  Callback initialization helpers                   //
+////////////////////////////////////////////////////////////////////////
+
+// Callback initialization helper.
+//   Returns hwShader node name, or "" if UI has been deleted.
+global proc string AEhwShader_beginCallback( int $iLayout )
+{
+    string $sNodeName;
+
+    // Find the requested instance of our hwShader AE template.
+    string $sLayout = "hwShader_AEinstance" + $iLayout;
+    if ( `layout -exists $sLayout` )
+    {
+        // Get the name of the hwShader node associated with this layout.
+        setParent $sLayout;
+        $sNodeName = `nameField -q -object nodeNameField`;
+
+        // setParent to the closest ancestor scrollLayout.
+        //   Maya searches for UI layout and control names beneath 
+        //   the current parent before looking elsewhere.  Here we
+        //   will set the parent to the right AE template instance.
+        //   Afterwards the caller can safely refer to controls and
+        //   layouts by their simple names instead of fully qualified
+        //   names, provided the simple names are unique within our
+        //   template instance's scrollLayout.
+        $sLayout = AEhwShader_closestAncestor( "scrollLayout" );
+        setParent $sLayout;
+    }
+    return $sNodeName;
+}
+
+
+// Callback before creating hwShader controls.
+global proc AEhwShader_beginNew( string $sNodeAttr )
+{
+    global int $gAEhwShader_bNew;    // OUT: true because not same node
+    global int $gAEhwShader_iLayout; // OUT: new template instance id        
+    global int $gAEhwShader_nLayout; // UPD: highest used instance id
+
+    // Assign a unique serial number to identify this AE template instance.
+    $gAEhwShader_iLayout = ++$gAEhwShader_nLayout;
+    $gAEhwShader_bNew    = true; 
+
+    // Create a uniquely named hidden layout.  
+    //   Callbacks use this to help find their UI elements and node name.
+    string $sLayout = "hwShader_AEinstance" + $gAEhwShader_iLayout;
+    columnLayout -manage 0 $sLayout;   
+ 
+    // Stash the hwShader node name in a hidden nameField.
+    // - In the event the user renames the node, the
+    //   nameField will update itself to the new name.  
+    // - Saving the name allows us to distinguish between 
+    //   refreshing an existing layout vs. switching the
+    //   layout to attach to a different hwShader node.
+    string $sNodeName = `match "^[^.]*" $sNodeAttr`;
+    textField -manage 0
+              -text $sNodeName
+              nodeNameTextField;
+    nameField -manage 0
+              -object $sNodeName
+              nodeNameField;
+}                                      // AEhwShader_beginNew
+
+
+// Callback before refreshing the layout or switching it to another node.
+global proc AEhwShader_beginReplace( string $sNodeAttr )
+{
+    global int $gAEhwShader_bNew;    // OUT: true if different node     
+    global int $gAEhwShader_iLayout; // OUT: template instance id        
+
+    // Get our unique layout name.  It is the current layout's first child.
+    string $sParent  = `setParent -q`;
+    string $saKids[] = `layout -q -ca $sParent`;
+    string $sKid     = $saKids[0];
+
+    // The layout name contains the id of this AE template instance.
+    //   Extract it and pass it via a global variable to our
+    //   subsequent UI building functions.
+    string $sIndex  = `match "[0-9]+" $sKid`;
+    string $sLayout = "hwShader_AEinstance" + $sIndex;
+    if ( $sKid != $sLayout )
+        error -sl 1 (uiRes("m_AEhwShaderTemplate.kInternalError"));
+
+    $gAEhwShader_iLayout = $sIndex;
+
+    // If this template instance is already associated with the
+    // given hwShader node, clear global flag to tell subsequent
+    // UI building functions that the existing controls can be kept.
+    string $sNodeName = `match "^[^.]*" $sNodeAttr`;
+    if ( $sNodeName == `textField -q -text nodeNameTextField` &&
+         $sNodeName == `nameField -q -object nodeNameField` )
+        $gAEhwShader_bNew = false;
+    else
+    {
+        $gAEhwShader_bNew = true;
+        textField -e
+                  -text $sNodeName
+                  nodeNameTextField;
+        nameField -e
+                  -object $sNodeName
+                  nodeNameField;
+    }
+}                                      // AEhwShader_beginReplace
+
+
+// Return full name of the closest ancestor layout of a given type, or "".
+global proc string AEhwShader_closestAncestor( string $sObjectTypeUI )
+{
+    string $sPrev;
+    string $sLayout = `setParent -q`;
+    while ( !`objectTypeUI -isType $sObjectTypeUI $sLayout` )
+    {
+        $sPrev = $sLayout;
+        $sLayout = `substitute "|[^|]*$" $sLayout ""`;  // drop rightmost "|name"
+        if ( $sLayout == $sPrev )
+            return "";
+    }
+    return $sLayout;
+}
+
+
+
+////////////////////////////////////////////////////////////////////
+//  MAIN PROCEDURES FOR THE TEMPLATE ///////////////////////////////
+////////////////////////////////////////////////////////////////////
+
+
+global proc AEhwShaderTemplateHeader( string $node)
+{
+    AEswatchDisplay $node;
+    editorTemplate -beginScrollLayout;
+
+    // Initialize globals used by the subsequent -callCustom procedures.
+    editorTemplate -callCustom AEhwShader_beginNew
+                               AEhwShader_beginReplace
+                               shader;
+}  // AEhwShaderTemplateHeader
+
+
+global proc AEhwShaderTemplateParameters( string $node)
+{
+    // Shader Data
+    editorTemplate -beginLayout (uiRes("m_AEhwShaderTemplate.kShaderParameters")) -collapse false;
+    editorTemplate -callCustom AEhwShader_uniformParameterLayout
+                               AEhwShader_uniformParameterLayout
+                               uniformParameters;
+    editorTemplate -endLayout;
+    
+    // Surface Data
+    editorTemplate -beginLayout (uiRes("m_AEhwShaderTemplate.kSurfaceData")) -collapse false;
+    editorTemplate -callCustom AEhwShader_varyingParameterLayout
+                               AEhwShader_varyingParameterLayout
+                               varyingParameters;
+    editorTemplate -endLayout;
+
+}  // AEhwShaderTemplateParameters
+
+
+global proc AEhwShaderTemplateFooter( string $node)
+{
+    // Hide "Extra Attributes" UI for dynamic attributes.
+    editorTemplate -addExtraControls;   
+    editorTemplate -callCustom AEhwShader_suppressExtraNew
+                               AEhwShader_suppressExtraReplace;
+    string $attrs[] = eval("listAttr -ud "+$node);
+    for ($attr in $attrs) 
+        editorTemplate -suppress $attr;
+
+	// Those attrabutes are meaningless for hardware shaders
+	string $suppressed[] = {
+		"outColor", "outTransparency", "outMatteOpacity", "outGlowColor",
+		"enableHwShading",
+		"miDeriveFromMaya", "miShinyness", "miAngle", 
+		"miSpreadX", "miSpreadY", "miWhiteness", "miSpecularColor", 
+		"miReflectivity", "miRefractiveIndex", "miRefractions", 
+		"miAbsorbs", "miDiffuse", "miColor", "miTransparency", 
+		"miTranslucence", "miTranslucenceFocus", "miNormalCamera"
+	};
+
+	for ($attr in $suppressed)
+		editorTemplate -suppress $attr;
+
+    AEdependNodeTemplate $node;
+	editorTemplate -addExtraControls;
+
+    editorTemplate -endScrollLayout;
+}
+
+
+global proc AEhwShaderTemplate( string $node)
+{
+	AEhwShaderTemplateHeader( $node);
+	AEhwShaderTemplateParameters( $node);
+	AEhwShaderTemplateFooter( $node);
+}  // AEhwShaderTemplate

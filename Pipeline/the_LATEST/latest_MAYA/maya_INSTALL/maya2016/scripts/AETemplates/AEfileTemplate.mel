@@ -1,0 +1,1241 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Procedure Name:
+//	AEfileTemplate
+//
+//  Description Name;
+//	Creates the attribute editor controls for the file Node
+//
+//  Input Value:
+//	nodeName
+//
+//  Output Value:
+//	None
+//
+
+// bring in the necessary procedures for the color profile controls
+// ADSK_CLR_MGT_BEGIN
+    source "colorSpaceProcedures";
+    source "colorProfileProcedures";
+// ADSK_CLR_MGT_END
+
+// bring in helper procedures for dealing with multi attrs
+source "AEnewNonNumericMulti";
+
+global proc AEfileTextureNameChanged(string $fileNode)
+{
+	//
+	// Description:
+	//	This procedure is called from AEassignTextureCB.
+	//	If the newly chosen file has an alpha channel, this procedure hooks up
+	//	the outTransparency attribute of the file node to the transparency
+	//	attribute of materials which are using this file for color, where
+	//	appropriate.
+	//
+
+	if (`getAttr ($fileNode + ".fileHasAlpha")` == 1)
+	{
+		//
+		// The newly chosen file has an alpha channel.
+		//
+
+		string $dstNodeArray[];
+
+		$dstNodeArray =
+			`listConnections
+				-source false
+				-destination true
+				($fileNode + ".outColor")`;
+
+		string $dstNode;
+
+		for ($dstNode in $dstNodeArray)
+		{
+			if (	(isClassified($dstNode, "shader"))
+				&&	(size(`ls ($dstNode + ".transparency")`) != 0)
+				&&	(size(`ls ($dstNode + ".color")`) != 0)
+				&&	(`isConnected ($fileNode+".outColor") ($dstNode+".color")`)
+				&&	(size(`listConnections
+						-source true
+						-destination false
+						($dstNode + ".transparency")`) == 0))
+			{
+				// The dstNode is a material,
+				// and it has a transparency attribute,
+				// and it has a color attribute,
+				// and the file node outColor is connected to the material
+				// color,
+				// and that transparency attribute is not currently the
+				// destination of any connection.
+				// We want to connect this file node's outTransparency to
+				// the dstNode's transparency.
+				//
+				connectAttr
+					($fileNode + ".outTransparency")
+					($dstNode + ".transparency");
+			}
+		}
+	}
+}
+
+//
+//  Procedure Name:
+//	AEassignTextureCB
+//
+
+global proc int AEassignTextureCB( string $fileAttribute,
+                                 string $filename,
+                                 string $fileType )
+{
+	//
+	// Description:
+	//	This procedure is called when the user changes the file texture name in
+	//	the edit box in the file texture attribute editor (whether by manually
+	//	typing it in, or by using the file browser to choose a new file).
+	//
+	//	This procedure updates the file texture node file name attribute and
+	//	calls AEfileTextureNameChanged to do some special case handling for
+	//	files with alpha channels.
+	//
+
+	setAttr $fileAttribute -type "string" $filename;
+
+	string $currentDir = `workspace -q -dir`;
+    retainWorkingDirectory ($currentDir);
+
+	// Extract the name of the node from the node.attribute name
+	//
+	string $tokenArray[];
+	tokenize($fileAttribute, ".", $tokenArray);
+
+	string $fileNode = $tokenArray[0];
+
+	AEfileTextureNameChanged($fileNode);
+
+	return true;
+}
+
+//
+//  Procedure Name:
+//	AEfileTextureBrowser
+//
+
+global proc AEfileTextureBrowser( string $cmd, string $nodeName, string $fileType )
+{
+    //get the directory where texure is put
+    string $path = `getAttr ($nodeName + ".fileTextureName")`;
+
+    //if file exist, then use it as start directory of file browser
+    if(`filetest -f $path`)
+    {
+        $path = dirname( $path );
+
+        workspace -dir $path;
+    }
+    else
+    {
+        string $workspace = `workspace -q -fn`;
+
+        setWorkingDirectory $workspace $fileType "sourceImages";
+    }
+
+    fileBrowser ($cmd, (uiRes("m_AEfileTemplate.kOpen")), $fileType, 0);
+}
+
+// Private helper to get texture name pattern
+proc string AEfileTextureGetFileTextureNamePattern(string $nodeName)
+{
+	string $pattern = `getAttr ($nodeName + ".fileTextureNamePattern")`;
+	if (size($pattern) <= 0)
+	{
+		$pattern = `getAttr ($nodeName + ".computedFileTextureNamePattern")`;
+	}
+	if (size($pattern) <= 0)
+	{
+		$pattern = `getAttr ($nodeName + ".fileTextureName")`;
+	}
+	return $pattern;
+}
+
+global proc AEfileTextureFileTextureNameUIChanged(string $nodeName)
+{
+	int $tilingType = `getAttr ($nodeName + ".uvTilingMode")`;
+	string $currFtn = `getAttr ($nodeName + ".fileTextureName")`;
+	string $newFtn = `textField -q -fileName textureNameField`;
+	if (!`filetest -f $currFtn` || $tilingType == 0)
+	{
+		setAttr ($nodeName + ".fileTextureName") -type "string" $newFtn;
+	}
+	else
+	{
+		string $pattern = AEfileTextureGetFileTextureNamePattern($nodeName);
+		if ($pattern == $currFtn)
+		{
+			if ($newFtn != $currFtn)
+			{
+				setAttr ($nodeName + ".fileTextureName") -type "string" $newFtn;
+			}
+		}
+		else
+		{
+			if ($newFtn != `getAttr ($nodeName + ".fileTextureNamePattern")`)
+			{
+				setAttr ($nodeName + ".fileTextureNamePattern") -type "string" $newFtn;
+			}
+		}
+	}
+}
+
+// Private helper for recreating image name controls on tiling type change
+proc AEfileTextureNameReplaceImageNameControls(string $parent)
+{
+	string $oldParent = `setParent -q`;
+	setParent $parent;
+
+	// If we have the column layout and it is the correct one then replace the
+	// apporiate controls
+	if (`columnLayout -exists textureNameContainerLayout` &&
+		startsWith(`columnLayout -q -fpn textureNameContainerLayout`, $parent))
+	{
+		setUITemplate -pst attributeEditorTemplate;
+
+		// Delete the rowLayout if it exists under the container
+		setParent textureNameContainerLayout;
+		if (`rowLayout -exists textureNameLayout` &&
+			startsWith(`rowLayout -q -fpn textureNameLayout`, $parent))
+		{
+			deleteUI textureNameLayout;
+		}
+		// Recreate the rowLayout and its contents
+		rowLayout -nc 3 -adj 2 textureNameLayout;
+			text -label (uiRes("m_AEfileTemplate.kImageName"));
+			textField textureNameField;
+			symbolButton -image "navButtonBrowse.png" browser;
+		setParent ..;
+
+		setUITemplate -ppt;
+	}
+
+	setParent $oldParent;
+}
+
+// Private helper for dealing with callbacks on base file texture name control
+proc AEfileTextureNameReplaceImageNameCallbacks(string $nodeName, string $parent, string $type)
+{
+	string $oldParent = `setParent -q`;
+	setParent $parent;
+
+	int $doUvTiling = ($type == "image");
+	if ($doUvTiling)
+	{
+		int $tilingType = `getAttr ($nodeName + ".uvTilingMode")`;
+		int $useFrameExt = `getAttr ($nodeName + ".useFrameExtension")`;
+		if ($useFrameExt || $tilingType == 1 || $tilingType == 2 || $tilingType == 3)
+		{
+			// Tiling type and image sequence are pattern based, so do manual
+			// syncing of control and attribute, note that this means that we show
+			// the full path when tiling is on even if the image is in a project
+			// folder.
+			textField -edit -changeCommand ("AEfileTextureFileTextureNameUIChanged " + $nodeName) textureNameField;
+			scriptJob
+				-replacePrevious
+				-parent textureNameField
+				-attributeChange ($nodeName + ".fileTextureName") ("AEfileTextureFileTextureNameChanged " + $nodeName + " " + $parent + " 1");
+			scriptJob
+				-parent textureNameField
+				-attributeChange ($nodeName + ".fileTextureNamePattern") ("AEfileTextureFileTextureNameChanged " + $nodeName + " " + $parent + " 1");
+			$patternOn = true;
+		}
+		else
+		{
+			// If tiling is off or explicit, just do simple fileName based connectControl,
+			// making sure to kill existing scriptJobs by creating a new one to replace
+			// previous on the control and then by killing it.
+			int $tmpJob = `scriptJob -replacePrevious -parent textureNameField -attributeChange ($nodeName + ".fileTextureName") "print \"\""`;
+			scriptJob -kill $tmpJob;
+			connectControl -fileName textureNameField ($nodeName + ".fileTextureName");
+
+		}
+	}
+	else
+	{
+		// In no tiling case, just do simple fileName based connectControl
+		connectControl -fileName textureNameField ($nodeName + ".fileTextureName");
+
+	}
+
+	// Always set up browse button callback
+    string $command = "AEassignTextureCB " + " " + $nodeName + ".fileTextureName";
+    button -e -c
+		("AEfileTextureBrowser \"" + $command + "\" " + "\"" + $nodeName + "\" " + $type) browser;
+
+	setParent $oldParent;
+}
+
+global proc AEfileTextureFileTextureNameChanged(string $nodeName, string $parent, int $updateUvTiling)
+{
+	string $oldParent = `setParent -q`;
+	setParent $parent;
+
+	// Update the callbacks for the base file texture name, if patterned tiling
+	// or image sequence is active we also need to manually set the value in
+	// the text field.
+	int $tilingType = `getAttr ($nodeName + ".uvTilingMode")`;
+	int $useFrameExt = `getAttr ($nodeName + ".useFrameExtension")`;
+	if ($useFrameExt || $tilingType == 1 || $tilingType == 2 || $tilingType == 3)
+	{
+		string $ftn = `getAttr ($nodeName + ".fileTextureName")`;
+		if (`filetest -f $ftn`)
+		{
+			$ftn = AEfileTextureGetFileTextureNamePattern($nodeName);
+		}
+		textField -edit -fileName $ftn textureNameField;
+	}
+
+	// Need to update tile UI as well
+	if ($updateUvTiling)
+	{
+		AEfileTextureCheckUseUvTilesUI($nodeName, $parent);
+	}
+
+	setParent $oldParent;
+
+}
+
+
+global proc AEfileTextureUvTilingModeChanged(string $nodeName, string $parent)
+{
+	AEfileTextureNameReplaceImageNameControls($parent);
+	AEfileTextureNameReplaceImageNameCallbacks($nodeName, $parent, "image");
+	AEfileTextureFileTextureNameChanged($nodeName, $parent, true);
+}
+
+//
+//  Procedure Name:
+//	AEfileTextureNameNew
+//
+global proc AEfileTextureNameNew (string $fileAttribute)
+{
+	string $parent = `setParent -q`;
+	$parent = `control -q -parent $parent`;
+	columnLayout -adj true textureNameContainerLayout;
+		AEfileTextureNameReplaceImageNameControls($parent);
+	setParent ..;
+
+    AEfileTextureNameReplace $fileAttribute;
+}
+
+//
+//  Procedure Name:
+//	AEfileTextureNameReplace
+//
+global proc AEfileTextureNameReplace(string $fileAttribute)
+{
+	string $tokens[];
+	tokenize $fileAttribute ". " $tokens;
+	AEfileTextureNameReplaceImageNameCallbacks($tokens[0], `setParent -q`, $tokens[2]);
+}
+
+global proc checkUseHardwareTextureCycling ( string $nodeName )
+{
+	string $nodeAttr = $nodeName + ".useHardwareTextureCycling";
+	int $value = `getAttr $nodeAttr`;
+
+	if ( $value == 1 ) {
+		editorTemplate -dimControl $nodeName "startCycleExtension" false;
+		editorTemplate -dimControl $nodeName "endCycleExtension" false;
+		editorTemplate -dimControl $nodeName "byCycleIncrement" false;
+	} else {
+		editorTemplate -dimControl $nodeName "startCycleExtension" true;
+		editorTemplate -dimControl $nodeName "endCycleExtension" true;
+		editorTemplate -dimControl $nodeName "byCycleIncrement" true;
+	}
+}
+
+//
+// UV Tiling helper methods
+//
+proc createGeneratePreviewButton(int $dirty, string $command)
+{
+	if ($dirty)
+	{
+		button
+			-label (uiRes("m_AEfileTemplate.kUvTilingGeneratePreviewDirty"))
+			-annotation (uiRes("m_AEfileTemplate.kUvTilingGeneratePreviewDirtyAnn"))
+			-enableBackground false
+			-backgroundColor 1.0 0.0 0.0
+			-command $command
+			textureUvTilingGeneratePreviewButton;
+	}
+	else
+	{
+		button
+			-label (uiRes("m_AEfileTemplate.kUvTilingGeneratePreview"))
+			-annotation (uiRes("m_AEfileTemplate.kUvTilingGeneratePreviewAnn"))
+			-command $command
+			textureUvTilingGeneratePreviewButton;
+	}
+}
+
+global proc AEfileTextureUvTilesNew(
+	string $uvTilingMode,
+	string $explicitUvTiles,
+	string $uvTileProxyQuality)
+{
+	setUITemplate -pst attributeEditorTemplate;
+
+	rowColumnLayout
+		-numberOfColumns 2
+		-columnAlign 1 "right" -columnAlign 2 "center"
+		-columnAttach 1 "both" 0 -columnAttach 2 "left" 5
+		-columnWidth 1 270 -columnWidth 2 100;
+		attrEnumOptionMenuGrp
+			-label (uiRes("m_AEfileTemplate.kUvTilingMode"))
+			-attribute $uvTilingMode
+			textureUvTileType;
+		text -label "" textureUvTilingTileCountLabel;
+	setParent ..;
+
+	rowColumnLayout
+		-numberOfColumns 2
+		-columnAlign 1 "right" -columnAlign 2 "center"
+		-columnAttach 1 "both" 0 -columnAttach 2 "left" 10
+		textureUvTilingPreviewLayout;
+		attrEnumOptionMenuGrp
+			-label (uiRes("m_AEfileTemplate.kUvTilingProxyQuality"))
+			-attribute $uvTileProxyQuality
+			textureUvTilingProxyQuality;
+		createGeneratePreviewButton(false, "");
+	setParent ..;
+
+	columnLayout -adjustableColumn true -visible false textureUvTilingExplicitLayout;
+		rowLayout
+			-numberOfColumns 8 -height 28 -adjustableColumn 2
+			-cal 1 "right" -cal 2 "center" -cal 3 "center" -cal 4 "right" -cal 5 "left" -cal 6 "right" -cal 7 "left" -cal 8 "center"
+			-cat 1 "both" 5 -cat 2 "both" 0 -cat 3 "both" 0 -cat 4 "both" 0 -cat 5 "both" 0 -cat 6 "both" 0 -cat 7 "both" 0 -cat 8 "left" 0
+			-cw 1 145 -cw 2 100 -cw 3 24 -cw 4 8 -cw 5 26 -cw 6 8 -cw 7 26 -cw 8 24;
+
+			text -label (uiRes("m_AEfileTemplate.kExplicitTiles"));
+			textField -editable false textureUvTilingBaseName;
+			text -width 24 -label "";
+			text -label (uiRes("m_AEfileTemplate.kULabel"));
+			intField textureUvTilingBaseUValue;
+			text -label (uiRes("m_AEfileTemplate.kVLabel"));
+			intField textureUvTilingBaseVValue;
+			text -width 23 -label "";
+		setParent ..;
+	setParent ..;
+
+	setUITemplate -ppt;
+
+	AEfileTextureUvTilesReplace $uvTilingMode $explicitUvTiles $uvTileProxyQuality;
+}
+
+global proc AEfileTextureUvTilesReplace(
+	string $uvTilingMode,
+	string $explicitUvTiles,
+	string $uvTileProxyQuality)
+{
+	// Get node name
+	//
+	string $tokens[];
+	tokenize $uvTilingMode "." $tokens;
+	string $nodeName = $tokens[0];
+
+	// Handle simple attributes
+	//
+	string $oldParent = `setParent -q`;
+	$oldParent = `control -q -parent $oldParent`;
+	attrEnumOptionMenuGrp -edit -attribute $uvTilingMode textureUvTileType;
+	scriptJob
+		-replacePrevious
+		-parent textureUvTileType
+		-attributeChange $uvTilingMode ("AEfileTextureUvTilingModeChanged " + $nodeName + " " + $oldParent);
+
+	attrEnumOptionMenuGrp -edit -attribute $uvTileProxyQuality textureUvTilingProxyQuality;
+	scriptJob
+		-replacePrevious
+		-parent textureUvTilingProxyQuality
+		-attributeChange $uvTileProxyQuality ("AEfileTextureCheckUseUvTilesUI " + $nodeName + " " + $oldParent);
+	scriptJob
+		-parent textureUvTilingProxyQuality
+		-event "UvTileProxyDirtyChangeTrigger" ("AEfileTextureCheckUseUvTilesUI " + $nodeName + " " + $oldParent);
+	button -edit -command ("generateUvTilePreview " + $nodeName) textureUvTilingGeneratePreviewButton;
+
+	// Handle variable number of explicit tiles, first connect base name, then
+	// do others.
+	//
+	string $explicitLayoutFPN = `columnLayout -q -fpn textureUvTilingExplicitLayout`;
+	scriptJob
+		-replacePrevious
+		-parent textureUvTilingExplicitLayout
+		-allChildren
+		-disregardIndex
+		-attributeChange ($nodeName + ".explicitUvTiles") ("AEfileTextureCheckUseUvTilesUI " + $nodeName + " " + $oldParent);
+	connectControl -fileName textureUvTilingBaseName ($nodeName + ".fileTextureName");
+	textField -edit -editable false textureUvTilingBaseName;
+	connectControl textureUvTilingBaseUValue ($nodeName + ".baseExplicitUvTilePositionU");
+	connectControl textureUvTilingBaseVValue ($nodeName + ".baseExplicitUvTilePositionV");
+	setUITemplate -pst attributeEditorTemplate;
+	setParent $explicitLayoutFPN;
+	if (`rowLayout -exists textureUvTilingAddTileLayout` &&
+		startsWith(`rowLayout -q -fpn textureUvTilingAddTileLayout`, $explicitLayoutFPN))
+	{
+		deleteUI textureUvTilingAddTileLayout;
+	}
+
+	string $propertyPanelUpdateCmd = "PPRefreshUvTilesUI " + $nodeName ;
+
+	int $oldCount = `columnLayout -q -numberOfChildren textureUvTilingExplicitLayout` - 1;
+	int $indices[] = `getAttr -multiIndices $explicitUvTiles`;
+	int $numIndices = size($indices);
+	for ($i=0; $i<$numIndices; $i++)
+	{
+		string $baseAttrName = ($explicitUvTiles + "[" + $indices[$i] + "]");
+		string $currLayout = ("textureUvTilingExplicitRow" + $i);
+		if (`rowLayout -exists $currLayout` &&
+			startsWith(`rowLayout -q -fpn $currLayout`, $explicitLayoutFPN))
+		{
+			setParent $currLayout;
+		}
+		else
+		{
+			rowLayout
+				-numberOfColumns 8 -adjustableColumn 2
+				-cal 1 "right" -cal 2 "center" -cal 3 "center" -cal 4 "right" -cal 5 "left" -cal 6 "right" -cal 7 "left" -cal 8 "center"
+				-cat 1 "both" 5 -cat 2 "both" 0 -cat 3 "both" 0 -cat 4 "both" 0 -cat 5 "both" 0 -cat 6 "both" 0 -cat 7 "both" 0 -cat 8 "left" 0
+				-cw 1 145 -cw 2 100 -cw 3 24 -cw 4 8 -cw 5 26 -cw 6 8 -cw 7 26 -cw 8 24
+				$currLayout;
+			text -label "";
+			textField textureUvTilingExplicitName;
+			symbolButton -image "navButtonBrowse.png" textureUvTilingExplicitBrowse;
+			text -label (uiRes("m_AEfileTemplate.kULabel"));
+			intField textureUvTilingExplicitUValue;
+			text -label (uiRes("m_AEfileTemplate.kVLabel"));
+			intField textureUvTilingExplicitVValue;
+			symbolButton -image "smallTrash.png" textureUvTilingExplicitTrash;
+		}
+		connectControl -fileName textureUvTilingExplicitName ($baseAttrName + ".explicitUvTileName");
+		symbolButton -edit -command ("AEfileTextureUvTileBrowser " + $currLayout + " " + $baseAttrName + ".explicitUvTileName") textureUvTilingExplicitBrowse;
+		connectControl textureUvTilingExplicitUValue ($baseAttrName + ".explicitUvTilePositionU");
+		connectControl textureUvTilingExplicitVValue ($baseAttrName + ".explicitUvTilePositionV");
+		symbolButton -edit -command ("AEremoveMultiElement " + $baseAttrName + "; " + $propertyPanelUpdateCmd) textureUvTilingExplicitTrash;
+
+		setParent $explicitLayoutFPN;
+	}
+	for ($i=$numIndices; $i<$oldCount; $i++)
+	{
+		string $currLayout = ("textureUvTilingExplicitRow" + $i);
+		if (`rowLayout -exists $currLayout` &&
+			startsWith(`rowLayout -q -fpn $currLayout`, $explicitLayoutFPN))
+		{
+			deleteUI $currLayout;
+		}
+	}
+	rowLayout -nc 2 textureUvTilingAddTileLayout;
+		text -label "";
+		button
+			-label (uiRes("m_AEfileTemplate.kAddExplicitTile"))
+			-command ("AEnewNonNumericMultiAddNewItem " + $nodeName + " explicitUvTiles" + "; " + $propertyPanelUpdateCmd)
+			textureUvTilingAddTileButton;
+	setParent ..;
+
+	setUITemplate -ppt;
+
+	// Update the enable state of UI now that it is all built
+	//
+	AEfileTextureFileTextureNameChanged($nodeName, $oldParent, true);
+}
+
+//
+// Helper to take an array of integers and produce a nice string collapsing
+// ranges (e.g {0,1,2,3,6,7,8,13} -> "0-3, 6-7, 8, 13")
+//
+proc string AEfileTextureIntStringList(int $values[])
+{
+	// First remove duplicates and negative values and sort list
+	if (size($values) <= 0)
+	{
+		return "";
+	}
+	int $sortedValues[];
+	for ($val in $values)
+	{
+		if ($val >= 0 &&
+			!intArrayContains($val, $sortedValues))
+		{
+			$sortedValues[size($sortedValues)] = $val;
+		}
+	}
+	$sortedValues = `sort $sortedValues`;
+	if (size($sortedValues) <= 0)
+	{
+		return "";
+	}
+
+	// Then walk the list and form the string
+	string $result = "";
+	int $min = -1;
+	int $max = -1;
+	for ($val in $sortedValues)
+	{
+		if ($min < 0) $min = $val;
+		if ($max < 0) $max = $val;
+		if ($val > $max+1)
+		{
+			if (size($result) > 0)
+			{
+				$result += ", ";
+			}
+			if ($min == $max)
+			{
+				$result += $min;
+			}
+			else
+			{
+				$result += ($min + "-" + $max);
+			}
+			$min = $val;
+			$max = $val;
+		}
+		else
+		{
+			$max = $val;
+		}
+	}
+	if ($min >= 0 && $max >=0)
+	{
+		if (size($result) > 0)
+		{
+			$result += ", ";
+		}
+		if ($min == $max)
+		{
+			$result += $min;
+		}
+		else
+		{
+			$result += ($min + "-" + $max);
+		}
+	}
+	return $result;
+}
+
+global proc AEfileTextureCheckUseUvTilesUI(string $nodeName, string $parent)
+{
+	string $oldParent = `setParent -q`;
+	setParent $parent;
+
+	// Update tiling specific controls
+
+	// Deal with button
+	setParent textureUvTilingPreviewLayout;
+		string $currButtonCmd = `button -q -command textureUvTilingGeneratePreviewButton`;
+		deleteUI textureUvTilingGeneratePreviewButton;
+		createGeneratePreviewButton(
+			`getAttr ($nodeName + ".uvTileProxyDirty")`, $currButtonCmd);
+	setParent $parent;
+	int $tilingType = `getAttr ($nodeName + ".uvTilingMode")`;
+	int $enablePreview = (`getAttr ($nodeName + ".uvTileProxyQuality")` != 0);
+	int $numTiles = 0;
+	int $uvValues[];
+	if ($tilingType == 1 || $tilingType == 2 || $tilingType == 3)
+	{
+		rowColumnLayout -edit -visible true textureUvTilingPreviewLayout;
+		columnLayout -edit -enable false -visible false textureUvTilingExplicitLayout;
+		text -edit -visible true textureUvTilingTileCountLabel;
+
+		// Update the label for number of found tiles
+		string $pattern = AEfileTextureGetFileTextureNamePattern($nodeName);
+		int $frameExt = `getAttr ($nodeName + ".frameExtension")` + `getAttr ($nodeName + ".frameOffset")`;
+		python("import maya.app.general.fileTexturePathResolver");
+		string $matches[] = python(
+			"maya.app.general.fileTexturePathResolver.findAllFilesForPattern('" + $pattern + "', " + $frameExt + ")");
+		$numTiles = size($matches);
+		if ($numTiles > 0)
+		{
+			$uvValues = python(
+				"maya.app.general.fileTexturePathResolver.computeUVForFiles(['" +
+					stringArrayToString($matches, "','") +	"'], '" + $pattern + "')");
+		}
+	}
+	else if ($tilingType == 4)
+	{
+		rowColumnLayout -edit -visible true textureUvTilingPreviewLayout;
+		columnLayout -edit -enable true -visible true textureUvTilingExplicitLayout;
+		int $indices[] = `getAttr -multiIndices ($nodeName + ".explicitUvTiles")`;
+		int $idxCount = size($indices);
+		string $currTileName;
+		for ($i=0; $i<$idxCount; $i++)
+		{
+			string $currentParent = `setParent -q`;
+			setParent ("textureUvTilingExplicitRow" + $i);
+			float $defaultBGC[] = `textField -q -backgroundColor textureNameField`;
+			textField -edit -backgroundColor $defaultBGC[0] $defaultBGC[1] $defaultBGC[2] textureUvTilingExplicitName;
+
+			string $baseAttrName = ($nodeName + ".explicitUvTiles[" + $indices[$i] + "]");
+			$currTileName = `getAttr ($baseAttrName + ".explicitUvTileName")`;
+			if (size($currTileName) > 0)
+			{
+				if (`filetest -f $currTileName`)
+				{
+					$numTiles++;
+					$uvValues[size($uvValues)] = int(`getAttr ($baseAttrName + ".explicitUvTilePositionU")`);
+					$uvValues[size($uvValues)] = int(`getAttr ($baseAttrName + ".explicitUvTilePositionV")`);
+				}
+				else
+				{
+					textField -edit -backgroundColor 1.0 0.0 0.0 textureUvTilingExplicitName;
+				}
+			}
+
+			setParent $currentParent;
+		}
+		$currTileName = `getAttr ($nodeName + ".fileTextureName")`;
+		if (size($currTileName) > 0 && `filetest -f $currTileName`)
+		{
+			$numTiles++;
+			$uvValues[size($uvValues)] = int(`getAttr ($nodeName + ".baseExplicitUvTilePositionU")`);
+			$uvValues[size($uvValues)] = int(`getAttr ($nodeName + ".baseExplicitUvTilePositionV")`);
+		}
+	}
+	else
+	{
+		rowColumnLayout -edit -visible false textureUvTilingPreviewLayout;
+		columnLayout -edit -enable false -visible false textureUvTilingExplicitLayout;
+	}
+
+	// Update tile count label
+	if ($tilingType == 0)
+	{
+		text -edit -visible false textureUvTilingTileCountLabel;
+	}
+	else
+	{
+		string $theFont = "plainLabelFont";
+		string $theLabel = "";
+		string $theAnnotation = "";
+		if ($numTiles <= 0)
+		{
+			$theFont = "obliqueLabelFont";
+			$theLabel = (uiRes("m_AEfileTemplate.kNoUvTilesFound"));
+		}
+		else
+		{
+			// label
+			if ($numTiles == 1)
+			{
+				$theLabel = (uiRes("m_AEfileTemplate.kOneUvTileFound"));
+			}
+			else
+			{
+				string $fmt = (uiRes("m_AEfileTemplate.kMultiUvTilesFound"));
+				$theLabel = `format -s $numTiles $fmt`;
+			}
+
+			// annotation
+			int $numUVs = size($uvValues)/2;
+			if ($numUVs > 0)
+			{
+				if ($tilingType == 3)
+				{
+					int $udimList[];
+					for ($i=0; $i<$numUVs; $i++)
+					{
+						int $uVal = $uvValues[$i*2];
+						int $vVal = $uvValues[$i*2+1];
+						$udimList[size($udimList)] = 1000+($uVal+1)+($vVal*10);
+					}
+					$theAnnotation = AEfileTextureIntStringList($udimList);
+				}
+				else
+				{
+					int $uList[];
+					int $vList[];
+					for ($i=0; $i<$numUVs; $i++)
+					{
+						if ($tilingType == 2)
+						{
+							$uList[size($uList)] = $uvValues[$i*2] + 1;
+							$vList[size($vList)] = $uvValues[$i*2+1] + 1;
+						}
+						else
+						{
+							$uList[size($uList)] = $uvValues[$i*2];
+							$vList[size($vList)] = $uvValues[$i*2+1];
+						}
+					}
+					$theAnnotation = ("U: " + AEfileTextureIntStringList($uList) + "\n");
+					$theAnnotation += ("V: " + AEfileTextureIntStringList($vList));
+				}
+			}
+			if (size($theAnnotation) > 0)
+			{
+				$theAnnotation = ((uiRes("m_AEfileTemplate.kUVRange")) + "\n" + $theAnnotation);
+			}
+		}
+
+		text -edit
+			-visible true
+			-font $theFont
+			-label $theLabel
+			-annotation $theAnnotation
+			textureUvTilingTileCountLabel;
+	}
+
+	setParent $oldParent;
+}
+
+global proc int AEfileTextureUvTileAssignTextureCB(
+	string $explicitNameAttr, string $fileName, string $fileType)
+{
+	setAttr $explicitNameAttr -type "string" $fileName;
+    retainWorkingDirectory(`workspace -q -dir`);
+	return true;
+}
+
+global proc AEfileTextureUvTileBrowser(
+	string $parentLayoutName, string $explicitNameAttr)
+{
+	string $oldParent = `setParent -q`;
+	setParent $parentLayoutName;
+
+	string $path = fromNativePath(`textField -q -text textureUvTilingExplicitName`);
+	if (`filetest -f $path`)
+	{
+		$path = dirname($path);
+		workspace -dir $path;
+	}
+	else
+	{
+		string $workspace = `workspace -q -fn`;
+		setWorkingDirectory $workspace "image" "sourceImages";
+	}
+
+	string $command = ("AEfileTextureUvTileAssignTextureCB " + $explicitNameAttr);
+	fileBrowser ($command, uiRes("m_AEfileTemplate.kOpen"), "image", 0);
+
+	setParent $oldParent;
+}
+
+//
+//  Procedure Name:
+//  checkFilterType
+//
+
+global proc checkFilterType ( string $nodeName )
+{
+	string $nodeAttr = $nodeName + ".filterType";
+	int $filter = `getAttr $nodeAttr`;
+	if ($filter == 0) {
+		editorTemplate -dimControl $nodeName "filter" true;
+		editorTemplate -dimControl $nodeName "filterOffset" true;
+
+		editorTemplate -dimControl $nodeName "miUseEllipticalFilter" true;
+
+	} else {
+		editorTemplate -dimControl $nodeName "filter" false;
+		editorTemplate -dimControl $nodeName "filterOffset" false;
+	}
+
+	// if ($filter == 1)
+	//	editorTemplate -dimControl $nodeName "useMaximumRes" false;
+	// else
+	//	editorTemplate -dimControl $nodeName "useMaximumRes" true;
+
+
+	if ($filter == 1) {
+		editorTemplate -dimControl $nodeName "miUseEllipticalFilter" false;
+	} else {
+		editorTemplate -dimControl $nodeName "miUseEllipticalFilter" true;
+	}
+
+	checkEllipticalFilter($nodeName);
+
+}
+
+global proc checkPtexFilterType(string $nodeName)
+{
+	string $nodeAttr = $nodeName + ".ptexFilterType";
+	if (`getAttr $nodeAttr` == 4)
+	{
+		editorTemplate -dimControl $nodeName "ptexFilterSharpness" false;
+	}
+	else
+	{
+		editorTemplate -dimControl $nodeName "ptexFilterSharpness" true;
+	}
+}
+
+global proc checkEllipticalFilter ( string $nodeName )
+{
+	if (`attrEnumOptionMenu -exists fileTextureEllipticalFilterTypeGrp`) {
+		int $filterType = `getAttr ($nodeName + ".filterType")`;
+		int $useElliptical = `getAttr ($nodeName + ".miUseEllipticalFilter")`;
+		int $value = (($filterType == 1) && ($useElliptical));
+
+		attrEnumOptionMenu -edit -enable $value
+ 			fileTextureEllipticalFilterTypeGrp;
+	}
+}
+
+global proc enableAutoConvertForElliptical ( string $nodeName )
+{
+	int $filterType = `getAttr ($nodeName + ".filterType")`;
+	int $useElliptical = `getAttr ($nodeName + ".miUseEllipticalFilter")`;
+	int $dim = (($filterType != 1) || (!$useElliptical));
+
+	// activate auto-convert to gain benefits in filtering
+	if (!$dim) {
+		setAttr ($nodeName + ".miOverrideConvertToOptim") 1;
+		setAttr ($nodeName + ".miConvertToOptim") 1;
+	}
+
+	// call UI enable function in case user set this attribute
+	// manually
+	checkEllipticalFilter $nodeName;
+}
+
+// Elliptical filter controls
+global proc AEfileTextureEllipticalFilterNew ( string $useFilter,
+												string $type )
+{
+	checkBoxGrp -label1 (uiRes("m_AEfileTemplate.kUseElliptical"))
+		-annotation (uiRes("m_AEfileTemplate.kUseEllipticalAnn"))
+		fileTextureEllipticalFilterCB;
+	attrEnumOptionMenuGrp -label (uiRes("m_AEfileTemplate.kEllFilterType"))
+		-annotation (uiRes("m_AEfileTemplate.kEllFilterTypeAnn"))
+		fileTextureEllipticalFilterTypeGrp;
+
+	AEfileTextureEllipticalFilterReplace $useFilter $type;
+}
+
+global proc AEfileTextureEllipticalFilterReplace ( string $useFilter,
+													string $type )
+{
+	string $tokenArray[];
+	tokenize($useFilter, ".", $tokenArray);
+	string $node = $tokenArray[0];
+
+	// change command to enable/disable level UI
+	checkBoxGrp -edit
+		-changeCommand ("checkEllipticalFilter " + $node)
+		fileTextureEllipticalFilterCB;
+	// connect attr to checkbox
+	connectControl -index 2
+		fileTextureEllipticalFilterCB
+		$useFilter;
+	// hook up script job to automatically enable the auto convert
+	// when turning on elliptical filtering. By hooking this
+	// to the attribute and not the UI, it will only be done when
+	// the user sets the attr and not also when the UI is loaded
+	scriptJob -replacePrevious
+		-parent fileTextureEllipticalFilterCB
+		-attributeChange $useFilter
+				("enableAutoConvertForElliptical " + $node);
+
+	attrEnumOptionMenuGrp -edit
+ 		-attribute $type
+ 		fileTextureEllipticalFilterTypeGrp;
+}
+
+//
+// File Texture Reload functions
+//
+
+global proc AEfileTextureReload (string $ftn)
+{
+	setUITemplate -pst attributeEditorTemplate;
+	rowLayout -nc 5  -cl5  "center" "center" "center" "center" "center";
+		text -label "";
+		button -label (uiRes("m_AEfileTemplate.kReload")) fileReloadBtn;
+		button -label (uiRes("m_AEfileTemplate.kEdit"))  fileEditBtn;
+		button -label (uiRes("m_AEfileTemplate.kView"))  fileViewBtn;
+		text -label "";
+	setParent ..;
+	setUITemplate -ppt;
+	AEfileTextureReloadReplace($ftn);
+}
+
+global proc AEfileTextureReloadReplace (string $ftn)
+{
+	button -e -c ("AEfileTextureReloadCmd " + $ftn) fileReloadBtn;
+	button -e -c ("AEfileTextureEditCmd " + $ftn) fileEditBtn;
+	button -e -c ("AEfileTextureViewCmd " + $ftn) fileViewBtn;
+}
+
+global proc AEfileTextureReloadCmd (string $ftn)
+{
+    string $currFile = `getAttr $ftn`;
+	if ($currFile != "") {
+		int $i;
+		string $allTextures[] = `ls -typ file -type mentalrayTexture`;
+
+		// this loop is needed to guarantee all texture nodes who
+		// reference this file gets updated.
+		for ($i = 0; $i < size($allTextures); $i++) {
+			string $ithFile = `getAttr ($allTextures[$i] + ".ftn")`;
+			if ($ithFile == $currFile)
+				setAttr ($allTextures[$i] + ".ftn") -type "string" $currFile;
+		}
+	}
+}
+
+global proc AEfileTextureEditCmd (string $ftn)
+{
+    string $currFile = `getAttr $ftn`;
+	int $sequence  = 0;	// 0 -> single image
+	int $editImage = 1;
+	launchImageApp($currFile, $sequence, $editImage);
+}
+
+global proc AEfileTextureViewCmd (string $ftn)
+{
+    string $currFile = `getAttr $ftn`;
+	int $sequence  = 0;	// 0 -> single image
+	int $editImage = 0;	// 0 -> view image
+	launchImageApp($currFile, $sequence, $editImage);
+}
+
+
+//
+//	Frame extension settings
+//
+global proc AEfileTextureUseFrameExtensionChanged(string $parent, string $fileType, string $nodeName)
+{
+	checkUseFrameExtension($nodeName);
+
+	// Update file name related UI
+	if ($fileType == "image")
+	{
+		AEfileTextureFileTextureNameChanged($nodeName, $parent, true);
+	}
+}
+
+global proc AEfileTextureFrameExtensionChanged(string $parent, string $fileType, string $nodeName)
+{
+	if ($fileType == "image")
+	{
+		AEfileTextureCheckUseUvTilesUI($nodeName, $parent);
+	}
+}
+
+//
+//	Prefilter settings
+//
+global proc checkPreFilter ( string $nodeName )
+{
+    string $nodeAttr = $nodeName + ".preFilter";
+    int $value = `getAttr $nodeAttr`;
+
+    if ( $value == 1 ) {
+        editorTemplate -dimControl $nodeName "preFilterRadius" false;
+    } else {
+        editorTemplate -dimControl $nodeName "preFilterRadius" true;
+    }
+}
+
+// ADSK_CLR_MGT_BEGIN
+global proc checkHDRMapping( string $nodeName )
+{
+    string $nodeAttr = $nodeName + ".hdrMapping";
+    int $value = `getAttr $nodeAttr`;
+
+    // 2 == exponential, so enable exponential exposure parameter
+    if ( $value == 2 )
+    {
+        editorTemplate -dimControl $nodeName "hdrExposure" false;
+    }
+    else
+    {
+        editorTemplate -dimControl $nodeName "hdrExposure" true;
+    }
+}
+// ADSK_CLR_MGT_END
+
+global proc checkAutoConvert( string $nodeName )
+{
+	string $nodeAttr = $nodeName + ".miOverrideConvertToOptim";
+	int $value = `getAttr $nodeAttr`;
+	int $dim = !$value;
+	editorTemplate -dimControl $nodeName "miConvertToOptim" $dim;
+}
+
+//
+//  Procedure Name:
+//	AEfileTemplate
+//
+
+global proc AEfileTemplate ( string $nodeName )
+{
+	fileOrMovieTemplate( $nodeName, "image" );
+}
+
+global proc fileOrMovieTemplate ( string $nodeName, string $fileType )
+{
+	AEswatchDisplay $nodeName;
+	editorTemplate -beginScrollLayout;
+		editorTemplate -beginLayout (uiRes("m_AEfileTemplate.kFileAttributes")) -collapse 0;
+			editorTemplate -addControl "filterType" "checkFilterType";
+			editorTemplate -addControl "preFilter" "checkPreFilter";
+			editorTemplate -addControl "preFilterRadius";
+			editorTemplate -addSeparator;
+
+			editorTemplate -callCustom "AEfileTextureNameNew"
+						"AEfileTextureNameReplace"
+						( "fileTextureName " + $fileType );
+			editorTemplate -callCustom "AEfileTextureReload"
+						"AEfileTextureReloadReplace"
+						"fileTextureName";
+			if ($fileType == "image")
+			{
+				editorTemplate -addSeparator;
+				editorTemplate -callCustom "AEfileTextureUvTilesNew" "AEfileTextureUvTilesReplace" "uvTilingMode" "explicitUvTiles" "uvTileProxyQuality";
+				editorTemplate -addSeparator;
+			}
+			else
+			{
+				editorTemplate -suppress "uvTilingMode";
+				editorTemplate -suppress "explicitUvTiles";
+				editorTemplate -suppress "uvTileProxyQuality";
+			}
+			editorTemplate -suppress "fileTextureNamePattern";
+			editorTemplate -suppress "computedFileTextureNamePattern";
+			editorTemplate -suppress "baseExplicitUvTilePosition";
+
+			editorTemplate -label (uiRes("m_AEfileTemplate.kUseImageSequence")) -addControl "useFrameExtension" ("AEfileTextureUseFrameExtensionChanged " + `setParent -q` + " " + $fileType + " ");
+			editorTemplate -label (uiRes("m_AEfileTemplate.kImageNumber")) -addControl "frameExtension" ("AEfileTextureFrameExtensionChanged " + `setParent -q` + " " + $fileType + " ");
+			editorTemplate -addControl "frameOffset";
+
+			editorTemplate -addSeparator;
+
+			// ADSK_CLR_MGT_BEGIN
+			editorTemplate -ccu "AEcolorSpaceNew" "AEcolorSpaceReplace" "colorSpace";
+			editorTemplate -addControl "ignoreColorSpaceFileRules";
+			// ADSK_CLR_MGT_END
+
+			editorTemplate -suppress "filterWidth";
+			editorTemplate -beginNoOptimize;
+			editorTemplate -suppress "useMaximumRes";
+			editorTemplate -label (uiRes("m_AEfileTemplate.kUseBOT")) -addControl "useCache";
+			editorTemplate -addControl "disableFileLoad";
+			editorTemplate -endNoOptimize;
+		editorTemplate -endLayout;
+
+		editorTemplate -beginLayout (uiRes("m_AEfileTemplate.kInteractiveSequenceCachingOptions"));
+			editorTemplate -label (uiRes("m_AEfileTemplate.kUseInteractiveSequenceCaching")) -addControl "useHardwareTextureCycling" "checkUseHardwareTextureCycling";
+			editorTemplate -label (uiRes("m_AEfileTemplate.kSequenceStart")) -addControl "startCycleExtension";
+			editorTemplate -label (uiRes("m_AEfileTemplate.kSequenceEnd")) -addControl "endCycleExtension";
+			editorTemplate -label (uiRes("m_AEfileTemplate.kSequenceIncrement")) -addControl "byCycleIncrement";
+		editorTemplate -endLayout;
+
+		// suppressed attributes
+		editorTemplate -suppress "noiseUV";
+		editorTemplate -suppress "blendForInteractive";
+
+		// include/call base class/node attributes
+		AEtexture2dCommon $nodeName;
+
+		// Add ptex controls
+		editorTemplate -beginLayout (uiRes("m_AEfileTemplate.kPtexControls"));
+			editorTemplate -label (uiRes("m_AEfileTemplate.kFilterType")) -addControl "ptexFilterType" "checkPtexFilterType";
+			editorTemplate -label (uiRes("m_AEfileTemplate.kWidth")) -addControl "ptexFilterWidth";
+			editorTemplate -label (uiRes("m_AEfileTemplate.kBlur")) -addControl "ptexFilterBlur";
+			editorTemplate -label (uiRes("m_AEfileTemplate.kSharpness")) -addControl "ptexFilterSharpness";
+			editorTemplate -label (uiRes("m_AEfileTemplate.kInterpolateLevels")) -addControl "ptexFilterInterpolateLevels";
+		editorTemplate -endLayout;
+
+	editorTemplate -addExtraControls;
+	editorTemplate -endScrollLayout;
+}
+
+
+// Procedures for propertyPanel layout.
+global string $gAEcustomFileTemplateParentLayouts[] ;
+
+global proc int addToAEcustomFileTemplateParentLayoutList(string $layout) {
+	global string $gAEcustomFileTemplateParentLayouts[];
+	int $found = 0;
+	for ($l in $gAEcustomFileTemplateParentLayouts) {
+		if ($l == $layout) {
+			$found = 1;
+			break;
+		}
+	}
+	if (!$found) {
+		$gAEcustomFileTemplateParentLayouts[size($gAEcustomFileTemplateParentLayouts)] = $layout;
+	}
+	return !$found;
+}
+
+global proc removeFromAEcustomFileTemplateParentLayoutList(string $layout) {
+	global string $gAEcustomFileTemplateParentLayouts[];
+	$gAEcustomFileTemplateParentLayouts = stringArrayRemove({$layout}, $gAEcustomFileTemplateParentLayouts);
+}
+	
+global proc PPtextureName(string $plug, string $attr, string $label)
+{
+	string $fileAttribute = $plug + " image";
+	AEfileTextureNameNew $fileAttribute;
+}
+
+global proc PPtileMode(string $plug, string $annot, string $label)
+{
+	string $rootLayout = `setParent -q`;
+	// Save this new layout to our global list...
+	//...but make sure to remove from list when layout is deleted,
+	// so add a script job if a new layout was added.
+	global string $gAEcustomFileTemplateParentLayouts[];
+	if(addToAEcustomFileTemplateParentLayoutList($rootLayout))
+	{
+		scriptJob -uiDeleted $rootLayout ("removeFromAEcustomFileTemplateParentLayoutList " + $rootLayout);
+	}
+
+	string $tokens[];
+	tokenize $plug "." $tokens;
+	string $uvTilingMode = $tokens[0] + ".uvTilingMode";
+	string $explicitUvTiles = $tokens[0] + ".explicitUvTiles";
+	string $uvTileProxyQuality = $tokens[0] + ".uvTileProxyQuality";
+
+	AEfileTextureUvTilesNew $uvTilingMode  $explicitUvTiles  $uvTileProxyQuality;
+}
+
+global proc PPRefreshUvTilesUI(string $node)
+{
+	global string $gAEcustomFileTemplateParentLayouts[];
+	string $uvTilingMode = $node+ ".uvTilingMode";
+	string $explicitUvTiles = $node + ".explicitUvTiles";
+	string $uvTileProxyQuality = $node + ".uvTileProxyQuality";	
+
+	string $oldParent = `setParent -q`;
+
+	// Update the UV tile layout for all  property panels
+	for ($layout in $gAEcustomFileTemplateParentLayouts) {
+		if (`layout -exists $layout`) {
+			setParent $layout;
+			AEfileTextureUvTilesReplace( $uvTilingMode, $explicitUvTiles, $uvTileProxyQuality);
+		}
+	}
+	
+	setParent $oldParent;	
+}

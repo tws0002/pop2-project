@@ -1,0 +1,744 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+global string $deleteWarningPromptCheckboxName;
+
+
+proc string addPrefixOnNamespace(string $name)
+{
+	if (!startsWith($name,":")&&size($name)>0) 
+	{
+		$name = ":" + $name;
+	}
+	return $name;
+}
+
+//  Procedure Name:
+//		renameNamespace
+//
+//  Description:
+//		Renames the specified namespace by popping a window for the user to enter
+//		a new name.
+//
+//  Input Arguments:
+//      $selectedNamespace:	the name of the namespace to rename
+//
+//  Return Value:
+//      None.
+//
+global proc renameNamespace(string $selectedNamespace) {
+
+
+	string $currentNamespace = `namespaceInfo -currentNamespace`;
+		
+	// Prompt the user for a new uvSet name
+	//
+	string $ok     = (uiRes("m_namespaceEditCmd.kNamespaceEditorOK")) ;
+	string $cancel = (uiRes("m_namespaceEditCmd.kNamespaceEditorCancel"));
+	string $result = `promptDialog 
+		-title (uiRes("m_namespaceEditCmd.kNamespaceEditorRenameNamespace"))
+		-message (uiRes("m_namespaceEditCmd.kNamespaceEditorEnterNewNamespace"))
+		-text $currentNamespace
+		-button $ok 
+		-button $cancel 
+		-defaultButton $ok 
+		-cancelButton $cancel 
+		-dismissString $cancel
+		-parent namespaceEditor`;
+
+	// If the result was "OK", then proceed
+	//
+	if ( $result == $ok ) {
+
+		// Query the promptDialog for the name the
+		// user typed in - note: there is no checking
+		// being done for illegal characters, spaces,
+		// etc.  This should be added.
+		//
+		string $newNamespace = `promptDialog -q`;
+		if (containsMultibyte($newNamespace)) {
+			error((uiRes("m_namespaceEditCmd.kNoMultibyteNamespace")));
+		}
+
+		namespace -setNamespace $selectedNamespace;
+		string $parentNamespace = `namespaceInfo -parent`;
+		$parentNamespace = addPrefixOnNamespace($parentNamespace);
+		if ($newNamespace != $selectedNamespace) {
+			string $fullNewNamespace = `namespace -add $newNamespace -parent  $parentNamespace`;		
+			namespace -mv  $selectedNamespace $fullNewNamespace;
+			namespace -setNamespace $parentNamespace;
+			namespace -rm  $selectedNamespace;
+		}
+	}
+}
+
+global proc
+namespaceEditorDeleteNamespaces(string $selSets[])
+{
+	string $currentNamespace;
+	
+	for( $set in $selSets ) {
+		
+		int $namespaceNotEmpty = 0;
+
+		string $contents[] = `namespaceInfo -listOnlyNamespaces $set`;
+		string $members[] = `namespaceInfo -listOnlyDependencyNodes $set`;
+		
+		if(size($contents) > 0 || size($members) > 0) 
+		{
+			$namespaceNotEmpty = 1;
+		}
+		
+		
+		
+		// If namespace is empty, delete namespace directly and return
+		if($namespaceNotEmpty == 0)
+		{
+			namespaceEditorDoDelete($set);
+			continue;
+		}
+		
+		//	Create dialog and let user choose what action they want
+		//	The four options are:
+		//	-Merge with Root
+		//	-Merge with Parent
+		//	-Delete Namespace
+		//	-Cancel
+		// 
+
+		int $userOption = namespaceEditorDeleteOptionConfirm($set);
+		
+		// If click cancel, do nothing
+		if($userOption == 0)
+		{
+			continue;
+		}
+		
+		switch($userOption)
+		{
+			case 1:	//	Click "Merge with Root"
+				namespaceEditorDoMergeWithRoot($set);
+				break;
+			case 2:	//	Click "Merge with Parent"
+				namespaceEditorDoMergeWithParent($set);
+				break;
+			case 3:	//	Click "Delete Namespace"
+				namespaceEditorDoDelete($set);
+				break;
+			default:
+				break;
+		}
+		
+	}
+	
+
+}
+
+//  Procedure Name:
+//		namespaceEditCmd
+//
+//  Description:
+//		Creates the commands for editting namespaces.
+//
+//  Input Arguments:
+//      $cmd:	the command to process. Valid commands are new, rename, delete,
+//				copy, setCurrent, propagate
+//		$scrollList:	the name of the scrollList from the namespaceEditor. If
+//				this is "none" then the commands are being called from the 
+//				pulldown menu items.
+//
+//  Return Value: 
+//      None.
+//
+global proc namespaceEditCmd( string $cmd, string $namespaceTreeView) 
+{
+		if ( !`optionVar -exists disableDeletePromptWarning`) 
+		{
+			optionVar -intValue disableDeletePromptWarning  false;
+		}
+
+		string $selSets[];
+		$selSets = `treeView -q -si $namespaceTreeView`;
+		string $selSet[];
+		int $setSize = size($selSets);
+		//flag to avoid multi comparisons
+		int $isSelected = ($setSize > 0);
+		int $isMultiSelected = ($setSize > 1);
+
+		switch( $cmd ) {
+		case "new":
+			string $parentToNew = ":";
+			if($isSelected)
+			{
+				$parentToNew = $selSets[0];
+			}
+			string $newNamespace = `namespace -add "NewNamespace#" -parent $parentToNew`;
+			$newNamespace = addPrefixOnNamespace($newNamespace);
+			treeView -e -cs $namespaceTreeView;
+
+			if (`window -exists namespaceEditor`) 
+			{
+				updateNamespaceEditor;
+			}
+			$selSet[0] = $newNamespace;
+			selectNamespaceTreeViewItem($namespaceTreeView, $selSet);
+			//UI bug so must set button setCurrentNamespaceButton status manully here 
+			button -e -enable true setCurrentNamespaceButton;
+			updateNamespaceEditor;
+
+			break;
+		case "rename":
+			//	Rename the selected set
+			//
+			renameNamespace $selSets[0];
+			if (`window -exists namespaceEditor`) 
+				updateNamespaceEditor;
+			break;
+		case "delete":
+			//	Delete the selected namespaces
+			//
+			namespaceEditorDeleteNamespaces($selSets);
+			if (`window -exists namespaceEditor`) 
+				updateNamespaceEditor;
+			break;
+		case "list":
+			if($isSelected)
+			{
+				displayNamespaceContents($selSets[0]);
+			}
+			break;
+		case "select":
+			if($isSelected)
+			{
+				string $currentNamespace = `namespaceInfo -currentNamespace`;
+				$currentNamespace = addPrefixOnNamespace($currentNamespace);
+				//	select the contents of the selected namespace
+				//
+				namespace -setNamespace $selSets[0];
+				select -replace (`namespaceInfo -listOnlyDependencyNodes -dagPath`);
+				// restore original
+				//
+				namespace -setNamespace $currentNamespace;
+			}
+			break;
+
+		case "add":
+			//	Add an object to the target namespace.
+			//
+			if($isSelected)
+			{
+				string $selection[] = `ls -sl`;
+				string $destNamespace =$selSets[0];
+				for ($sel in $selection){
+					string $buffer[];
+					
+					// As the name string may contains namespace informations, we only need to get
+					// base name of the object.
+					// Get the last part of the whole string seperated by namespace separator ":"
+					//
+					$buffer = stringToStringArray($sel, ":");
+					int $size = `size $buffer`;
+					
+					// As the object base name may contains "|", for example, a string consist of parent
+					// object and child object, like "CUBE|Sphere".
+					// Get the last part of the object base name string seperated by separator "|"
+					//
+					$buffer = stringToStringArray($buffer[$size - 1], "|");
+					$size = `size $buffer`;
+					
+					// This should be the final result string to be a parameter as the destination string 
+					// for rename command.
+					//
+					string $targetName = $buffer[$size - 1];
+
+					// Since renaming a transform renames the shape, we
+					// have to check here to make sure the object with the old
+					// name still even exists to be renamed.
+					//
+					if (`objExists $sel`) {
+						rename $sel ($destNamespace + ":" + $targetName);
+					}
+				}
+			}
+			if (`window -exists namespaceEditor`) 
+				updateNamespaceEditor;
+			break;
+		
+		case "setCurrent":
+			//	set the selected namespace as current
+			//
+			if($isSelected)
+			{
+				namespace -setNamespace  $selSets[0];
+			}
+			break;
+
+		case "selectEmpty":
+			//	select all empty namespaces
+			//
+			string $oldCurrentNS = `namespaceInfo -currentNamespace`;
+			$oldCurrentNS = addPrefixOnNamespace($oldCurrentNS);
+			treeView -e -clearSelection $namespaceTreeView;
+			string $allNamespaces[] = `treeView -q -children ":" $namespaceTreeView`;
+			int $selIndex = 0;
+			for( $itemNamespace in $allNamespaces )
+			{
+				namespace -setNamespace $itemNamespace;
+				string $contents[] = `namespaceInfo -listNamespace`;
+				if (`size $contents`==0)
+				{
+					$selSet[$selIndex] = $itemNamespace;
+					$selIndex++;
+				}
+			}
+			selectNamespaceTreeViewItem($namespaceTreeView, $selSet);
+			namespace -setNamespace $oldCurrentNS;
+			updateNamespaceEditor;
+			break;
+
+		case "collapse":
+			//	delete all empty parents(no elements excepts for namespace)
+			//
+			if( $isSelected)
+			{
+				//Collapse will change many namespaces, so just the last selected be collapsed.
+				collapseEmptyNamespaces($selSets[$setSize - 1]);
+			}
+			updateNamespaceEditor;
+			break;		
+		}
+	
+}
+
+global proc displayNamespaceContents( string $namespaceName )
+//
+//	Description:
+//		display certain namespace's content in a window together with cmd window.
+// Params:
+//		$namespaceName, the name of the namespace TreeView
+{
+	//Close last window
+	//
+	if(`window -exists namespaceContentViewer`)
+    {
+        deleteUI -window namespaceContentViewer;
+    }
+	//Create window and widgets
+	//
+	window 
+			-title (uiRes("m_namespaceEditCmd.kNamespaceEditorContentViewer"))
+			-sizeable true 
+			namespaceContentViewer;
+	formLayout namespaceContentForm;
+
+	string $contentsList = "namespaceContentsList";
+
+	textScrollList $contentsList;
+
+	separator listButtonsSeparator;
+
+	button -h 26 -w 107 
+			-label (uiRes("m_namespaceEditCmd.kNamespaceContentUpdate"))
+			-c ("updateNamespaceContentsList \"" + $namespaceName + "\" \"" + $contentsList + "\"")
+			updateButton;
+	button -h 26 -w 107 
+			-label (uiRes("m_namespaceEditCmd.kNamespaceContentClose"))
+			-c "deleteUI -window namespaceContentViewer" 
+			closeButton;
+
+	formLayout -edit
+	    -af namespaceContentsList top 5
+	    -af namespaceContentsList left 5
+	    -af namespaceContentsList right 5
+	    -ac namespaceContentsList bottom 5 listButtonsSeparator
+
+		-af listButtonsSeparator left 0
+		-af listButtonsSeparator right 0
+		-ac listButtonsSeparator bottom 5 updateButton
+		-an listButtonsSeparator top
+
+		-af updateButton left 5
+		-af updateButton bottom 5
+		-ap updateButton right 3 50
+		-an updateButton top 
+	    
+		-ap closeButton left 2 50
+		-af closeButton bottom 5
+		-af closeButton right 5
+		-an closeButton top 
+		namespaceContentForm ;  
+
+	showWindow namespaceContentViewer;
+
+	updateNamespaceContentsList( $namespaceName, $contentsList );
+}
+
+global proc updateNamespaceContentsList( string $namespaceName, string $contentsList )
+//
+//	Description:
+//		Helper for populating the list of namespace contents.
+// Params:
+//		$namespaceName, the namespace to display.
+//		$contentsList, the name of the scroll list widget to display the content.
+//	
+{
+	string $currentNamespace = `namespaceInfo -currentNamespace`;
+	$currentNamespace = addPrefixOnNamespace($currentNamespace);
+	namespace -setNamespace  $namespaceName;
+
+	// populate list of contents
+	//
+	string $contents[] = `namespaceInfo -listOnlyDependencyNodes`;
+
+	//	add contents to scroll list
+	if (`size $contents`){
+
+		// clear list first
+		textScrollList -e -ra $contentsList;
+
+		for( $itemContent in $contents )
+		{
+			textScrollList -e -a $itemContent $contentsList;
+		}
+	}
+
+	// restore original
+	//
+	namespace -setNamespace $currentNamespace;
+}
+
+global proc collapseEmptyNamespaces(string $namespaceName)
+//
+//	Description:
+//		Delete all empty parent namespace.
+//	Procedure:
+//		1.find path to root;
+//		2.Loop begin from root's child till the select one, 
+//			if  empty, delete it, set its childs parented to its parent, and continue
+//	
+{
+
+	//Get current namespace
+	//There are probably deletes and/or renames in collapsing, so if current namespace is involved, 
+	//		the current namespace will be set into root before the function returns;
+	string $currentNamespace = `namespaceInfo -currentNamespace`;
+	$currentNamespace = addPrefixOnNamespace($currentNamespace);
+	int $currentNamespaceInvolved = 0;
+
+	//Get array containing parent path
+	string $namespacePath[] = getNamespacePathToRoot($namespaceName);
+	int $parentCount = size($namespacePath);
+
+	//Find current namespace and handling namespace's first ancestor in common  
+	string $currentNamespacePath[] = getNamespacePathToRoot($currentNamespace);
+	int $currentNSParentCount = size($currentNamespacePath);
+	int $commonAncestorIndex = -1;
+	int $i = 0;
+	while( $i < $parentCount &&  $i < $currentNSParentCount )
+	{
+		if( $namespacePath[$parentCount - $i -1] == $currentNamespacePath[$currentNSParentCount - $i -1])
+		{
+			$commonAncestorIndex = $parentCount - $i -1;
+		}
+		else
+		{
+			break;
+		}
+		$i++;
+	}
+	$currentNamespaceInvolved = ($commonAncestorIndex == 0);
+
+	string $contents[] ;
+	string $parentNS;
+	string $loopItem;
+	string $shortName;
+	if($parentCount>1)
+	{
+		$shortName = endString($namespacePath[0], size($namespacePath[0]) - size($namespacePath[1]) -1);
+	}
+	for($i = 1; $i <$parentCount - 1; $i++)
+	{
+		$loopItem = $namespacePath[$i];
+		namespace -setNamespace $loopItem;
+		$contents = `namespaceInfo -listOnlyDependencyNodes -internal`;
+		if(size($contents)==0)
+		{
+			if($commonAncestorIndex>0&&!$currentNamespaceInvolved && $commonAncestorIndex <= $i)
+			{
+				$currentNamespaceInvolved = 1;
+			}
+			$parentNS = (`namespaceInfo -parent`);
+			$parentNS = addPrefixOnNamespace($parentNS);
+
+			//Rename the namespace to avoid nameclash when delete it and move its childs to parent.
+			//		Ex: We are collapsing namespace ":a:b:b", ":a:b" is empty. What the collapse will do is move ":a:b:b"
+			//		into ":a" and then delete original ":a:b". The problem is after we move ":a:b:b", we got a name clash
+			//		on ":a:b", so the original ":a:b" will be renamed to ":a:b1"( or ":a:b2"":a:b3"...":a:bn" if needed), and deleted
+			//		after new one moved in, so the new one will keep its name after the collapse process.
+			//following code will rename the original ":a:b" to "a:bx" to avoid the nameclash.
+			int $sameEnd = size($shortName) && (endString($loopItem, size($shortName)) == $shortName);
+			if($sameEnd)
+			{
+				//Find a name will not clash.
+				namespace -setNamespace $parentNS;
+				int $isRelative = `namespace -q -relativeNames`;
+				namespace -relativeNames true;
+				string $childs[] = `namespaceInfo -listOnlyNamespaces`;
+				namespace -relativeNames $isRelative;
+				int $tempSuffix = 0;
+				string $tempName = $shortName + $tempSuffix;
+				//The new name maybe still has clash, inc the suffix untill no clash.
+				while(stringArrayContains( $tempName, $childs))
+				{
+					$tempName = $tempName + (++$tempSuffix);
+				}
+				namespace -setNamespace $loopItem;
+				string $fullNewNamespace = `namespace -add $tempName  -parent  $parentNS`;	
+				$fullNewNamespace = addPrefixOnNamespace($fullNewNamespace);
+				namespace -mv  $loopItem $fullNewNamespace;
+				namespace -setNamespace $parentNS;
+				namespace -rm  $loopItem;	
+				$loopItem = $fullNewNamespace;
+			}
+			namespace -force -mv  $loopItem $parentNS;
+			namespace -rm $loopItem;
+		}
+	}
+
+	//Since rename may happens, so just set current to root 
+	if($currentNamespaceInvolved)
+	{
+		warning (uiRes("m_namespaceEditCmd.kWarningCurrentNamespaceChanges"));
+		namespace -setNamespace (":");
+	}
+	else
+	{
+		namespace -setNamespace $currentNamespace;
+	}
+}
+
+global proc string[] getNamespacePathToRoot(string $namespaceName)
+//	Return string array containing ancestor namespace, from direct parent to root
+//
+{
+	string $currentNamespace = `namespaceInfo -currentNamespace`;
+	$currentNamespace = addPrefixOnNamespace($currentNamespace);
+
+	string $namespacePath[];
+	int $parentCount = 0;
+	$namespaceName = addPrefixOnNamespace($namespaceName);
+	$namespacePath[$parentCount++] = $namespaceName;
+	if(`namespace -exists $namespaceName` && $namespaceName != ":")
+	{
+		namespace -setNamespace  $namespaceName;
+		string $loopItem = `namespaceInfo -parent`;
+		while(size($loopItem) )
+		{
+			$loopItem = addPrefixOnNamespace($loopItem);
+			$namespacePath[$parentCount++] = $loopItem;
+			if( $loopItem ==":")
+			{
+				break;
+			}
+			namespace -setNamespace  $loopItem;
+			$loopItem = `namespaceInfo -parent `;
+		}
+	}
+
+	namespace -setNamespace  $currentNamespace;
+	return $namespacePath;
+}
+
+global proc namespaceEditorCheckboxPrompt()
+//  Procedure Name:
+//		namespaceEditorCheckboxPrompt
+//
+//  Description:
+//		Callback for "layout -ui"
+//
+//
+{
+    // Get the dialog's formLayout.
+    //
+    string $form = `setParent -q`;
+    formLayout -e -width 200 $form;
+
+    string $warning  = `text -l (uiRes("m_namespaceEditCmd.kNamespacePromtWarning")) -font "boldLabelFont"`;
+    string $tContent = `text -l (uiRes("m_namespaceEditCmd.kNamespacePromtWarningContent"))`;
+    string $b1 = `button -l (uiRes("m_namespaceEditCmd.kNamespacePromtButtonNo"))    -c "layoutDialog -dismiss \"No\""`;
+    string $b2 = `button -l (uiRes("m_namespaceEditCmd.kNamespacePromtButtonYes")) -c "namespaceEditorPromptYes"`;
+	global string $deleteWarningPromptCheckboxName;
+  	$deleteWarningPromptCheckboxName = `checkBox -label (uiRes("m_namespaceEditCmd.kNamespacePromtCheckboxLabel"))`;
+  	
+    int $spacer = 10;
+    int $top = 10;
+    
+    formLayout -edit
+        -attachForm            $warning   "top"    10
+        -attachForm            $warning   "left"    $spacer  
+        -attachNone            $warning   "bottom"
+        -attachForm            $warning   "right"    $spacer 
+
+        -attachControl         $tContent   "top"    5 $warning
+        -attachForm            $tContent   "left"    $spacer
+        -attachNone            $tContent   "bottom"
+        -attachForm            $tContent   "right"   $spacer
+
+        -attachControl         $b1  "top"    $spacer $tContent
+        -attachForm            $b1  "left"   22 
+        -attachNone            $b1  "bottom"
+        -attachPosition        $b1  "right" 2 50
+
+        -attachControl         $b2  "top"    $spacer $tContent
+        -attachForm            $b2  "right"  22
+        -attachNone            $b2  "bottom"
+        -attachPosition        $b2  "left"  2 50 
+
+        -attachControl         $deleteWarningPromptCheckboxName "top"    $spacer $b2
+        -attachForm            $deleteWarningPromptCheckboxName "left"   20
+        -attachForm            $deleteWarningPromptCheckboxName "bottom" $spacer
+        -attachNone            $deleteWarningPromptCheckboxName "right"
+    $form;
+}
+
+global proc namespaceEditorPromptYes()
+//  Procedure Name:
+//		namespaceEditorCheckboxPrompt
+//
+//  Description:
+//		Callback when "yes" button clicked on warningPrompt dialog
+//      to remember the don't ask setting.
+//
+{
+	global string $deleteWarningPromptCheckboxName;
+	int $disablePrompt = `checkBox -q -value $deleteWarningPromptCheckboxName`;
+	optionVar -intValue disableDeletePromptWarning  $disablePrompt;
+	///return string for promptDialog
+	layoutDialog -dismiss "Yes";
+}
+
+global proc int
+namespaceEditorDeleteOptionConfirm(string $namespaceName)
+//  Procedure Name:
+//		namespaceEditorDeleteOptionConfirm
+//
+//  Description:
+//		Pop up a confirm window for the user, make four options for user
+//		and then return the option in integer value
+//
+//	Return value:
+//		0	Click "Merge with Root"
+//		1	Click "Merge with Parent"
+//		2	Click "Delete Namespace"
+//		3   Click "Cancel"
+//
+{
+	// Labels for the four buttons
+	string $deleteOptionMergeWithRoot = (uiRes("m_namespaceEditCmd.kNamespaceDeleteOptionMergeWithRoot"));
+	string $deleteOptionMergeWithParent = (uiRes("m_namespaceEditCmd.kNamespaceDeleteOptionMergeWithParent"));
+	string $deleteOptionDelete = (uiRes("m_namespaceEditCmd.kNamespaceDeleteOptionDelete"));
+	string $deleteOptionCancel = (uiRes("m_namespaceEditCmd.kNamespaceDeleteOptionCancel"));
+	
+	int $optionValue = 0;
+	
+	string $namespaceDeleteOptionTitle = (uiRes("m_namespaceEditCmd.kNamespaceDeleteOptionTitleString")) + $namespaceName;
+	string $warningContent = (uiRes("m_namespaceEditCmd.kNamespaceDeleteOptionContent"));
+	
+	string $userOption = `confirmDialog -title $namespaceDeleteOptionTitle
+										-message $warningContent
+										
+										-button  $deleteOptionMergeWithRoot
+										-ann (uiRes("m_namespaceEditCmd.kNamespaceDeleteOptionMergeWithRootToolTip"))
+										
+										-button  $deleteOptionMergeWithParent
+										-ann (uiRes("m_namespaceEditCmd.kNamespaceDeleteOptionMergeWithParentToolTip"))
+										
+										-button $deleteOptionDelete
+										-ann (uiRes("m_namespaceEditCmd.kNamespaceDeleteOptionDeleteToolTip"))
+										
+										-button $deleteOptionCancel
+										-ann (uiRes("m_namespaceEditCmd.kNamespaceDeleteOptionCancelToolTip"))
+										
+										-cancelButton $deleteOptionCancel
+										-dismissString $deleteOptionCancel
+										`;
+										
+	
+	if($userOption == $deleteOptionMergeWithRoot)
+	{
+		$optionValue = 1;
+	}
+	else if($userOption == $deleteOptionMergeWithParent)
+	{
+		$optionValue = 2;
+	}
+	else if($userOption == $deleteOptionDelete)
+	{
+		$optionValue = 3;
+	}
+	else	//	Cancel
+	{
+		$optionValue = 0;
+	}
+	
+	return $optionValue;
+	
+}
+
+global proc
+namespaceEditorDoMergeWithParent(string $namespaceName)
+//  Procedure Name:
+//		namespaceEditorDoMergeWithParent
+//
+//  Description:
+//		Remove the contents of the indicatednamespace to 
+//		parent namespace and delete the indicated itself.
+//
+{
+	namespace -mergeNamespaceWithParent -removeNamespace $namespaceName;
+}
+
+global proc
+namespaceEditorDoMergeWithRoot(string $namespaceName)
+//  Procedure Name:
+//		namespaceEditorDoMergeWithRoot
+//
+//  Description:
+//		Remove the contents of the indicated namespace to 
+//		root namespace and delete the indicated itself.
+//
+{	
+	namespace -mergeNamespaceWithRoot -removeNamespace $namespaceName;
+}
+
+global proc
+namespaceEditorDoDelete(string $namespaceName)
+//  Procedure Name:
+//		namespaceEditorDoDelete
+//
+//  Description:
+//		Delete all the contents in the indicated namespace
+//		and the indicated namespace itself.
+//
+{
+	namespace -deleteNamespaceContent -removeNamespace $namespaceName;
+}
+

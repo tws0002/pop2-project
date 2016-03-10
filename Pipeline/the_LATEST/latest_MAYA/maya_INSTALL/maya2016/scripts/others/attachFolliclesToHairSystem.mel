@@ -1,0 +1,215 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+//
+//
+//  Creation Date:  2003
+//
+//  Description:
+//	  Routine to connect a passed in array of hair follicles to
+//		a passed in hair system.	
+//
+
+proc string cloneConstraint( string $constraint )
+{
+	string $tforms[] = `listTransforms $constraint`;
+	string $newCon[] = `duplicate -rr $tforms[0]`;	
+	string $newConstraint[] = `ls -dag -shapes $newCon[0]`;
+	string $curveIndices[] = `listAttr -m ($newConstraint[0] + ".curveIndices")`;
+	int $i;
+	for( $i = size($curveIndices)-1;$i >= 0; $i-- ){
+		removeMultiInstance -break true ($newConstraint[0] + "." + $curveIndices[$i]); 
+	}
+	return( $newConstraint[0] );
+}
+
+proc attachFollicleToHairSys(
+	string $hsys, 
+	string $follicle, 
+	string $oldConstraints[], 
+	string $newConstraints[],
+	int $endHairSystemIndex[],
+	string $hsysGroup,
+	string $hsysOutHairGroup
+)
+{
+        if(`nodeType $follicle` == "transform"){
+		string $follicleList[] = `listRelatives -shapes -type "follicle" $follicle`;
+		if (size($follicleList) == 0){ 
+	    		return;
+		}
+		$follicle = $follicleList[0];
+	}
+	string $con[] = `connectionInfo -dfs ($follicle + ".outHair")`;
+
+	int $i, $j, $k, $l;
+	if( size( $con ) > 0 ){
+		string $buffer[];
+		int $numTokens = `tokenize $con[0] ".[]" $buffer`;
+		if( $numTokens == 3 ){
+			int $oldIndex = $buffer[2];
+			string $curHsys = $buffer[0];
+			if( $curHsys == $hsys ){
+				return; // don't reconnect to same system
+			}
+			string $sourceFurDes[], $sourceHairSystems;
+			string $destFurDes[], $destHairSystems;
+			if(`pluginInfo -q -l Fur`){			
+				$sourceFurDes = HfDetachCurvesFromFur($curHsys);
+				$sourceHairSystems = $curHsys;
+				$destFurDes = HfDetachCurvesFromFur($hsys);
+				$destHairSystems = $hsys;
+			}				
+			string $constraints[] = `listConnections -source true -sh true ($curHsys + ".inputHairPin")`;
+			$endHairSystemIndex[0] = getNextFreeMultiIndex( ($hsys + ".inputHair"), 
+								$endHairSystemIndex[0] );	
+			int $newHairIndex = $endHairSystemIndex[0];
+			$endHairSystemIndex[0] += 1; // avoid checking this index twice
+			connectAttr ($follicle + ".outHair") ($hsys + ".inputHair["+$newHairIndex+"]");
+			string $outCon = `connectionInfo -sfd ($follicle + ".currentPosition")`;
+			if( size($outCon) > 0  ){
+				disconnectAttr $outCon ($follicle + ".currentPosition");
+			}
+			connectAttr ($hsys + ".outputHair["+$newHairIndex+"]") ($follicle + ".currentPosition");
+			disconnectAttr ($follicle + ".outHair") $con[0];
+			
+
+			for( $j = 0; $j < size( $constraints ); $j++ ){
+				string $constraint = $constraints[$j];
+				float $indices[] = getAttr( $constraint + ".curveIndices" );
+				int $numIndices = size( $indices );
+				for( $k = 0; $k < $numIndices; $k++ ){
+					if( $indices[$k] == $oldIndex ){
+						// this follicle is constrained, so we need to duplicate the constraint
+						// First check to see if we have already duplicated this constraint
+						string $newConstraint = "";
+						int $conInd;
+						int $conSize = size( $oldConstraints );
+						for( $conInd = 0; $conInd < $conSize; $conInd++ ){
+							if( $oldConstraints[$conInd] == $constraint ){
+								$newConstraint = $newConstraints[$conInd];
+							}
+						} 
+						if( $newConstraint == "" ){
+							// we need to create a new duplicate constraint
+							$newConstraint = cloneConstraint( $constraint );
+							$oldConstraints[$conSize] = $constraint;
+							$newConstraints[$conSize] = $newConstraint;
+							int $numPinInputs = `getAttr -size ($hsys + ".inputHairPin" )`;
+							int $pinInd;
+							// connect to first available input on hairsystem
+							for( $pinInd = 0; $pinInd <= $numPinInputs; $pinInd++ ){
+								string $input = ($hsys + ".inputHairPin[" + $pinInd +"]");
+								if( $pinInd < $numPinInputs ){
+									string $ccon = `connectionInfo -sfd $input`;
+									if( size( $ccon ) > 0 ){
+										// already connected, keep looking
+										continue;
+									}
+								}
+								connectAttr ($newConstraint + ".outPin[0]") $input;
+								break;
+							}
+						}
+						// remove the index by compacting the indices
+						// then unlinking the last array entry on the old constraint
+						for( $l = $k; $l < $numIndices-1; $l++ ){
+							setAttr ($constraint + ".curveIndices[" + $l + "]") $indices[($l+1)];	
+						}
+						removeMultiInstance -break true ($constraint + ".curveIndices[" + ($numIndices-1) + "]"); 
+
+						// set the next index on the new constraint
+						int $newIndex = `getAttr -size ($newConstraint + ".curveIndices" )`;
+						setAttr ($newConstraint + ".curveIndices[" + $newIndex + "]") $newHairIndex;
+						break;
+					}
+				}		
+			}
+			if(`pluginInfo -q -l Fur`){	
+				HfAttachHairSystemToFur($sourceHairSystems,$sourceFurDes);
+				HfAttachHairSystemToFur($destHairSystems,$destFurDes);
+			}
+		} else {
+			warning( (uiRes("m_attachFolliclesToHairSystem.kBadTokenCountWrn")));
+			return;
+		}
+	} else {
+		// unattached follicle, simply connect
+		$endHairSystemIndex[0] = getNextFreeMultiIndex( ($hsys + ".inputHair"), 
+							$endHairSystemIndex[0] );	
+		int $newHairIndex = $endHairSystemIndex[0];
+		$endHairSystemIndex[0] += 1; // avoid checking this index twice
+		connectAttr ($follicle + ".outHair") ($hsys + ".inputHair["+$newHairIndex+"]");
+		connectAttr ($hsys + ".outputHair["+$newHairIndex+"]") ($follicle + ".currentPosition");
+	}
+	// group follicle
+	if( $hsysGroup != "" ){
+		string $tforms[] = `listTransforms $follicle`;
+		// Group the follicles into the passed in parent node.
+		string $pcon[] = `listConnections -s 1 -d 0 ($tforms[0] + ".tx")`;
+		if( size($pcon) > 0 ){
+			// use -relative to avoid stepping on transform inputs
+			parent -relative $tforms[0] $hsysGroup; 
+		} else {
+			parent $tforms[0] $hsysGroup; 
+		}
+	}
+	if( $hsysOutHairGroup != "" ){
+		string $outC[] = `listConnections -d true -s false ($follicle + ".outCurve")`;
+		if( size( $outC ) > 0 ){
+			parent -relative $outC[0] $hsysOutHairGroup; 
+		}	
+	}
+
+}
+
+
+global proc attachFolliclesToHairSystem(string $hsys, string $follicles[] )
+{
+	int $numFollicles = size( $follicles );
+	if( $numFollicles < 1 ){
+		return;
+	}
+
+	int $endIndex[] = {0};
+	string $oldConstraints[];
+	string $newConstraints[];
+	string $groupNames[] = getHairSystemGroups( $hsys, true );
+//	string $constraints[] = listConnections -sh 1 ($hsys + ".inputHairPin");
+	for( $i = 0; $i < $numFollicles; $i++ ){
+		attachFollicleToHairSys( $hsys, $follicles[$i], $oldConstraints, $newConstraints,
+									$endIndex, $groupNames[0], $groupNames[1] );
+		
+	}
+	// delete the old constraints if they no longer have any hairs
+	for( $i = 0; $i < size( $oldConstraints ); $i++ ){
+		string $constraint = $oldConstraints[$i];
+		int $numConHairs = `getAttr -size ($constraint + ".curveIndices" )`;
+		if( $numConHairs < 1 ){
+			
+			string $oldParent[] = `listTransforms $constraint`;
+			delete $oldParent[0];
+			string $newParent[] = `listTransforms $newConstraints[$i]`;
+			rename $newParent[0] $oldParent[0]; 
+		}
+	}
+}

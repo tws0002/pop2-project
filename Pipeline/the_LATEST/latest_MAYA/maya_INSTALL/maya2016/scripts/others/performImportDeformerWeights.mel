@@ -1,0 +1,551 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//  Description:
+//      This script is the import deformer weight option box dialogs.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+
+
+// Set up the optionVars
+//
+
+proc setOptionVars (int $forceFactorySettings)
+{
+	if ( $forceFactorySettings || !`optionVar -exists importDefWeightDirName`) {
+		optionVar -sv importDefWeightDirName "CurrentProject";
+	}
+
+	if ( $forceFactorySettings || !`optionVar -exists importDefWeightFileName`) {
+		optionVar -sv importDefWeightFileName "weightSet";
+	}
+
+	if ( $forceFactorySettings || !`optionVar -exists importDefWeightFileMethod`) {
+		optionVar -sv importDefWeightFileMethod "index";
+	}
+	
+	if ( $forceFactorySettings || !`optionVar -exists importDefWeightIngoreNames` ) {
+		optionVar -intValue importDefWeightIngoreNames 0;
+	}
+
+	if ( $forceFactorySettings || !`optionVar -exists importDefWeightPostNormalize` ) {
+		optionVar -intValue importDefWeightPostNormalize 1;
+	}
+	
+}
+
+
+proc string mapMethod_melToUI( string $mel )
+{
+    string $ui = $mel;
+
+    if( $mel == "index" ) {
+        $ui = (uiRes("m_performImportDeformerWeights.kIndexMethod"));
+    } else if( $mel == "over" ) {
+        $ui = (uiRes("m_performImportDeformerWeights.kOverMethod"));
+    } else if( $mel == "nearest" ) {
+        $ui = (uiRes("m_performImportDeformerWeights.kNearestMethod"));
+    } else {
+        uiToMelMsg( "mapMethod_melToUI", $mel, 1 );
+    }
+
+    return $ui;
+}
+
+proc string mapMethod_uiToMel( string $ui )
+{
+    string $mel = $ui;
+
+    if( $ui == (`uiRes("m_performImportDeformerWeights.kIndexMethod")`) ) {
+        $mel = "index";
+    } else if ( $ui == (`uiRes("m_performImportDeformerWeights.kOverMethod")`) ) {
+        $mel = "over";
+    } else if ( $ui == (`uiRes("m_performImportDeformerWeights.kNearestMethod")`) ) {
+        $mel = "nearest";
+    } else {
+        uiToMelMsg( "mapMethod_uiToMel", $ui, 1 );
+    }
+
+    return $mel;
+}
+
+// Update the state of the option box UI to reflect the option values.
+//
+//  Input Arguments:
+//      parent               - Top level parent layout of the option box UI.
+//                             Required so that UI object names can be 
+//                             successfully resolved.
+//
+//    forceFactorySettings     - Whether the option values should be set to
+//                             default values.
+//
+
+global proc importDeformWeightsSetup (string $parent, int $forceFactorySettings)
+{
+	// Retrieve the option settings
+	//
+	setOptionVars( $forceFactorySettings );
+
+	checkBoxGrp -edit -value1 `optionVar -query importDefWeightIngoreNames`  weighIngoreWeightBox;
+	checkBoxGrp -edit -value1 `optionVar -query importDefWeightPostNormalize` weightNormalizeBox;
+
+	// Default File name
+	//
+	// `optionVar -sv importDefWeightFileName "weightSet";
+
+
+	// Set the method
+	//
+	string $method = `optionVar -query importDefWeightFileMethod`;
+	string $uiMethod = mapMethod_melToUI($method);
+	optionMenuGrp  -edit -value $uiMethod importDefWeightMapMethod;
+	
+	// enable world space if barycentric or nearest
+	//
+//	if ($method == "barycentric" || $method == "nearest") {
+//		radioButtonGrp -e -enable true weightExpSpace;	
+//	}
+//	else {
+//	    radioButtonGrp -e -enable false weightExpSpace;	
+//	}
+
+	setParent $parent;
+
+}
+
+
+//  Update the option values with the current state of the option box UI.
+//
+//  Input Arguments:
+//      parent - Top level parent layout of the option box UI.  Required so
+//               that UI object names can be successfully resolved.
+//
+//    doIt       - Whether the command should execute.
+//
+
+global proc importDeformWeightsCallback (string $parent, int $doIt)
+{
+	setParent $parent;
+
+	// updates
+	optionVar -intValue importDefWeightIngoreNames `checkBoxGrp -query -value1 weighIngoreWeightBox`;
+	optionVar -intValue importDefWeightPostNormalize `checkBoxGrp -query -value1 weightNormalizeBox`;
+
+	if ($doIt)
+	{     
+		performImportDeformerWeights false;
+		addToRecentCommandQueue "performImportDeformerWeights false" "importDeformerWeights";
+	}
+}
+
+// Get the current directory. Get the last used directory or the current
+//	working directory. Use as the starting point for the file brower dialog
+//
+proc string importDefWeightGetCurrentDir()
+{
+            
+      // first find the current project directory, if it is defined
+      //
+      string $currentProj = (`workspace -q -rd`);  
+      
+      // check what the user has as their preference
+      //
+      if (`optionVar -exists importDefWeightDirName`) {
+            string $cacheVar = `optionVar -q importDefWeightDirName`;
+            // 
+            if ($cacheVar != "CurrentProject") {
+                  $currentProj = $cacheVar;
+            }
+      }
+      
+	  if(!endsWith( $currentProj, "/" ) ) {
+            $currentProj += "/";
+	  }
+            
+      return $currentProj;
+}
+
+
+// Set the path and file name option variables from a full 
+// path string. This is the call back used from the file dialog
+//
+
+global proc int importDefWeightSetFile( string $fullPath, string $type )
+{
+	// $type not used
+
+	string $buffer[];
+	string $file = "";
+	string $dir = "";
+
+	int $depth = tokenize( $fullPath, "/", $buffer );
+	if ($depth > 1) {
+		$file = $buffer[$depth-1];
+		$dir = substring ($fullPath, 1, size($fullPath) - size($file)); 
+	}
+	else {
+		$file = $fullPath;
+	}
+
+	if ( `textField -exists weightFileNameField` )
+		textField -e -tx $file weightFileNameField;
+
+
+	// set the option variable for the current directoy
+	if (`optionVar -exists importDefWeightDirName`) {
+		string $currentProj = (`workspace -q -rd`);
+		if ($currentProj == $dir) {
+			optionVar -sv importDefWeightDirName "CurrentProject";
+		}
+		else {
+			optionVar -sv importDefWeightDirName $dir;
+		}
+	}
+
+	return 1;
+}
+
+// Call back from text field changes
+//
+global proc importDefWeightFileNameChanged()
+{
+      if( !`textField -exists weightFileNameField` ) return;
+
+      string $name = `textField -query -text weightFileNameField` ;
+      if ( $name == "" ) {
+            // automatically generate a name
+            // TO DO
+      }
+
+      optionVar -sv importWeightFileName $name;
+}
+
+
+// Get the file name and make sure that it has an extension on it
+//	Note: we aren't forcing xml has a file extension just adding it 
+//  in case the user hasn't added any extension
+//
+proc string getValidFileName()
+{
+
+	string $fileName = `textField -query -text weightFileNameField` ;
+	string $buffer[];
+
+	int $depth = tokenize( $fileName, ".", $buffer );
+	if ($depth == 1) {
+		// doesn't have any extensions so add one
+		//
+		$fileName += ".xml";
+	}
+
+	return $fileName;
+}
+
+
+global proc importDefWeightBrowse()
+{
+	string $cmd = "importDefWeightSetFile ";
+	string $action = (uiRes("m_performImportDeformerWeights.kWeightImportFile"));
+	string $startInDir;
+	$startInDir = importDefWeightGetCurrentDir();
+
+	if ( size( $startInDir ) == 0 ) {
+		$startInDir = `internalVar -uwd`;
+	}
+
+	if ( `file -q -ex $startInDir` ) {
+		// set the work space to the current directory 
+		workspace -dir $startInDir;
+	}
+
+	// Note: xml isn't yet register as a possible format so
+	// place in "xmlcache" as the file format type
+	//
+	fileBrowser( $cmd, $action, "xmlcache", 0 );  
+}
+
+
+
+
+global proc mapMethodCallback()
+{
+	// get the method
+	string $method = mapMethod_uiToMel(`optionMenuGrp -q -v importDefWeightMapMethod`);
+	
+	// set the optionVar
+	optionVar -sv importDefWeightFileMethod $method;
+	
+	// enable world space if barycentric or nearest
+	//
+//	if ($method == "barycentric" || $method == "nearest") {
+//		radioButtonGrp -e -enable true weightExpSpace;	
+//	}
+//	else {
+//	    radioButtonGrp -e -enable false weightExpSpace;	
+//	}
+}
+
+
+proc string importDeformWeightsWidgets( string $parent )
+{
+
+	setParent $parent;
+
+	string $tabForm = `columnLayout -adjustableColumn true`;
+	print (">>>> " + $tabForm + "\n");
+
+	// select a destination deformer
+	textFieldGrp
+		-enable 1 
+		-label (uiRes("m_performImportDeformerWeights.kDeformerNode"))  
+		-tx "" 
+		deformImportNode;
+
+	// Create an option menu listing existing deformer nodes
+	//
+	optionMenuGrp
+		-enable 1
+		-label (uiRes("m_performImportDeformerWeights.kExistingNodes")) 
+		-cc "textFieldGrp -e -tx `optionMenuGrp -q -v deformWeightList` deformImportNode;" 
+		deformWeightList;
+
+	// add all the deformers to the menu
+	//
+	string $dfArray[];
+	if (size(`ls -sl`) > 0)
+		catch($dfArray = `findExportableDeformers`);
+
+	int $pp, $dfCount = size($dfArray);
+	for ($pp = 0; $pp < $dfCount; $pp++)
+		menuItem -label $dfArray[$pp];
+
+	if ($dfCount == 0) {
+		menuItem -label (uiRes("m_performImportDeformerWeights.kNoDeformer")) ;
+		optionMenuGrp -e -enable 0 deformWeightList;
+	}
+	else {
+		textFieldGrp -e -tx $dfArray[0] deformImportNode;
+	}
+
+	// Directory name
+	//
+	rowLayout -nc 3
+		-adjustableColumn 2
+		-cw 3 50
+		fileNameRowLayout;
+
+		text -label (uiRes("m_performImportDeformerWeights.kWeightImportDirectory"));
+
+		textField -cc ( "importDefWeightFileNameChanged" ) weightFileNameField;
+
+		symbolButton -image "navButtonBrowse.png" 
+			-c ( "importDefWeightBrowse" )
+			weightFileBrowser;
+
+	setParent ..;
+
+	optionMenuGrp -enable 1 -label (uiRes("m_performImportDeformerWeights.kMappingMethod"))
+		-cc "mapMethodCallback"
+		importDefWeightMapMethod;
+
+		menuItem -label `mapMethod_melToUI( "index" )`;
+		menuItem -label `mapMethod_melToUI( "over" )`;
+		menuItem -label `mapMethod_melToUI( "nearest" )`;
+
+	checkBoxGrp
+		-numberOfCheckBoxes 1
+		-label1 (uiRes("m_performImportDeformerWeights.kIgnore"))
+		-label ""
+		weighIngoreWeightBox;
+
+	checkBoxGrp
+		-numberOfCheckBoxes 1
+		-label1 (uiRes("m_performImportDeformerWeights.kNormalizeWeights"))
+		-label ""
+		weightNormalizeBox;
+
+	return $tabForm;
+}
+
+
+global proc importDeformWeightsOptions ()
+{
+
+	string $commandName = "importDeformWeights";
+
+	// Build the option box "methods"
+	//
+	string $callback = ($commandName + "Callback");
+	string $setup = ($commandName + "Setup");
+
+	//    Get the option box.
+	//
+	//  The value returned is the name of the layout to be used as
+	//    the parent for the option box UI.
+	//
+	string $layout = getOptionBox();
+	setParent $layout;
+
+	setOptionBoxCommandName("importDeformWeights");
+
+	setUITemplate -pushTemplate DefaultTemplate;
+	waitCursor -state 1;
+
+	tabLayout -scr true -tv false;      // To get the scroll bars
+
+	// create the widgets
+	string $parent = `columnLayout -adjustableColumn 1`;
+	importDeformWeightsWidgets $parent;
+
+	waitCursor -state 0;
+	setUITemplate -popTemplate;
+
+	//    'Apply' button.
+	//
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit
+		-label (uiRes("m_performImportDeformerWeights.kDeformImport")) 
+		-command ($callback + " " + $parent + " " + 1)
+		$applyBtn;
+
+	//    'Save' button.
+	//
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + $parent + " " + 0 + "; hideOptionBox")
+		$saveBtn;
+
+	// 'Reset' button.
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + " " + $parent + " " + 1)
+		$resetBtn;
+
+	// Set the option box title.
+	setOptionBoxTitle (uiRes("m_performImportDeformerWeights.kImportDeformWeightsOptions"));
+
+	// Customize the 'Help' menu item text.
+	setOptionBoxHelpTag( "ImportDeformerWeights" );
+
+	// Set the current values of the option box.
+	eval (($setup + " " + $parent + " " + 0));      
+
+	// Show the option box.
+	showOptionBox();
+}
+
+
+// Construct the command that will apply the option box values.
+//
+proc string assembleCmd()
+{
+
+	string $cmd = "deformerWeights -import";
+
+	// method
+	string $method = mapMethod_uiToMel(`optionMenuGrp -q -v importDefWeightMapMethod`);
+	if ($method != "") {
+		$cmd += " -method \""+ $method + "\"";
+	}     
+
+	// World space
+	// if (`optionVar -query importDefWeightWorldSpace`) {
+	//	$cmd += " -worldSpace";
+	//}
+	
+	// Ignore names
+	if (`optionVar -query importDefWeightIngoreNames`) {
+		$cmd += " -ignoreName";
+	}
+
+	// deformer
+	string $deformer = `textFieldGrp -q -tx deformImportNode`;
+	$cmd += " -deformer \""+ $deformer + "\"";
+
+	// add path
+	string $directory = `optionVar -q importDefWeightDirName`;
+	if ($directory != "CurrentProject") {
+		$cmd += " -path \"" + $directory + "\"";
+	}
+
+	// add the file name
+	string $fileName = getValidFileName();
+	$cmd += " \"" + $fileName + "\"";
+    
+	if ( `optionVar -q importDefWeightPostNormalize` && nodeType($deformer) == "skinCluster") {
+		$cmd += "; skinCluster -e -forceNormalizeWeights \""+ $deformer + "\";";
+	}
+
+	return $cmd;
+}
+
+
+//  Procedure Name:
+//      importiDeformerWeights
+//
+//  Description:
+//          TO DO :
+//
+//  Input Arguments:
+//      0 - Execute the command.
+//      1 - Show the option box dialog.
+//      2 - Return the command.
+//
+//  Return Value:
+//      None.
+//
+
+global proc string performImportDeformerWeights (int $action)
+{
+	string $cmd = "";
+
+	switch ($action) {
+
+	case 0:
+		
+		// Retrieve the option settings
+		setOptionVars(false);
+
+		// Get the command.
+		$cmd = `assembleCmd`;
+
+		// Execute the command with the option settings
+		evalEcho($cmd);
+
+		break;
+
+	case 1:
+
+		// Show the option box.
+		importDeformWeightsOptions;
+		break;
+	case 2:
+		// Get the command.
+		$cmd = `assembleCmd`;
+	}  
+	
+	return $cmd;
+}

@@ -1,0 +1,158 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  2000
+//
+// Description:	Creates random strokes of selected paint effects brush
+//			on selected surfaces.
+//	
+
+global proc paintRandom( int $udensity, int $vdensity, float $strokeLength, float $randOffset, 
+float $sampleDensity, int $arcLengthDensity, float $surfaceOffsetMin, float $surfaceOffsetMax, 
+int $doClip, int $shareOneBrush )
+{
+	string $selected[] = `ls -sl -dag -type nurbsSurface -type mesh`;
+	string $sel;
+
+	if( size( $selected ) <= 0  )
+	{
+		warning( uiRes("m_paintGrid.kNoSurfacesSelected") );
+		return;
+	}	
+	int $uspan, $vspan;
+	float $u,$v,$minU, $minV, $rangeU, $rangeV;
+	string $cmdK = "-k 0 -k 1 ";
+	string $newStrokes[], $newCurves[], $newStroke[];
+	int $numNewStrokes = 0;
+	if( $udensity < 1 )
+		$udensity = 1;
+	if( $vdensity < 1 )
+		$vdensity = 1;
+
+	float $uscale = 1.0/(float)$udensity;
+	float $vscale = 1.0/(float)$vdensity;
+	rand( $uscale ); // the first rand is sometimes bad
+	for( $sel in $selected )
+	{
+		if(`objectType -isType nurbsSurface $sel`)
+		{
+			$minU = getAttr( $sel+".minValueU" );
+			$minV = getAttr( $sel+".minValueV" );
+			$rangeU = getAttr( $sel+".maxValueU" ) - $minU;
+			$rangeV = getAttr( $sel+".maxValueV" ) - $minV;
+		}
+		else
+		{
+			$minU = 0.0;
+			$minV = 0.0;
+			$rangeU = 1.0;
+			$rangeV = 1.0;
+		}
+
+		for( $uspan = 0; $uspan < $udensity; $uspan++ ) 
+		{
+			for( $vspan = 0; $vspan < $vdensity; $vspan++ ) 
+			{
+				$u = (float)($uspan)/(float)($udensity);
+				$v = (float)($vspan)/(float)($vdensity);
+				$u += (0.5 + (rand( 1 )-0.5) * $randOffset) * $uscale;
+				$v += (0.5 + (rand( 1 )-0.5) * $randOffset) * $vscale;
+				// $u2 = rand( $uscale );
+				// $v2 = rand( $vscale );
+				$u2 = rand( 2 ) - 1;
+				$v2 = rand( 2 ) - 1;
+				$length = sqrt( $u2*$u2 + $v2*$v2 );
+				if( $length == 0 )
+					continue;
+				$length = $strokeLength / $length;
+				$u2 = $u + $u2*$length*$uscale;
+				$v2 = $v + $v2*$length*$vscale;
+				if( $doClip )
+				{
+					if( $u > 1 )
+						$u = 1;
+					else if( $u < 0 )
+						$u = 0;
+	
+					if( $v > 1 )
+						$v = 1;
+					else if( $v < 0 )
+						$v = 0;
+	
+					if( $u2 > 1 )
+						$u2 = 1;
+					else if( $u2 < 0 )
+						$u2 = 0;
+	
+					if( $v2 > 1 )
+						$v2 = 1;
+					else if( $v2 < 0 )
+						$v2 = 0;
+	// TODO: modulate sampleDensity based on length change with clipping
+				}		
+				string $cmd = ("curveOnSurface -d 1 -uv " + ($u*$rangeU + $minU) + " " + ($v*$rangeV + $minV)
+							  + " -uv "+ ($u2*$rangeU + $minU) +" "+ ($v2*$rangeV + $minV)
+							  + " "+ $cmdK + $sel);
+				$newCurves[$numNewStrokes] = `eval($cmd)`;
+				convertCurvesToStrokes;
+				$newStroke =  `ls -sl -dag -type stroke`;
+				$newStrokes[ $numNewStrokes ] = $newStroke[0];
+				$numNewStrokes++;
+			}
+		}
+	}
+
+	float $offsetRange = $surfaceOffsetMax -$surfaceOffsetMin;
+	rand( $offsetRange ); // the first rand is sometimes bad
+		float $maxCurveLength = 0;
+	float $curveLengths[];
+	for( $i = 0; $i < $numNewStrokes; $i++)
+	{
+		if( $arcLengthDensity )
+		{
+			$curveLengths[$i] = arclen ($newCurves[$i]);
+			if( $curveLengths[$i] > $maxCurveLength )
+			{
+				$maxCurveLength = $curveLengths[$i];
+			}
+		}
+		hide $newCurves[$i];
+	}
+	float $sDense = $sampleDensity;
+	for( $i = 0; $i < $numNewStrokes; $i++)
+	{
+		if( $arcLengthDensity && $maxCurveLength > 0)
+		{
+			$sDense = $sampleDensity * $curveLengths[$i]/$maxCurveLength;
+		}
+		setAttr ( $newStrokes[$i] + ".sampleDensity" ) $sDense;
+		setAttr ( $newStrokes[$i] + ".seed" ) $i;
+		setAttr ( $newStrokes[$i] + ".surfaceOffset" ) ($surfaceOffsetMin + rand( $offsetRange ));
+		select -add $newStrokes[$i];
+	}
+    if( $shareOneBrush )
+    {
+        useSameBrush;
+    }
+
+}

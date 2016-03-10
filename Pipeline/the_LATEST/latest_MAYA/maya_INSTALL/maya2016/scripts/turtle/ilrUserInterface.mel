@@ -1,0 +1,4907 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// provided at the time of installation or download, or which otherwise accompanies 
+
+global int $g_ilrScriptJobs[];
+global string $g_ilrUIItems[];
+global string $g_ilrIBLVizItems[];
+global int $g_ilrDeleteAEScriptJob = -1, $g_ilrFileAEChangeScriptJob = -1;
+global string $g_ilrAEMenu, $g_ilrSSEditor;
+global string $g_ilrMtrlShaders[]  = { "lambert","blinn","phong","phongE","anisotropic","rampShader","oceanShader","layeredShader", "ilrBssrdfShader","ilrOrenNayarShader","ilrAshikhminShader","ilrDielectricShader" };
+global string $g_ilrReflShaders[]  = { "blinn","phong","phongE","anisotropic" };
+global string $g_ilrRefrShaders[]  = { "lambert","blinn","phong","phongE","anisotropic","rampShader","oceanShader" };
+global string $g_ilrLightSources[] = { "ambientLight","directionalLight","pointLight","spotLight","areaLight","volumeLight" };
+
+global proc int ilrIsMtrlShader(string $nodeType) {
+	global string $g_ilrMtrlShaders[];
+	for ($s in $g_ilrMtrlShaders) {
+		if ($nodeType == $s) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+global proc int ilrIsRefrShader(string $nodeType) {
+	global string $g_ilrRefrShaders[];
+	for ($s in $g_ilrRefrShaders) {
+		if ($nodeType == $s) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+global proc int ilrIsReflShader(string $nodeType) {
+	global string $g_ilrReflShaders[];
+	for ($s in $g_ilrReflShaders) {
+		if ($nodeType == $s) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+global proc int ilrIsLightSource(string $nodeType) {
+	global string $g_ilrLightSources[];
+	for ($s in $g_ilrLightSources) {
+		if ($nodeType == $s) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+global proc int clExists(string $layout)
+{
+	string $fullPath = `setParent -q` + "|" + $layout; 
+	if (`columnLayout -exists $fullPath`) {
+		return 1;
+	}
+	return 0;
+}
+
+global proc int AEilrAssignTextureCB(string $fileAttribute, string $filename, string $fileType)
+{
+	setAttr $fileAttribute -type "string" $filename;
+
+	string $currentDir = `workspace -q -dir`;
+	retainWorkingDirectory($currentDir);
+
+	return true;
+}
+
+global proc AEilrFileTextureBrowser(string $cmd)
+{
+	string  $workspace = `workspace -q -fn`;
+	setWorkingDirectory $workspace "image" "sourceImages";
+	fileBrowser($cmd, "Open", "image", 0);
+}
+
+global proc ilrShowAE(string $node)
+{
+    //  If the option to show the attribute editor is on, then
+    //  display the attribute editor for this bake layer
+    //
+    if (`optionVar -q AEpopupWhenCreatingShaders`) {
+        string $cmd = ("showEditor " + $node);
+        evalDeferred -lowestPriority $cmd;
+    }
+}
+
+global proc string ilrGetProjectDir()
+{
+	string $work = `workspace -query -rootDirectory`;
+	workspace -directory $work;
+
+	// Create directories needed by Turtle
+	workspace -create "turtle";
+	workspace -create "turtle/fgMaps";
+	workspace -create "turtle/rcMaps";
+	workspace -create "turtle/ptMaps";
+	workspace -create "turtle/occMaps";
+	workspace -create "turtle/photonMaps";
+	workspace -create "turtle/depthMaps";
+	workspace -create "turtle/bakedTextures";
+	workspace -create "turtle/temp";
+	workspace -create "turtle/textureCache";
+
+	return `workspace -query -directory`;
+}
+
+global proc string ilrGetDepthMapDir()
+{
+	return (ilrGetProjectDir() + "turtle/depthMaps/");
+}
+
+global proc string ilrGetPhotonMapDir()
+{
+	return (ilrGetProjectDir() + "turtle/photonMaps/");
+}
+
+global proc string ilrGetFGMapDir()
+{
+	return (ilrGetProjectDir() + "turtle/fgMaps/");
+}
+
+global proc string ilrGetOccMapDir()
+{
+	return (ilrGetProjectDir() + "turtle/occMaps/");
+}
+
+global proc string ilrGetBakedTextureDir()
+{
+	//We make the paths absolute when sending them to the respective bake command.
+	//The path shown should be relative (the user can type in an absolute path),
+	//but all changes should be checked in the callback function using "workspace -expandName" 
+	return "turtle/bakedTextures/";
+	//return (ilrGetProjectDir() + "turtle/bakedTextures/");
+}
+
+global proc string ilrGetTempDir()
+{
+	return (ilrGetProjectDir() + "turtle/temp/");
+}
+
+global proc string ilrGetImageDir()
+{
+	string $imgDir = `workspace -q -fileRuleEntry "images"`;
+	string $imgDirFullPath = `workspace -expandName $imgDir`;
+	if (!endsWith($imgDirFullPath, "/")) {
+		$imgDirFullPath += "/";
+	}
+	return $imgDirFullPath;
+}
+
+// IBL visualization
+global proc ilrUpdateIBLVis(string $enabledAttr, string $fileAttr, string $turnDomeAttr, string $swapYZAttr)
+{
+	global string $g_ilrIBLVizItems[];
+
+	int $enabled = `getAttr $enabledAttr`;
+
+	// Delete exisisting dome if found
+	if (size($g_ilrIBLVizItems)) {
+
+		// Delete all IBL items
+		for ($item in $g_ilrIBLVizItems) {
+			if (`objExists $item`) {
+				delete $item;
+			}
+		}
+
+		// Clear the items list
+		clear($g_ilrIBLVizItems);
+	}
+	
+	// If not enabled the dome is
+	// now deleted and we're done
+	if ($enabled == 0) {
+		// Hack to remove IBL items even if list is empty
+		// This is the case when opening a scen with saved ibl items
+		if (`objExists "ilrIBLDomeViz"`) { delete "ilrIBLDomeViz"; }
+		if (`objExists "ilrIBLDomeVizShader"`) { delete "ilrIBLDomeVizShader"; }
+		if (`objExists "ilrIBLDomeVizTexture"`) { delete "ilrIBLDomeVizTexture"; }
+		if (`objExists "ilrIBLDomeVizPlaceTexture"`) { delete "ilrIBLDomeVizPlaceTexture"; }
+		if (`objExists "ilrIBLDomeVizShaderSG"`) { delete "ilrIBLDomeVizShaderSG"; }
+		return;
+	}
+
+	select -cl;
+
+	// Use a unit sphere for the dome if there's no geometry
+	float $sphereSize = 1.0;
+
+	string $allGeome[] = `ls -geometry -visible`;
+	if (size($allGeome)) {
+		float $bbox[] = `exactWorldBoundingBox $allGeome`;
+		float $dist1 = `mag <<($bbox[0]), ($bbox[1]), ($bbox[2])>>` ;
+		float $dist2 = `mag <<($bbox[3]), ($bbox[4]), ($bbox[5])>>`;
+		float $radius = `max $dist1 $dist2`;
+		$sphereSize = $radius * 1.8;
+	}
+	
+	string $transforms[] = `polySphere -r 1 -sx 20 -sy 20 -ax 0 1 0 -cuv 1 -ch 1 -name "ilrIBLDomeViz"`;
+	string $transform = $transforms[0];
+	$g_ilrIBLVizItems[size($g_ilrIBLVizItems)] = $transform;
+	
+	string $shapes[] = `listRelatives -shapes $transform`;
+	string $shape = $shapes[0];
+	
+	// Add Turtle's render stat attributes
+	ilrRenderStatsAttributes(1, $shape);
+
+	// Set render stats to make it invisible in renderings
+	setAttr ($shape+".castsShadows")  0;
+	setAttr ($shape+".receiveShadows")  0;
+	setAttr ($shape+".primaryVisibility")  0;
+	setAttr ($shape+".smoothShading")  0;
+	setAttr ($shape+".visibleInReflections")  0;
+	setAttr ($shape+".visibleInRefractions")  0;
+	setAttr ($shape+".doubleSided") 1;
+	setAttr ($shape+".ilrVisibleInFG") 0;
+	setAttr ($shape+".ilrCastGI") 0;
+	setAttr ($shape+".ilrReceiveGI") 0;
+	setAttr ($shape+".ilrCastOcclusion") 0;
+	setAttr ($shape+".ilrSelfOcclusion") 0;
+	setAttr ($shape+".ilrReceiveOcclusion") 0;
+	
+	// Create shader
+	string $shader = `shadingNode -asShader lambert -name "ilrIBLDomeVizShader"`;
+	$g_ilrIBLVizItems[size($g_ilrIBLVizItems)] = $shader;
+
+	// Create file texture
+	string $fileName = `getAttr $fileAttr`;
+	string $fileTexture  = `shadingNode -asTexture -name "ilrIBLDomeVizTexture" file`;
+	$g_ilrIBLVizItems[size($g_ilrIBLVizItems)] = $fileTexture;
+	AEassignTextureCB ($fileTexture+".fileTextureName") $fileName "image";
+
+	//...and place it correctly
+	string $placeTexture = `shadingNode -asUtility place2dTexture -name "ilrIBLDomeVizPlaceTexture"`;
+	$g_ilrIBLVizItems[size($g_ilrIBLVizItems)] = $placeTexture;
+
+	connectAttr -f ($placeTexture+".coverage")        ($fileTexture+".coverage");
+	connectAttr -f ($placeTexture+".translateFrame")  ($fileTexture+".translateFrame");
+	connectAttr -f ($placeTexture+".rotateFrame")     ($fileTexture+".rotateFrame");
+	connectAttr -f ($placeTexture+".mirrorU")         ($fileTexture+".mirrorU");
+	connectAttr -f ($placeTexture+".mirrorV")         ($fileTexture+".mirrorV");
+	connectAttr -f ($placeTexture+".stagger")         ($fileTexture+".stagger");
+	connectAttr -f ($placeTexture+".wrapU")           ($fileTexture+".wrapU");
+	connectAttr -f ($placeTexture+".wrapV")           ($fileTexture+".wrapV");
+	connectAttr -f ($placeTexture+".repeatUV")        ($fileTexture+".repeatUV");
+	connectAttr -f ($placeTexture+".offset")          ($fileTexture+".offset");
+	connectAttr -f ($placeTexture+".rotateUV")        ($fileTexture+".rotateUV");
+	connectAttr -f ($placeTexture+".noiseUV")         ($fileTexture+".noiseUV");
+	connectAttr -f ($placeTexture+".vertexUvOne")     ($fileTexture+".vertexUvOne");
+	connectAttr -f ($placeTexture+".vertexUvTwo")     ($fileTexture+".vertexUvTwo");
+	connectAttr -f ($placeTexture+".vertexUvThree")   ($fileTexture+".vertexUvThree");
+	connectAttr -f ($placeTexture+".vertexCameraOne") ($fileTexture+".vertexCameraOne");
+	connectAttr    ($placeTexture+".outUV")           ($fileTexture+".uv");
+	connectAttr    ($placeTexture+".outUvFilterSize") ($fileTexture+".uvFilterSize");
+
+	defaultNavigation -connectToExisting -source $fileTexture -destination $shader;
+	setAttr ($shader +".transparency") -type double3 0.15 0.15 0.15 ;
+
+	// Create shading group
+	string $sg = `sets -renderable true -noSurfaceShader true -empty -name ($shader + "SG")`;
+	$g_ilrIBLVizItems[size($g_ilrIBLVizItems)] = $sg;
+	defaultNavigation -connectToExisting -source $shader -destination $sg;
+	sets -edit -forceElement $sg $transform;
+
+	select -cl;
+	select -r $transform;
+	hilite $transform;
+	//selectMode 1 ;
+	select -r ($transform + ".f[0:399]");
+
+	string $proj[] = `polyProjection -ch 1 -type Spherical -ibd off -icx 0.5 -icy 0.5 -ra 0 -isu 1 -isv 1 -sf off  -pcx 0 -pcy 0 -pcz 0 -rx 0  -ry 0 -rz  0 -psu 360 -psv 90 ($transform + ".f[0:399]")`;
+	select -r ($transform + ".map[0:400]");
+	polyEditUV -pu 0.5 -pv 0.5 -su 1 -sv 0.5;
+
+	int $zUp   = `getAttr $swapYZAttr`;
+	float $rot = `getAttr $turnDomeAttr`;
+
+	scale -a $sphereSize $sphereSize $sphereSize $transform;
+	if ($zUp) {
+		rotate -r 90.0 0.0 -90.0 $transform;
+	} else {
+		rotate -r 0.0 -90.0 0.0 $transform;
+	}
+	makeIdentity -apply true -t 1 -r 1 -s 1 -n 0 $transform;
+
+	// Transform limits
+	// Lock all except rotation around up-axis
+	//
+	transformLimits -tx 0 0 -ty 0 0 -tz 0 0 $transform;
+	transformLimits -etx on on -ety on on -etz on on $transform;
+	if ($zUp) {
+		transformLimits -rx 0 0 -ry 0 0 $transform;
+		transformLimits -erx on on -ery on on $transform;
+		connectAttr -f ($transform + ".rotateZ") $turnDomeAttr;
+		setAttr ($transform + ".rotateZ") $rot;
+	} else {
+		transformLimits -rx 0 0 -rz 0 0 $transform;
+		transformLimits -erx on on -erz on on $transform;
+		connectAttr -f ($transform + ".rotateY") $turnDomeAttr;
+		setAttr ($transform + ".rotateY") $rot;
+	}
+	
+	// Hardware textured
+	DisplayShadedAndTextured;
+
+	select -r $transform;
+	
+	string $evDef = "AEfileTextureReloadCmd " + $fileTexture + ".fileTextureName";
+	evalDeferred($evDef);
+}
+
+global proc ilrSaveOptionsToTextFile(string $filename, string $filetype)
+{
+	if (size($filename))
+	{
+		$fileId = `fopen $filename "w"`;
+
+		string $attrib;
+		string $attribs[] = `listAttr -hasData TurtleRenderOptions`;
+		for ($attrib in $attribs)
+		{
+			string $value = `getAttr ("TurtleRenderOptions."+$attrib)`;
+			fprint $fileId ($attrib+" "+$value+"\n");
+		}
+
+		fclose $fileId;
+	}
+}
+
+global proc ilrQueryFile(string $file, string $node)
+{
+	if (! `file -q -ex $file`)
+	{
+		warning("File " + $file + " doesn't exist, node " + $node);
+	}
+	else
+	{
+		ilrDebugPrint("File " + $file + " found, node " + $node);
+	}
+}
+
+global proc ilrSetFileName(string $file)
+{
+	if ($file == "causticsPhotonMapFile")
+	{
+		setAttr -type "string" TurtleRenderOptions.causticsPhotonMapFile `textFieldGrp -query -text ilrCausticsPhotonMapFile`;
+	}
+	else if ($file == "globalPhotonMapFile")
+	{
+		setAttr -type "string" TurtleRenderOptions.globalPhotonMapFile `textFieldGrp -query -text ilrGlobalPhotonMapFile`;
+	}
+	else if ($file == "dynamicPhotonMapFile")
+	{
+		setAttr -type "string" TurtleRenderOptions.dynamicPhotonMapFile `textFieldGrp -query -text ilrDynamicPhotonMapFile`;
+	}
+	else if ($file == "finalGatherFile")
+	{
+		setAttr -type "string" TurtleRenderOptions.fgFile `textFieldGrp -query -text ilrFinalGatherFile`;
+	} 
+	else if ($file == "pathTracerFile")
+	{
+		setAttr -type "string" TurtleRenderOptions.ptFile `textFieldGrp -query -text ilrPathTracerFile`;
+	}
+}
+
+global proc float ilrCheckRange(float $v, float $min, float $max)
+{
+	if ($v < $min) 
+		$v = $min;
+	else if ($v > $max)
+		$v = $max;
+	return $v;
+}
+
+global proc ilrClearTC() {
+	string $path = `getAttr TurtleRenderOptions.textureCacheDirectory`;
+	eval(("ilrClearTextureCacheCmd \"" + $path +"\""));
+}
+global proc ilrTexCacheDirChanged() {
+	string $dir = `textFieldGrp -query -fi ilrTextureCacheDirectoryFile`;
+	setAttr TurtleRenderOptions.textureCacheDirectory -type "string" $dir;
+}
+global proc ilrCacheAllTextures() {
+	string $allFileTextures[] = `ls -typ file`;
+	for($i = 0; $i < size($allFileTextures); $i++) {
+		print ($allFileTextures[$i] + "\n");
+	}
+}
+
+global proc ilrUpdatePerformanceOptions()
+{
+	string $oldparent = `setParent -q`;
+
+	if (!size(ilrSetParentToOptionsTab())) {
+		setParent $oldparent;
+		return;
+	}
+
+	if (!clExists("roPerformanceFrame|roPerformanceLayout")) {
+		setParent $oldparent;
+		return;
+	}
+	
+	setParent roPerformanceFrame;
+
+	int $autoThreads = !`getAttr TurtleRenderOptions.autoThreads`;
+	attrControlGrp -edit -enable $autoThreads ilrRenderThreads;
+
+	int $enableComp = `getAttr ("TurtleRenderOptions.enableTextureCache")`;
+	attrControlGrp -edit -enable $enableComp ilrReadOnlyCache;
+	attrControlGrp -edit -enable $enableComp ilrTextureTileSize;
+	attrControlGrp -edit -enable $enableComp ilrTextureCacheSize;
+	attrControlGrp -edit -enable $enableComp ilrMinimumTextureSize;
+	attrControlGrp -edit -enable $enableComp ilrTextureCompressionType;
+	attrControlGrp -edit -enable $enableComp ilrTextureCacheDirectoryFile;
+	attrControlGrp -edit -enable $enableComp ilrDeleteCacheButton;
+
+	setParent $oldparent;
+}
+
+global proc ilrBuildPerformanceOptions(string $parent)
+{
+	global int $g_ilrIsSystemNT;
+	global int $g_ilrIsSystemLinux;
+	global int $g_ilrIsSystemMac;
+	global int $g_ilrIsSystemMacX86;
+
+	ilrSetParentToOptionsTab();
+	setParent $parent;
+
+	// If the UI is created already then just update the attribute values.
+	if (clExists("roPerformanceLayout")) {
+		ilrUpdatePerformanceOptions;
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+	
+	columnLayout -adjustableColumn true roPerformanceLayout;
+
+	attrEnumOptionMenuGrp -label "Tile Scheme"
+		-at "TurtleRenderOptions.tileScheme"
+		ilrTileSchemeMenu;
+
+	attrEnumOptionMenuGrp -label "Tile Size"
+		-at "TurtleRenderOptions.tileSize"
+		ilrTileSizeMenu;
+
+	attrControlGrp -label "Use one thread per CPU"
+		-attribute "TurtleRenderOptions.autoThreads"
+		-cc "ilrUpdatePerformanceOptions"
+		ilrAutoThreads;
+
+	attrControlGrp -label "Rendering Threads"
+		-attribute "TurtleRenderOptions.renderThreads"
+        ilrRenderThreads;
+
+	separator;
+
+	if ($g_ilrIsSystemNT) {
+		attrControlGrp -label "Use SSE"
+			-attribute "TurtleRenderOptions.useSSE"
+			ilrUseSSECheck;
+	} else if ($g_ilrIsSystemLinux || $g_ilrIsSystemMacX86) {
+		attrControlGrp -label "Use SSE"
+			-attribute "TurtleRenderOptions.useSSE"
+			ilrUseSSECheck;
+	} else if ($g_ilrIsSystemMac) {
+		attrControlGrp -label "Use Altivec"
+			-attribute "TurtleRenderOptions.useSSE"
+			ilrUseSSECheck;
+	}
+
+	attrControlGrp -label "Use Instancing" 
+		-attribute "TurtleRenderOptions.useInstancing"
+		ilrUseInstancingCheck;
+
+	attrControlGrp -label "Vertex Merge Threshold"
+		-attribute "TurtleRenderOptions.vertexMergeThreshold"
+        ilrVertexMergeThreshold;
+
+	frameLayout -label "Texture Cache" -cll true -cl 1;
+		columnLayout -adjustableColumn true;
+
+			attrControlGrp -label "Enable Texture Cache"
+				-attribute "TurtleRenderOptions.enableTextureCache"  
+				-cc "ilrUpdatePerformanceOptions"
+				ilrEnableTextureCache;
+
+			attrControlGrp -label "Read Only Cache"
+				-attribute "TurtleRenderOptions.readOnlyCache"
+				ilrReadOnlyCache;
+			
+			separator;
+
+			attrEnumOptionMenuGrp -label "Texture Tile Size"
+				-at "TurtleRenderOptions.textureTileSize"
+				ilrTextureTileSize;
+
+			attrControlGrp -label "Texture Cache Size (Mb)"
+				-attribute "TurtleRenderOptions.textureCacheSize"
+				ilrTextureCacheSize;
+
+			attrControlGrp -label "Minimum Texture Size (Mb)"
+				-attribute "TurtleRenderOptions.minimumTextureSize"
+				ilrMinimumTextureSize;
+
+			attrEnumOptionMenuGrp -label "Texture Compression Type"
+				-at "TurtleRenderOptions.textureCompressionType"
+				ilrTextureCompressionType;
+
+			separator;
+
+			string $initialTexDir = `getAttr TurtleRenderOptions.textureCacheDirectory`;
+			textFieldGrp -label "Texture Cache Directory"
+				-cc "ilrTexCacheDirChanged"
+				-text $initialTexDir
+				ilrTextureCacheDirectoryFile;
+			
+			rowLayout -numberOfColumns 1;
+				button
+					-label " Delete Cache "
+					-align "center"
+					-command ("ilrClearTC")
+					ilrDeleteCacheButton;
+			setParent ..;
+		
+		setParent ..;
+	setParent ..;
+
+
+	frameLayout -label "Advanced Raytracing Settings" -cll true -cl 1;
+		columnLayout -adjustableColumn true;
+
+			attrControlGrp -label "Recursion Depth"
+				-attribute "TurtleRenderOptions.recursionDepth"
+				ilrRecursionDepth;
+
+			attrControlGrp -label "Recursion Threshold"
+				-attribute "TurtleRenderOptions.recursionThreshold"
+				ilrRecursionThreshold;
+
+			setParent ..;
+	setParent ..;
+
+
+	setParent ..;
+
+	setUITemplate -popTemplate;
+
+	ilrUpdatePerformanceOptions;
+}
+
+global proc ilrUpdateRaytracingOptions()
+{
+	string $oldparent = `setParent -q`;
+
+	if (!size(ilrSetParentToSamplingTab())) {
+		setParent $oldparent;
+		return;
+	}
+
+	if (!clExists("roRaytracingFrame|roRaytracingLayout")) {
+		setParent $oldparent;
+		return;
+	}
+
+	setParent roRaytracingFrame;
+
+	float $bias = `floatFieldGrp -q -v1 ilrRtBias`;
+	floatFieldGrp -edit -extraLabel ($bias > 0.0 ? "(custom)" : "(automatic)") ilrRtBias;
+
+	setParent $oldparent;
+}
+
+global proc ilrBuildRaytracingOptions(string $parent)
+{
+	ilrSetParentToSamplingTab();
+	setParent $parent;
+
+	// If the UI is created already then just update the attribute values.
+	if(clExists("roRaytracingLayout")) {
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	columnLayout -adjustableColumn true roRaytracingLayout;
+	
+    attrControlGrp -label "Max Ray Depth"
+		-attribute "TurtleRenderOptions.rtMaxRayDepth"
+        ilrRtMaxRayDepth;
+
+	 attrControlGrp -label "Reflections"
+		-attribute "TurtleRenderOptions.rtReflections"
+        ilrRtReflections;
+
+	 attrControlGrp -label "Refractions"
+		-attribute "TurtleRenderOptions.rtRefractions"
+        ilrRtRefractions;
+
+	 attrControlGrp -label "Shadows"
+		-attribute "TurtleRenderOptions.rtShadows"
+        ilrRtShadows;
+
+	attrControlGrp -label "GI Transparency"
+		-attribute "TurtleRenderOptions.rtGITransparency"
+		ilrRtGITransparency;
+
+	floatFieldGrp -numberOfFields 1
+		-label "Bias" -extraLabel "(automatic)"
+		-columnAlign 3 "left"
+		-cc "ilrUpdateRaytracingOptions"
+		ilrRtBias;
+
+	connectControl -index 2 ilrRtBias TurtleRenderOptions.rtBias;
+
+	setParent ..;
+
+	setUITemplate -popTemplate;
+	
+	ilrUpdateRaytracingOptions;
+}
+
+global proc ilrUpdateFrameBufferOptions()
+{
+	string $oldparent = `setParent -q`;
+
+	if (!size(ilrSetParentToOptionsTab())) {
+		setParent $oldparent;
+		return;
+	}
+
+	if (!clExists("roFrameBufferFrame|roFrameBufferLayout")) {
+		setParent $oldparent;
+		return;
+	}
+
+	setParent roFrameBufferFrame;
+
+
+	int $preMult = `getAttr TurtleRenderOptions.preMultiply`;
+	attrControlGrp -edit -enable ($preMult==0) ilrPreMultiplyThreshold;
+
+	int $inputGammaCorrection = `getAttr TurtleRenderOptions.inputGammaCorrection`;
+	attrControlGrp -edit -enable ($inputGammaCorrection==1) ilrGammaInput;
+	
+	int $outputCorrection = `getAttr TurtleRenderOptions.outputCorrection`;
+	// TODO: change == 1 to something that maps directly to the underlying enum
+	attrControlGrp -edit -enable ($outputCorrection==1) ilrGammaOutput;
+
+	setParent $oldparent;
+}
+
+global proc ilrBuildFrameBufferOptions(string $parent)
+{
+	ilrSetParentToOptionsTab();
+	setParent $parent;
+
+	// If the UI is created already then just update the attribute values.
+	if(clExists("roFrameBufferLayout")) {
+		ilrUpdateFrameBufferOptions;
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	columnLayout -adjustableColumn true roFrameBufferLayout;
+
+	attrControlGrp -label "Premultiply Alpha"
+		-attribute "TurtleRenderOptions.preMultiply"
+		-cc "ilrUpdateFrameBufferOptions"
+		ilrPreMultiply;
+		
+	attrControlGrp -label "Premultiply Threshold"
+		-attribute "TurtleRenderOptions.preMultiplyThreshold"
+		ilrPreMultiplyThreshold;
+
+	separator;
+
+	attrControlGrp -label "Enable Input Gamma Correction"
+		-attribute "TurtleRenderOptions.inputGammaCorrection"
+		-cc "ilrUpdateFrameBufferOptions"
+		ilrInputGammaCorrection;
+
+	attrControlGrp -label "Input Gamma Correction"
+		-attribute "TurtleRenderOptions.gammaInput"
+		ilrGammaInput;
+
+	separator;
+	
+	attrEnumOptionMenuGrp -label "Output Correction"
+		-attribute "TurtleRenderOptions.outputCorrection"
+		ilrOutputCorrection;
+	scriptJob -parent ilrOutputCorrection -attributeChange "TurtleRenderOptions.outputCorrection" "ilrUpdateFrameBufferOptions";
+
+	attrControlGrp -label "Output Gamma Correction"
+		-attribute "TurtleRenderOptions.gammaOutput"
+		ilrGammaOutput;
+
+	attrControlGrp -label "Dither Final Color"
+		-attribute "TurtleRenderOptions.dither"
+		ilrJitter;
+
+	frameLayout -label "Output Shader" -cll true -cl 1;
+		columnLayout -adjustableColumn true;
+
+			attrNavigationControlGrp 
+				-l "Output Shader"
+				-at TurtleRenderOptions.outputShader
+				outputShaderControl;
+
+		setParent ..;
+	setParent ..;
+
+	setParent ..;
+	setUITemplate -popTemplate;
+
+	ilrUpdateFrameBufferOptions;
+}
+
+global proc ilrUpdateOverridesOptions()
+{
+	string $oldparent = `setParent -q`;
+
+	if (!size(ilrSetParentToOptionsTab())) {
+		setParent $oldparent;
+		return;
+	}
+
+	if (!clExists("roOverridesFrame|roOverridesLayout")) {
+		setParent $oldparent;
+		return;
+	}
+
+	setParent roOverridesFrame;
+
+
+	$useQ = `getAttr TurtleRenderOptions.rtQualityLimits`;
+	attrControlGrp -edit -enable ($useQ == 1) ilrRtMaxShadowRays;
+	attrControlGrp -edit -enable ($useQ == 1) ilrRtMaxGlossyRays;
+	attrControlGrp -edit -enable true ilrRtMinShadowRays;
+	
+	setParent $oldparent;
+}
+
+global proc ilrBuildOverridesOptions(string $parent)
+{
+	ilrSetParentToOptionsTab();
+	setParent $parent;
+
+	// If the UI is created already then just update the attribute values.
+	if(clExists("roOverridesLayout")) {
+		ilrUpdateOverridesOptions;
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	columnLayout -adjustableColumn true roOverridesLayout;
+
+	attrControlGrp -label "Ignore Light Links"
+		-attribute "TurtleRenderOptions.ignoreLightLinks"
+		ilrIgnoreLightLinks;
+
+	attrControlGrp -label "Enable Quality Limits"
+		-attribute "TurtleRenderOptions.rtQualityLimits"
+		-cc "ilrUpdateOverridesOptions"
+		ilrQualityLimits;
+
+	attrControlGrp -label "Max Shadow Rays"
+		-attribute "TurtleRenderOptions.rtMaxShadowRays"
+        ilrRtMaxShadowRays;
+
+	attrControlGrp -label "Max Glossy Rays"
+		-attribute "TurtleRenderOptions.rtMaxGlossyRays"
+        ilrRtMaxGlossyRays;
+        
+    separator;
+     
+	attrControlGrp -label "Min Shadow Rays"
+		-attribute "TurtleRenderOptions.rtMinShadowRays"
+        ilrRtMinShadowRays;
+
+	
+	frameLayout -label "Tangent Space" -cll true -cl 1;
+		columnLayout -adjustableColumn true;
+	
+			attrControlGrp -label "Flip for odd UV winding direction"
+				-attribute "TurtleRenderOptions.tsOddUVFlipping"
+				ilrTsOddUVFlipping;
+			
+			separator;
+
+			attrControlGrp -label "Vertex Level Orthogonalization"
+				-attribute "TurtleRenderOptions.tsVertexOrthogonalization"
+				ilrTsVertexOrthogonalization;
+
+			attrControlGrp -label "Vertex Level Normalization"
+				-attribute "TurtleRenderOptions.tsVertexNormalization"
+				ilrTsVertexNormalization;
+
+			attrControlGrp -label "Intersection Level Orthogonalization"
+				-attribute "TurtleRenderOptions.tsIntersectionOrthogonalization"
+				ilrTsIntersectionOrthogonalization;
+
+			attrControlGrp -label "Intersection Level Normalization"
+				-attribute "TurtleRenderOptions.tsIntersectionNormalization"
+				ilrTsIntersectionNormalization;
+
+		setParent ..;
+	setParent ..;
+	
+	setParent ..;
+	setUITemplate -popTemplate;
+
+	ilrUpdateOverridesOptions;
+}
+
+global proc ilrUpdateSamplingOptions()
+{
+	string $oldparent = `setParent -q`;
+
+	if (!size(ilrSetParentToSamplingTab())) {
+		setParent $oldparent;
+		return;
+	}
+
+	if (!clExists("roSamplingFrame|roSamplingLayout")) {
+		setParent $oldparent;
+		return;
+	}
+
+	setParent roSamplingFrame;
+
+
+	int $minRate = `getAttr TurtleRenderOptions.aaMinSampleRate`;
+	int $maxRate = `getAttr TurtleRenderOptions.aaMaxSampleRate`;
+	int $minRate = max(-4, min(4, $minRate));
+	int $maxRate = max(-4, min(4, $maxRate));
+	if ($minRate > $maxRate) {
+		$maxRate = $minRate;
+	}
+
+	string $str = "";
+
+	string $sampleCount[] = {"1/256", "1/64", "1/16", "1/4", "1", "4", "16", "64", "256"};
+	if ($sampleCount[$minRate + 4] == $sampleCount[$maxRate + 4]) {
+		$str = "(fixed: ";
+		$str += $sampleCount[$minRate + 4];
+		$str += $minRate > 0 ? " samples " : " sample ";
+		$str += "per pixel)";
+	} else {
+		$str = "(adaptive: ";
+		$str += $sampleCount[$minRate + 4];
+		$str += " to ";
+		$str += $sampleCount[$maxRate + 4];
+		$str += $maxRate > 0 ? " samples " : " sample ";
+		$str += "per pixel)";
+	}
+
+	text -edit -label $str ilrAaNumSamplesText;
+
+	int $clamp = `getAttr TurtleRenderOptions.aaClamp`;
+	attrControlGrp -edit -enable $clamp ilrAaMinValue;
+	attrControlGrp -edit -enable $clamp ilrAaMaxValue;
+
+	setParent $oldparent;
+}
+
+global proc ilrBuildSamplingOptions(string $parent)
+{
+	ilrSetParentToSamplingTab();
+	setParent $parent;
+
+	// If the UI is created already then just update the attribute values.
+	if(clExists("roSamplingLayout")) {
+		ilrUpdateSamplingOptions;
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	columnLayout -adjustableColumn true roSamplingLayout;
+
+	attrControlGrp -label "Min Sample Rate"
+		-attribute "TurtleRenderOptions.aaMinSampleRate"
+		-cc "ilrUpdateSamplingOptions"
+		ilrAaMinSampleRate;
+
+	attrControlGrp -label "Max Sample Rate"
+		-attribute "TurtleRenderOptions.aaMaxSampleRate"
+		-cc "ilrUpdateSamplingOptions"
+		ilrAaMaxSampleRate;
+
+	rowLayout -nc 2;
+		text -label " ";
+		columnLayout -adjustableColumn true -columnAlign "left" -rowSpacing 0;
+			text -label "(adaptive: 1/16 to 1 samples per pixel)" ilrAaNumSamplesText;
+		setParent ..;
+	setParent ..;
+
+	separator;
+
+	attrControlGrp -label "Contrast Threshold"
+		-attribute "TurtleRenderOptions.aaContrast"
+		ilrAaContrast;
+
+	attrControlGrp -label "Diagnose Sample Rate"
+		-attribute "TurtleRenderOptions.aaDiagnose"
+		ilrAaDiagnose;
+
+	attrControlGrp -label "Clamp Values"
+		-attribute "TurtleRenderOptions.aaClamp"
+		-cc "ilrUpdateSamplingOptions"
+		ilrAaClamp;
+
+	attrControlGrp -label "Min Value"
+		-attribute "TurtleRenderOptions.aaMinValue"
+		ilrAaMinValue;
+
+	attrControlGrp -label "Max Value"
+		-attribute "TurtleRenderOptions.aaMaxValue"
+		ilrAaMaxValue;
+		
+	separator;
+
+	attrEnumOptionMenuGrp -label "Filter"
+		-at "TurtleRenderOptions.aaFilter"
+		ilrAaFilter;
+
+	attrControlGrp -label "Filter Width"
+		-attribute "TurtleRenderOptions.aaFilterSizeX"
+		ilrAaFilterSizeX;
+
+	attrControlGrp -label "Filter Height"
+		-attribute "TurtleRenderOptions.aaFilterSizeY"
+		ilrAaFilterSizeY;
+
+		setParent ..;
+	setParent ..;
+
+	setParent ..;
+	setUITemplate -popTemplate;
+
+	ilrUpdateSamplingOptions();
+}
+
+global proc ilrUpdatePrepassOptions()
+{
+	string $oldparent = `setParent -q`;
+
+	if (!size(ilrSetParentToSamplingTab())) {
+		setParent $oldparent;
+		return;
+	}
+
+	if (!clExists("roPrepassFrame|roPrepassLayout")) {
+		setParent $oldparent;
+		return;
+	}
+
+	setParent roPrepassFrame;
+
+
+	int $minRate = `getAttr TurtleRenderOptions.prepassMinSampleRate`;
+	int $maxRate = `getAttr TurtleRenderOptions.prepassMaxSampleRate`;
+	int $minRate = max(-5, min(0, $minRate));
+	int $maxRate = max(-5, min(0, $maxRate));
+	if ($minRate > $maxRate) {
+		$maxRate = $minRate;
+	}
+
+	string $str = "";
+
+	string $sampleCount[] = {"1/512", "1/256", "1/64", "1/16", "1/4", "1"};
+	if ($sampleCount[$minRate + 5] == $sampleCount[$maxRate + 5]) {
+		$str = "(singlepass: ";
+		$str += $sampleCount[$minRate + 5];
+		$str += $minRate > 0 ? " samples " : " sample ";
+		$str += "per pixel)";
+	} else {
+		$str = "(multipass: ";
+		$str += $sampleCount[$minRate + 5];
+		$str += " to ";
+		$str += $sampleCount[$maxRate + 5];
+		$str += $maxRate > 0 ? " samples " : " sample ";
+		$str += "per pixel)";
+	}
+
+	text -edit -label $str ilrPrepassText;
+	
+	setParent $oldparent;
+}
+
+global proc ilrBuildPrepassOptions(string $parent)
+{
+	ilrSetParentToSamplingTab();
+	setParent $parent;
+
+	// If the UI is created already then just update the attribute values.
+	if(clExists("roPrepassLayout")) {
+		ilrUpdatePrepassOptions;
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	columnLayout -adjustableColumn true roPrepassLayout;
+
+	attrControlGrp -label "Min Sample Rate"
+		-attribute "TurtleRenderOptions.prepassMinSampleRate"
+		-cc "ilrUpdatePrepassOptions"
+		ilrPrepassMinSampleRate;
+
+	attrControlGrp -label "Max Sample Rate"
+		-attribute "TurtleRenderOptions.prepassMaxSampleRate"
+		-cc "ilrUpdatePrepassOptions"
+		ilrPrepassMaxSampleRate;
+
+	rowLayout -nc 2;
+		text -label " ";
+		columnLayout -adjustableColumn true -columnAlign "left" -rowSpacing 0;
+			text -label "(5 adaptive passes)" ilrPrepassText;
+		setParent ..;
+	setParent ..;
+
+	setParent ..;
+
+	setUITemplate -popTemplate;
+	ilrUpdatePrepassOptions;
+}
+
+global proc ilrUpdateIBLOptions()
+{
+	string $oldparent = `setParent -q`;
+
+	if (!size(ilrSetParentToEnvironmentTab())) {
+		setParent $oldparent;
+		return;
+	}
+
+	if (!clExists("roIBLFrame|roIBLLayout")) {
+		setParent $oldparent;
+		return;
+	}
+
+	setParent roIBLFrame;
+
+
+	int $light    = `getAttr TurtleRenderOptions.iblEmitLight`;
+	int $shadows  = `getAttr TurtleRenderOptions.iblShadows`;
+	int $photons  = `getAttr TurtleRenderOptions.iblEmitPhotons`;
+	
+	connectControl -index 2 ilrIBLVisField TurtleRenderOptions.iblVisualize;
+
+	attrControlGrp -edit -enable $light ilrIBLEmitDiffuseField;
+	attrControlGrp -edit -enable $light ilrIBLEmitSpecularField;
+	attrControlGrp -edit -enable $light ilrIBLSamplesField;
+	attrControlGrp -edit -enable $light ilrIBLIntensityField;
+	attrControlGrp -edit -enable $light ilrIBLSpecularBoostField;
+	attrControlGrp -edit -enable $light ilrIBLShadowsField;
+	attrControlGrp -edit -enable $light ilrIBLBandingVsNoiseField;
+	attrControlGrp -edit -enable $light  ilrIBLEmitPhotonsField;
+	attrControlGrp -edit -enable ($light && $photons) ilrIBLGlobalPhotonsField;
+	attrControlGrp -edit -enable ($light && $photons) ilrIBLCausticsPhotonsField;
+	attrControlGrp -edit -enable ($light && $photons) ilrIBLPhotonEnergyField;
+
+	setParent $oldparent;
+}
+
+global proc ilrBuildIBLOptions(string $parent)
+{
+	ilrSetParentToEnvironmentTab();
+	setParent $parent;
+
+	// If the UI is created already then just update the attribute values.
+	if(clExists("roIBLLayout")) {
+		ilrUpdateIBLOptions;
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	columnLayout -adjustableColumn true roIBLLayout;
+
+	rowLayout -nc 3 ilrIBLImageFileLayout;
+		text -l "Image File";
+		textField ilrIBLImageFileField;
+		symbolButton -image "navButtonBrowse.xpm" ilrIBLImageFileBrowser;
+		connectControl -fileName ilrIBLImageFileField TurtleRenderOptions.iblImageFile;
+	    button -edit -command ("AEilrFileTextureBrowser \"AEilrAssignTextureCB TurtleRenderOptions.iblImageFile\"") ilrIBLImageFileBrowser;
+	setParent ..;
+
+	attrControlGrp -label "Turn Light Dome"
+		-attribute "TurtleRenderOptions.iblTurnDome"
+		ilrIBLTurnDomeField;
+
+	attrControlGrp -label "Swap Y <-> Z"
+		-attribute "TurtleRenderOptions.iblSwapYZ"
+		ilrIBLSwapYZField;
+
+	attrControlGrp -label "Visualize"
+		-attribute "TurtleRenderOptions.iblVisualize"
+		-cc "ilrUpdateIBLVis TurtleRenderOptions.iblVisualize TurtleRenderOptions.iblImageFile TurtleRenderOptions.iblTurnDome TurtleRenderOptions.iblSwapYZ"
+		ilrIBLVisField;
+
+	separator;
+
+	attrControlGrp -label "Blur for GI"
+		-attribute TurtleRenderOptions.iblGIEnvBlur
+		ilrIBLGIEnvBlurField;
+
+	frameLayout -label "Light Emission" -cll true -cl true roIBLLightEmissionFrame;
+		columnLayout -adjustableColumn true roIBLLightEmissionLayout;
+
+			attrControlGrp -label "Emit Light"
+				-attribute "TurtleRenderOptions.iblEmitLight"
+				-cc "ilrUpdateIBLOptions"
+				ilrIBLEmitLightField;
+
+			attrControlGrp -label "Emit Diffuse"
+				-attribute "TurtleRenderOptions.iblEmitDiffuse"
+				ilrIBLEmitDiffuseField;
+
+			attrControlGrp -label "Emit Specular"
+				-attribute "TurtleRenderOptions.iblEmitSpecular"
+				ilrIBLEmitSpecularField;
+
+			attrControlGrp -label "Samples"
+				-attribute "TurtleRenderOptions.iblSamples"
+				ilrIBLSamplesField;
+
+			attrControlGrp -label "Intensity"
+				-attribute "TurtleRenderOptions.iblIntensity"
+				ilrIBLIntensityField;
+
+			attrControlGrp -label "Specular Boost"
+				-attribute "TurtleRenderOptions.iblSpecularBoost"
+				ilrIBLSpecularBoostField;
+
+			attrControlGrp -label "Enable Shadows"
+				-attribute "TurtleRenderOptions.iblShadows"
+				-cc "ilrUpdateIBLOptions"
+				ilrIBLShadowsField;
+
+			attrControlGrp -label "Banding Vs Noise"
+				-attribute "TurtleRenderOptions.iblBandingVsNoise"
+				ilrIBLBandingVsNoiseField;
+
+			frameLayout -label "Photon Emission" -cll true -cl true;
+				columnLayout -adjustableColumn true;
+
+					attrControlGrp -label "Emit Photons"
+						-attribute "TurtleRenderOptions.iblEmitPhotons"
+						-cc "ilrUpdateIBLOptions"
+						ilrIBLEmitPhotonsField;
+
+					attrControlGrp -label "Caustics Photons"
+						-attribute TurtleRenderOptions.iblCausticsPhotons
+						ilrIBLCausticsPhotonsField;
+
+					attrControlGrp -label "Global Photons"
+						-attribute TurtleRenderOptions.iblGlobalPhotons
+						ilrIBLGlobalPhotonsField;
+
+					attrControlGrp -label "Photon Energy"
+						-attribute TurtleRenderOptions.iblPhotonEnergy
+						ilrIBLPhotonEnergyField;
+						
+				setParent ..;
+			setParent ..;
+
+		setParent ..;
+	setParent ..;
+
+	setParent ..;
+
+	setUITemplate -popTemplate;
+
+	ilrUpdateIBLOptions();
+}
+
+global proc ilrUpdateGICommonOptions()
+{
+	string $oldparent = `setParent -q`;
+
+	if (!size(ilrSetParentToGITab())) {
+		setParent $oldparent;
+		return;
+	}
+	
+	if (!clExists("roGICommonLayout")) {
+		setParent $oldparent;
+		return;
+	}
+
+	int $gi = `getAttr TurtleRenderOptions.enableGI`;
+	int $sec = `getAttr TurtleRenderOptions.secondaryIntegrator`;
+
+	attrEnumOptionMenuGrp -edit -enable $gi ilrPrimaryIntegratorField;
+	attrEnumOptionMenuGrp -edit -enable $gi ilrSecondaryIntegratorField;
+	attrControlGrp -edit -enable $gi ilrEnableCausticsField;
+
+	if (`layout -exists roGIColorBalanceFrame`)
+		ilrUpdateGIColorBalanceOptions();
+	if (`layout -exists roFinalGatherFrame`)
+		ilrUpdateFinalGatherOptions();
+	if (`layout -exists roPathTracerFrame`)
+		ilrUpdatePathTracerOptions();
+	if (`layout -exists roMonteCarloFrame`)
+		ilrUpdateMonteCarloOptions();
+	if (`layout -exists roCausticsPhotonMapFrame`)
+		ilrUpdateCausticsPhotonMapOptions();
+	if (`layout -exists roGlobalPhotonMapFrame`)
+		ilrUpdateGlobalPhotonMapOptions();
+	if (`layout -exists roDynamicPhotonMapFrame`)
+		ilrUpdateDynamicPhotonMapOptions();
+	if (`layout -exists roGIEnvironmentFrame`)
+		ilrUpdateGIEnvironmentOptions();
+	if (`layout -exists roGIAdvancedFrame`)
+		ilrUpdateGIAdvancedOptions();
+
+	setParent $oldparent;
+}
+
+global proc ilrBuildGICommonOptions(string $parent)
+{
+	ilrSetParentToGITab();
+	setParent $parent;
+
+	// If the UI is created already then just update the attribute values.
+	if(clExists("roGICommonLayout")) {
+		ilrUpdateGICommonOptions;
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	columnLayout -adjustableColumn true roGICommonLayout;
+
+	attrControlGrp -label "Enable Global Illumination"
+		-attribute "TurtleRenderOptions.enableGI"
+		-cc "ilrUpdateGICommonOptions"
+        ilrEnableGIField;
+
+	attrEnumOptionMenuGrp -label "Primary GI"
+		-attribute "TurtleRenderOptions.primaryIntegrator"
+		ilrPrimaryIntegratorField;
+	scriptJob -parent ilrPrimaryIntegratorField -attributeChange "TurtleRenderOptions.primaryIntegrator" "ilrUpdateGICommonOptions";
+
+	attrEnumOptionMenuGrp -label "Secondary GI"
+		-attribute "TurtleRenderOptions.secondaryIntegrator"
+		ilrSecondaryIntegratorField;
+	scriptJob -parent ilrSecondaryIntegratorField -attributeChange "TurtleRenderOptions.secondaryIntegrator" "ilrUpdateGICommonOptions";
+
+	attrControlGrp -label "Enable Caustics"
+		-attribute "TurtleRenderOptions.enableCaustics"
+		-cc "ilrUpdateGICommonOptions"
+        ilrEnableCausticsField;
+
+	setParent ..;
+
+	setUITemplate -popTemplate;
+	ilrUpdateGICommonOptions;
+}
+
+global proc ilrUpdateGIColorBalanceOptions()
+{
+	string $oldparent = `setParent -q`;
+
+	if (!size(ilrSetParentToGITab())) {
+		setParent $oldparent;
+		return;
+	}
+
+	if (!clExists("roGIColorBalanceFrame|roGIColorBalanceLayout")) {
+		setParent $oldparent;
+		return;
+	}
+
+	setParent roGIColorBalanceFrame;
+
+
+	int $gi = `getAttr TurtleRenderOptions.enableGI`;
+	int $c = `getAttr TurtleRenderOptions.enableCaustics`;
+
+	attrControlGrp -edit -enable $gi ilrPrimaryIntensityField;
+	attrControlGrp -edit -enable $gi ilrPrimarySaturationField;
+	attrControlGrp -edit -enable $gi ilrSecondaryIntensityField;
+	attrControlGrp -edit -enable $gi ilrSecondarySaturationField;
+	attrControlGrp -edit -enable ($gi && $c) ilrCausticsIntensityField;
+	attrControlGrp -edit -enable ($gi && $c) ilrCausticsSaturationField;
+	attrControlGrp -edit -enable $gi ilrDiffuseBoostField;
+	attrControlGrp -edit -enable $gi ilrSpecularScaleField;
+	attrControlGrp -edit -enable $gi ilrEmissiveScaleField;
+	attrEnumOptionMenuGrp -edit -enable $gi ilrClampMaterialsField;
+
+	setParent $oldparent;
+}
+
+global proc ilrBuildGIColorBalanceOptions(string $parent)
+{
+	ilrSetParentToGITab();
+	setParent $parent;
+	
+	// If the UI is created already then just update the attribute values.
+	if(clExists("roGIColorBalanceLayout")) {
+		ilrUpdateGIColorBalanceOptions();
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	columnLayout -adjustableColumn true roGIColorBalanceLayout;
+
+	attrControlGrp -label "Primary Intensity"
+		-attribute "TurtleRenderOptions.primaryIntensity"
+		ilrPrimaryIntensityField;
+
+	attrControlGrp -label "Primary Saturation"
+		-attribute "TurtleRenderOptions.primarySaturation"
+		ilrPrimarySaturationField;
+
+	attrControlGrp -label "Secondary Intensity"
+		-attribute "TurtleRenderOptions.secondaryIntensity"
+		ilrSecondaryIntensityField;
+
+	attrControlGrp -label "Secondary Saturation"
+		-attribute "TurtleRenderOptions.secondarySaturation"
+		ilrSecondarySaturationField;
+
+	attrControlGrp -label "Caustics Intensity"
+		-attribute "TurtleRenderOptions.causticsIntensity"
+		ilrCausticsIntensityField;
+
+	attrControlGrp -label "Caustics Saturation"
+		-attribute "TurtleRenderOptions.causticsSaturation"
+		ilrCausticsSaturationField;
+
+	separator;
+
+	attrControlGrp -label "Diffuse Boost"
+		-attribute "TurtleRenderOptions.diffuseBoost"
+		ilrDiffuseBoostField;
+
+	attrControlGrp -label "Specular Scale"
+		-attribute "TurtleRenderOptions.specularScale"
+		ilrSpecularScaleField;
+
+	attrControlGrp -label "Emissive Scale"
+		-attribute "TurtleRenderOptions.emissiveScale"
+		ilrEmissiveScaleField;
+
+	attrEnumOptionMenuGrp -label "Clamp Materials"
+		-attribute "TurtleRenderOptions.clampMaterials"
+        ilrClampMaterialsField;
+	scriptJob -parent ilrClampMaterialsField -attributeChange "TurtleRenderOptions.clampMaterials" "ilrUpdateGIColorBalanceOptions";
+
+	setParent ..;
+
+	setUITemplate -popTemplate;
+	ilrUpdateGIColorBalanceOptions;
+}
+
+
+global proc ilrUpdateCausticsPhotonMapOptions()
+{
+	string $oldparent = `setParent -q`;
+
+	if (!size(ilrSetParentToGITab())) {
+		setParent $oldparent;
+		return;
+	}
+
+	if (!clExists("roCausticsPhotonMapFrame|roCausticsPhotonMapLayout")) {
+		setParent $oldparent;
+		return;
+	}
+
+	setParent roCausticsPhotonMapFrame;
+
+
+	int $c = `getAttr TurtleRenderOptions.enableCaustics`;
+	int $cUseFile = `getAttr TurtleRenderOptions.causticsPhotonMapUseFile`;
+	float $radii = `floatFieldGrp -q -v1 ilrCausticsPhotonMapRadius`;
+	
+	attrControlGrp -edit -enable $c ilrCausticsPhotonMapAccuracy;
+	floatFieldGrp -edit -enable $c -extraLabel ($radii > 0.0 ? "(custom)" : "(automatic)") ilrCausticsPhotonMapRadius;
+	attrEnumOptionMenuGrp -edit -enable $c ilrCausticsPhotonMapUseFile;
+	textFieldGrp -edit -text (`getAttr TurtleRenderOptions.causticsPhotonMapFile`) -enable ($c&&$cUseFile) ilrCausticsPhotonMapFile;
+	attrControlGrp -edit -enable ($c && $cUseFile!=0) ilrCausticsPhotonMapVisualize;
+	attrControlGrp -edit -enable ($c) ilrCausticsPhotonMapMaxDepth;
+	
+	setParent $oldparent;
+}
+
+global proc ilrBuildCausticsPhotonMapOptions(string $parent)
+{
+	ilrSetParentToGITab();
+	setParent $parent;
+	
+	// If the UI is created already then just update the attribute values.
+	if(clExists("roCausticsPhotonMapLayout")) {
+		ilrUpdateCausticsPhotonMapOptions();
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	columnLayout -adjustableColumn true roCausticsPhotonMapLayout;
+
+	attrControlGrp -label "Accuracy"
+		-attribute "TurtleRenderOptions.causticsPhotonMapAccuracy"
+        ilrCausticsPhotonMapAccuracy;
+
+	separator;
+
+	attrEnumOptionMenuGrp -label "Use Photon Map File"
+		-attribute "TurtleRenderOptions.causticsPhotonMapUseFile"
+        ilrCausticsPhotonMapUseFile;
+	scriptJob -parent ilrCausticsPhotonMapUseFile -attributeChange "TurtleRenderOptions.causticsPhotonMapUseFile" "ilrUpdateCausticsPhotonMapOptions";
+
+	textFieldGrp -label "File Name"
+		-cc "ilrSetFileName \"causticsPhotonMapFile\"; ilrUpdateCausticsPhotonMapOptions"
+		ilrCausticsPhotonMapFile;
+
+	attrControlGrp -label "Visualize in Model View"
+		-attribute "TurtleRenderOptions.causticsPhotonMapVisualize"
+		ilrCausticsPhotonMapVisualize;
+
+	frameLayout -label "Advanced Settings" -cll true -cl true roCausticsPhotonMapAdvancedSettingsFrame;
+		columnLayout -adjustableColumn true roCausticsPhotonMapAdvancedSettingsLayout;
+
+			floatFieldGrp -numberOfFields 1
+				-label "Photon Radius" -extraLabel "(automatic)"
+				-columnAlign 3 "left"
+				-cc "ilrUpdateCausticsPhotonMapOptions"
+				ilrCausticsPhotonMapRadius;
+
+			connectControl -index 2 ilrCausticsPhotonMapRadius TurtleRenderOptions.causticsPhotonMapRadius;
+
+			separator;
+
+			attrControlGrp -label "Max Photon Depth"
+				-attribute "TurtleRenderOptions.causticsPhotonMapMaxDepth"
+				ilrCausticsPhotonMapMaxDepth;
+		
+		setParent ..;
+	setParent ..;
+
+	setParent ..;
+
+	setUITemplate -popTemplate;
+	ilrUpdateCausticsPhotonMapOptions;
+}
+
+global proc ilrUpdateGlobalPhotonMapOptions()
+{
+	string $oldparent = `setParent -q`;
+
+	if (!size(ilrSetParentToGITab())) {
+		setParent $oldparent;
+		return;
+	}
+
+	if (!clExists("roGlobalPhotonMapFrame|roGlobalPhotonMapLayout")) {
+		setParent $oldparent;
+		return;
+	}
+
+	setParent roGlobalPhotonMapFrame;
+
+
+	int $pmap = `getAttr TurtleRenderOptions.enableGI`;
+	int $algorithm = `getAttr TurtleRenderOptions.globalPhotonMapAlgorithm`;
+	int $precalc = `getAttr TurtleRenderOptions.globalPhotonMapPrecalcIrradiance`;
+	int $gUseFile = `getAttr TurtleRenderOptions.globalPhotonMapUseFile`;
+	int $gOverrideMin = `getAttr TurtleRenderOptions.globalPhotonMapOverrideMinDepth`;
+	float $radii = `floatFieldGrp -q -v1 ilrGlobalPhotonMapRadius`;
+	
+	attrEnumOptionMenuGrp -edit -enable $pmap ilrGlobalPhotonMapAlgorithmMenu;
+	attrControlGrp -edit -enable $pmap ilrGlobalPhotonMapAccuracy;
+	attrEnumOptionMenuGrp -edit -enable $pmap ilrGlobalPhotonMapUseFile;
+	textFieldGrp -edit -text (`getAttr TurtleRenderOptions.globalPhotonMapFile`) -enable ($pmap && $gUseFile) ilrGlobalPhotonMapFile;
+	attrControlGrp -edit -enable ($pmap && $gUseFile!=0 && $algorithm==1) ilrGlobalPhotonMapVisualize;
+	floatFieldGrp -edit -enable $pmap -extraLabel ($radii > 0.0 ? "(custom)" : "(automatic)") ilrGlobalPhotonMapRadius;
+	attrControlGrp -edit -enable $pmap ilrGlobalPhotonMapCacheDirectLight;
+	attrControlGrp -edit -enable $pmap ilrGlobalPhotonMapMaxDepth;
+	attrEnumOptionMenuGrp -edit -enable $pmap ilrGlobalPhotonMapOverrideMinDepth;
+	attrControlGrp -edit -enable ($pmap && $gOverrideMin) ilrGlobalPhotonMapMinDepth;
+	attrControlGrp -edit -enable ($pmap && $algorithm==0) ilrGlobalPhotonMapGridCells;
+	attrControlGrp -edit -enable ($pmap && $algorithm==1) ilrGlobalPhotonMapPrecalcIrradiance;
+	attrControlGrp -edit -enable ($pmap && $algorithm==1 && $precalc) ilrGlobalPhotonMapPrecalcStep;
+
+	setParent $oldparent;
+}
+
+global proc ilrBuildGlobalPhotonMapOptions(string $parent)
+{
+	ilrSetParentToGITab();
+	setParent $parent;
+
+	// If the UI is created already then just update the attribute values.
+	if(clExists("roGlobalPhotonMapLayout")) {
+		ilrUpdateGlobalPhotonMapOptions();
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	columnLayout -adjustableColumn true roGlobalPhotonMapLayout;
+
+	attrControlGrp -label "Accuracy"
+		-attribute "TurtleRenderOptions.globalPhotonMapAccuracy"
+        ilrGlobalPhotonMapAccuracy;
+
+	separator;
+
+	attrEnumOptionMenuGrp -label "Use Photon Map File"
+		-attribute "TurtleRenderOptions.globalPhotonMapUseFile"
+        ilrGlobalPhotonMapUseFile;
+	scriptJob -parent ilrGlobalPhotonMapUseFile -attributeChange "TurtleRenderOptions.globalPhotonMapUseFile" "ilrUpdateGlobalPhotonMapOptions";
+
+	textFieldGrp -label "File Name"
+		-cc "ilrSetFileName \"globalPhotonMapFile\"; ilrUpdateGlobalPhotonMapOptions"
+		ilrGlobalPhotonMapFile;
+
+	attrControlGrp -label "Visualize in Model View"
+		-attribute "TurtleRenderOptions.globalPhotonMapVisualize"
+		ilrGlobalPhotonMapVisualize;
+
+	frameLayout -label "Advanced Settings" -cll true -cl true roGlobalPhotonMapAdvancedSettingsFrame;
+		columnLayout -adjustableColumn true roGlobalPhotonMapAdvancedSettingsLayout;
+
+			floatFieldGrp -numberOfFields 1
+				-label "Photon Radius" -extraLabel "(automatic)"
+				-columnAlign 3 "left"
+				-cc "ilrUpdateGlobalPhotonMapOptions"
+				ilrGlobalPhotonMapRadius;
+
+			connectControl -index 2 ilrGlobalPhotonMapRadius TurtleRenderOptions.globalPhotonMapRadius;
+
+			attrControlGrp -label "Cache Direct Light"
+				-attribute "TurtleRenderOptions.globalPhotonMapCacheDirectLight"
+				ilrGlobalPhotonMapCacheDirectLight;
+			
+			separator;
+
+			attrControlGrp -label "Max Photon Depth"
+				-attribute "TurtleRenderOptions.globalPhotonMapMaxDepth"
+				ilrGlobalPhotonMapMaxDepth;
+
+			attrEnumOptionMenuGrp -label "Use Min Photon Depth"
+				-attribute "TurtleRenderOptions.globalPhotonMapOverrideMinDepth"
+				ilrGlobalPhotonMapOverrideMinDepth;
+			scriptJob -parent ilrGlobalPhotonMapOverrideMinDepth -attributeChange "TurtleRenderOptions.globalPhotonMapOverrideMinDepth" "ilrUpdateGlobalPhotonMapOptions";
+
+			attrControlGrp -label "Min Photon Depth"
+				-attribute "TurtleRenderOptions.globalPhotonMapMinDepth"
+				ilrGlobalPhotonMapMinDepth;
+
+			separator;
+
+			attrEnumOptionMenuGrp -label "Algorithm"
+				-at "TurtleRenderOptions.globalPhotonMapAlgorithm"
+				ilrGlobalPhotonMapAlgorithmMenu;
+				scriptJob -parent ilrGlobalPhotonMapAlgorithmMenu -attributeChange "TurtleRenderOptions.globalPhotonMapAlgorithm" "ilrUpdateGlobalPhotonMapOptions";
+
+			attrControlGrp -label "Grid Cells"
+				-attribute "TurtleRenderOptions.globalPhotonMapGridCells"
+				ilrGlobalPhotonMapGridCells;
+
+			attrControlGrp -label "Precalc. Irradiance"
+				-attribute "TurtleRenderOptions.globalPhotonMapPrecalcIrradiance"
+				-cc "ilrUpdateGlobalPhotonMapOptions"
+				ilrGlobalPhotonMapPrecalcIrradiance;
+
+			attrControlGrp -label "Precalc. Step"
+				-attribute "TurtleRenderOptions.globalPhotonMapPrecalcStep"
+				ilrGlobalPhotonMapPrecalcStep;
+
+		setParent ..;
+	setParent ..;
+
+	setParent ..;
+
+	setUITemplate -popTemplate;
+	ilrUpdateGlobalPhotonMapOptions;
+}
+
+global proc ilrUpdateDynamicPhotonMapOptions()
+{
+	string $oldparent = `setParent -q`;
+
+	if (!size(ilrSetParentToGITab())) {
+		setParent $oldparent;
+		return;
+	}
+
+	if (!clExists("roDynamicPhotonMapFrame|roDynamicPhotonMapLayout")) {
+		setParent $oldparent;
+		return;
+	}
+
+	setParent roDynamicPhotonMapFrame;
+
+
+	int $dynpm = `getAttr TurtleRenderOptions.enableGI`;
+	int $dynUseFile = `getAttr TurtleRenderOptions.dynamicPhotonMapUseFile`;
+	float $radii = `getAttr TurtleRenderOptions.dynamicPhotonMapRadius`;
+	float $radii = `floatFieldGrp -q -v1 ilrDynamicPhotonMapRadius`;
+
+	attrControlGrp -edit -enable $dynpm ilrDynamicPhotonMapTotalPhotons;
+	attrControlGrp -edit -enable $dynpm ilrDynamicPhotonMapAccuracy;
+	attrControlGrp -edit -enable $dynpm ilrDynamicPhotonMapPreviewLightDirection;
+	attrEnumOptionMenuGrp -edit -enable $dynpm ilrDynamicPhotonMapUseFile;
+	textFieldGrp -edit -text (`getAttr TurtleRenderOptions.dynamicPhotonMapFile`) -enable ($dynpm&&$dynUseFile) ilrDynamicPhotonMapFile;
+	floatFieldGrp -edit -enable $dynpm -extraLabel ($radii > 0.0 ? "(custom)" : "(automatic)") ilrDynamicPhotonMapRadius;
+	attrControlGrp -edit -enable $dynpm ilrDynamicPhotonMapMinDepth;
+	attrControlGrp -edit -enable $dynpm ilrDynamicPhotonMapMaxDepth;
+	attrControlGrp -edit -enable $dynpm ilrDynamicPhotonMapSHBands;
+	attrControlGrp -edit -enable $dynpm ilrDynamicPhotonMapSHGatherCells;
+	attrControlGrp -edit -enable $dynpm ilrDynamicPhotonMapGridCells;
+
+	setParent $oldparent;
+}
+
+global proc ilrBuildDynamicPhotonMapOptions(string $parent)
+{
+	ilrSetParentToGITab();
+	setParent $parent;
+
+	// If the UI is created already then just update the attribute values.
+	if(clExists("roDynamicPhotonMapLayout")) {
+		ilrUpdateDynamicPhotonMapOptions();
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	columnLayout -adjustableColumn true roDynamicPhotonMapLayout;
+
+	attrControlGrp -label "Total Photons"
+		-attribute "TurtleRenderOptions.dynamicPhotonMapTotalPhotons"
+        ilrDynamicPhotonMapTotalPhotons;
+
+	attrControlGrp -label "Accuracy"
+		-attribute "TurtleRenderOptions.dynamicPhotonMapAccuracy"
+        ilrDynamicPhotonMapAccuracy;
+
+	separator;
+
+	attrEnumOptionMenuGrp -label "Use Photon Map File"
+		-attribute "TurtleRenderOptions.dynamicPhotonMapUseFile"
+        ilrDynamicPhotonMapUseFile;
+	scriptJob -parent ilrDynamicPhotonMapUseFile -attributeChange "TurtleRenderOptions.dynamicPhotonMapUseFile" "ilrUpdateDynamicPhotonMapOptions";
+
+	textFieldGrp -label "File Name"
+		-cc "ilrSetFileName \"dynamicPhotonMapFile\"; ilrUpdateDynamicPhotonMapOptions"
+		ilrDynamicPhotonMapFile;
+
+	separator;
+	
+	floatFieldGrp -numberOfFields 3 -label "Preview Light Direction" ilrDynamicPhotonMapPreviewLightDirection;
+	connectControl -index 2 ilrDynamicPhotonMapPreviewLightDirection TurtleRenderOptions.dynamicPhotonMapPreviewLightDirectionX;
+	connectControl -index 3 ilrDynamicPhotonMapPreviewLightDirection TurtleRenderOptions.dynamicPhotonMapPreviewLightDirectionY;
+	connectControl -index 4 ilrDynamicPhotonMapPreviewLightDirection TurtleRenderOptions.dynamicPhotonMapPreviewLightDirectionZ; 
+
+	frameLayout -label "Advanced Settings" -cll true -cl true roDynamicPhotonMapAdvancedSettingsFrame;
+		columnLayout -adjustableColumn true roDynamicPhotonMapSettingsLayout;
+
+			floatFieldGrp -numberOfFields 1
+				-label "Photon Radius" -extraLabel "(automatic)"
+				-columnAlign 3 "left"
+				-cc "ilrUpdateDynamicPhotonMapOptions"
+				ilrDynamicPhotonMapRadius;
+
+			connectControl -index 2 ilrDynamicPhotonMapRadius TurtleRenderOptions.dynamicPhotonMapRadius;
+
+			separator;
+
+			attrControlGrp -label "Min Photon Depth"
+				-attribute "TurtleRenderOptions.dynamicPhotonMapMinDepth"
+				ilrDynamicPhotonMapMinDepth;
+		
+			attrControlGrp -label "Max Photon Depth"
+				-attribute "TurtleRenderOptions.dynamicPhotonMapMaxDepth"
+				ilrDynamicPhotonMapMaxDepth;
+		
+			attrControlGrp -label "SH Bands"
+				-attribute "TurtleRenderOptions.dynamicPhotonMapSHBands"
+				ilrDynamicPhotonMapSHBands;
+
+			attrControlGrp -label "SH Gather Cells"
+				-attribute "TurtleRenderOptions.dynamicPhotonMapSHGatherCells"
+				ilrDynamicPhotonMapSHGatherCells;
+
+			separator;
+			
+			attrControlGrp -label "Grid Cells"
+				-attribute "TurtleRenderOptions.dynamicPhotonMapGridCells"
+				ilrDynamicPhotonMapGridCells;
+
+		setParent ..;
+	setParent ..;
+
+	setParent ..;
+
+	setUITemplate -popTemplate;
+	ilrUpdateDynamicPhotonMapOptions;
+}
+
+global proc ilrUpdateFinalGatherOptions()
+{
+	string $oldparent = `setParent -q`;
+
+	if (!size(ilrSetParentToGITab())) {
+		setParent $oldparent;
+		return;
+	}
+
+	if (!clExists("roFinalGatherFrame|roFinalGatherLayout")) {
+		setParent $oldparent;
+		return;
+	}
+
+	setParent roFinalGatherFrame;
+
+	int $fg  = `getAttr TurtleRenderOptions.enableGI`;
+	float $mrl = `floatFieldGrp -q -v1 ilrFinalGatherMaxRayLength`;
+	float $llr = `floatFieldGrp -q -v1 ilrFinalGatherLightLeakRadius`;
+	float $ao = `getAttr TurtleRenderOptions.fgAOInfluence`;
+	float $aomd = `floatFieldGrp -q -v1 ilrFinalGatherAOMaxDistance`;
+	int $prim = `getAttr TurtleRenderOptions.primaryIntegrator`;
+	int $sec = `getAttr TurtleRenderOptions.secondaryIntegrator`;
+	int $red = ($prim == 4) && ($sec == 1 || $sec == 3);
+	int $ll = `getAttr TurtleRenderOptions.fgLightLeakReduction` && $red;
+
+	int $efc = `getAttr TurtleRenderOptions.fgExploitFrameCoherence`;
+	int $leg = `getAttr TurtleRenderOptions.fgUseLegacy`;
+	int $cache = (`getAttr TurtleRenderOptions.fgUseCache` > 0);
+	int $uf = (`getAttr TurtleRenderOptions.fgUseFile` != 0 && $cache);
+	int $vis = `getAttr TurtleRenderOptions.fgCheckVisibility`;
+	
+	int $fg1 = ($fg && $cache && !$leg);
+	int $fg2 = ($fg && $cache && $leg);
+
+	floatFieldGrp -edit -extraLabel ($mrl > 0.0 ? "(custom)" : "(automatic)") ilrFinalGatherMaxRayLength;
+	floatFieldGrp -edit -extraLabel ($llr > 0.0 ? "(custom)" : "(automatic)") ilrFinalGatherLightLeakRadius;
+	floatFieldGrp -edit -enable ($fg && $ao>0.0) -extraLabel ($aomd > 0.0 ? "(custom)" : "(automatic)") ilrFinalGatherAOMaxDistance;
+	floatFieldGrp -edit -enable $fg ilrFinalGatherMaxRayLength;
+	floatFieldGrp -edit -enable ($fg && $ll) ilrFinalGatherLightLeakRadius;
+	attrEnumOptionMenuGrp -edit -enable $fg ilrFinalGatherUseCache;
+	attrControlGrp -edit -enable $fg ilrFinalGatherRays;
+	attrControlGrp -edit -enable $fg ilrFinalGatherMaxDepth;
+	attrControlGrp -edit -enable $fg ilrFinalGatherClampRadiance;
+	attrControlGrp -edit -enable ($fg && $red) ilrFinalGatherLightLeakReduction;
+	attrControlGrp -edit -enable ($fg && $cache) ilrFinalGatherCacheDirectLight;
+	attrControlGrp -edit -enable ($fg && $cache) ilrFinalGatherPreview;
+	attrControlGrp -edit -enable ($fg && $cache) ilrFinalGatherCheckVisibility;
+	attrControlGrp -edit -enable ($fg && $cache && $vis) ilrFinalGatherCheckVisibilityDepth;
+	attrEnumOptionMenuGrp -edit -enable ($fg && $cache) ilrFinalGatherUseFile;
+	textFieldGrp -edit -text (`getAttr TurtleRenderOptions.fgFile`) -enable ($fg && $uf) ilrFinalGatherFile;
+	attrControlGrp -edit -enable ($fg && $uf) ilrFinalGatherVisualize;
+	attrControlGrp -edit -enable ($fg && $cache) ilrFinalGatherUseLegacy;
+	attrControlGrp -edit -enable $fg1 ilrFinalGatherInterpolationPoints;
+	attrControlGrp -edit -enable $fg1 ilrFinalGatherContrastThreshold;
+	attrControlGrp -edit -enable $fg1 ilrFinalGatherEstimatePoints;
+	attrControlGrp -edit -enable $fg1 ilrFinalGatherNormalThreshold;
+	attrControlGrp -edit -enable $fg1 ilrFinalGatherGradientThreshold;
+	attrControlGrp -edit -enable $fg2 ilrFinalGatherAccuracy;
+	attrControlGrp -edit -enable $fg2 ilrFinalGatherSmooth;
+	attrControlGrp -edit -enable $fg2 ilrFinalGatherDisableMinRadius;
+	attrControlGrp -edit -enable $fg ilrFinalGatherAttenuationStart;
+	attrControlGrp -edit -enable $fg ilrFinalGatherAttenuationStop;
+	attrControlGrp -edit -enable $fg ilrFinalGatherFalloffExponent;
+	attrControlGrp -edit -enable $fg ilrFinalGatherAOInfluence;
+	attrControlGrp -edit -enable ($fg && $ao>0.0) ilrFinalGatherAOScale;
+	attrControlGrp -edit -enable ($fg && $ao>0.0) ilrFinalGatherAOContrast;
+	attrControlGrp -edit -enable ($fg && $ao>0.0) ilrFinalGatherAOVisualize;
+
+	// Make sure to sync RNM bake options
+	ilrUpdateBakeOutputsUI();
+
+	setParent $oldparent;
+}
+
+global proc ilrBuildFinalGatherOptions(string $parent)
+{
+	ilrSetParentToGITab();
+	setParent $parent;
+
+	// If the UI is created already then just update the attribute values.
+	if(clExists("roFinalGatherLayout")) {
+		ilrUpdateFinalGatherOptions();
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	columnLayout -adjustableColumn true roFinalGatherLayout;
+
+	attrEnumOptionMenuGrp -label "Use Cache"
+		-attribute "TurtleRenderOptions.fgUseCache"
+        ilrFinalGatherUseCache;
+	scriptJob -parent ilrFinalGatherUseCache -attributeChange "TurtleRenderOptions.fgUseCache" "ilrUpdateFinalGatherOptions";
+
+	attrControlGrp -label "Rays"
+		-attribute "TurtleRenderOptions.fgRays"
+        ilrFinalGatherRays;
+
+	attrControlGrp -label "Depth"
+		-attribute "TurtleRenderOptions.fgDepth"
+		ilrFinalGatherMaxDepth;
+
+	attrControlGrp -label "Contrast Threshold"
+		-attribute "TurtleRenderOptions.fgContrastThreshold"
+		ilrFinalGatherContrastThreshold;
+
+	attrControlGrp -label "Interpolation Points"
+		-attribute "TurtleRenderOptions.fgInterpolationPoints"
+        ilrFinalGatherInterpolationPoints;
+
+	attrControlGrp -label "Preview Calculation Pass"
+		-attribute "TurtleRenderOptions.fgPreview"
+		ilrFinalGatherPreview;
+
+	separator;
+
+	attrEnumOptionMenuGrp -label "Use FG Map File"
+		-attribute "TurtleRenderOptions.fgUseFile"
+        ilrFinalGatherUseFile;
+	scriptJob -parent ilrFinalGatherUseFile -attributeChange "TurtleRenderOptions.fgUseFile" "ilrUpdateFinalGatherOptions";
+
+	textFieldGrp -label "File Name"
+		-cc "ilrSetFileName \"finalGatherFile\"; ilrUpdateFinalGatherOptions"
+		ilrFinalGatherFile;
+
+	attrControlGrp -label "Visualize in Model View"
+		-attribute "TurtleRenderOptions.fgVisualize"
+		ilrFinalGatherVisualize;
+
+	frameLayout -label "Legacy Settings" -cll true -cl true roFinalGatherLegacySettingsFrame;
+		columnLayout -adjustableColumn true roFinalGatherLegacySettingsLayout;
+
+		attrControlGrp -label "Use Legacy Settings"
+			-attribute "TurtleRenderOptions.fgUseLegacy"
+			-cc ("ilrUpdateFinalGatherOptions")
+			ilrFinalGatherUseLegacy;
+
+		attrControlGrp -label "Accuracy"
+			-attribute "TurtleRenderOptions.fgAccuracy"
+			ilrFinalGatherAccuracy;
+
+		attrControlGrp -label "Smooth"
+			-attribute "TurtleRenderOptions.fgSmooth"
+			ilrFinalGatherSmooth;
+
+		attrControlGrp -label "Disable Min Radius"
+			-attribute "TurtleRenderOptions.fgDisableMinRadius"
+			ilrFinalGatherDisableMinRadius;
+
+		setParent ..;
+	setParent ..;
+
+	frameLayout -label "Ambient Occlusion Settings" -cll true -cl true roFinalGatherAmbientOcclusionFrame;
+		columnLayout -adjustableColumn true roFinalGatherAmbientOcclusionLayout;
+
+		attrControlGrp -label "Influence"
+			-attribute "TurtleRenderOptions.fgAOInfluence"
+			-cc "ilrUpdateFinalGatherOptions"
+			ilrFinalGatherAOInfluence;
+
+		floatFieldGrp -numberOfFields 1
+			-label "Max Distance" -extraLabel "(automatic)"
+			-columnAlign 3 "left"
+			-cc "ilrUpdateFinalGatherOptions"
+			ilrFinalGatherAOMaxDistance;
+
+		connectControl -index 2 ilrFinalGatherAOMaxDistance TurtleRenderOptions.fgAOMaxDistance;
+
+		attrControlGrp -label "Contrast"
+			-attribute "TurtleRenderOptions.fgAOContrast"
+			ilrFinalGatherAOContrast;
+
+		attrControlGrp -label "Scale"
+			-attribute "TurtleRenderOptions.fgAOScale"
+			ilrFinalGatherAOScale;
+
+		attrControlGrp -label "Visualize Occlusion"
+			-attribute "TurtleRenderOptions.fgAOVisualize"
+			ilrFinalGatherAOVisualize;
+
+		setParent ..;
+	setParent ..;
+
+	frameLayout -label "Attenuation Settings" -cll true -cl true roFinalGatherAttenuationFrame;
+		columnLayout -adjustableColumn true roFinalGatherAttenuationLayout;
+
+		attrControlGrp -label "Attenuation Start"
+			-attribute "TurtleRenderOptions.fgAttenuationStart"
+			ilrFinalGatherAttenuationStart;
+
+		attrControlGrp -label "Attenuation Stop"
+			-attribute "TurtleRenderOptions.fgAttenuationStop"
+			ilrFinalGatherAttenuationStop;
+
+		attrControlGrp -label "Falloff Exponent"
+			-attribute "TurtleRenderOptions.fgFalloffExponent"
+			ilrFinalGatherFalloffExponent;
+
+		setParent ..;
+	setParent ..;
+
+	frameLayout -label "Advanced Settings" -cll true -cl true roFinalGatherAdvancedSettingsFrame;
+		columnLayout -adjustableColumn true roFinalGatherAdvancedSettingsLayout;
+
+		attrControlGrp -label "Estimate Points"
+			-attribute "TurtleRenderOptions.fgEstimatePoints"
+			ilrFinalGatherEstimatePoints;
+
+		attrControlGrp -label "Normal Threshold"
+			-attribute "TurtleRenderOptions.fgNormalThreshold"
+			ilrFinalGatherNormalThreshold;
+
+		attrControlGrp -label "Gradient Threshold"
+			-attribute "TurtleRenderOptions.fgGradientThreshold"
+			ilrFinalGatherGradientThreshold;
+
+		separator;
+
+		floatFieldGrp -numberOfFields 1
+			-label "Max Ray Length" -extraLabel "(automatic)"
+			-columnAlign 3 "left"
+			-cc "ilrUpdateFinalGatherOptions"
+			ilrFinalGatherMaxRayLength;
+
+		connectControl -index 2 ilrFinalGatherMaxRayLength TurtleRenderOptions.fgMaxRayLength;
+
+		attrControlGrp -label "Cache Direct Light"
+			-attribute "TurtleRenderOptions.fgCacheDirectLight"
+			ilrFinalGatherCacheDirectLight;
+
+		attrControlGrp -label "Clamp Radiance"
+			-attribute "TurtleRenderOptions.fgClampRadiance"
+			ilrFinalGatherClampRadiance;
+
+		attrControlGrp -label "Check Sample Visibility"
+			-attribute "TurtleRenderOptions.fgCheckVisibility"
+			-cc ("ilrUpdateFinalGatherOptions")
+			ilrFinalGatherCheckVisibility;
+
+		attrControlGrp -label "Visibility Depth"
+			-attribute "TurtleRenderOptions.fgCheckVisibilityDepth"
+			ilrFinalGatherCheckVisibilityDepth;
+
+		attrControlGrp -label "Light Leak Reduction"
+			-attribute "TurtleRenderOptions.fgLightLeakReduction"
+			-cc "ilrUpdateFinalGatherOptions"
+			ilrFinalGatherLightLeakReduction;
+
+		floatFieldGrp -numberOfFields 1
+			-label "Light Leak Radius" -extraLabel "(automatic)"
+			-columnAlign 3 "left"
+			-cc "ilrUpdateFinalGatherOptions"
+			ilrFinalGatherLightLeakRadius;
+
+		connectControl -index 2 ilrFinalGatherLightLeakRadius TurtleRenderOptions.fgLightLeakRadius;
+
+		setParent ..;
+	setParent ..;
+
+	setParent ..;
+
+	setUITemplate -popTemplate;
+	ilrUpdateFinalGatherOptions;
+}
+
+global proc ilrUpdatePathTracerOptions()
+{
+	string $oldparent = `setParent -q`;
+
+	if (!size(ilrSetParentToGITab())) {
+		setParent $oldparent;
+		return;
+	}
+	
+	if (!clExists("roPathTracerFrame|roPathTracerLayout")) {
+		setParent $oldparent;
+		return;
+	}
+
+	setParent roPathTracerFrame;
+
+
+	int $pt = `getAttr TurtleRenderOptions.enableGI`;
+	int $uf = `getAttr TurtleRenderOptions.ptUseFile`;
+	float $sz = `floatFieldGrp -q -v1 ilrPathTracerPointSize`;
+	
+	attrControlGrp -edit -enable $pt ilrPathTracerPreview;
+	attrControlGrp -edit -enable $pt ilrPathTracerAccuracy;
+	attrControlGrp -edit -enable $pt ilrPathTracerDepth;
+	floatFieldGrp -edit -enable $pt -extraLabel ($sz > 0.0 ? "(custom)" : "(automatic)") ilrPathTracerPointSize;
+	attrControlGrp -edit -enable $pt ilrPathTracerCheckVisibility;
+	attrControlGrp -edit -enable $pt ilrPathTracerCacheDirectLight;
+	attrControlGrp -edit -enable $pt ilrPathTracerFilterType;
+	attrControlGrp -edit -enable $pt ilrPathTracerFilterSize;
+	attrEnumOptionMenuGrp -edit -enable $pt ilrPathTracerUseFile;
+	textFieldGrp -edit -text (`getAttr TurtleRenderOptions.ptFile`) -enable ($pt && $uf!=0) ilrPathTracerFile;
+	attrControlGrp -edit -enable ($pt && $uf!=0) ilrPathTracerVisualize;
+	attrColorSliderGrp -edit -enable $pt ilrPathTracerDefaultColor;
+	attrControlGrp -edit -enable $pt ilrPathTracerConservativeEnergyLimit;
+	attrControlGrp -edit -enable $pt ilrPathTracerPrecalcIrradiance;
+
+	setParent $oldparent;
+}
+
+global proc ilrBuildPathTracerOptions(string $parent)
+{
+	ilrSetParentToGITab();
+	setParent $parent;
+
+	// If the UI is created already then just update the attribute values.
+	if(clExists("roPathTracerLayout")) {
+		ilrUpdatePathTracerOptions();
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	columnLayout -adjustableColumn true roPathTracerLayout;
+
+		attrControlGrp -label "Accuracy"
+			-attribute "TurtleRenderOptions.ptAccuracy"
+		    ilrPathTracerAccuracy;
+		    
+		attrControlGrp -label "Depth"
+			-attribute "TurtleRenderOptions.ptDepth"
+		    ilrPathTracerDepth;
+
+		floatFieldGrp -numberOfFields 1
+			-label "Cache Point Spacing" -extraLabel "(automatic)"
+			-columnAlign 3 "left"
+			-cc "ilrUpdatePathTracerOptions"
+			ilrPathTracerPointSize;
+
+		connectControl -index 2 ilrPathTracerPointSize TurtleRenderOptions.ptPointSize;
+
+		attrControlGrp -label "Preview Calculation Pass"
+			-attribute "TurtleRenderOptions.ptPreview"
+	        ilrPathTracerPreview;
+		
+		separator;
+
+		attrEnumOptionMenuGrp -label "Filter Type"
+			-attribute "TurtleRenderOptions.ptFilterType"
+			ilrPathTracerFilterType;
+		scriptJob -parent ilrPathTracerFilterType -attributeChange "TurtleRenderOptions.ptFilterType" "ilrUpdatePathTracerOptions";
+		
+		attrControlGrp -label "Filter Size"
+			-attribute "TurtleRenderOptions.ptFilterSize"
+		    ilrPathTracerFilterSize;
+
+		attrControlGrp -label "Precalculate Irradiance"
+			-attribute "TurtleRenderOptions.ptPrecalcIrradiance"
+			ilrPathTracerPrecalcIrradiance;
+		
+		separator;
+
+		attrEnumOptionMenuGrp -label "Use Path Tracer Map File"
+			-attribute "TurtleRenderOptions.ptUseFile"
+			ilrPathTracerUseFile;
+		scriptJob -parent ilrPathTracerUseFile -attributeChange "TurtleRenderOptions.ptUseFile" "ilrUpdatePathTracerOptions";
+
+		textFieldGrp -label "File Name"
+			-cc "ilrSetFileName \"pathTracerFile\"; ilrUpdatePathTracerOptions"
+			ilrPathTracerFile;
+
+		attrControlGrp -label "Visualize in Model View"
+			-attribute "TurtleRenderOptions.ptVisualize"
+			ilrPathTracerVisualize;
+
+		frameLayout -label "Advanced Settings" -cll true -cl true roPathTracerAdvancedSettingsFrame;
+			columnLayout -adjustableColumn true roPathTracerSettingsLayout;
+
+			attrControlGrp -label "Cache Direct Light"
+				-attribute "TurtleRenderOptions.ptCacheDirectLight"
+				ilrPathTracerCacheDirectLight;
+
+			attrControlGrp -label "Check Sample Visibility"
+				-attribute "TurtleRenderOptions.ptCheckVisibility"
+				ilrPathTracerCheckVisibility;
+				
+			attrControlGrp -label "Conservative Energy Limit"
+				-attribute "TurtleRenderOptions.ptConservativeEnergyLimit"
+				ilrPathTracerConservativeEnergyLimit;
+
+			separator;
+
+			attrColorSliderGrp -label "Default Color"
+				-attribute "TurtleRenderOptions.ptDefaultColor"
+				-showButton false
+				ilrPathTracerDefaultColor;
+
+			setParent ..;
+		setParent ..;
+
+	setParent ..;
+
+	setUITemplate -popTemplate;
+	ilrUpdatePathTracerOptions;
+}
+
+global proc ilrUpdateMonteCarloOptions()
+{
+	string $oldparent = `setParent -q`;
+
+	if (!size(ilrSetParentToGITab())) {
+		setParent $oldparent;
+		return;
+	}
+
+	if (!clExists("roMonteCarloFrame|roMonteCarloLayout")) {
+		setParent $oldparent;
+		return;
+	}
+
+	setParent roMonteCarloFrame;
+	
+
+	int $gi = `getAttr TurtleRenderOptions.enableGI`;
+	float $mrl = `floatFieldGrp -q -v1 ilrMonteCarloMaxRayLength`;
+
+	attrControlGrp -edit -enable $gi ilrMonteCarloRays;
+	attrControlGrp -edit -enable $gi ilrMonteCarloDepth;
+
+	floatFieldGrp -edit -enable $gi -extraLabel ($mrl > 0.0 ? "(custom)" : "(automatic)") ilrMonteCarloMaxRayLength;
+
+	setParent $oldparent;
+}
+
+global proc ilrBuildMonteCarloOptions(string $parent)
+{
+	ilrSetParentToGITab();
+	setParent $parent;
+
+	// If the UI is created already then just update the attribute values.
+	if(clExists("roMonteCarloLayout")) {
+		ilrUpdateMonteCarloOptions;
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	columnLayout -adjustableColumn true roMonteCarloLayout;
+
+		attrControlGrp -label "Rays"
+			-attribute "TurtleRenderOptions.mcRays"
+		    ilrMonteCarloRays;
+
+		attrControlGrp -label "Depth"
+			-attribute "TurtleRenderOptions.mcDepth"
+		    ilrMonteCarloDepth;
+
+		floatFieldGrp -numberOfFields 1
+			-label "Max Ray Length" -extraLabel "(automatic)"
+			-columnAlign 3 "left"
+			-cc "ilrUpdateMonteCarloOptions"
+			ilrMonteCarloMaxRayLength;
+
+		connectControl -index 2 ilrMonteCarloMaxRayLength TurtleRenderOptions.mcMaxRayLength;
+
+	setParent ..;
+
+	setUITemplate -popTemplate;
+	ilrUpdateMonteCarloOptions;
+}
+
+global proc ilrUpdateGIAdvancedOptions()
+{
+	string $oldparent = `setParent -q`;
+
+	if (!size(ilrSetParentToGITab())) {
+		setParent $oldparent;
+		return;
+	}
+
+	if (!clExists("roGIAdvancedFrame|roGIAdvancedLayout")) {
+		setParent $oldparent;
+		return;
+	}
+
+	setParent roGIAdvancedFrame;
+
+	
+	connectControl ilrEyeRayIntegratorField TurtleRenderOptions.eyeRayIntegrator;
+	connectControl ilrReflRayIntegratorField TurtleRenderOptions.reflRayIntegrator;
+	connectControl ilrRefrRayIntegratorField TurtleRenderOptions.refrRayIntegrator;
+	connectControl ilrGlossyRayIntegratorField TurtleRenderOptions.glossyRayIntegrator;
+
+	int $gi   = `getAttr TurtleRenderOptions.enableGI`;
+	
+	text -edit -enable $gi ilrRayTypeLabelField;
+	text -edit -enable $gi ilrPrimGILabelField;
+	text -edit -enable $gi ilrSecGILabelField;
+	radioButtonGrp -edit -enable $gi ilrEyeRayIntegratorField;
+	radioButtonGrp -edit -enable $gi ilrReflRayIntegratorField;
+	radioButtonGrp -edit -enable $gi ilrRefrRayIntegratorField;
+	radioButtonGrp -edit -enable $gi ilrGlossyRayIntegratorField;
+	attrControlGrp -edit -enable $gi ilrRenderGIPrepassOnly;
+
+	setParent $oldparent;
+}
+
+global proc ilrBuildGIAdvancedOptions(string $parent)
+{
+	ilrSetParentToGITab();
+	setParent $parent;
+
+	// If the UI is created already then just update the attribute values.
+	if(clExists("roGIAdvancedLayout")) {
+		ilrUpdateGIAdvancedOptions();
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	columnLayout -adjustableColumn true roGIAdvancedLayout;
+
+		separator;
+
+		rowLayout -numberOfColumns 4 
+			-columnWidth4 80 80 100 100
+			-columnAttach4 "both" "both" "both" "both" 
+			-columnAlign4 "center" "center" "center" "center";
+			
+			text -label "" -width 80;
+			text -label "Ray Type" -font "boldLabelFont" -width 80 ilrRayTypeLabelField;
+			text -label "Primary GI" -font "boldLabelFont" -width 100 ilrPrimGILabelField;
+			text -label "Secondary GI" -font "boldLabelFont" -width 100 ilrSecGILabelField;
+
+		setParent ..;
+	
+		radioButtonGrp -numberOfRadioButtons 2 
+			-label "Eye" -labelArray2 "" "" 
+			-data1 0 -data2 1
+			-columnAttach3 "right" "both" "both" 
+			-columnOffset3 15 58 18 
+			ilrEyeRayIntegratorField;
+
+		radioButtonGrp -numberOfRadioButtons 2 
+			-label "Refl" -labelArray2 "" "" 
+			-data1 0 -data2 1
+			-columnAttach3 "right" "both" "both" 
+			-columnOffset3 15 58 18 
+			ilrReflRayIntegratorField;
+
+		radioButtonGrp -numberOfRadioButtons 2 
+			-label "Refr" -labelArray2 "" "" 
+			-data1 0 -data2 1
+			-columnAttach3 "right" "both" "both" 
+			-columnOffset3 15 58 18 
+			ilrRefrRayIntegratorField;
+
+		radioButtonGrp -numberOfRadioButtons 2 
+			-label "Glossy" -labelArray2 "" "" 
+			-data1 0 -data2 1
+			-columnAttach3 "right" "both" "both" 
+			-columnOffset3 15 58 18 
+			ilrGlossyRayIntegratorField;
+
+		separator;
+
+		attrControlGrp -label "Render Prepass Only"
+			-attribute "TurtleRenderOptions.renderGIPrepassOnly"
+			ilrRenderGIPrepassOnly;
+
+	setParent ..;
+
+	setUITemplate -popTemplate;
+	ilrUpdateGIAdvancedOptions;
+}
+
+global proc ilrUpdateEnvironmentCommonOptions()
+{
+	string $oldparent = `setParent -q`;
+
+	if (!size(ilrSetParentToEnvironmentTab())) {
+		setParent $oldparent;
+		return;
+	}
+
+	if (!clExists("roEnvironmentCommonLayout")) {
+		setParent $oldparent;
+		return;
+	}
+
+	int $rt = `getAttr TurtleRenderOptions.rtEnvironment`;
+	int $gi = `getAttr TurtleRenderOptions.giEnvironment`;
+
+	attrControlGrp -edit -enable ($rt>1) ilrRayTraceEnvironmentIntensityField;
+	attrControlGrp -edit -enable ($rt>1) ilrRayTraceEnvironmentEyeField;
+	attrControlGrp -edit -enable ($rt>1) ilrRayTraceEnvironmentReflField;
+	attrControlGrp -edit -enable ($rt>1) ilrRayTraceEnvironmentRefrField;
+	attrControlGrp -edit -enable ($gi>1) ilrGIEnvironmentIntensityField;
+	attrControlGrp -edit -enable ($gi>1) ilrGIEnvironmentPrimaryScaleField;
+	attrControlGrp -edit -enable ($gi>1) ilrGIEnvironmentSecondaryScaleField;
+
+	ilrUpdateSkyLightOptions;
+	ilrUpdateIBLOptions;
+
+	setParent $oldparent;
+}
+
+global proc ilrBuildEnvironmentCommonOptions(string $parent)
+{
+	ilrSetParentToEnvironmentTab();
+	setParent $parent;
+
+	// If the UI is created already then just update the attribute values.
+	if(clExists("roEnvironmentCommonLayout")) {
+		ilrUpdateEnvironmentCommonOptions;
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	columnLayout -adjustableColumn true roEnvironmentCommonLayout;
+
+	attrEnumOptionMenuGrp -label "Environment"
+		-attribute "TurtleRenderOptions.rtEnvironment"
+		ilrRayTraceEnvironmentField;
+	scriptJob -parent ilrRayTraceEnvironmentField -attributeChange "TurtleRenderOptions.rtEnvironment" "ilrUpdateEnvironmentCommonOptions";
+
+	attrControlGrp -label "Intensity"
+		-attribute "TurtleRenderOptions.rtEnvironmentIntensity"
+		ilrRayTraceEnvironmentIntensityField;
+
+	attrControlGrp -label "Visible in Background"
+		-attribute "TurtleRenderOptions.rtEnvironmentEye"
+        ilrRayTraceEnvironmentEyeField;
+
+	attrControlGrp -label "Visible in Reflections"
+		-attribute "TurtleRenderOptions.rtEnvironmentRefl"
+        ilrRayTraceEnvironmentReflField;
+
+	attrControlGrp -label "Visible in Refractions"
+		-attribute "TurtleRenderOptions.rtEnvironmentRefr"
+        ilrRayTraceEnvironmentRefrField;
+
+	separator;
+
+	attrEnumOptionMenuGrp -label "GI Environment"
+		-attribute "TurtleRenderOptions.giEnvironment"
+		ilrGIEnvironmentField;
+	scriptJob -parent ilrGIEnvironmentField -attributeChange "TurtleRenderOptions.giEnvironment" "ilrUpdateEnvironmentCommonOptions";
+
+	attrControlGrp -label "Intensity"
+		-attribute "TurtleRenderOptions.giEnvironmentIntensity"
+		ilrGIEnvironmentIntensityField;
+
+	attrControlGrp -label "Primary Scale"
+		-attribute "TurtleRenderOptions.giEnvironmentPrimaryScale"
+		ilrGIEnvironmentPrimaryScaleField;
+
+	attrControlGrp -label "Secondary Scale"
+		-attribute "TurtleRenderOptions.giEnvironmentSecondaryScale"
+		ilrGIEnvironmentSecondaryScaleField;
+
+	setParent ..;
+
+	setUITemplate -popTemplate;
+	
+	ilrUpdateEnvironmentCommonOptions();
+}
+
+global proc ilrUpdateSkyLightOptions()
+{
+}
+
+global proc ilrBuildSkyLightOptions(string $parent) 
+{
+	ilrSetParentToEnvironmentTab();
+	setParent $parent;
+
+	// If the UI is created already then just update the attribute values.
+	if(clExists("roSkyLightLayout")) {
+		ilrUpdateSkyLightOptions();
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	columnLayout -adjustableColumn true roSkyLightLayout;
+
+	attrControlGrp -label "Sky Color"
+		-attribute "TurtleRenderOptions.skyLightShader"
+        ilrSkyLightShaderField;
+
+	setParent ..;
+
+	setUITemplate -popTemplate;
+
+	ilrUpdateSkyLightOptions();
+}
+
+global proc ilrUpdateVerboseOptions()
+{
+}
+
+global proc ilrBuildVerboseOptions(string $parent) 
+{
+	ilrSetParentToOptionsTab();
+	setParent $parent;
+
+	// If the UI is created already then just update the attribute values.
+	if(clExists("roVerboseLayout")) {
+		ilrUpdateVerboseOptions;
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	columnLayout -adjustableColumn true roVerboseLayout;
+
+	attrControlGrp -label "Error"
+		-attribute "TurtleRenderOptions.errorPrint"
+        verboseCheck7;
+
+	attrControlGrp -label "Warning"
+		-attribute "TurtleRenderOptions.warningPrint"
+        verboseCheck4;
+
+	attrControlGrp -label "Benchmark"
+		-attribute "TurtleRenderOptions.benchmarkPrint"
+        verboseCheck6;
+
+	attrControlGrp -label "Progress"
+		-attribute "TurtleRenderOptions.progressPrint"
+        verboseCheck3;
+
+	attrControlGrp -label "Info"
+		-attribute "TurtleRenderOptions.infoPrint"
+        verboseCheck5;
+
+	attrControlGrp -label "Verbose"
+		-attribute "TurtleRenderOptions.verbosePrint"
+        verboseCheck2;
+
+	attrControlGrp -label "Debug"
+		-attribute "TurtleRenderOptions.debugPrint"
+        verboseCheck1;
+
+	separator;
+
+	attrControlGrp -label "Save output to file"
+		-attribute "TurtleRenderOptions.debugFile"
+        verboseCheck8;
+
+	setParent ..;
+
+	setUITemplate -popTemplate;
+	ilrUpdateVerboseOptions;
+}
+
+global proc ilrAddTargetSurfaces(string $surfaces[])
+{
+	string $layer = ilrGetCurrentBakeLayer();
+	
+	ilrAddSurfacesToBakeLayer($surfaces, $layer);
+
+	ilrUpdateBakeTargetsUI();
+	ilrUpdateBLE();
+	ilrUpdateUVSA();
+}
+
+global proc ilrRemoveTargetSurfaces(string $surfaces[])
+{
+	string $layer = ilrGetCurrentBakeLayer();
+	
+	ilrRemoveSurfacesFromBakeLayer($surfaces, $layer);
+
+	ilrUpdateBakeTargetsUI();
+	ilrUpdateBLE();
+	ilrUpdateUVSA();
+}
+
+global proc ilrClearTargetSurfaces()
+{
+	string $layer = ilrGetCurrentBakeLayer();
+	
+	ilrClearBakeLayer($layer);
+
+	ilrUpdateBakeTargetsUI();
+	ilrUpdateBLE();
+	ilrUpdateUVSA();
+}
+
+global proc ilrAddSourceSurfaces(string $targetList, string $surfaces[])
+{
+	string $targets[] =`textScrollList -q -si $targetList`;
+	if (!size($targets)) {
+		error("No target surface specified. Select a target surface in the target surface list.");
+		return;
+	}
+
+	string $layer = ilrGetCurrentBakeLayer();
+
+	for ($t in $targets) {
+		for ($s in $surfaces) {
+			ilrMakeBakeLayerSourceLink($layer, $t, $s);
+		}
+	}
+
+	ilrUpdateBakeTargetsUI();
+	ilrUpdateBLE();
+	ilrUpdateUVSA();
+}
+
+global proc ilrRemoveSourceSurfaces(string $targetList, string $surfaces[])
+{
+	string $targets[] =`textScrollList -q -si $targetList`;
+	if (!size($targets)) {
+		error("No target surface specified. Select a target surface in the target surface list.");
+		return;
+	}
+
+	string $layer = ilrGetCurrentBakeLayer();
+
+	for ($t in $targets) {
+		for ($s in $surfaces) {
+			ilrBreakBakeLayerSourceLink($layer, $t, $s);
+		}
+	}
+
+	ilrUpdateBakeTargetsUI();
+	ilrUpdateBLE();
+	ilrUpdateUVSA();
+}
+
+global proc ilrAddEnvelopeSurfaces(string $targetList, string $surfaces[])
+{
+	string $targets[] =`textScrollList -q -si $targetList`;
+	if (!size($targets)) {
+		error("No target surface specified. Select a target surface in the target surface list.");
+		return;
+	}
+
+	string $layer = ilrGetCurrentBakeLayer();
+	
+	for ($t in $targets) {
+		for ($s in $surfaces) {
+			ilrMakeBakeLayerEnvelopeLink($layer, $t, $s);
+		}
+	}
+
+	ilrUpdateBakeTargetsUI();
+	ilrUpdateBLE();
+	ilrUpdateUVSA();
+}
+
+global proc ilrRemoveEnvelopeSurfaces(string $targetList, string $surfaces[])
+{
+	string $targets[] =`textScrollList -q -si $targetList`;
+	if (!size($targets)) {
+		error("No target surface specified. Select a target surface in the target surface list.");
+		return;
+	}
+
+	string $layer = ilrGetCurrentBakeLayer();
+
+	for ($t in $targets) {
+		for ($s in $surfaces) {
+			ilrBreakBakeLayerEnvelopeLink($layer, $t, $s);
+		}
+	}
+
+	ilrUpdateBakeTargetsUI();
+	ilrUpdateBLE();
+	ilrUpdateUVSA();
+}
+
+global proc ilrUpdateBakeTargetsUI()
+{
+	string $oldparent = `setParent -q`;
+
+	if (!size(ilrSetParentToBakingTab())) {
+		setParent $oldparent;
+		return;
+	}
+
+	if (!clExists("roBakeTargetsFrame|roBakeTargetsLayout")) {
+		setParent $oldparent;
+		return;
+	}
+
+	setParent roBakeTargetsFrame;
+
+
+	string $layer = ilrGetCurrentBakeLayer();
+
+	//
+	// Target list
+	//
+	
+	// Clear the list, but save selection first
+	//
+	string $targetSel[] = `textScrollList -query -selectItem ilrTargetSurfaceList`;
+
+	textScrollList -edit -removeAll ilrTargetSurfaceList;
+
+	// Rebuild the targets list
+	//
+	string $layer = ilrGetCurrentBakeLayer();
+	string $surfaces[] = `sets -query $layer`;
+	for ($s in $surfaces) {
+		textScrollList -edit -append $s ilrTargetSurfaceList;
+		if (stringArrayContains($s, $targetSel))
+			textScrollList -edit -selectItem $s ilrTargetSurfaceList;
+	}
+	
+	// If no item is selected, select the first one in the list
+	//
+	if ((`textScrollList -query -numberOfItems ilrTargetSurfaceList` > 0) && 
+		(size(`textScrollList -query -selectItem ilrTargetSurfaceList`) == 0))
+	{
+		textScrollList -edit -selectIndexedItem 1 ilrTargetSurfaceList;
+	}
+	
+	//
+	// Source and envelope lists
+	//
+	
+	// Clear the lists
+	//
+	textScrollList -edit -removeAll ilrSourceSurfaceList;
+	textScrollList -edit -removeAll ilrEnvelopeSurfaceList;
+
+	// Make sure a target surface is selected
+	//
+	string $targets[] =`textScrollList -q -si ilrTargetSurfaceList`;
+	if (size($targets))
+	for ($t in $targets)
+	{
+		// Get the source surfaces linking to this target surface
+		//
+		string $surfaces[] = ilrGetBakeLayerSourceSurfaces($layer, $t);
+
+		// Rebuild the source list
+		//
+		for ($s in $surfaces) {
+			string $items[] = `textScrollList -query -allItems ilrSourceSurfaceList`;
+			if (!stringArrayContains($s, $items)) {
+				textScrollList -edit -append $s ilrSourceSurfaceList;
+			}
+		}
+
+		// Get the envelope surfaces linking to this target surface
+		//
+		string $envelopes[] = ilrGetBakeLayerEnvelopeSurfaces($layer, $t);
+
+		// Rebuild the envelope list
+		//
+		for ($e in $envelopes) {
+			string $items[] = `textScrollList -query -allItems ilrEnvelopeSurfaceList`;
+			if (!stringArrayContains($e, $items)) {
+				textScrollList -edit -append $e ilrEnvelopeSurfaceList;
+			}
+		}
+	}
+	
+	int $useTargets = `getAttr ($layer + ".renderSelection")` == 0;
+	int $useSources = $useTargets && (`textScrollList -query -numberOfItems ilrTargetSurfaceList` > 0);
+	int $transp = `getAttr ($layer + ".considerTransparency")`;
+
+	textScrollList -edit -enable $useTargets ilrTargetSurfaceList;
+	textScrollList -edit -enable $useSources ilrSourceSurfaceList;
+	textScrollList -edit -enable $useSources ilrEnvelopeSurfaceList;
+	button -edit -enable $useTargets ilrTargetSurfaceAddButton;
+	button -edit -enable $useTargets ilrTargetSurfaceRemoveButton;
+	button -edit -enable $useTargets ilrTargetSurfaceClearButton;
+	button -edit -enable $useSources ilrSourceSurfaceAddButton;
+	button -edit -enable $useSources ilrSourceSurfaceRemoveButton;
+	button -edit -enable $useSources ilrSourceSurfaceClearButton;
+	button -edit -enable $useSources ilrEnvelopeSurfaceAddButton;
+	button -edit -enable $useSources ilrEnvelopeSurfaceRemoveButton;
+	button -edit -enable $useSources ilrEnvelopeSurfaceClearButton;
+	
+	connectControl -index 2 ilrBakeSelectionField ($layer + ".renderSelection");
+	connectControl -index 2 ilrBakeRangePresetField ($layer + ".rangePreset");
+	connectControl -index 2 ilrBakeTransferSpaceField ($layer + ".transferSpace");
+	connectControl -index 2 ilrBakeSelectionModeField ($layer + ".selectionMode");
+	connectControl -index 2 ilrBakeMismatchModeField ($layer + ".mismatchMode");
+	connectControl -index 2 ilrBakeIgnoreInconsistentNormalsField ($layer + ".ignoreInconsistentNormals");
+	connectControl -index 2 ilrBakeConsiderTransparencyField ($layer + ".considerTransparency");
+
+	attrFieldSliderGrp -edit -attribute ($layer + ".frontRange") ilrBakeFrontRangeField;
+	attrFieldSliderGrp -edit -attribute ($layer + ".backRange") ilrBakeBackRangeField;
+	attrFieldSliderGrp -edit -attribute ($layer + ".frontBias") ilrBakeFrontBiasField;
+	attrFieldSliderGrp -edit -attribute ($layer + ".backBias") ilrBakeBackBiasField;
+	attrFieldSliderGrp -edit -attribute ($layer + ".transparencyThreshold") -enable ($transp) ilrBakeTransparencyThresholdField;
+
+	optionMenuGrp -edit -cc ("ilrUpdateRangePreset(\"" + $layer + "\")") ilrBakeRangePresetField;
+
+	setParent $oldparent;
+}
+
+global proc ilrBuildBakeTargetsUI(string $parent)
+{
+	ilrSetParentToBakingTab();
+	setParent $parent;
+
+	// If the UI is created already then just update the attribute values.
+	if (clExists("roBakeTargetsLayout")) {
+		ilrUpdateBakeTargetsUI();
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	string $layer = ilrGetCurrentBakeLayer();
+
+	columnLayout -adjustableColumn true roBakeTargetsLayout;
+
+	checkBoxGrp -numberOfCheckBoxes 1 -label1 "Bake selected surfaces" 
+		-cc "ilrUpdateBakeTargetsUI" 
+		ilrBakeSelectionField;
+
+	frameLayout -label "Target Surfaces" -cll true -cl false;
+		columnLayout -columnAttach "both" 5 -rowSpacing 10 -columnWidth 402;
+		
+			textScrollList
+				//-numberOfRows 6
+				-allowMultiSelection true
+				-selectCommand "ilrUpdateBakeTargetsUI"
+				-deleteKeyCommand "ilrRemoveTargetSurfaces(\"ilrTargetSurfaceList\")"
+				-doubleClickCommand "string $ss[]=`textScrollList -q -si ilrTargetSurfaceList`; select -replace $ss;"
+		 		ilrTargetSurfaceList;
+			 	
+				popupMenu -parent ilrTargetSurfaceList;
+					menuItem -label "Select" -command "string $ss[]=`textScrollList -q -si ilrTargetSurfaceList`; select -replace $ss;";
+					menuItem -label "Add to selection" -command "string $ss[]=`textScrollList -q -si ilrTargetSurfaceList`; select -add $ss;";
+					menuItem -label "Remove from selection" -command "string $ss[]=`textScrollList -q -si ilrTargetSurfaceList`; select -deselect $ss;";
+
+			rowLayout
+				-numberOfColumns 3 
+				-columnWidth3 130 130 130 
+				-columnAttach3 "both" "both" "both" 
+				-columnOffset3 3 3 3 
+				-columnAlign3 "center" "center" "center";
+	 			
+ 				button -label "Add Selected" -command ("string $ss[]=`ls -selection`; ilrAddTargetSurfaces($ss);") ilrTargetSurfaceAddButton;
+ 				button -label "Remove" -command ("string $ss[]=`textScrollList -q -si ilrTargetSurfaceList`; ilrRemoveTargetSurfaces($ss);") ilrTargetSurfaceRemoveButton;
+ 				button -label "Clear All" -command ("ilrClearTargetSurfaces();") ilrTargetSurfaceClearButton;
+		 	
+	 		setParent ..;
+
+ 		setParent ..;
+	setParent ..;
+
+	frameLayout -label "Source Surfaces" -cll true -cl false;
+		columnLayout -columnAttach "both" 5 -rowSpacing 10 -columnWidth 402;
+
+			textScrollList
+				//-numberOfRows 6
+				-allowMultiSelection true 
+				-deleteKeyCommand "string $ss[]=`textScrollList -q -si ilrSourceSurfaceList`; ilrRemoveSourceSurfaces(\"ilrTargetSurfaceList\", $ss);"
+				-doubleClickCommand "string $ss[]=`textScrollList -q -si ilrSourceSurfaceList`; select -replace $ss;"
+		 		ilrSourceSurfaceList;
+
+				popupMenu -parent ilrSourceSurfaceList;
+					menuItem -label "Select" -command "string $ss[]=`textScrollList -q -si ilrSourceSurfaceList`; select -replace $ss;";
+					menuItem -label "Add to selection" -command "string $ss[]=`textScrollList -q -si ilrSourceSurfaceList`; select -add $ss;";
+					menuItem -label "Remove from selection" -command "string $ss[]=`textScrollList -q -si ilrSourceSurfaceList`; select -deselect $ss;";
+
+			rowLayout	
+				-numberOfColumns 3 
+				-columnWidth3 130 130 130 
+				-columnAttach3 "both" "both" "both" 
+				-columnOffset3 3 3 3 
+				-columnAlign3 "center" "center" "center";
+	 			
+ 				button -label "Add Selected" -command ("string $ss[]=`ls -sl`; ilrAddSourceSurfaces(\"ilrTargetSurfaceList\", $ss);") ilrSourceSurfaceAddButton;
+ 				button -label "Remove" -command ("string $ss[]=`textScrollList -q -si ilrSourceSurfaceList`; ilrRemoveSourceSurfaces(\"ilrTargetSurfaceList\", $ss);") ilrSourceSurfaceRemoveButton;
+ 				button -label "Clear All" -command ("string $ss[]=`textScrollList -q -ai ilrSourceSurfaceList`; ilrRemoveSourceSurfaces(\"ilrTargetSurfaceList\", $ss);") ilrSourceSurfaceClearButton;
+		 	
+	 		setParent ..;
+
+ 		setParent ..;
+	setParent ..;
+
+	frameLayout -label "Envelope Surfaces" -cll true -cl true;
+		columnLayout -columnAttach "both" 5 -rowSpacing 10 -columnWidth 402;
+
+			textScrollList
+				//-numberOfRows 6
+				-allowMultiSelection true 
+				-deleteKeyCommand "string $ss[]=`textScrollList -q -si ilrEnvelopeSurfaceList`; ilrRemoveEnvelopeSurfaces(\"ilrTargetSurfaceList\", $ss);"
+				-doubleClickCommand "string $ss[]=`textScrollList -q -si ilrEnvelopeSurfaceList`; select -replace $ss;"
+		 		ilrEnvelopeSurfaceList;
+
+				popupMenu -parent ilrEnvelopeSurfaceList;
+					menuItem -label "Select" -command "string $ss[]=`textScrollList -q -si ilrEnvelopeSurfaceList`; select -replace $ss";
+					menuItem -label "Add to selection" -command "string $ss[]=`textScrollList -q -si ilrEnvelopeSurfaceList`; select -add $ss;";
+					menuItem -label "Remove from selection" -command "string $ss[]=`textScrollList -q -si ilrEnvelopeSurfaceList`; select -deselect $ss;";
+
+			rowLayout	
+				-numberOfColumns 3 
+				-columnWidth3 130 130 130 
+				-columnAttach3 "both" "both" "both" 
+				-columnOffset3 3 3 3 
+				-columnAlign3 "center" "center" "center";
+	 			
+ 				button -label "Add Selected" -command ("string $ss[]=`ls -sl`; ilrAddEnvelopeSurfaces(\"ilrTargetSurfaceList\", $ss);") ilrEnvelopeSurfaceAddButton;
+ 				button -label "Remove" -command ("string $ss[]=`textScrollList -q -si ilrEnvelopeSurfaceList`; ilrRemoveEnvelopeSurfaces(\"ilrTargetSurfaceList\", $ss);") ilrEnvelopeSurfaceRemoveButton;
+ 				button -label "Clear All" -command ("string $ss[]=`textScrollList -q -ai ilrEnvelopeSurfaceList`; ilrRemoveEnvelopeSurfaces(\"ilrTargetSurfaceList\", $ss);") ilrEnvelopeSurfaceClearButton;
+		 	
+	 		setParent ..;
+
+			optionMenuGrp -label "Envelope Mode" ilrEnvelopeModeField;
+				menuItem -label "Closest" -data 0;
+				menuItem -label "Inside Only" -data 1;
+				menuItem -label "Outside Only" -data 2;
+				menuItem -label "Inside First" -data 3;
+				menuItem -label "Outside First" -data 4;
+
+	 	setParent ..;
+ 	setParent ..;
+
+	frameLayout -label "Transfer Settings" -cll true -cl true;
+		columnLayout -adjustableColumn true;
+
+		optionMenuGrp -label "Sampling Preset" ilrBakeRangePresetField;
+			menuItem -label "Closest" -data 0;
+			menuItem -label "Inwards" -data 1;
+			menuItem -label "Outwards" -data 2;
+
+		separator -height 15;
+		
+		attrFieldSliderGrp -label "Front Range" ilrBakeFrontRangeField;
+		attrFieldSliderGrp -label "Back Range" ilrBakeBackRangeField;
+		attrFieldSliderGrp -label "Front Bias" ilrBakeFrontBiasField;
+		attrFieldSliderGrp -label "Back Bias" ilrBakeBackBiasField;
+
+		separator -height 15;
+
+		optionMenuGrp -label "Transfer Space" ilrBakeTransferSpaceField;
+			menuItem -label "Object Space" -data 0;
+			menuItem -label "World Space" -data 1;
+		
+		optionMenuGrp -label "Selection Mode" ilrBakeSelectionModeField;
+			menuItem -label "Distance" -data 0;
+			menuItem -label "Best Normal" -data 1;
+			menuItem -label "Distance with flipped normal" -data 2;
+
+		optionMenuGrp -label "Mismatch Mode" ilrBakeMismatchModeField;
+			menuItem -label "Use Background" -data 0;
+			menuItem -label "Use Target Surface" -data 1;
+
+		checkBoxGrp -numberOfCheckBoxes 1 -label1 "Ignore Inconsistent Normals" ilrBakeIgnoreInconsistentNormalsField;
+
+		checkBoxGrp -numberOfCheckBoxes 1 -label1 "Consider Transparency" -cc "ilrUpdateBakeTargetsUI" ilrBakeConsiderTransparencyField;
+		attrFieldSliderGrp -label "Transparency Threshold" ilrBakeTransparencyThresholdField;
+
+		setParent ..;
+	setParent ..;
+
+ 	setParent ..;
+
+	ilrUpdateBakeTargetsUI();
+}
+
+global proc ilrUpdateRangePreset(string $layer)
+{
+	int $rangePreset = `getAttr ($layer + ".rangePreset")`;
+	string $frontRange = ($layer + ".frontRange");
+	string $backRange = ($layer + ".backRange");
+	string $frontBias = ($layer + ".frontBias");
+	string $backBias = ($layer + ".backBias");
+	switch($rangePreset) {
+	case 0: // closest
+		setAttr $frontRange 100.0;
+		setAttr $backRange 100.0;
+		setAttr $frontBias 0.0;
+		setAttr $backBias 0.0;
+		break;
+	case 1: // inwards
+		setAttr $frontRange 0.0;
+		setAttr $backRange 200.0;
+		setAttr $frontBias 0.0;
+		setAttr $backBias -100.0;
+		break;
+	case 2: // outwards
+		setAttr $frontRange 200.0;
+		setAttr $backRange 0.0;
+		setAttr $frontBias -100.0;
+		setAttr $backBias 0.0;
+		break;
+	}
+}
+
+global proc ilrChangeBakeCamera(string $layer)
+{
+	string $cam = `optionMenuGrp -query -value ilrBakeCameraField`;
+	setAttr -type "string" ($layer + ".camera") $cam;
+	ilrUpdateCommonBakeUI();
+}
+
+global proc	ilrUpdateCommonBakeUI()
+{
+	string $oldparent = `setParent -q`;
+
+	if (!size(ilrSetParentToBakingTab())) {
+		setParent $oldparent;
+		return;
+	}
+
+	if (!clExists("roCommonBakeFrame|roCommonBakeLayout")) {
+		setParent $oldparent;
+		return;
+	}
+
+	setParent roCommonBakeFrame;
+
+
+	string $layer = ilrGetCurrentBakeLayer();
+
+	// Update the selected camera
+	// If $optionsNode.camera is among the current cameras
+	// it will be selected, otherwise persp is selected
+	//
+	string $cam = "persp";
+	string $camera = `getAttr ($layer + ".camera")`;
+	string $items[] = `optionMenuGrp -query -itemListShort ilrBakeCameraField`;
+	for ($item in $items) {
+		if (`menuItem -query -label $item` == $camera) {
+			$cam = $camera;
+			break;
+		}
+	}
+	optionMenuGrp -edit -value $cam -cc ("ilrChangeBakeCamera(\"" + $layer + "\")") ilrBakeCameraField;
+
+	connectControl -index 2 ilrBakeNormalDirectionField ($layer + ".normalDirection");
+	connectControl -index 2 ilrBakeViewDependentField ($layer + ".viewDependent");
+	connectControl -index 2 ilrBakeShadowsField ($layer + ".shadows");
+	connectControl -index 2 ilrBakeAlphaField ($layer + ".alpha");
+	connectControl -index 2 ilrBakeOrthoReflField ($layer + ".orthoRefl");
+	attrColorSliderGrp -edit -attribute ($layer + ".backgroundColor") ilrBakeBackgroundColorField;
+
+	setParent $oldparent;
+}
+
+global proc	ilrBuildCommonBakeUI(string $parent)
+{
+	ilrSetParentToBakingTab();
+	setParent $parent;
+
+	// If the UI is created already then just update the attribute values.
+	if (clExists("roCommonBakeLayout")) {
+		ilrUpdateCommonBakeUI();
+		return;
+	}
+
+	string $layer = ilrGetCurrentBakeLayer();
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	columnLayout -adjustableColumn true roCommonBakeLayout;
+
+		optionMenuGrp -label "Camera" ilrBakeCameraField;
+		string $cams[] = `listCameras`;
+		for ($cam in $cams)	{
+			menuItem -label $cam;
+		}
+
+		optionMenuGrp -label "Normal Direction" ilrBakeNormalDirectionField;
+			menuItem -label "Surface Front" -data 0;
+			menuItem -label "Surface Back" -data 1;
+			menuItem -label "Facing Camera" -data 2;
+
+		checkBoxGrp -numberOfCheckBoxes 1 -label1 "Orthogonal Reflections" ilrBakeOrthoReflField;
+		checkBoxGrp -numberOfCheckBoxes 1 -label1 "Bake Shadows" ilrBakeShadowsField;
+		checkBoxGrp -numberOfCheckBoxes 1 -label1 "Bake Alpha" ilrBakeAlphaField;
+		checkBoxGrp -numberOfCheckBoxes 1 -label1 "Bake View Dependent" ilrBakeViewDependentField;
+
+		attrColorSliderGrp -label "Background Color" -showButton false ilrBakeBackgroundColorField;
+
+	setParent ..;
+
+	setUITemplate -popTemplate;
+
+	ilrUpdateCommonBakeUI();
+}
+
+global proc	ilrUpdateTextureBakeUI()
+{
+	string $layer = ilrGetCurrentBakeLayer();
+
+	string $dir = `getAttr ($layer + ".tbDirectory")`;
+	if (size($dir) == 0) {
+		$dir = ilrGetBakedTextureDir();
+		setAttr -type "string" ($layer + ".tbDirectory") $dir;
+	}
+	string $name = `getAttr ($layer + ".tbFileName")`;
+	if (size($name) == 0) {
+		setAttr -type "string" ($layer + ".tbFileName") "baked_$p_$s.$e";
+	}
+
+	string $oldparent = `setParent -q`;
+
+	if (!size(ilrSetParentToBakingTab())) {
+		setParent $oldparent;
+		return;
+	}
+
+	if (!clExists("roTextureBakeFrame|roTextureBakeLayout")) {
+		setParent $oldparent;
+		return;
+	}
+
+	setParent roTextureBakeFrame;
+	
+	//
+	// Connect controls and attributes
+	//
+
+	connectControl -index 2 ilrBakeMergeField ($layer + ".tbMerge");
+	connectControl -index 2 ilrBakeWindingOrderField ($layer + ".tbWindingOrder");
+	connectControl -index 2 ilrBakeConservativeField ($layer + ".tbConservative");
+	
+	attrFieldSliderGrp -edit -attribute ($layer + ".tbUMin") ilrBakeUMinField;
+	attrFieldSliderGrp -edit -attribute ($layer + ".tbVMin") ilrBakeVMinField;
+	attrFieldSliderGrp -edit -attribute ($layer + ".tbUMax") ilrBakeUMaxField;
+	attrFieldSliderGrp -edit -attribute ($layer + ".tbVMax") ilrBakeVMaxField;
+	connectControl -index 2 ilrBakeUVRangeField ($layer + ".tbUvRange");
+	connectControl -index 2 ilrBakeUVSetField ($layer + ".tbUvSet");
+	connectControl -index 2 ilrBakeTangentUVSetField ($layer + ".tbTangentUvSet");
+	
+	attrFieldSliderGrp -edit -attribute ($layer + ".tbResX") ilrBakeWidthField;
+	attrFieldSliderGrp -edit -attribute ($layer + ".tbResY") ilrBakeHeightField;
+	
+	connectControl -index 2 ilrBakeSaveToRenderViewField ($layer + ".tbSaveToRenderView");
+	connectControl -index 2 ilrTextureBakeSaveToFileField ($layer + ".tbSaveToFile");
+	connectControl -index 2 ilrTextureBakeDirectoryField ($layer + ".tbDirectory");
+	connectControl -index 2 ilrTextureBakeFileNameField ($layer + ".tbFileName");
+	connectControl -index 2 ilrBakeFileFormatField ($layer + ".tbImageFormat");
+	global int $g_ilrIsSystemNT;
+	if ($g_ilrIsSystemNT) {
+		connectControl -index 2 ilrBakeVisualizeField ($layer + ".tbVisualize");
+	}
+
+	connectControl -index 2 ilrBakeBilinearFilterField ($layer + ".tbBilinearFilter");
+	attrFieldSliderGrp -edit -attribute ($layer + ".tbEdgeDilation") ilrBakeEdgeDilationField;
+
+	//
+	// Dim controls
+	//
+
+	int $tb = (`getAttr ($layer + ".renderType")` == 1);
+	if ($tb)
+	{
+		columnLayout -edit -enable true roTextureBakeLayout;
+
+		int $range = `getAttr ($layer + ".tbUvRange")`;
+		attrFieldSliderGrp -edit -enable ($range==2) ilrBakeUMinField;
+		attrFieldSliderGrp -edit -enable ($range==2) ilrBakeVMinField;
+		attrFieldSliderGrp -edit -enable ($range==2) ilrBakeUMaxField;
+		attrFieldSliderGrp -edit -enable ($range==2) ilrBakeVMaxField;
+
+		int $saveToFile = `getAttr ($layer + ".tbSaveToFile")`;
+		textFieldGrp -edit -enable $saveToFile ilrTextureBakeDirectoryField;
+		button -edit -enable $saveToFile ilrTextureBakeDirectoryBrowserButton;
+		textFieldGrp -edit -enable $saveToFile ilrTextureBakeFileNameField;
+		optionMenuGrp -edit -enable $saveToFile ilrBakeFileFormatField;
+		if ($g_ilrIsSystemNT) {
+			checkBoxGrp -edit -enable $saveToFile ilrBakeVisualizeField;
+		}
+	}
+	else 
+	{
+		columnLayout -edit -enable false roTextureBakeLayout;
+	}
+
+	setParent $oldparent;
+}
+
+global proc ilrSetTextureBakeDirectoryCallback(string $path, string $type)
+{
+	string $layer  = ilrGetCurrentBakeLayer();
+	string $fullPath = `workspace -expandName $path`;
+	int $err = true;
+
+	if (`file -query -exists $fullPath`) {
+		string $typeList[] = `file -query -type $fullPath`;
+		if (size($typeList) > 0 && $typeList[0] == "directory") {
+
+			// If possible get the project relative part of the path
+			$path = `workspace -projectPath $path`;
+			
+			// Make sure to end with a slash
+			if (!endsWith($path, "/")) {
+ 				$path += "/";
+ 			}
+			
+			setAttr -type "string" ($layer + ".tbDirectory") $path;
+			textFieldGrp -edit -text $path ilrTextureBakeDirectoryField;
+			
+			$err = false;
+		}
+	}
+
+	ilrUpdateTextureBakeUI();
+
+	if ($err) {
+		error($path + " is not a valid directory!");
+	}
+}
+
+global proc ilrChangeTextureBakeDirectory()
+{
+	string $dir = `textFieldGrp -query -text ilrTextureBakeDirectoryField`;
+	ilrSetTextureBakeDirectoryCallback($dir, "directory");
+}
+
+global proc	ilrBuildTextureBakeUI(string $parent)
+{
+	ilrSetParentToBakingTab();
+	setParent $parent;
+
+	// If the UI is created already then just update the attribute values.
+	if (clExists("roTextureBakeLayout")) {
+		ilrUpdateTextureBakeUI();
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	string $layer  = ilrGetCurrentBakeLayer();
+
+	columnLayout -adjustableColumn true roTextureBakeLayout;
+
+		attrFieldSliderGrp -label "Width" ilrBakeWidthField;
+		attrFieldSliderGrp -label "Height" ilrBakeHeightField;
+
+		checkBoxGrp -numberOfCheckBoxes 1 -label1 "Conservative Rasterization" ilrBakeConservativeField;
+		checkBoxGrp -numberOfCheckBoxes 1 -label1 "Merge to one map" ilrBakeMergeField;
+		checkBoxGrp -numberOfCheckBoxes 1 -label1 "Save to Render View" ilrBakeSaveToRenderViewField;
+		checkBoxGrp -numberOfCheckBoxes 1 -label1 "Save to File" -cc "ilrUpdateTextureBakeUI" ilrTextureBakeSaveToFileField;
+
+		rowLayout -numberOfColumns 2
+ 			-columnWidth2 350 90
+ 			-columnAttach 1 "left" 0
+ 			-columnAttach 2 "left" 5;
+			textFieldGrp -label "Directory"	-cc ("ilrChangeTextureBakeDirectory") ilrTextureBakeDirectoryField;
+			symbolButton -image "navButtonBrowse.xpm" ilrTextureBakeDirectoryBrowserButton;
+			button -edit -command ("fileBrowser \"ilrSetTextureBakeDirectoryCallback\" \"Set Directory\" \"\" 4") ilrTextureBakeDirectoryBrowserButton;
+		setParent ..;
+		
+		textFieldGrp -label "File Name" -cc "ilrUpdateTextureBakeUI" ilrTextureBakeFileNameField;
+		
+		optionMenuGrp -label "File Format" ilrBakeFileFormatField;
+			menuItem -label "Targa (tga)" -data 0;
+//			menuItem -label "Portable Pixelmap (ppm)" -data 1;
+			menuItem -label "OpenEXR (exr)" -data 2;
+			menuItem -label "TIFF (tif)" -data 3;
+			menuItem -label "TIFF16 (tif)" -data 4;
+			menuItem -label "TIFF32 (tif)" -data 5;
+			menuItem -label "Maya IFF (iff)" -data 6;
+			menuItem -label "OpenEXR MultiLayer (exr)" -data 7;
+			menuItem -label "Windows Bitmap (bmp)" -data 8;
+			menuItem -label "PNG (png)" -data 9;
+
+		global int $g_ilrIsSystemNT;
+		if ($g_ilrIsSystemNT) {
+			checkBoxGrp -numberOfCheckBoxes 1 -label1 "Model View Hardware Visualization" ilrBakeVisualizeField;
+		}
+
+		separator -height 15;
+
+		checkBoxGrp -numberOfCheckBoxes 1 -label1 "Bilinear Filter" ilrBakeBilinearFilterField;
+		attrFieldSliderGrp -label "Edge Dilation" ilrBakeEdgeDilationField;
+
+		separator -height 15;
+
+		optionMenuGrp -label "UV Range" -cc "ilrUpdateTextureBakeUI" ilrBakeUVRangeField;
+			menuItem -label "Default [0,1]" -data 0;
+			menuItem -label "Entire Range" -data 1;
+			menuItem -label "User Specified" -data 2;
+
+		attrFieldSliderGrp -label "U Min" ilrBakeUMinField;
+		attrFieldSliderGrp -label "V Min" ilrBakeVMinField;
+		attrFieldSliderGrp -label "U Max" ilrBakeUMaxField;
+		attrFieldSliderGrp -label "V Max" ilrBakeVMaxField;
+
+		textFieldGrp -label "UV Set" ilrBakeUVSetField;
+		textFieldGrp -label "Tangent Space UV Set" ilrBakeTangentUVSetField;
+
+		optionMenuGrp -label "Primary Winding Order" ilrBakeWindingOrderField;
+			menuItem -label "Clockwise" -data 0;
+			menuItem -label "Counter Clockwise" -data 1;
+
+	setParent ..;
+
+	setUITemplate -popTemplate;
+
+	ilrUpdateTextureBakeUI();
+}
+
+global proc	ilrUpdateVertexBakeUI()
+{
+	string $layer = ilrGetCurrentBakeLayer();
+
+	// Set default values
+	string $colorset = `getAttr ($layer + ".vbColorSet")`;
+	if (size($colorset) == 0) {
+		setAttr -type "string" ($layer + ".vbColorSet") "baked_$p";
+	}
+	string $dir = `getAttr ($layer + ".vbDirectory")`;
+	if (size($dir) == 0) {
+		$dir = ilrGetBakedTextureDir();
+		setAttr -type "string" ($layer + ".vbDirectory") $dir;
+	}
+	string $filename = `getAttr ($layer + ".vbFileName")`;
+	if (size($colorset) == 0) {
+		setAttr -type "string" ($layer + ".vbFileName") "baked_$p_$b.pc";
+	}
+
+	string $oldparent = `setParent -q`;
+
+	if (!size(ilrSetParentToBakingTab())) {
+		setParent $oldparent;
+		return;
+	}
+
+	if (!clExists("roVertexBakeFrame|roVertexBakeLayout")) {
+		setParent $oldparent;
+		return;
+	}
+
+	setParent roVertexBakeFrame;
+
+	//
+	// Connect controls and attributes
+	//
+	
+	connectControl -index 2 ilrBakeSamplingModeField ($layer + ".vbSamplingMode");
+	attrFieldSliderGrp -edit -attribute ($layer + ".vbMinSamples") ilrBakeMinSamplesField;
+	attrFieldSliderGrp -edit -attribute ($layer + ".vbMaxSamples") ilrBakeMaxSamplesField;
+	attrFieldSliderGrp -edit -attribute ($layer + ".vbVertexBias") ilrBakeVertexBiasField;
+
+	connectControl -index 2 ilrBakeSaveToColorSetField ($layer + ".vbSaveToColorSet");
+	connectControl -index 2 ilrBakeOverwriteColorSetField ($layer + ".vbOverwriteColorSet");
+	connectControl -index 2 ilrBakeColorSetField ($layer + ".vbColorSet");
+	connectControl -index 2 ilrVertexBakeSaveToFileField ($layer + ".vbSaveToFile");
+	connectControl -index 2 ilrVertexBakeDirectoryField ($layer + ".vbDirectory");
+	connectControl -index 2 ilrVertexBakeFileNameField ($layer + ".vbFileName");
+
+	attrFieldSliderGrp -edit -attribute ($layer + ".vbFilterSize") ilrBakeFilterSizeField;
+	attrFieldSliderGrp -edit -attribute ($layer + ".vbFilterShape") ilrBakeFilterShapeField;
+	attrFieldSliderGrp -edit -attribute ($layer + ".vbFilterNormalDev") ilrBakeFilterNormalDevField;
+	
+	connectControl -index 2 ilrBakeUseBlendingField ($layer + ".vbUseBlending");
+	connectControl -index 2 ilrBakeRGBBlendField ($layer + ".vbRgbBlend");
+	connectControl -index 2 ilrBakeAlphaBlendField ($layer + ".vbAlphaBlend");
+	attrFieldSliderGrp -edit -attribute ($layer + ".vbRgbScale") ilrBakeRGBScaleField;
+	attrFieldSliderGrp -edit -attribute ($layer + ".vbAlphaScale") ilrBakeAlphaScaleField;
+	connectControl -index 2 ilrBakeClampField ($layer + ".vbClamp");
+	attrColorSliderGrp -edit -attribute ($layer + ".vbRgbMin") ilrBakeRGBMinField;
+	attrColorSliderGrp -edit -attribute ($layer + ".vbRgbMax") ilrBakeRGBMaxField;
+	attrFieldSliderGrp -edit -attribute ($layer + ".vbAlphaMin") ilrBakeAlphaMinField;
+	attrFieldSliderGrp -edit -attribute ($layer + ".vbAlphaMax") ilrBakeAlphaMaxField;
+	
+	connectControl -index 2 ilrBakeFilterField ($layer + ".vbFilter");
+
+	//
+	// Dim controls
+	//
+
+	int $vb = (`getAttr ($layer + ".renderType")` == 2);
+	if ($vb)
+	{
+		columnLayout -edit -enable true roVertexBakeLayout;
+
+		int $samp = `getAttr ($layer + ".vbSamplingMode")`;
+		attrFieldSliderGrp -edit -enable ($samp > 0) ilrBakeMinSamplesField;
+		attrFieldSliderGrp -edit -enable ($samp > 0) ilrBakeMaxSamplesField;
+
+		int $clamp = `getAttr ($layer + ".vbClamp")`;
+		attrColorSliderGrp -edit -enable $clamp ilrBakeRGBMinField;
+		attrColorSliderGrp -edit -enable $clamp ilrBakeRGBMaxField;
+		attrFieldSliderGrp -edit -enable $clamp ilrBakeAlphaMinField;
+		attrFieldSliderGrp -edit -enable $clamp ilrBakeAlphaMaxField;
+		
+		int $filter = `getAttr ($layer + ".vbFilter")`;
+		attrFieldSliderGrp -edit -enable $filter ilrBakeFilterSizeField;
+		attrFieldSliderGrp -edit -enable $filter ilrBakeFilterShapeField;
+		attrFieldSliderGrp -edit -enable $filter ilrBakeFilterNormalDevField;
+
+		int $saveToColorSet = `getAttr ($layer + ".vbSaveToColorSet")`;
+		checkBoxGrp -edit -enable $saveToColorSet ilrBakeOverwriteColorSetField;
+		textFieldGrp -edit -enable $saveToColorSet ilrBakeColorSetField;
+
+		int $saveToFile = `getAttr ($layer + ".vbSaveToFile")`;
+		textFieldGrp -edit -enable $saveToFile ilrVertexBakeDirectoryField;
+		button -edit -enable $saveToFile ilrVertexBakeDirectoryBrowserButton;
+		textFieldGrp -edit -enable $saveToFile ilrVertexBakeFileNameField;
+
+		int $blend = (`getAttr ($layer + ".vbUseBlending")` > 0);
+		optionMenuGrp -edit -enable $blend ilrBakeRGBBlendField;
+		optionMenuGrp -edit -enable $blend ilrBakeAlphaBlendField;
+	}
+	else
+	{
+		columnLayout -edit -enable false roVertexBakeLayout;
+	}
+
+	setParent $oldparent;
+}
+
+global proc ilrSetVertexBakeDirectoryCallback(string $path, string $type)
+{
+	string $layer  = ilrGetCurrentBakeLayer();
+	string $fullPath = `workspace -expandName $path`;
+	int $err = true;
+
+	if (`file -query -exists $fullPath`) {
+		string $typeList[] = `file -query -type $fullPath`;
+		if (size($typeList) > 0 && $typeList[0] == "directory") {
+
+			// If possible get the project relative part of the path
+			$path = `workspace -projectPath $path`;
+			
+			// Make sure to end with a slash
+			if (!endsWith($path, "/")) {
+ 				$path += "/";
+ 			}
+			
+			setAttr -type "string" ($layer + ".vbDirectory") $path;
+			textFieldGrp -edit -text $path ilrVertexBakeDirectoryField;
+			
+			$err = false;
+		}
+	}
+
+	ilrUpdateVertexBakeUI();
+
+	if ($err) {
+		error($path + " is not a valid directory!");
+	}
+}
+
+global proc ilrChangeVertexBakeDirectory()
+{
+	string $dir = `textFieldGrp -query -text ilrVertexBakeDirectoryField`;
+	ilrSetVertexBakeDirectoryCallback($dir, "directory");
+}
+
+global proc	ilrBuildVertexBakeUI(string $parent)
+{
+	ilrSetParentToBakingTab();
+	setParent $parent;
+
+	// If the UI is created already then just update the attribute values.
+	if (clExists("roVertexBakeLayout")) {
+		ilrUpdateVertexBakeUI();
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	columnLayout -adjustableColumn true roVertexBakeLayout;
+
+		optionMenuGrp -label "Sampling Mode" -cc "ilrUpdateVertexBakeUI" ilrBakeSamplingModeField;
+			menuItem -label "Per Vertex" -data 0;
+			menuItem -label "Triangle Subdiv" -data 1;
+
+		attrFieldSliderGrp -label "Min Samples" ilrBakeMinSamplesField;
+		attrFieldSliderGrp -label "Max Samples" ilrBakeMaxSamplesField;
+		attrFieldSliderGrp -label "Vertex Bias" ilrBakeVertexBiasField;
+
+		separator -height 15;
+		
+		checkBoxGrp -numberOfCheckBoxes 1 -label1 "Save to Color Set" -cc "ilrUpdateVertexBakeUI" ilrBakeSaveToColorSetField;
+		checkBoxGrp -numberOfCheckBoxes 1 -label1 "Overwrite Color Set" ilrBakeOverwriteColorSetField;
+		textFieldGrp -label "Color Set" ilrBakeColorSetField;
+
+		checkBoxGrp -numberOfCheckBoxes 1 -label1 "Save to File" -cc "ilrUpdateVertexBakeUI" ilrVertexBakeSaveToFileField;
+
+		rowLayout -numberOfColumns 2
+ 			-columnWidth2 350 90
+ 			-columnAttach 1 "left" 0
+ 			-columnAttach 2 "left" 5;
+			textFieldGrp -label "Directory"	-cc ("ilrChangeVertexBakeDirectory") ilrVertexBakeDirectoryField;
+			symbolButton -image "navButtonBrowse.xpm" ilrVertexBakeDirectoryBrowserButton;
+			button -edit -command ("fileBrowser \"ilrSetVertexBakeDirectoryCallback\" \"Set Directory\" \"\" 4") ilrVertexBakeDirectoryBrowserButton;
+		setParent ..;
+		
+		textFieldGrp -label "File Name" -cc "ilrUpdateVertexBakeUI" ilrVertexBakeFileNameField;
+
+		separator -height 15;
+
+		optionMenuGrp -label "Use Blending" -cc "ilrUpdateVertexBakeUI" ilrBakeUseBlendingField;
+			menuItem -label "Disabled" -data 0;
+			menuItem -label "Blend Old Colors" -data 1;
+			menuItem -label "Blend Passes" -data 2;
+
+		optionMenuGrp -label "RGB Blending" ilrBakeRGBBlendField;
+			menuItem -label "Replace" -data 0;
+			menuItem -label "Add" -data 1;
+			menuItem -label "Subtract" -data 2;
+			menuItem -label "Multiply" -data 3;
+			menuItem -label "Divide" -data 4;
+			menuItem -label "Average" -data 5;
+			menuItem -label "None" -data 6;
+			
+		optionMenuGrp -label "Alpha Blending" ilrBakeAlphaBlendField;
+			menuItem -label "Replace" -data 0;
+			menuItem -label "Add" -data 1;
+			menuItem -label "Subtract" -data 2;
+			menuItem -label "Multiply" -data 3;
+			menuItem -label "Divide" -data 4;
+			menuItem -label "Average" -data 5;
+			menuItem -label "None" -data 6;
+		
+		separator -height 15;
+
+		attrFieldSliderGrp -label "RGB Scale" ilrBakeRGBScaleField;
+		attrFieldSliderGrp -label "Alpha Scale" ilrBakeAlphaScaleField;
+
+		checkBoxGrp -numberOfCheckBoxes 1 -label1 "Clamp" -cc "ilrUpdateVertexBakeUI" ilrBakeClampField;
+		attrColorSliderGrp -label "RGB Min" ilrBakeRGBMinField;
+		attrColorSliderGrp -label "RGB Max" ilrBakeRGBMaxField;
+		attrFieldSliderGrp -label "Alpha Min" ilrBakeAlphaMinField;
+		attrFieldSliderGrp -label "Alpha Max" ilrBakeAlphaMaxField;
+
+		separator -height 15;
+
+		checkBoxGrp -numberOfCheckBoxes 1 -label1 "Enable Vertex Color Filter" -cc "ilrUpdateVertexBakeUI" ilrBakeFilterField;
+		attrFieldSliderGrp -label "Filter Size" ilrBakeFilterSizeField;
+		attrFieldSliderGrp -label "Filter Shape" ilrBakeFilterShapeField;
+		attrFieldSliderGrp -label "Filter Normal Deviation" ilrBakeFilterNormalDevField;
+
+	setParent ..;
+
+	setUITemplate -popTemplate;
+
+	ilrUpdateVertexBakeUI();
+}
+
+global proc ilrUpdateBakeOutputsUI()
+{
+	string $oldparent = `setParent -q`;
+
+	if (!size(ilrSetParentToBakingTab())) {
+		setParent $oldparent;
+		return;
+	}
+
+	if (!clExists("roBakeOutputsFrame|roBakeOutputsLayout")) {
+		setParent $oldparent;
+		return;
+	}
+
+	setParent roBakeOutputsFrame;
+
+
+	string $layer = ilrGetCurrentBakeLayer();
+
+	//
+	// Connect controls and attributes
+	//
+
+	connectControl -index 2 ilrNormalsField ($layer + ".normals");
+	connectControl -index 2 ilrNormalsCoordSysField ($layer + ".normalsCoordSys");
+	connectControl -index 2 ilrNormalsFlipChannelField ($layer + ".normalsFlipChannel");
+	connectControl -index 2 ilrNormalsFaceTangentsField ($layer + ".normalsFaceTangents");
+	connectControl -index 2 ilrNormalsUseBumpField ($layer + ".normalsUseBump");
+	connectControl -index 2 ilrStencilBakeField ($layer + ".stencilBake");
+	connectControl -index 2 ilrDisplacementAlphaField ($layer + ".displacementAlpha");
+	connectControl -index 2 ilrDisplacementField ($layer + ".displacement");
+	connectControl -index 2 ilrDisplacementRemapField ($layer + ".displacementRemap");
+
+	connectControl -index 2 ilrLuaField ($layer + ".lua");
+	connectControl -index 2 ilrLuaFileField ($layer + ".luaFile");
+
+	connectControl -index 2 ilrDirOccField ($layer + ".dirOcc");
+	connectControl -index 2 ilrDirOccVector1 ($layer + ".dirOccVector1X");
+	connectControl -index 3 ilrDirOccVector1 ($layer + ".dirOccVector1Y");
+	connectControl -index 4 ilrDirOccVector1 ($layer + ".dirOccVector1Z");
+	connectControl -index 2 ilrDirOccVector2 ($layer + ".dirOccVector2X");
+	connectControl -index 3 ilrDirOccVector2 ($layer + ".dirOccVector2Y");
+	connectControl -index 4 ilrDirOccVector2 ($layer + ".dirOccVector2Z");
+	connectControl -index 2 ilrDirOccVector3 ($layer + ".dirOccVector3X");
+	connectControl -index 3 ilrDirOccVector3 ($layer + ".dirOccVector3Y");
+	connectControl -index 4 ilrDirOccVector3 ($layer + ".dirOccVector3Z");
+	connectControl -index 2 ilrDirOccVector4 ($layer + ".dirOccVector4X");
+	connectControl -index 3 ilrDirOccVector4 ($layer + ".dirOccVector4Y");
+	connectControl -index 4 ilrDirOccVector4 ($layer + ".dirOccVector4Z");
+
+	connectControl -index 2 ilrRnmField ($layer + ".rnm");
+	connectControl -index 2 ilrRnmSampleTypeField ($layer + ".rnmSampleType");
+	connectControl -index 2 ilrRnmAdjustIntensityField ($layer + ".rnmAdjustIntensity");
+
+	connectControl -index 2 ilrPtmField ($layer + ".ptm");
+	connectControl -index 2 ilrPtmSampleTypeField ($layer + ".ptmSampleType");
+	connectControl -index 2 ilrPtmOutputField ($layer + ".ptmOutput");
+	
+	connectControl -index 2 ilrSphField ($layer + ".sph");
+	connectControl -index 2 ilrSphSampleTypeField ($layer + ".sphSampleType");
+	connectControl -index 2 ilrSphSpaceTypeField ($layer + ".sphSpaceType");
+	//connectControl -index 2 ilrSphSignLessField ($layer + ".sphSignLess");
+	connectControl -index 2 ilrSphOutputField ($layer + ".sphOutput");
+	
+	connectControl -index 2 ilrFullShadingField ($layer + ".fullShading");
+	connectControl -index 2 ilrIlluminationField ($layer + ".illumination");
+	connectControl -index 2 ilrIndirectIlluminationField ($layer + ".indirectIllumination");
+	connectControl -index 2 ilrAlbedoField ($layer + ".albedo");
+	connectControl -index 2 ilrDiffuseField ($layer + ".diffuse");
+	connectControl -index 2 ilrSpecularField ($layer + ".specular");
+	connectControl -index 2 ilrAmbientField ($layer + ".ambient");
+	connectControl -index 2 ilrIncandescenceField ($layer + ".incandescence");
+	connectControl -index 2 ilrSSSField ($layer + ".sss");
+	connectControl -index 2 ilrReflectionsField ($layer + ".reflections");
+	connectControl -index 2 ilrRefractionsField ($layer + ".refractions");
+	connectControl -index 2 ilrCustomField ($layer + ".custom");
+
+	//
+	// Dim controls
+	//
+	
+	int $normals = `getAttr ($layer + ".normals")`;
+	int $displac = (`getAttr ($layer + ".displacement")` || `getAttr ($layer + ".displacementAlpha")`);
+	int $remap   = `getAttr ($layer + ".displacementRemap")`;
+	int $custom  = `getAttr ($layer + ".custom")`;
+	int $lua	 = `getAttr ($layer + ".lua")`;
+	int $dirocc	 = `getAttr ($layer + ".dirOcc")`;
+	int $ptm	 = `getAttr ($layer + ".ptm")`;
+	int $sph	 = `getAttr ($layer + ".sph")`;
+	int $rnm	 = `getAttr ($layer + ".rnm")`;
+
+	optionMenuGrp -edit -enable $normals ilrNormalsCoordSysField;
+	optionMenuGrp -edit -enable $normals ilrNormalsFlipChannelField;
+	checkBoxGrp -edit -enable1 $normals ilrNormalsFaceTangentsField;
+	checkBoxGrp -edit -enable1 $normals ilrNormalsUseBumpField;
+	checkBoxGrp -edit -enable1 $normals ilrStencilBakeField;
+	checkBoxGrp -edit -enable1 $normals ilrDisplacementAlphaField;
+
+	checkBoxGrp -edit -enable1 $displac ilrDisplacementRemapField;
+	attrFieldSliderGrp -edit -attribute ($layer + ".displacementScale") -enable ($displac && !$remap) ilrDisplacementScaleField;
+	attrFieldSliderGrp -edit -attribute ($layer + ".displacementOffset") -enable ($displac && !$remap) ilrDisplacementOffsetField;
+
+	text -edit -enable $lua ilrLuaFileLabel;
+	textField -edit -enable $lua ilrLuaFileField;
+	symbolButton -edit -enable $lua ilrLuaPassFileNameBrowser;
+
+	attrFieldSliderGrp -edit -attribute ($layer + ".dirOccSamples") -enable $dirocc ilrDirOccSamplesField;
+	attrFieldSliderGrp -edit -attribute ($layer + ".dirOccExponent") -enable $dirocc ilrDirOccExponentField;
+	attrControlGrp -edit -enable $dirocc ilrDirOccVector1;
+	attrControlGrp -edit -enable $dirocc ilrDirOccVector2;
+	attrControlGrp -edit -enable $dirocc ilrDirOccVector3;
+	attrControlGrp -edit -enable $dirocc ilrDirOccVector4;
+
+	optionMenuGrp -edit -enable $rnm ilrRnmSampleTypeField;
+	checkBoxGrp -edit -enable $rnm ilrRnmAdjustIntensityField;
+	int $fgrc = (`getAttr TurtleRenderOptions.enableGI`==true && `getAttr TurtleRenderOptions.primaryIntegrator`==4 && `getAttr TurtleRenderOptions.fgUseCache`==2);
+	attrFieldSliderGrp -edit -attribute ($layer + ".rnmSamples") -enable ($rnm && !$fgrc) ilrRnmSamplesField;
+	
+	text -edit -enable $rnm -label ($fgrc ? "(adaptive: FG/RadianceSH enabled)" : "(bruteforce: FG/RadianceSH disabled)") ilrRnmMethodText;
+
+	optionMenuGrp -edit -enable $ptm ilrPtmSampleTypeField;
+	optionMenuGrp -edit -enable $ptm ilrPtmOutputField;
+	attrFieldSliderGrp -edit -attribute ($layer + ".ptmSamples") -enable $ptm ilrPtmSamplesField;
+
+	optionMenuGrp -edit -enable $sph ilrSphSampleTypeField;
+	optionMenuGrp -edit -enable $sph ilrSphSpaceTypeField;
+	optionMenuGrp -edit -enable $sph ilrSphOutputField;
+	attrFieldSliderGrp -edit -attribute ($layer + ".sphSamples") -enable $sph ilrSphSamplesField;
+	attrFieldSliderGrp -edit -attribute ($layer + ".sphBands") -enable $sph ilrSphBandsField;
+	
+	attrNavigationControlGrp -edit -attribute ($layer + ".customShader") -enable $custom ilrCustomShaderField;
+
+	setParent $oldparent;
+}
+
+global proc ilrSetLuaPassFileCallback(string $file, string $type)
+{
+	string $layer = ilrGetCurrentBakeLayer();
+
+	int $err = true;
+
+	if (`file -query -exists $file`) {
+		$file = `file -query -expandName $file`;
+		setAttr -type "string" ($layer + ".luaFile") $file;
+		textField -edit -text $file ilrLuaFileField;
+		$err = false;
+	}
+
+	ilrUpdateBakeOutputsUI();
+	
+	if ($err) {
+		error($file + " is not a valid file!");
+	}
+}
+
+global proc ilrBuildBakeOutputsUI(string $parent)
+{
+	ilrSetParentToBakingTab();
+	setParent $parent;
+
+	// If the UI is created already then just update the attribute values.
+	if (clExists("roBakeOutputsLayout")) {
+		ilrUpdateBakeOutputsUI();
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	columnLayout -adjustableColumn true roBakeOutputsLayout;
+
+		frameLayout -label "Shader Outputs" -cll true -cl 1;
+			columnLayout -adjustableColumn true;
+			checkBoxGrp -numberOfCheckBoxes 1 -label1 "Full Shading" ilrFullShadingField;
+			checkBoxGrp -numberOfCheckBoxes 1 -label1 "Illumination" ilrIlluminationField;
+			checkBoxGrp -numberOfCheckBoxes 1 -label1 "Indirect Illumination" ilrIndirectIlluminationField;
+			checkBoxGrp -numberOfCheckBoxes 1 -label1 "Albedo" ilrAlbedoField;
+			checkBoxGrp -numberOfCheckBoxes 1 -label1 "Diffuse" ilrDiffuseField;
+			checkBoxGrp -numberOfCheckBoxes 1 -label1 "Specular" ilrSpecularField;
+			checkBoxGrp -numberOfCheckBoxes 1 -label1 "Ambient" ilrAmbientField;
+			checkBoxGrp -numberOfCheckBoxes 1 -label1 "Incandescence" ilrIncandescenceField;
+			checkBoxGrp -numberOfCheckBoxes 1 -label1 "SSS" ilrSSSField;
+			checkBoxGrp -numberOfCheckBoxes 1 -label1 "Reflections" ilrReflectionsField;
+			checkBoxGrp -numberOfCheckBoxes 1 -label1 "Refractions" ilrRefractionsField;
+			checkBoxGrp -numberOfCheckBoxes 1 -label1 "Custom" -cc "ilrUpdateBakeOutputsUI" ilrCustomField;
+			attrNavigationControlGrp -label "Custom Shader" ilrCustomShaderField;
+			setParent ..;
+		setParent ..;
+
+		frameLayout -label "Normal Map" -cll true -cl 1;
+			columnLayout -adjustableColumn true;
+			checkBoxGrp -numberOfCheckBoxes 1 -label1 "Normal Map" -cc "ilrUpdateBakeOutputsUI" ilrNormalsField;
+			optionMenuGrp -label "Coordinate System" ilrNormalsCoordSysField;
+				menuItem -label "Tangent Space" -data 0;
+				menuItem -label "Object Space" -data 1;
+				menuItem -label "World Space" -data 2;
+			optionMenuGrp -label "Modify Channels" ilrNormalsFlipChannelField;
+				menuItem -label "Default" -data 0;
+				menuItem -label "Invert Red" -data 1;
+				menuItem -label "Invert Green" -data 2;
+				menuItem -label "Flip Red-Green" -data 3;
+			checkBoxGrp -numberOfCheckBoxes 1 -label1 "Use Face Tangents" ilrNormalsFaceTangentsField;
+			checkBoxGrp -numberOfCheckBoxes 1 -label1 "Include Bump Maps" ilrNormalsUseBumpField;
+			checkBoxGrp -numberOfCheckBoxes 1 -label1 "Stencil in Alpha Channel" ilrStencilBakeField;
+			checkBoxGrp -numberOfCheckBoxes 1 -label1 "Displacement in Alpha Channel" -cc "ilrUpdateBakeOutputsUI" ilrDisplacementAlphaField;
+			setParent ..;
+		setParent ..;
+
+		frameLayout -label "Displacement Map" -cll true -cl 1;
+			columnLayout -adjustableColumn true;
+			checkBoxGrp -numberOfCheckBoxes 1 -label1 "Displacement Map" -cc "ilrUpdateBakeOutputsUI" ilrDisplacementField;
+			checkBoxGrp -numberOfCheckBoxes 1 -label1 "Fit to range [0,1]" -cc "ilrUpdateBakeOutputsUI" ilrDisplacementRemapField;
+			attrFieldSliderGrp -label "Scale" ilrDisplacementScaleField;
+			attrFieldSliderGrp -label "Offset" ilrDisplacementOffsetField;
+			setParent ..;
+		setParent ..;
+
+		frameLayout -label "Directional Occlusion Map" -cll true -cl 1;
+			columnLayout -adjustableColumn true;
+				checkBoxGrp -numberOfCheckBoxes 1 -label1 "Directional Occlusion Map" -cc "ilrUpdateBakeOutputsUI" ilrDirOccField;
+				attrFieldSliderGrp -label "Samples" ilrDirOccSamplesField;
+				attrFieldSliderGrp -label "Exponent" ilrDirOccExponentField;
+				floatFieldGrp -numberOfFields 3 -label "Basis Vector 1" ilrDirOccVector1;
+				floatFieldGrp -numberOfFields 3 -label "Basis Vector 2" ilrDirOccVector2;
+				floatFieldGrp -numberOfFields 3 -label "Basis Vector 3" ilrDirOccVector3;
+				floatFieldGrp -numberOfFields 3 -label "Basis Vector 4" ilrDirOccVector4;
+			setParent ..;
+		setParent ..;
+
+		frameLayout -label "Radiosity Normal Map" -cll true -cl 1;
+			columnLayout -adjustableColumn true;
+				checkBoxGrp -numberOfCheckBoxes 1 -label1 "Radiosity Normal Map" -cc "ilrUpdateBakeOutputsUI" ilrRnmField;
+				checkBoxGrp -numberOfCheckBoxes 1 -label1 "Adjust Intensity" ilrRnmAdjustIntensityField;
+				optionMenuGrp -label "Sample Type" ilrRnmSampleTypeField;
+					menuItem -label "Illumination" -data 0;
+					menuItem -label "Direct Illumination" -data 1;
+					menuItem -label "Indirect Illumination" -data 2;
+				rowLayout -nc 2;
+					text -label " ";
+					columnLayout -adjustableColumn true -columnAlign "left" -rowSpacing 0;
+						text -label "(bruteforce: FG/RadianceSH disabled)" ilrRnmMethodText;
+					setParent ..;
+				setParent ..;
+			attrFieldSliderGrp -label "Samples" ilrRnmSamplesField;
+
+			setParent ..;
+		setParent ..;
+
+		frameLayout -label "Polynomial Texture Map" -cll true -cl 1;
+			columnLayout -adjustableColumn true;
+				checkBoxGrp -numberOfCheckBoxes 1 -label1 "Polynomial Texture Map" -cc "ilrUpdateBakeOutputsUI" ilrPtmField;
+				attrFieldSliderGrp -label "Samples" ilrPtmSamplesField;
+				optionMenuGrp -label "Sample Type" ilrPtmSampleTypeField;
+					//menuItem -label "Occlusion" -data 0;
+					menuItem -label "Dynamic Illumination" -data 1;
+					menuItem -label "Direct Dynamic Illumination" -data 2;
+					menuItem -label "Indirect Dynamic Illumination" -data 3;
+				optionMenuGrp -label "Output" ilrPtmOutputField;
+					menuItem -label "Intensity" -data 0;
+					menuItem -label "RGB" -data 1;
+			setParent ..;
+		setParent ..;
+
+		frameLayout -label "Spherical Harmonics" -cll true -cl 1;
+			columnLayout -adjustableColumn true;
+				checkBoxGrp -numberOfCheckBoxes 1 -label1 "Spherical Harmonics" -cc "ilrUpdateBakeOutputsUI" ilrSphField;
+				//checkBoxGrp -numberOfCheckBoxes 1 -label1 "Signless" ilrSphSignLessField;
+				attrFieldSliderGrp -label "Bands" ilrSphBandsField;
+				attrFieldSliderGrp -label "Samples" ilrSphSamplesField;
+				//attrFieldSliderGrp -label "Cone Angle" ilrSphConeAngleField;
+				optionMenuGrp -label "Sample Type" ilrSphSampleTypeField;
+					//menuItem -label "Occlusion" -data 0;
+					menuItem -label "Dynamic Illumination" -data 1;
+					menuItem -label "Direct Dynamic Illumination" -data 2;
+					menuItem -label "Indirect Dynamic Illumination" -data 3;
+				optionMenuGrp -label "Space Type" ilrSphSpaceTypeField;
+					//menuItem -label "Tangent Space" -data 0;
+					menuItem -label "Object Space" -data 1;
+					menuItem -label "World Space" -data 2;
+				optionMenuGrp -label "Output" ilrSphOutputField;
+					menuItem -label "Intensity" -data 0;
+					menuItem -label "RGB" -data 1;
+			setParent ..;
+		setParent ..;
+
+		frameLayout -label "Lua" -cll true -cl 1;
+			columnLayout -adjustableColumn true;
+				checkBoxGrp -numberOfCheckBoxes 1 -label1 "Lua" -cc "ilrUpdateBakeOutputsUI" ilrLuaField;
+				rowLayout -nc 3 ilrLuaPassFileNameLayout;
+					text -l "Lua Bake Script" ilrLuaFileLabel;
+					textField ilrLuaFileField;
+					symbolButton -image "navButtonBrowse.xpm" ilrLuaPassFileNameBrowser;
+					button -edit -command ("fileBrowser \"ilrSetLuaPassFileCallback\" \"Choose File\" \"\" 0") ilrLuaPassFileNameBrowser;
+				setParent ..;
+			setParent ..;
+		setParent ..;
+		
+	setParent ..;
+	
+	setUITemplate -popTemplate;
+
+	ilrUpdateBakeOutputsUI();
+}
+
+global proc int ilrCheckVersion(string $node)
+{
+	int $ok = false;
+
+	if (`attributeQuery -exists -node $node "version"`)
+	{
+		global string $g_ilrPluginName;
+	
+		// Convert plug-in version string to float format
+		string $ver = `pluginInfo -query -version $g_ilrPluginName`;
+		string $tokens[];
+		int $num = `tokenize $ver "." $tokens`;
+		$ver = $tokens[0] + ".";
+		int $i;
+		for ($i=1; $i<$num; $i++) {
+			$ver += $tokens[$i];
+		}
+
+		// Check version number
+		float $pversion = (float)$ver;
+		float $nversion = (float)`getAttr ($node + ".version")`;
+		if (abs($pversion - $nversion) < 0.0001)
+			$ok = true;
+	}
+	
+	ilrDebugPrint("Checking version on " + $node + " = " + $ok);
+
+	return $ok;
+}
+
+//
+// Updates dynamic attributes on nodes created with earlier versions of Turtle
+//
+global proc ilrUpdateDynamicAttributes()
+{
+	string $item;
+	string $list[];
+	
+	// rename a couple of dynamic attributes
+	//
+	
+	$list = `ls -type pointLight -type spotLight -type directionalLight -type areaLight`;
+	for ($item in $list)
+	{
+		if (`attributeQuery -exists -node $item "emit"`) {
+			catch( ilrLightGIAttributes(1, $item) );
+
+			setAttr ($item + ".ilrEmit") `getAttr ($item + ".emit")`;
+			deleteAttr -attribute "emit" $item;
+
+			setAttr ($item + ".ilrPhotonEnergy") `getAttr ($item + ".photonEnergy")`;
+			deleteAttr -attribute "photonEnergy" $item;
+
+			setAttr ($item + ".ilrCausticsPhotons") `getAttr ($item + ".causticsPhotons")`;
+			deleteAttr -attribute "causticsPhotons" $item;
+
+			setAttr ($item + ".ilrGlobalPhotons") `getAttr ($item + ".globalPhotons")`;
+			deleteAttr -attribute "globalPhotons" $item;
+		}
+	}
+	
+	$list = `ls -type file -type psdFileTex`;
+	for ($item in $list)
+	{
+		if (`attributeQuery -exists -node $item "ilrZbrushButton"`) {
+			catch( ilrTextureAttributes(1, $item) );
+
+			setAttr ($item + ".ilrZbrush") `getAttr ($item + ".ilrZbrushButton")`;
+			deleteAttr -attribute "ilrZbrushButton" $item;
+
+			setAttr ($item + ".ilrDisableGamma") `getAttr ($item + ".ilrDisableGammaButton")`;
+			deleteAttr -attribute "ilrDisableGammaButton" $item;
+		}
+	}
+	
+    $list = `ls -type mesh -type nurbsSurface -type subdiv`;
+	for ($item in $list)
+	{
+		if (`attributeQuery -exists -node $item "ilrBakeResXOverride"`) {
+			catch( ilrBakeAttributes(1, $item) );
+
+			setAttr ($item + ".ilrBakeResX") `getAttr ($item + ".ilrBakeResXOverride")`;
+			deleteAttr -attribute "ilrBakeResXOverride" $item;
+
+			setAttr ($item + ".ilrBakeResY") `getAttr ($item + ".ilrBakeResYOverride")`;
+			deleteAttr -attribute "ilrBakeResYOverride" $item;
+
+			setAttr ($item + ".ilrBakeScale") `getAttr ($item + ".ilrBakeScaleOverride")`;
+			deleteAttr -attribute "ilrBakeScaleOverride" $item;
+		}
+
+		if (`attributeQuery -exists -node $item "subdivEnable"`) {
+			catch( ilrSubdivAttributes(1, $item) );
+
+			setAttr ($item + ".ilrSubdivEnable") `getAttr ($item + ".subdivEnable")`;
+			deleteAttr -attribute "subdivEnable" $item;
+
+			setAttr ($item + ".ilrSubdivDepth") `getAttr ($item + ".subdivDepth")`;
+			deleteAttr -attribute "subdivDepth" $item;
+
+			setAttr ($item + ".ilrSubdivCorner") `getAttr ($item + ".subdivCorner")`;
+			deleteAttr -attribute "subdivCorner" $item;
+
+			setAttr ($item + ".ilrSmoothUV") `getAttr ($item + ".smoothUV")`;
+			deleteAttr -attribute "smoothUV" $item;
+		}
+	}
+	
+
+	//make sure that all attribute groups are complete. no attributes missing within a set of attributes.
+	//
+	
+	$list = `ls -type ambientLight -type directionalLight -type pointLight -type spotLight -type areaLight`;
+	for ($item in $list)
+	{
+		if (`attributeQuery -exists -node $item "ilrEyeIntensity"`) {
+			catch( ilrIntensityAttributes(1, $item) );
+		}
+		if (`attributeQuery -exists -node $item "ilrDepthMapShadows"`) {
+			catch( ilrShadowAttributes(1, $item) );
+		}
+		if (`attributeQuery -exists -node $item "ilrEmit"`) {
+			catch( ilrLightGIAttributes(1, $item) );
+		}
+		if (`attributeQuery -exists -node $item "ilrLightProfileFileName"`) {
+			catch( ilrIESAttributes(1, $item) );
+		}
+		if (`attributeQuery -exists -node $item "ilrRadiusOfInfluence"`) {
+			catch( ilrDecayAttributes(1, $item) );
+		}
+	}
+
+	$list = `ls -materials`;
+	for ($item in $list)
+	{
+		if (`attributeQuery -exists -node $item "ilrGIPrimaryIntensity"`) {
+			catch( ilrMaterialGIAttributes(1, $item) );
+		}
+		if (`attributeQuery -exists -node $item "ilrGlossyReflections"`) {
+			catch( ilrReflectionAttributes(1, $item) );
+		}
+		if (`attributeQuery -exists -node $item "ilrGlossyRefractions"`) {
+			catch( ilrRefractionAttributes(1, $item) );
+		}
+	}
+
+	$list = `ls -type file -type psdFileTex`;
+	for ($item in $list)
+	{
+		if (`attributeQuery -exists -node $item "ilrZbrush"`) {
+			catch( ilrTextureAttributes(1, $item) );
+		}
+	}
+
+	$list = `ls -cameras`;
+	for ($item in $list)
+	{
+		if (`attributeQuery -exists -node $item "ilrEnvCamera"`) {
+			catch( ilrCameraAttributes(1, $item) );
+		}
+	}
+
+    $list = `ls -type mesh -type nurbsSurface -type subdiv`;
+	for ($item in $list)
+	{
+		if (`attributeQuery -exists -node $item "ilrSmoothNormals"`) {
+			catch( ilrRenderStatsAttributes(1, $item) );
+		}
+		if (`attributeQuery -exists -node $item "ilrFinalGatherOverride"`) {
+			catch( ilrGeometryGIAttributes(1, $item) );
+		}
+		if (`attributeQuery -exists -node $item "ilrBakeResOverride"`) {
+			catch( ilrBakeAttributes(1, $item) );
+		}
+		if (`attributeQuery -exists -node $item "ilrSubdivEnable"`) {
+			catch( ilrSubdivAttributes(1, $item) );
+		}
+	}
+
+	$list = `ls -type displacementShader`;
+	for ($item in $list)
+	{
+		if (`attributeQuery -exists -node $item "ilrDisplacementMethod"`) {
+			catch( ilrDisplacementAttributes(1, $item) );
+		}
+	}
+
+	$list = `ls -type renderLayer`;
+	for ($item in $list)
+	{
+		if (`attributeQuery -exists -node $item "ilrIllumination"`) {
+			catch( ilrRenderPassAttributes(1, $item) );
+		}
+	}
+
+}
+
+//
+// Create/delete all dynamic attributes used by Turtle
+// Using "catch" to avoid craching complete scrips if an attribute failes
+//
+global proc ilrDynamicAttributes(int $add)
+{
+	string $item;
+	string $list[];
+	
+	$list = `ls -type ambientLight -type directionalLight -type pointLight -type spotLight -type areaLight`;
+	for ($item in $list)
+	{
+		catch( ilrIntensityAttributes($add, $item) );
+		catch( ilrShadowAttributes($add, $item) );
+		catch( ilrLightGIAttributes($add, $item) );
+		catch( ilrIESAttributes($add, $item) );
+		catch( ilrDecayAttributes($add, $item) );
+	}
+
+	$list = `ls -materials`;
+	for ($item in $list)
+	{
+		catch( ilrMaterialGIAttributes($add, $item) );
+		catch( ilrReflectionAttributes($add, $item) );
+		catch( ilrRefractionAttributes($add, $item) );
+	}
+
+	$list = `ls -type file -type psdFileTex`;
+	for ($item in $list)
+	{
+		catch( ilrTextureAttributes($add, $item) );
+	}
+
+	$list = `ls -type shadingEngine`;
+	for ($item in $list)
+	{
+		catch( ilrShadingGroupAttributes($add, $item) );
+	}
+
+	$list = `ls -cameras`;
+	for ($item in $list)
+	{
+		catch( ilrCameraAttributes($add, $item) );
+	}
+
+    $list = `ls -type mesh -type nurbsSurface -type subdiv`;
+	for ($item in $list)
+	{
+		catch( ilrRenderStatsAttributes($add, $item) );
+		catch( ilrGeometryGIAttributes($add, $item) );
+		catch( ilrBakeAttributes($add, $item) );
+		catch( ilrSubdivAttributes($add, $item) );
+	}
+
+	$list = `ls -type displacementShader`;
+	for ($item in $list)
+	{
+		catch( ilrDisplacementAttributes($add, $item) );
+	}
+
+	$list = `ls -type renderLayer`;
+	for ($item in $list)
+	{
+		catch( ilrRenderPassAttributes($add, $item) );
+	}
+
+	ilrUpdateAEDeferred;	
+}
+
+global proc ilrCreateRenderOptionsNode()
+{
+	string $items[] = `selectedNodes`;
+	createNode "ilrOptionsNode" -shared -name "TurtleRenderOptions" -skipSelect;
+	lockNode TurtleRenderOptions;
+	select -replace $items;
+
+	ilrDebugPrint("Render options node created");
+}
+
+global proc ilrCreateUIOptionsNode()
+{
+	string $items[] = `selectedNodes`;
+	createNode "ilrUIOptionsNode" -shared -name "TurtleUIOptions" -skipSelect;
+	lockNode TurtleUIOptions;
+	select -replace $items;
+
+	ilrDebugPrint("UI options node created");
+}
+
+global proc ilrCreateBakeLayerManagerNode()
+{
+	string $items[] = `selectedNodes`;
+	createNode "ilrBakeLayerManager" -shared -name "TurtleBakeLayerManager" -skipSelect;
+	lockNode TurtleBakeLayerManager;
+	select -replace $items;
+
+	ilrDebugPrint("Bake layer manager node created");
+}
+
+global proc ilrDefaultNodes(int $add)
+{
+	if ($add)
+	{
+		// Create render options node	
+		if (!`objExists TurtleRenderOptions`) {
+			ilrCreateRenderOptionsNode();
+		} else {
+			// Make sure the version is up to date
+			if (! `ilrCheckVersion("TurtleRenderOptions")`) {	
+				warning("Incompatible node TurtleRenderOptions found, a new node will be created!\n");
+				lockNode -lock false TurtleRenderOptions;
+				delete TurtleRenderOptions;
+				ilrCreateRenderOptionsNode();
+			} else {
+				lockNode TurtleRenderOptions;
+			}
+		}
+
+		// Create UI options node	
+		if (!`objExists TurtleUIOptions`) {
+			ilrCreateUIOptionsNode();
+		} else {
+			// Make sure the version is up to date
+			if (! `ilrCheckVersion("TurtleUIOptions")`) {
+				warning("Incompatible node TurtleUIOptions found, a new node will be created!\n");	
+				lockNode -lock false TurtleUIOptions;
+				delete TurtleUIOptions;
+				ilrCreateUIOptionsNode();
+			} else {
+				lockNode TurtleUIOptions;
+			}
+		}
+
+		// Create bake layer manager
+		if (!`objExists TurtleBakeLayerManager`) {
+			ilrCreateBakeLayerManagerNode();
+		} else {
+			// Make sure the version is up to date
+			if (! `ilrCheckVersion("TurtleBakeLayerManager")`) {
+				warning("Incompatible node TurtleBakeLayerManager found, a new node will be created!\n");
+				lockNode -lock off TurtleBakeLayerManager;
+				delete TurtleBakeLayerManager;
+				ilrCreateBakeLayerManagerNode();
+			} else {
+				lockNode TurtleBakeLayerManager;
+			}
+		}
+
+		// Create default bake layer
+		if (!`objExists TurtleDefaultBakeLayer`) {
+			ilrCreateDefaultBakeLayer();
+		} else {
+			// Make sure the version is up to date
+			if (! `ilrCheckVersion("TurtleDefaultBakeLayer")`) {
+				warning("Incompatible node TurtleDefaultBakeLayer found, a new node will be created!\n");
+				lockNode -lock off TurtleDefaultBakeLayer;
+				delete TurtleDefaultBakeLayer;
+				ilrCreateDefaultBakeLayer();
+			} else {
+				lockNode TurtleDefaultBakeLayer;
+			}
+		}
+	}
+	else
+	{
+		if (`objExists TurtleRenderOptions`) {
+			lockNode -lock off TurtleRenderOptions;
+			delete TurtleRenderOptions;
+		}
+		if (`objExists TurtleUIOptions`) {
+			lockNode -lock off TurtleUIOptions;
+			delete TurtleUIOptions;
+		}
+		if (`objExists TurtleBakeLayerManager`) {
+			lockNode -lock off TurtleBakeLayerManager;
+			delete TurtleBakeLayerManager;
+		}
+		if (`objExists TurtleDefaultBakeLayer`) {
+			lockNode -lock off TurtleDefaultBakeLayer;
+			delete TurtleDefaultBakeLayer;
+		}
+		if (`objExists TurtleRenderGlobals`) {
+			lockNode -lock off TurtleRenderGlobals;
+			delete TurtleRenderGlobals;
+		}
+		if (`objExists TurtlePackUVOptions`) {
+			lockNode -lock off TurtlePackUVOptions;
+			delete TurtlePackUVOptions;
+		}
+	}
+}
+
+global proc ilrInitScene()
+{
+	ilrDefaultNodes(1);
+	ilrUpdatePointCloudBakeEditor();
+	ilrUpdateTurtleTab();
+	ilrUpdateDynamicAttributes();
+}
+
+global proc ilrClearScene()
+{
+	string $result = `confirmDialog
+		-title "Clear Scene"
+		-message "Are you sure you want to delete all Turtle nodes? All settings will be lost!"
+ 		-button "Yes" -button "No" -defaultButton "Yes"
+ 		-cancelButton "No" -dismissString "No"`;
+ 
+ 	if ($result == "Yes") {
+
+		// Delete default nodes
+		//
+ 		ilrDefaultNodes(0);
+ 		
+ 		// Delete all other Turtle nodes
+ 		//
+		string $nodes[]= `ls
+			-type ilrOptionsNode 
+			-type ilrUIOptionsNode 
+			-type ilrBakeLayer 
+			-type ilrBakeLayerManager 
+			-type ilrBssrdfShader 
+			-type ilrOccSampler 
+			-type ilrOccData 
+			-type ilrNormalMap 
+			-type ilrSurfaceThickness 
+			-type ilrRaySampler 
+			-type ilrShadowMask 
+			-type ilrBasicPhotonShader 
+			-type ilrPhysicPhotonShader 
+			-type ilrDielectricPhotonShader 
+			-type ilrDielectricShader 
+			-type ilrOrenNayarShader 
+			-type ilrAshikhminShader 
+			-type ilrPolyColorPerVertex 
+			-type ilrUVMappingVisualizer 
+			-type ilrLuaNode 
+			-type ilrHwBakeVisualizer 
+			-type ilrOutputShaderBackendNode 
+			-type ilrPointCloudShape`;
+		for ($n in $nodes) {
+			if (`objExists $n`) {
+				lockNode -lock false $n;
+				delete $n;
+			}
+		}
+
+		// Delete dynamic attributes
+		//
+ 		ilrDynamicAttributes(0);
+ 	}
+}
+
+global proc ilrInspectHwShader()
+{
+	string $selection[] = `ls -selection`;
+	if (size($selection) == 0) {
+		error("Nothing is selected");
+	}
+
+	string $shape = "";
+	if (`nodeType $selection[0]` == "transform") {
+		string $shapes[] = `listRelatives -children`;
+		if (size($shapes) == 0) {
+			error("No shape found");
+		}
+		$shape = $shapes[0];
+	}
+
+	string $nodes[] = `listConnections ($shape + ".instObjGroups")`;
+	string $sg = "";
+	for ($node in $nodes) {
+		if (`nodeType $node` == "shadingEngine") {
+			$sg = $node;
+			break;
+		}
+	}
+	if (size($sg) == 0) {
+		error("No shading group found");
+	}
+
+	$nodes = `listConnections ($sg + ".surfaceShader")`;
+	if (size($nodes) == 0) {
+		error("No surface shader connected");
+	}
+	$node = $nodes[0];
+	
+	if (`attributeExists "hardwareShader" $node`) {
+		$nodes = `listConnections ($node + ".hardwareShader")`;
+		if (size($nodes) == 0) {
+			error("No hardware shader selected");
+		}
+		$node = $nodes[0];
+	}
+	
+	if(!`isAttributeEditorVisible`) {
+		openAEWindow;
+	}
+
+	updateAE $node;
+}
+
+global proc ilrBuildAEMenu()
+{
+	string $item;
+	global string $gAEMenuBarLayoutName, $g_ilrAEMenu;
+
+	if (`layout -exists $gAEMenuBarLayoutName`) {
+		setParent $gAEMenuBarLayoutName;
+
+		string $menus[] = `menuBarLayout -q -menuArray $gAEMenuBarLayoutName`;
+
+		for ($item in $menus) {
+			if ($item == "ilrAEMenu") {
+				return;
+			}
+		}
+
+		$g_ilrAEMenu = `menu -label "TURTLE" -pmc "ilrBuildAESubMenu" ilrAEMenu`;
+	}
+}
+
+global proc ilrBuildAESubMenu()
+{
+    global string $gAERootLayoutName;
+	if(!`layout -exists $gAERootLayoutName`) {
+		return;
+	}
+
+	setParent $gAERootLayoutName;
+	setParent -menu ilrAEMenu;
+
+	menu -edit -deleteAllItems ilrAEMenu;
+	
+	menuItem -l "Turtle Attribute Spread Sheet" -c "ilrSpreadSheetEditor" ilrSSEMenuItem;
+
+    global string $gAECurrentTab;
+    if (!`objExists $gAECurrentTab`) {
+		return;
+	}
+
+	string $type = nodeType($gAECurrentTab);
+
+	// geometry menu items
+	if ($type == "mesh" || $type == "subdiv" || $type == "nurbsSurface") {
+		if ($type == "mesh") {
+			if (!`attributeQuery -exists -node $gAECurrentTab "ilrSubdivEnable"`) {
+				menuItem -l "Add Subdivision Attributes" -c "ilrAttributesOnSelection(\"ilrSubdivAttributes\", 1)";
+			} else {
+				menuItem -l "Remove Subdivision Attributes" -c "ilrAttributesOnSelection(\"ilrSubdivAttributes\", 0)";
+			}
+		}
+
+		if (!`attributeQuery -exists -node $gAECurrentTab "ilrSmoothNormals"`) {
+			menuItem -l "Add Render Stats Attributes" -c "ilrAttributesOnSelection(\"ilrRenderStatsAttributes\", 1)";
+		} else {
+			menuItem -l "Remove Render Stats Attributes" -c "ilrAttributesOnSelection(\"ilrRenderStatsAttributes\", 0)";
+		}
+
+		if (!`attributeQuery -exists -node $gAECurrentTab "ilrFinalGatherOverride"`) {
+			menuItem -l "Add Geometry GI Attributes" -c "ilrAttributesOnSelection(\"ilrGeometryGIAttributes\", 1)";
+		} else {
+			menuItem -l "Remove Geometry GI Attributes" -c "ilrAttributesOnSelection(\"ilrGeometryGIAttributes\", 0)";
+		}
+
+		if (!`attributeQuery -exists -node $gAECurrentTab "ilrBakeResOverride"`) {
+			menuItem -l "Add Bake Attributes" -c "ilrAttributesOnSelection(\"ilrBakeAttributes\", 1)";
+		} else {
+			menuItem -l "Remove Bake Attributes" -c "ilrAttributesOnSelection(\"ilrBakeAttributes\", 0)";
+		}
+	}
+	
+	// shader menu items
+	if (ilrIsReflShader($type)) {
+		if (!`attributeQuery -exists -node $gAECurrentTab "ilrGlossyReflections"`) {
+			menuItem -l "Add Reflection Attributes" -c "ilrAttributesOnSelection(\"ilrReflectionAttributes\", 1)";
+		} else {
+			menuItem -l "Remove Reflection Attributes" -c "ilrAttributesOnSelection(\"ilrReflectionAttributes\", 0)";
+		}
+	}
+	if (ilrIsRefrShader($type)) {
+		if (!`attributeQuery -exists -node $gAECurrentTab "ilrGlossyRefractions"`) {
+			menuItem -l "Add Refraction Attributes" -c "ilrAttributesOnSelection(\"ilrRefractionAttributes\", 1)";
+		} else {
+			menuItem -l "Remove Refraction Attributes" -c "ilrAttributesOnSelection(\"ilrRefractionAttributes\", 0)";
+		}
+	}
+	if (ilrIsMtrlShader($type)) {
+		if (!`attributeQuery -exists -node $gAECurrentTab "ilrGIPrimaryIntensity"`) {
+			menuItem -l "Add Material GI Attributes" -c "ilrAttributesOnSelection(\"ilrMaterialGIAttributes\", 1)";
+		} else {
+			menuItem -l "Remove Material GI Attributes" -c "ilrAttributesOnSelection(\"ilrMaterialGIAttributes\", 0)";
+		}
+	}
+
+	// light menu items
+	if ($type == "ambientLight" || $type == "directionalLight" || $type == "pointLight" || $type == "spotLight" || $type == "areaLight" || $type == "volumeLight") {
+		if (!`attributeQuery -exists -node $gAECurrentTab "ilrEyeIntensity"`) {
+			menuItem -l "Add Intensity Attributes" -c "ilrAttributesOnSelection(\"ilrIntensityAttributes\", 1)";
+		} else {
+			menuItem -l "Remove Intensity Attributes" -c "ilrAttributesOnSelection(\"ilrIntensityAttributes\", 0)";
+		}
+		
+		if ($type == "pointLight" || $type == "spotLight" || $type == "ambientLight") {
+			if (!`attributeQuery -exists -node $gAECurrentTab "ilrRadiusOfInfluence"`) {
+				menuItem -l "Add Decay Attributes" -c "ilrAttributesOnSelection(\"ilrDecayAttributes\", 1)";
+			} else {
+				menuItem -l "Remove Decay Attributes" -c "ilrAttributesOnSelection(\"ilrDecayAttributes\", 0)";
+			}
+		}
+
+		if ($type != "ambientLight") {
+			if (!`attributeQuery -exists -node $gAECurrentTab "ilrDepthMapShadows"`) {
+				menuItem -l "Add Shadow Attributes" -c "ilrAttributesOnSelection(\"ilrShadowAttributes\", 1)";
+			} else {
+				menuItem -l "Remove Shadow Attributes" -c "ilrAttributesOnSelection(\"ilrShadowAttributes\", 0)";
+			}
+
+			if (!`attributeQuery -exists -node $gAECurrentTab "ilrEmit"`) {
+				menuItem -l "Add Light GI Attributes" -c "ilrAttributesOnSelection(\"ilrLightGIAttributes\", 1)";
+			} else {
+				menuItem -l "Remove Light GI Attributes" -c "ilrAttributesOnSelection(\"ilrLightGIAttributes\", 0)";
+			}
+		}
+
+		if ($type == "pointLight") {
+			if (!`attributeQuery -exists -node $gAECurrentTab "ilrLightProfileFileName"`) {
+				menuItem -l "Add IES Attributes" -c "ilrAttributesOnSelection(\"ilrIESAttributes\", 1)";
+			} else {
+				menuItem -l "Remove IES Attributes" -c "ilrAttributesOnSelection(\"ilrIESAttributes\", 0)";
+			}
+		}
+	}
+
+	// camera menu items
+	if ($type == "camera") {
+		if (!`attributeQuery -exists -node $gAECurrentTab "ilrEnvCamera"`) {
+			menuItem -l "Add Camera Attributes" -c "ilrAttributesOnSelection(\"ilrCameraAttributes\", 1)";
+		} else {
+			menuItem -l "Remove Camera Attributes" -c "ilrAttributesOnSelection(\"ilrCameraAttributes\", 0)";
+		}
+	}
+
+	// shading engine menu items
+	if ($type == "shadingEngine") {
+		if (!`attributeQuery -exists -node $gAECurrentTab "ilrPhotonShader"`) {
+			menuItem -l "Add Shading Group Attributes" -c "ilrAttributesOnSelection(\"ilrShadingGroupAttributes\", 1)";
+		} else {
+			menuItem -l "Remove Shading Group Attributes" -c "ilrAttributesOnSelection(\"ilrShadingGroupAttributes\", 0)";
+		}
+	}
+
+	// displacement shader menu items
+	if ($type == "displacementShader") {
+		if (!`attributeQuery -exists -node $gAECurrentTab "ilrDisplacementMethod"`) {
+			menuItem -l "Add Displacement Attributes" -c "ilrAttributesOnSelection(\"ilrDisplacementAttributes\", 1)";
+		} else {
+			menuItem -l "Remove Displacement Attributes" -c "ilrAttributesOnSelection(\"ilrDisplacementAttributes\", 0)";
+		}
+	}
+
+	// file menu items
+	if ($type == "file" || $type == "psdFileTex") {
+		if (!`attributeQuery -exists -node $gAECurrentTab "ilrZbrush"`) {
+			menuItem -l "Add File Attributes" -c "ilrAttributesOnSelection(\"ilrTextureAttributes\", 1)";
+		} else {
+			menuItem -l "Remove File Attributes" -c "ilrAttributesOnSelection(\"ilrTextureAttributes\", 0)";
+		}
+	}
+
+	// render layer menu items
+	if ($type == "renderLayer") {
+		if (!`attributeQuery -exists -node $gAECurrentTab "ilrIllumination"`) {
+			menuItem -l "Add Render Layer Attributes" -c "ilrAttributesOnSelection(\"ilrRenderPassAttributes\", 1)";
+		} else {
+			menuItem -l "Remove Render Layer Attributes" -c "ilrAttributesOnSelection(\"ilrRenderPassAttributes\", 0)";
+		}
+	}
+
+
+	if (`menu -q -numberOfItems ilrAEMenu` > 1) {
+		menuItem -divider true -insertAfter "ilrSSEMenuItem";
+	}
+}
+
+global proc ilrAttributesOnSelection(string $attrCmd, int $add) {
+
+	int $i;
+    string $node;
+	string $objects[] = `ls -selection`;
+
+	// extend selected objects to shapes
+	for ($i = 0; $i < size($objects); $i++) {
+		if (`nodeType $objects[$i]` == "transform") {
+			$objects[$i] = ilrExtendToShape($objects[$i]);
+		}
+	}
+
+	// find primary node
+    global string $gAECurrentTab, $gAERootLayoutName;
+    if (`layout -exists $gAERootLayoutName` && `objExists $gAECurrentTab`) {
+		$node = $gAECurrentTab;
+	} else {
+		if (size($objects) > 0) {
+			$node = $objects[size($objects) - 1];
+		} else {
+			return;
+		}
+	}
+	
+	string $type = `nodeType $node`;
+	
+	// check if there are more nodes of the same type in the selection
+	string $button;
+	for ($item in $objects) {
+		if (`nodeType $item` == $type && !isSameObject($item, $node)) {
+			$button = `confirmDialog -title "Attribute change"
+				-message ("There are more than one object of type " + $type + " in your selection.\nWould you like to make this change to all selected objects of this type?")
+				-button "Yes" -button "No" -defaultButton "No"
+				-cancelButton "No" -dismissString "No"`;
+			break;
+		}
+	}
+
+	// run command on whole selection
+	if ($button == "Yes") {
+		for ($item in $objects) {
+			eval $attrCmd $add $item;
+		}
+	}
+
+	// run command on primary node
+	eval $attrCmd $add $node;
+
+	ilrUpdateAEDeferred();
+	ilrUpdateSpreadSheetEditor();
+}
+
+global proc ilrUpdateSpreadSheetEditor() {
+
+	global string $g_ilrSSEditor;
+	
+	if (! `window -exists $g_ilrSSEditor`) {
+		return;
+	}
+
+	setParent $g_ilrSSEditor;
+	
+	string $attrList[];
+	
+	string $objects[] = `ls -selection`;
+
+	int $i;
+	for ($i = size($objects) - 1; $i >= 0; $i--) {
+		string $node = $objects[$i];
+		if (`nodeType $node` == "transform") {
+			$node = ilrExtendToShape($node);
+		}
+		
+		string $nodeAttr[] = `listAttr $node`;
+		
+		string $attr;
+		for ($attr in $nodeAttr) {
+			if (`match "^ilr" $attr` == "ilr") {
+				$attrList[size($attrList)] = $attr;
+			}
+		}
+	}
+	
+	$attrList = `stringArrayRemoveDuplicates $attrList`;
+	
+	// sseditor shows all attributes if the list is empty so it shuldn't be
+	if (size($attrList) == 0) {
+		$attrList = {""};
+	}
+	
+	spreadSheetEditor -e -fixedAttrList $attrList ilrSpreadSheet;
+}
+
+global proc ilrSpreadSheetEditor() {
+	global string $g_ilrSSEditor;
+
+	if (`window -exists $g_ilrSSEditor`) {
+		return;
+	}
+
+	string $g_ilrSSEditor = `window -title "Turtle Attribute Spread Sheet"`;
+	paneLayout;
+	string $activeList = `selectionConnection -activeList`;
+	spreadSheetEditor -mainListConnection $activeList -keyableOnly false -showShapes true ilrSpreadSheet;
+	ilrUpdateSpreadSheetEditor();
+	window -e -widthHeight 900 600 $g_ilrSSEditor;
+	showWindow $g_ilrSSEditor;
+}
+
+global proc ilrCreateAEEvents()
+{
+	global string $gAERootLayoutName;
+	global string $gAETabLayoutName;
+
+	if (`layout -exists $gAERootLayoutName`) {
+		setParent $gAERootLayoutName;
+
+		// update ae on tab change
+		string $tabSelectCmd = `tabLayout -q -selectCommand $gAETabLayoutName`;
+		if (`match "ilrUpdateAEDeferred" $tabSelectCmd` == "") {
+			tabLayout -e -selectCommand ("ilrUpdateAEDeferred;\n" + $tabSelectCmd) $gAETabLayoutName;
+		}
+		
+		// update ae after it's rebuilt (right after deletion)
+		global int $g_ilrDeleteAEScriptJob;
+		if( !`scriptJob -exists $g_ilrDeleteAEScriptJob` ) {
+			$g_ilrDeleteAEScriptJob = `scriptJob -uiDeleted $gAERootLayoutName "ilrUpdateAEDeferred"`;
+		}
+	}
+}
+
+proc int ilrHasIlrAttrControl(string $node)
+{
+	int $i;
+
+	string $fullPath = `setParent -q` + "|" + $node;
+
+	if (`objectTypeUI $fullPath` == "rowGroupLayout") {
+		string $at = `attrControlGrp -q -attribute $fullPath`;
+
+		string $lb;
+		if (`text -exists ($fullPath + "|label")`) {
+			$lb = `text -q -label ($fullPath + "|label")`;
+		}
+
+		if (`match ".ilr" $at` == ".ilr") {
+			return 1;
+		} else if (`match "^Ilr " $lb` == "Ilr ") {
+			return 1;
+		} else {
+			return 0;
+		}
+	} else if (`objectTypeUI $fullPath` == "staticText") {
+		string $lb = `text -q -label $fullPath`;
+
+		if (`match "^Ilr " $lb` == "Ilr ") {
+			return 1;
+		} else {
+			return 0;
+		}
+	} else {
+		if (!`layout -exists $fullPath`) {
+			return 0;
+		}
+
+		string $nodeChildren[] = `layout -q -ca $fullPath`;
+
+		for ($i = 0; $i < size($nodeChildren); $i++) {
+			if (ilrHasIlrAttrControl($node + "|" + $nodeChildren[$i])) {
+				return 1;
+			}
+		}
+	}
+
+	return 0;
+}
+
+global proc ilrUpdateAEDeferred()
+{
+    evalDeferred -lowestPriority "ilrUpdateAE";
+}
+
+global proc ilrUpdateAE()
+{
+	int $i, $j;
+	string $node;
+	string $turtleAELabel = "Turtle";
+	global string $gAETabLayoutName;
+	global string $gAEControlLayoutName;
+	global string $gAECurrentTab;
+
+	ilrCreateAEEvents;
+	ilrBuildAEMenu;
+	
+	if (!`layout -exists $gAETabLayoutName`) {
+		return;
+	}
+	setParent $gAETabLayoutName;
+
+	$node = $gAECurrentTab;
+	
+	if ($node == "") {
+		string $objects[] = `ls -selection`;
+		if (size($objects) > 0) {
+			$node = $objects[size($objects) - 1];
+			
+			if (`nodeType $node` == "transform") {
+				$node = ilrExtendToShape($node);
+			}
+
+		} else {
+			return;
+		}
+	}
+	
+	string $type = `nodeType $node`;
+
+	// no need to continue from this point if the node type is not one of the following	
+	if (!ilrIsMtrlShader($type) && 
+		!ilrIsLightSource($type) &&
+		$type != "mesh" && $type != "subdiv" && $type != "nurbsSurface" &&
+		$type != "camera" &&
+		$type != "shadingEngine" &&
+		$type != "displacementShader" &&
+		$type != "file" && $type != "psdFileTex" &&
+		$type != "renderLayer")
+	{
+		return;
+	}
+
+	// update ae when a file node updates image
+	if ($type == "file" || $type == "psdFileTex") {
+		global int $g_ilrFileAEChangeScriptJob;
+		if( `scriptJob -exists $g_ilrFileAEChangeScriptJob` ) {
+			scriptJob -kill $g_ilrFileAEChangeScriptJob;
+		}
+		$g_ilrFileAEChangeScriptJob = `scriptJob -attributeChange ($node + ".fileTextureName") ilrUpdateAEDeferred`;
+	}
+
+	
+	string $nodeTypeForm = "AttrEd" + $type + "FormLayout";
+    
+	if (!`formLayout -exists $nodeTypeForm`) {
+		return;
+	}
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+	
+	// find the columnLayout within the scroller
+	string $colLayout = "";
+
+	setParent $gAEControlLayoutName;
+	setParent $nodeTypeForm;
+
+	string $formChildren[] = `layout -q -ca $nodeTypeForm`;
+
+	for ($i = 0; $i < size($formChildren) && $colLayout == ""; $i++) {
+		if (`match "^scrollLayout" $formChildren[$i]` == "scrollLayout") {
+			string $scrollChildren[] = `layout -q -ca $formChildren[$i]`;
+
+			for ($j = 0; $j < size($scrollChildren); $j++) {
+				if (`match "^columnLayout" $scrollChildren[$j]` == "columnLayout") {
+					$colLayout = $scrollChildren[$j];
+					break;
+				}
+			}
+		}
+	}
+
+	// find the turtle frame and empty it, find the extra attributes frame and hide all Turtle controls
+	string $turtleFrame = "";
+
+	if ($colLayout != "") {
+		setParent $colLayout;
+		string $colChildren[] = `layout -q -ca $colLayout`;
+
+		for ($i = 0; $i < size($colChildren); $i++ ) {
+			if (`match "^frameLayout" $colChildren[$i]` == "frameLayout") {
+				string $lbl = `frameLayout -q -label $colChildren[$i]`;
+
+				// remove all controls in the Turtle frame.
+				if ($lbl == $turtleAELabel) {
+					$turtleFrame = $colChildren[$i];
+					string $frameChildren[] = `layout -q -ca $turtleFrame`;
+					for ($j = 0; $j < size($frameChildren); $j++ ) {
+						deleteUI $frameChildren[$j];
+					}
+				}
+
+				// hide the Turtle controls in extra attributes.
+				if ($lbl == "Extra Attributes") {
+					string $eaFrame = $colChildren[$i];
+					
+					string $frameChildren[] = `layout -q -ca $eaFrame`;
+					if (size($frameChildren) == 1) {
+						string $controls[] = `layout -q -ca $frameChildren[0]`;
+						
+						if (size($controls) > 0) {
+							frameLayout -edit -expandCommand "" $eaFrame;
+						} else {
+							frameLayout -edit -expandCommand "ilrUpdateAEDeferred" $eaFrame;
+						}
+						
+						for ($j = 0; $j < size($controls); $j++) {
+							if (ilrHasIlrAttrControl($eaFrame + "|" + $frameChildren[0] + "|" + $controls[$j])) {
+								control -e -vis 0 $controls[$j];
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// check to see if we've got any Turtle attributes on the node.
+	string $attrs[] = `listAttr -ud $node`;
+	int $hasTurtleAttrs = 0;
+	for ($i = 0; $i < size($attrs); $i++) {
+		if (`match "^ilr" $attrs[$i]` == "ilr") {
+			$hasTurtleAttrs = 1;
+			break;
+		}
+	}
+
+	if ($hasTurtleAttrs) {
+		if ($turtleFrame != "") {
+			setParent $turtleFrame;
+		} else {
+			$turtleFrame = `frameLayout -label $turtleAELabel -cll true -cl true`;
+			if ($colLayout == "") {
+				formLayout -e -attachForm $turtleFrame "bottom" 5 $nodeTypeForm;
+			}
+		}
+		string $turtleColumn = `columnLayout -parent $turtleFrame -adjustableColumn true`;
+		
+
+		if ($type == "mesh" || $type == "subdiv" || $type == "nurbsSurface") {
+			ilrCreateAEGeometryShapeOptions($turtleColumn, $node);
+		}
+	
+		if (ilrIsMtrlShader($type)) {
+			ilrCreateAESurfaceShaderOptions($turtleColumn, $node);
+		}
+
+		if (ilrIsLightSource($type)) {
+			ilrCreateAELightOptions($turtleColumn, $node);
+		}
+
+		if ($type == "camera") {
+			ilrCreateAECameraOptions($turtleColumn, $node);
+		}
+
+		if ($type == "shadingEngine") {
+			ilrCreateAEShadingEngineOptions($turtleColumn, $node);
+		}
+
+		if ($type == "displacementShader") {
+			ilrCreateAEDisplacementShaderOptions($turtleColumn, $node);
+		}
+
+		if ($type == "file" || $type == "psdFileTex") {
+			ilrCreateAEFileOptions($turtleColumn, $node);
+		}
+
+		if ($type == "renderLayer") {
+			ilrCreateAERenderLayerOptions($turtleColumn, $node);
+		}
+
+	} else {
+		if ($turtleFrame != "") {
+			deleteUI $turtleFrame;
+		}	
+	}
+	
+	setUITemplate -popTemplate;
+}
+
+global proc ilrUserInterface(int $add)
+{	
+	global string $g_ilrUIItems[];
+	global int $g_ilrScriptJobs[];
+	global float $g_ilrMayaVersion;
+	
+	if ($add)
+	{
+		// Add baking stuff to the Shading/Lighting menu
+		//
+		global string $gMainLightingMenu;
+		RenShadersMenu $gMainLightingMenu;
+		setParent -menu $gMainLightingMenu;
+		$g_ilrUIItems[size($g_ilrUIItems)] = `menuItem -divider true`;
+		$g_ilrUIItems[size($g_ilrUIItems)] = `menuItem -l "Bake Layer Editor (TURTLE) ..." -c "ilrBakeLayerEditor"`;
+		$g_ilrUIItems[size($g_ilrUIItems)] = `menuItem -l "Point Cloud Bake Editor (TURTLE) ..." -c "ilrPointCloudBakeEditor"`;
+		$g_ilrUIItems[size($g_ilrUIItems)] = `menuItem -l "Assign New Bake Layer (TURTLE)" -c "ilrCreateBakeLayer(\"\", 1)"`;
+		string $menuItemPath = `menuItem -l "Assign Existing Bake Layer (TURTLE)" -subMenu true -allowOptionBoxes true`;
+		menuItem -edit -postMenuCommand ("ilrBuildAssignBakeLayerMenu(\"" + $menuItemPath + "\")") $menuItemPath;
+		$g_ilrUIItems[size($g_ilrUIItems)] = $menuItemPath;
+		setParent -menu ..;
+
+
+		ilrRegisterRenderer();
+		ilrInitScene();
+		ilrUpdateAE();
+	}
+	else
+	{
+		ilrUnRegisterRenderer();
+
+		int $i;
+
+		// delete created UI items
+		for ($i = 0; $i < size($g_ilrUIItems); $i++)
+		{
+			deleteUI $g_ilrUIItems[$i];
+		}
+		clear($g_ilrUIItems);
+
+		// kill created script jobs
+		for ($i = 0; $i < size($g_ilrScriptJobs); $i++)
+		{
+			scriptJob -force -kill $g_ilrScriptJobs[$i];
+		}
+		clear($g_ilrScriptJobs);
+
+		// kill ae stuff
+		global int $g_ilrDeleteAEScriptJob, $g_ilrFileAEChangeScriptJob;
+		if (`scriptJob -exists $g_ilrDeleteAEScriptJob`) {
+			scriptJob -kill $g_ilrDeleteAEScriptJob;
+		}
+
+		if (`scriptJob -exists $g_ilrFileAEChangeScriptJob`) {
+			scriptJob -kill $g_ilrFileAEChangeScriptJob;
+		}
+		
+		global string $g_ilrAEMenu;
+		if (`menu -exists $g_ilrAEMenu`) {
+			deleteUI $g_ilrAEMenu;
+		}
+
+		global string $g_ilrSSEditor;
+		if (`window -exists $g_ilrSSEditor`) {
+			deleteUI $g_ilrSSEditor;
+		}
+	}
+}

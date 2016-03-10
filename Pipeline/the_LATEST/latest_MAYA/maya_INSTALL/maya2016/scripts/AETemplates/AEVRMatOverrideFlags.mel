@@ -1,0 +1,343 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+/// Utility Stuff ///
+// Takes a node-name with attribute combination (i.e. Node.Attribute) 
+// and spits out the node's name
+//
+proc string FindMainNodeName(string $strNodeName)
+{
+	string $strBuffer[];
+	tokenize($strNodeName, ".", $strBuffer);
+	return $strBuffer[0];
+}
+
+/////////////////////////////////////////////////////
+///////////// Edge Weights Control  /////////////////
+/////////////////////////////////////////////////////
+// This sets the actual attribute for the Edge Weight
+//
+global proc VRMATSetEdgeWeight(string $strNodeName)
+{
+	string $strMainNodeName = FindMainNodeName($strNodeName);
+	string $strNodeType = `nodeType ($strNodeName)`;
+	string $strWidgetName = $strNodeType + "fsEdgeWeightCtrl";
+	string $strOptionWidgetName = $strNodeType + "omEdgeWeightPresets";
+
+	float $fEdgeWeight = `floatSliderGrp -q -v ($strWidgetName)`;
+	setAttr ($strMainNodeName + ".vrEdgeWeight") $fEdgeWeight;
+	optionMenuGrp -e -sl 15 ($strOptionWidgetName);
+}
+
+global proc VRMATCreateEdgeWeightControl(int $nCreateUI, 
+										string $strNodeName )
+{
+	string $strMainNodeName = FindMainNodeName($strNodeName);
+	string $strNodeType = `nodeType ($strMainNodeName)`;
+	string $strWidgetName = $strNodeType + "fsEdgeWeightCtrl";
+	
+	if ($nCreateUI)
+	{
+		floatSliderGrp	-label (uiRes("m_AEVRMatOverrideFlags.kEdgeWeight"))  
+						-min -1 -max 30 -value 0 -step 0.5 
+						-cc ("VRMATSetEdgeWeight " + $strMainNodeName) 
+						($strWidgetName);
+	} else { 
+		floatSliderGrp -e 
+			-cc ("VRMATSetEdgeWeight " + $strMainNodeName)
+			($strWidgetName);
+	}
+	
+	// I don't need to create it, and by this point, 
+	// it should already exist so, we need to set it 
+	// to the attribute that it is
+	float $fEdgeWeight = `getAttr ($strMainNodeName + ".vrEdgeWeight")`;
+	floatSliderGrp -e -v $fEdgeWeight ($strWidgetName);
+}
+
+global proc VRMATCreateEdgeWeightControlUI(string $strNodeName)
+{
+	VRMATCreateEdgeWeightControl(true, $strNodeName);
+}
+
+global proc VRMATReplaceEdgeWeightControlUI(string $strNodeName)
+{
+	VRMATCreateEdgeWeightControl(false, $strNodeName);
+}
+///////////////////////////////////////////////////////////////////////
+
+///////////////////////////////////////////////////////
+/////////////////// Edge Weights UI ///////////////////
+///////////////////////////////////////////////////////
+global proc VRMATChangeEdgeWeights(string $strNodeName)
+{
+	string $strMainNodeName = $strNodeName;
+	string $strNodeType = `nodeType ($strNodeName)`;
+	string $strWidgetName = $strNodeType + "fsEdgeWeightCtrl";
+	string $strWidgetName2 = $strNodeType + "omEdgeWeightPresets";
+
+	// first, get the current selection
+	int $nCurrSelection = `optionMenuGrp -q -sl ($strWidgetName2)`;
+
+	// now, I need a list of the numbers in the dropdown menu
+	float $fEdgeWeightPresets[14];
+	float $fCurrValue = 0.0;
+	$fEdgeWeightPresets = {-1.0,0.0,0.5,1.0,1.5,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0};
+	int $nNumWeights = size($fEdgeWeightPresets);
+	
+	// border-line case: if it's custom, we won't do anything, 
+	// but if it's default or hairline, we need special cases
+	if ($nCurrSelection == 1)
+	{
+		setAttr ($strNodeName + ".vrEdgeWeight") -1;
+		$fCurrValue = -1;
+	}
+	else if ($nCurrSelection == 2)
+	{
+		setAttr ($strNodeName + ".vrEdgeWeight") 0;
+		$fCurrValue = 0;
+	}
+	else if (($nCurrSelection >= 2) && ($nCurrSelection <= $nNumWeights))
+	{
+		setAttr ($strNodeName + ".vrEdgeWeight") 
+			$fEdgeWeightPresets [$nCurrSelection - 1];
+		$fCurrValue = $fEdgeWeightPresets[$nCurrSelection - 1];
+	}
+	
+	floatSliderGrp -e -v $fCurrValue $strWidgetName;
+}
+
+global proc VRMATCreateEdgeWeightPreset(int $nCreateUI, 
+										string $strNodeName )
+{	
+	string $strMainNodeName = FindMainNodeName($strNodeName);
+	string $strNodeType = `nodeType ($strMainNodeName)`;
+	string $strWidgetName = $strNodeType + "omEdgeWeightPresets";
+		
+	// Now, we need a list of the numbers in the dropdown menu.
+	float $fEdgeWeightPresets[14];
+	$fEdgeWeightPresets = {-1.0, 0.0,0.5,1.0,1.5,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0};
+	
+	int $nStart = 0;
+	int $nFinish = size($fEdgeWeightPresets);
+	float $fCurrItem = 0;
+	string $strItemText = "";
+		
+	// Our basic scenario is if the UI element exists or not and this 
+	// will be run only once since the UI is custom, it will have one 
+	// global instance when creating different shaders, the create 
+	// function is called when calling multiple iterations of the same 
+	// shader, the replace is called
+	//
+	if ($nCreateUI)
+	{
+		optionMenuGrp	-label (uiRes("m_AEVRMatOverrideFlags.kEdgeWeightPresets"))  
+						-cal 1 "right" 
+						-cal 2 "center" 
+						-cc ("VRMATChangeEdgeWeights " + $strMainNodeName) 
+						($strWidgetName);
+				
+		for ($nStart = 0; $nStart < $nFinish; $nStart++)
+		{
+			$fCurrItem = $fEdgeWeightPresets[$nStart];
+			if ($fCurrItem == -1.0)
+			{
+				$strItemText = (uiRes("m_AEVRMatOverrideFlags.kEdgeWeightDefault"));
+			}
+			else if ($fCurrItem == 0.0) 
+			{
+				$strItemText = (uiRes("m_AEVRMatOverrideFlags.kHairline"));
+			}
+			else
+			{
+				string $fmt = (uiRes("m_AEVRMatOverrideFlags.kPtFmt"));
+				$strItemText = `format -s $fCurrItem $fmt`;
+			}
+			
+			menuItem -label $strItemText;
+		}
+		menuItem -label (uiRes("m_AEVRMatOverrideFlags.kCustom")) ;
+	}
+	
+	// Now, if we're doing a replace and the UI does exist, 
+	// which it should by this point so we can set it's value 
+	// to the actual value of the attribute 
+	// (which should also exist by this point)
+
+	float $fEdgeWeight = `getAttr ($strMainNodeName + ".vrEdgeWeight")`;
+
+	if ($fEdgeWeight == -1.0) 
+	{
+		optionMenuGrp -e -sl 1 $strWidgetName;
+	}
+	else if ($fEdgeWeight == 0.0) 
+	{
+		optionMenuGrp -e -sl 2 $strWidgetName;
+	}
+	else
+	{
+		// set it to custom if it isn't anything else
+		optionMenuGrp -e -sl ($nFinish+1) $strWidgetName;
+		for ($nStart = 2; $nStart < $nFinish; $nStart++)
+		{
+			if ($fEdgeWeight == $fEdgeWeightPresets[$nStart])
+			{
+				optionMenuGrp -e -sl ($nStart + 1) $strWidgetName;
+			}
+		}
+	}	
+}
+
+global proc VRMATCreateEdgeWeightPresetUI(string $strNodeName)
+{
+	VRMATCreateEdgeWeightPreset(true, $strNodeName);
+}
+
+global proc VRMATReplaceEdgeWeightPresetUI(string $strNodeName)
+{
+	VRMATCreateEdgeWeightPreset(false, $strNodeName);
+}
+
+//////////////////////////////////////////////////////////////////////
+
+global proc VRMATEnableEdgeStyleOps(string $strNodeName, int $nEnable)
+{
+	editorTemplate -dimControl $strNodeName "vrEdgeColor" (!$nEnable);
+	editorTemplate -dimControl $strNodeName "vrHiddenEdges" (!$nEnable);
+	editorTemplate -dimControl $strNodeName "vrHiddenEdgesOnTransparent" (!$nEnable);
+	editorTemplate -dimControl $strNodeName "vrOutlinesAtIntersections" (!$nEnable);
+	editorTemplate -dimControl $strNodeName "vrEdgePriority" (!$nEnable);
+}
+
+global proc VRMATEdgeStyleControl(string $strNodeName)
+{
+	int $ov = `getAttr ($strNodeName + ".vrOverwriteDefaults")`;
+	if ( $ov ) { 
+		int $nEdgeStyle = `getAttr ($strNodeName + ".vrEdgeStyle")`;
+		int $nEdgeStyleEnable = (3 != $nEdgeStyle);
+		VRMATEnableEdgeStyleOps($strNodeName, $nEdgeStyleEnable);
+	}
+}
+
+global proc VRMATEnableUI(string $strNodeName)
+{
+	string $strNodeAttr = $strNodeName + ".vrOverwriteDefaults";
+	int $nValue = 0;
+	
+	if ( `objExists $strNodeAttr`) 
+	{
+		$nValue = `getAttr $strNodeAttr`;
+	}
+
+	// In the context of the editorTemplate command, 'dim' means disable
+	editorTemplate -dimControl $strNodeName "vrFillObject" (!$nValue);
+	editorTemplate -dimControl $strNodeName "vrEdgeWeight" (!$nValue);
+	editorTemplate -dimControl $strNodeName "vrEdgeStyle" (!$nValue);
+	
+	if ($nValue)
+	{
+		VRMATEdgeStyleControl($strNodeName);
+	}
+	else
+	{
+		VRMATEnableEdgeStyleOps($strNodeName, $nValue);
+	}
+		
+	string $strNodeType = `nodeType ($strNodeName)`;
+	if (`optionMenuGrp -q -ex ($strNodeType + "omEdgeWeightPresets")`)
+	{
+		optionMenuGrp	-e 
+						-enable $nValue 
+						($strNodeType + "omEdgeWeightPresets");
+	}
+
+	if (`floatSliderGrp -ex ($strNodeType + "fsEdgeWeightCtrl")`)
+	{
+		floatSliderGrp	-e 
+						-en $nValue 
+						($strNodeType + "fsEdgeWeightCtrl");
+	}
+}
+
+global proc VRMATFillObjectUIChanged(string $strNodeName)
+{	
+	string $strRendererName = `getAttr defaultRenderGlobals.ren`;
+	
+	if ($strRendererName != "mayaVector")
+	{
+		return;
+	}
+
+	string $strMainNodeName = FindMainNodeName($strNodeName);
+
+	int $nFillStyle = `getAttr ($strNodeName + ".vrFillObject")`;
+	
+	if (($nFillStyle == 6) || ($nFillStyle == 7))
+	{
+		int $nFileFormat = `getAttr vectorRenderGlobals.imageFormat`;
+		if (($nFileFormat == 1) || ($nFileFormat == 2))
+		{
+			// Set it to average color if a style 
+			// (Area Gradient or Mesh Gradient) that 
+			// doesn't work with EPS or Adobe(R) Illustrator(R) 
+			// file formats is chosen
+			// 
+			string $msg = (uiRes("m_AEVRMatOverrideFlags.kGradientWarn"));
+			warning $msg;
+								
+			setAttr ($strMainNodeName + ".vrFillObject") 5;
+		}
+	}
+}
+
+global proc AEVRMatOverrideFlags(string $node)
+{
+	editorTemplate -beginLayout (uiRes("m_AEVRMatOverrideFlags.kVectorRendererControl"))  -collapse true;
+		setUITemplate -pst attributeEditorTemplate;
+				editorTemplate	-label (uiRes("m_AEVRMatOverrideFlags.kOverwriteDefaultValues"))  
+								-ac "vrOverwriteDefaults" "VRMATEnableUI";
+												
+				editorTemplate	-label (uiRes("m_AEVRMatOverrideFlags.kFillObject"))  
+								-ac "vrFillObject" "VRMATFillObjectUIChanged";
+												
+				editorTemplate	-ccu "VRMATCreateEdgeWeightPresetUI" 
+								"VRMATReplaceEdgeWeightPresetUI" $node;
+												
+				editorTemplate	-ccu "VRMATCreateEdgeWeightControlUI" 
+								"VRMATReplaceEdgeWeightControlUI" $node;
+												
+				editorTemplate	-label (uiRes("m_AEVRMatOverrideFlags.kEdgeStyle"))  
+								-ac "vrEdgeStyle" "VRMATEdgeStyleControl";
+								
+				editorTemplate -label (uiRes("m_AEVRMatOverrideFlags.kEdgeColor"))  -ac "vrEdgeColor";
+				editorTemplate -beginNoOptimize; 
+				editorTemplate -label (uiRes("m_AEVRMatOverrideFlags.kHiddenEdges"))  -ac "vrHiddenEdges";
+				editorTemplate -label (uiRes("m_AEVRMatOverrideFlags.kHiddenEdgesOnTransparent")) 
+							   -ac "vrHiddenEdgesOnTransparent";
+				editorTemplate	-label (uiRes("m_AEVRMatOverrideFlags.kOutlinesAtIntersections")) 
+								-adc "vrOutlinesAtIntersections";
+				editorTemplate -label (uiRes("m_AEVRMatOverrideFlags.kEdgePriority"))  -ac "vrEdgePriority";
+				editorTemplate -endNoOptimize; 
+
+				editorTemplate -suppress "vrEdgeWeight";
+		setUITemplate -ppt;
+	editorTemplate -endLayout;
+}

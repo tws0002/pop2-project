@@ -1,0 +1,1964 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+includeEffectsGlobals();
+
+global string $gSpriteWizardParticle;
+
+proc int swFrameRange()
+//
+//	Description:
+//		Return the selected image frame range
+//
+{
+	int $startFrame = `intFieldGrp -q -value1 swFileRangeInt`;
+	int $endFrame = `intFieldGrp -q -value2 swFileRangeInt`;
+	return ($endFrame-$startFrame);
+}
+
+proc int newImageFileName(string $imageFile)
+//
+//	Description:
+//		Return whether the file name is new or not
+//
+{
+	global string $gSpriteWizardParticle;
+	string $fileTexture = particleSpriteFileTexture( $gSpriteWizardParticle );
+	if ("" != $fileTexture) {
+		string $file = `getAttr ($fileTexture+".fileTextureName")`;
+		return ($file != $imageFile);
+	}
+	return 0;
+}
+
+proc int existingSpriteAnimation()
+//
+//	Description:
+//		Return the current sprite animation attribute value
+//
+{
+	global string $gSpriteWizardParticle;
+	if("" != $gSpriteWizardParticle &&
+	   `attributeQuery -exists -node $gSpriteWizardParticle SpriteAnimation` ) {
+		int $animVal = `getAttr ($gSpriteWizardParticle+".SpriteAnimation")`;
+		return $animVal;
+	}
+	return 0;
+}
+
+proc createHelpButtons(string $parent)
+// 
+//	Description:
+//		Create buttons (one for each frame) that also switch between
+//		the tabs.
+//
+//	Arguments:
+//		The parent argument is assumed to be a formLayout.
+//
+{
+	setParent $parent;
+
+	string $frame1 = `button -label (uiRes("m_spriteWizard.kClose")) 
+									-annotation (uiRes("m_spriteWizard.kCloseThisWindowAnnot")) 
+                                    -command "deleteUI WizardHelpWindow"`;
+
+    string $frame2 = `button -label (uiRes("m_spriteWizard.kReadManual"))  
+					-annotation (uiRes("m_spriteWizard.kOpenWebWindowToTheManualToAnnot")) 
+					-command ("//showHelp")`;  // Marker needs to be added
+
+	formLayout -edit
+		-attachForm     $frame1 "top"    5
+		-attachForm     $frame1 "left"   5
+		-attachForm     $frame1 "bottom" 5
+		-attachPosition $frame1 "right"  2 50
+
+		-attachForm     $frame2 "top"    5
+		-attachPosition $frame2 "left"   2 50
+		-attachPosition $frame2 "right"  2 100
+		-attachForm     $frame2 "bottom" 5
+
+		$parent;
+}
+
+proc wizardHelpWindow(string $helpTitle, string $helpText[])
+{
+	//	If the window already exists then just show it and return.
+	//
+	if (`window -exists WizardHelpWindow`) {
+		deleteUI -window WizardHelpWindow;
+	}
+
+	//	Otherwise, build the window.
+	//
+	window -title (uiRes("m_spriteWizard.kSpriteWizardHelp"))
+		-iconName (uiRes("m_spriteWizard.kSpriteWizard")) 
+		-width    500
+		-height   200
+		-sizeable true
+		WizardHelpWindow;
+
+	string $form = `formLayout SpriteWizardForm`;
+
+	string $textArea = `columnLayout`;
+
+	text -align "center" -label $helpTitle;
+	separator -w 200 -h 5;
+	string $txt;
+	for ($txt in $helpText) {
+		text -label $txt;
+	}
+	setParent ..;
+
+	string $buttons = `formLayout`;
+	setParent ..;
+
+	createHelpButtons($buttons);
+	
+	formLayout -edit
+		-attachForm    $textArea    "top"    0
+		-attachForm    $textArea    "left"   0
+		-attachControl $textArea    "bottom" 0 $buttons
+		-attachForm    $textArea    "right"  0
+
+		-attachNone    $buttons "top"
+		-attachForm    $buttons "left"   0
+		-attachForm    $buttons "bottom" 0
+		-attachForm    $buttons "right"  0
+		$form;
+
+	showWindow WizardHelpWindow; 
+}
+
+proc string[] selectedParticleObjects()
+//
+// Description:
+//   Return the list of selected particle objects.
+{
+	string $selList[] = `ls -sl`;
+	int $particleCount;
+	string $list[];
+
+	int $i;
+	for ($i = size($selList)-1; $i >= 0; $i--)
+	{
+		if (`particleExists $selList[$i]`)
+		{
+			$list[ $particleCount ] = $selList[$i];
+			$particleCount++;
+		}
+	}
+	return $list;
+}
+
+global proc int particleIsSelected()
+//
+// Description:
+//   Return true if some particle object is selected, false otherwise.
+{
+	string $selList[] = selectedParticleObjects();
+	return (size($selList) > 0);
+}
+
+global proc spriteWizard( string $object, string $image )
+// 
+// Description:
+//   Determine the exact sequence of images to be used (sorting out issues of
+// suffixes and suff formatting), then launch the main wizard window.
+{
+	// Get the particle shape.
+	//
+	string $shape = getShapeFromObject( $object, 0, 0 );
+
+	// Build and launch the wizard window
+	//
+	wizardWindow( $shape, $image );
+}
+
+global proc spriteWizardVisor( string $image )
+//
+// Description:
+//   This is the front end to invoke the wizard from Visor.
+// Currently it just passes the file name to the main wizard.
+{ 
+	// Get list of selected particle objects.
+	//
+	string $objects[] = selectedParticleObjects();	
+	if (size($objects) == 0)
+	{
+		error (uiRes("m_spriteWizard.kChooseErr"));
+		return;
+	}
+	else
+	if (size($objects) > 1)
+	{
+		error (uiRes("m_spriteWizard.kOneErr"));
+		return;
+	}
+
+	spriteWizard( $objects[0], $image );
+}
+
+
+global proc spriteWizardMenu()
+//
+// Description:
+//   This is the front end for the wizard from the Particles menu.
+// It invokes a file dialog to get an image name, and passes
+// that to the main wizard.
+//
+{
+	// We need a unique selected particle object to proceed.
+	//
+	string $objects[] = selectedParticleObjects();
+	
+	if (size($objects) == 0)
+	{
+		error (uiRes("m_spriteWizard.kChooseErr2"));
+		return;
+	}
+	else
+	if (size($objects) > 1)
+	{
+		error (uiRes("m_spriteWizard.kOneErr2"));
+		return;
+	}
+
+	spriteWizard( $objects[0], "" );
+}
+
+proc doApplySprites()
+//
+//  Description:
+//  This is the routine which finishes the wizard's action by actually applying the sprites.
+//  It reads the input values from the controls and calls the applySpriteWizard script
+//  to make the nodes and generate the expressions.
+{
+
+	// User has hit "apply."  Apply the sprites, we're done.
+	//
+	int $startFrame = `intFieldGrp -q -value1 swFileRangeInt`;
+	int $endFrame = `intFieldGrp -q -value2 swFileRangeInt`;
+	string $shape = `textField -q -text swGlobalParticleShape`;
+	string $image = `textFieldButtonGrp -q -fileName swFileSelectionGroup`;
+
+	int $animation = 0; 
+	int $selection = 0;
+	int $cycle = 0;
+	float $cycleLength = 100;
+	int $invert  = 0;
+
+	//
+	// Get the animation option.
+	//
+	string $animationOption = `radioCollection -q -select
+		swAnimationOptionCollection`;
+	if( $animationOption == "swSingleImageButton" )
+	{
+		$animation = 0;
+	}
+	else if( $animationOption == "swCycleButton" )
+	{
+		$animation = 1;
+	}
+	else
+	{
+		$animation = existingSpriteAnimation();
+	}
+
+	//
+	// Get the image selection option.
+	//
+	string $imageSelectionOption = `radioCollection -q -select
+		swImageSelectionOptionCollection`;
+	if( $imageSelectionOption == "swFirstImageButton" )
+	{
+		$selection = 0;
+	}
+	else if( $imageSelectionOption == "swParticleIdButton" )
+	{
+		$selection = 1;
+	}
+	else if( $imageSelectionOption == "swRandomButton" )
+	{
+		$selection = 2;
+	}
+	else if( $imageSelectionOption == "swSpriteNumPPButton" )
+	{
+		$selection = 3;
+	}
+	else if( $imageSelectionOption == "swInitRampButton" )
+	{
+		$selection = 4;
+	}
+	else
+	{
+		warning (uiRes("m_spriteWizard.kInvalidImg"));
+	}
+
+	//
+	// Get the cycle option.
+	//
+	string $cycleOption = `radioCollection -q -select
+		swCycleOptionCollection`;
+	if( $cycleOption == "swLinearUpButton" )
+	{
+		$cycle = 0;
+	}
+	else if( $cycleOption == "swSmoothUpButton" )
+	{
+		$cycle = 1;
+	}
+	else if( $cycleOption == "swLinearUpDownButton" )
+	{
+		$cycle = 2;
+	}
+	else if( $cycleOption == "swSmoothUpDownButton" )
+	{
+		$cycle = 3;
+	}
+	else if ( $cycleOption == "swSpriteCustomButton" )
+	{
+		$cycle = 4;
+	}
+	else if ( $cycleOption == "swRampButton" )
+	{
+		$cycle = 5;
+	}
+
+	//
+	// Get cycle length.
+	//
+	if( `checkBox -q -value swCycleOnceCheckbox` )
+	{
+		$cycleLength = 0;
+	}
+	else
+	{
+		$cycleLength = `floatSliderGrp -q -value swCycleLengthValue`;
+	}
+
+	//
+	// Get the invert value.
+	//
+	if( $animation == 0 )
+	{
+		if( `radioCollection -q -select
+			swCycleOptionCollection` == "swRampButton" )
+		{
+			$invert = `checkBox -q -value swInvertRampCheckbox`;
+		}
+	}
+	else
+	{
+		if( `radioCollection -q -select
+			swCycleOptionCollection` == "swRampButton" )
+		{
+			$invert = `checkBox -q -value swInvertRampCheckbox`;
+		}
+		else
+		{
+			$invert = `checkBox -q -value swInvertCycleCheckbox`;
+		}
+	}
+
+	// Invoke applySpriteWizard to build the sprites.
+	//
+	applySpriteWizard( $shape, $image, $startFrame, $endFrame,
+		$animation, $selection, $cycle, $cycleLength, $invert  );
+		
+	// Take down the sprite wizard window
+	//
+	deleteUI -window WizardExampleWindow;
+}
+
+global proc wizardExampleWindowSelectFileSelection()
+{
+	textField -e -text "file" swGlobalCurrentFrame;
+	tabLayout -edit
+		-selectTab swFileSelectionLayout WizardExampleWindowTabs;
+
+	string $selectedFile =
+		`textFieldButtonGrp -q -fileName swFileSelectionGroup`;
+
+	if( ( $selectedFile == "" ) ||
+		( `filetest -r $selectedFile` == 0 ) )
+	{
+		button -e -enable false applyContinueButton;
+	}
+	else
+	{
+		button -e -enable true applyContinueButton;
+	}
+
+	button -e -label (uiRes("m_spriteWizard.kContinue"))  applyContinueButton;
+	button -e -enable false backButton;
+}
+
+global proc wizardExampleWindowSelectAnimation()
+// 
+//      Description:
+//              Invoked when Frame 1 button is selected.
+//
+//              Make Frame 1 active.
+//
+{
+	textField -e -text "animation" swGlobalCurrentFrame;
+	tabLayout -edit
+		-selectTab swAnimationOptionsLayout WizardExampleWindowTabs;
+
+	updateAnimationApplyButton();
+	button -e -enable true backButton;
+}
+
+global proc wizardExampleWindowSelectImageSelection()
+// 
+//      Description:
+//              Invoked when Frame 2 button is selected.
+//
+//              Make Frame 2 active.
+//
+{
+	textField -e -text "imageSelection" swGlobalCurrentFrame;
+	tabLayout -edit
+		-selectTab swImageSelectionLayout WizardExampleWindowTabs;
+
+	button -e -label (uiRes("m_spriteWizard.kContinue2"))  applyContinueButton;
+	button -e -enable true backButton;
+}
+
+global proc wizardExampleWindowSelectCycle()
+// 
+//      Description:
+//              Invoked when Frame 3 button is selected.
+//
+//              Make Frame 3 active.
+//
+{
+	textField -e -text "cycle" swGlobalCurrentFrame;
+	tabLayout -edit
+		-selectTab swCycleOptionsLayout WizardExampleWindowTabs;
+
+	button -e -label (uiRes("m_spriteWizard.kContinue3"))  applyContinueButton;
+	button -e -enable true backButton;
+}
+
+global proc wizardExampleWindowSelectSummary()
+// 
+//      Description:
+//              Invoked when Frame 3 button is selected.
+//
+//              Make Frame 3 active.
+//
+{
+	//
+	// Generate the summary string.
+	//
+	int $startFrame = `intFieldGrp -q -value1 swFileRangeInt`;
+	int $endFrame = `intFieldGrp -q -value2 swFileRangeInt`;
+	string $shape = `textField -q -text swGlobalParticleShape`;
+	string $image = `textFieldButtonGrp -q -fileName swFileSelectionGroup`;
+
+	int $animation = 0; 
+	int $selection = 0;
+	int $cycle = 0;
+	float $cycleLength = 100;
+	int $invert  = 0;
+
+	//
+	// Get the animation option.
+	//
+	string $animationOption = `radioCollection -q -select
+		swAnimationOptionCollection`;
+	if( $animationOption == "swSingleImageButton" )
+	{
+		$animation = 0;
+	}
+	else if( $animationOption == "swCycleButton" )
+	{
+		$animation = 1;
+	}
+	else
+	{
+		warning (uiRes("m_spriteWizard.kInvSprite"));
+	}
+
+	//
+	// Get the image selection option.
+	//
+	string $imageSelectionOption = `radioCollection -q -select
+		swImageSelectionOptionCollection`;
+	if( $imageSelectionOption == "swFirstImageButton" )
+	{
+		$selection = 0;
+	}
+	else if( $imageSelectionOption == "swParticleIdButton" )
+	{
+		$selection = 1;
+	}
+	else if( $imageSelectionOption == "swRandomButton" )
+	{
+		$selection = 2;
+	}
+	else if( $imageSelectionOption == "swSpriteNumPPButton" )
+	{
+		$selection = 3;
+	}
+	else if( $imageSelectionOption == "swInitRampButton" )
+	{
+		$selection = 4;
+	}
+	else
+	{
+		warning (uiRes("m_spriteWizard.kInvSel"));
+	}
+
+	//
+	// Get the cycle option.
+	//
+	string $cycleOption = `radioCollection -q -select
+		swCycleOptionCollection`;
+	if( $cycleOption == "swLinearUpButton" )
+	{
+		$cycle = 0;
+	}
+	else if( $cycleOption == "swSmoothUpButton" )
+	{
+		$cycle = 1;
+	}
+	else if( $cycleOption == "swLinearUpDownButton" )
+	{
+		$cycle = 2;
+	}
+	else if( $cycleOption == "swSmoothUpDownButton" )
+	{
+		$cycle = 3;
+	}
+	else if( $cycleOption == "swSpriteCustomButton" )
+	{
+		$cycle = 4;
+	}
+	else if( $cycleOption == "swRampButton" )
+	{
+		$cycle = 5;
+	}
+
+	//
+	// Get cycle length.
+	//
+	if( `checkBox -q -value swCycleOnceCheckbox` )
+	{
+		$cycleLength = 0;
+	}
+	else
+	{
+		$cycleLength = `floatSliderGrp -q -value swCycleLengthValue`;
+	}
+
+	//
+	// Get the invert value.
+	//
+	if( $animation == 0 )
+	{
+		if( `radioCollection -q -select
+			swImageSelectionOptionCollection` == "swRampButton" )
+		{
+			$invert = `checkBox -q -value swInvertRampCheckbox`;
+		}
+	}
+	else
+	{
+		if( `radioCollection -q -select
+			swImageSelectionOptionCollection` == "swRampButton" )
+		{
+			$invert = `checkBox -q -value swInvertRampCheckbox`;
+		}
+		else
+		{
+			$invert = `checkBox -q -value swInvertCycleCheckbox`;
+		}
+	}
+
+	string $summary;
+
+	string $particleFmt = (uiRes("m_spriteWizard.kParticleObj"));
+	string $spriteFmt   = (uiRes("m_spriteWizard.kSpriteImg"));
+
+	$summary += `format -s $shape $particleFmt`;
+	$summary += `format -s $image -s $startFrame -s $endFrame $spriteFmt`;
+
+	if( $animation == 0 )
+	{
+		string $animFmt = (uiRes("m_spriteWizard.kNoAnim"));
+		string $animDetail;
+		switch( $selection )
+		{
+			case 0:
+				$animDetail = (uiRes("m_spriteWizard.kFirst"));
+				break;
+			case 1:
+				$animDetail = (uiRes("m_spriteWizard.kPartID"));
+				break;
+			case 2:
+				$animDetail = (uiRes("m_spriteWizard.kRand"));
+				break;
+			case 3:
+				$animDetail = (uiRes("m_spriteWizard.kSpriteNum"));
+				break;
+			case 4:
+				if( $invert == 0 )
+				{
+					$animDetail = (uiRes("m_spriteWizard.kRamp"));
+				}
+				else
+				{
+					$animDetail = (uiRes("m_spriteWizard.kRampInv"));
+				}
+				break;
+		}
+
+		$summary += `format -s $animDetail $animFmt`;
+	}
+	else
+	{
+		string $animFmt = (uiRes("m_spriteWizard.kCycleImages"));
+		string $animDetail1, $animDetail2;
+
+		switch( $selection )
+		{
+			case 0:
+				$animDetail1 = (uiRes("m_spriteWizard.kAllFirst"));
+				break;
+			case 1:
+				$animDetail1 = (uiRes("m_spriteWizard.kEachID"));
+				break;
+			case 2:
+				$animDetail1 = (uiRes("m_spriteWizard.kEachRnd"));
+				break;
+			case 3:
+				$animDetail1 = (uiRes("m_spriteWizard.kEachPP"));
+				break;
+			case 4:
+				$animDetail1 = (uiRes("m_spriteWizard.kEachRamp"));
+				break;
+		}
+     
+		if( $cycleLength == 0 ) {
+			switch( $cycle ) {
+				case 0:
+					if( $invert == 1 ) {
+						$animDetail2 = (uiRes("m_spriteWizard.kCycleDownLinearly"));
+					} else {
+						$animDetail2 = (uiRes("m_spriteWizard.kCycleUpLinearly"));
+					}
+					break;
+				case 1:
+					if( $invert == 1 ) {
+						$animDetail2 = (uiRes("m_spriteWizard.kEaseDownOnce"));
+					} else {
+						$animDetail2 = (uiRes("m_spriteWizard.kEaseUpOnce"));
+					}
+					break;
+				case 2:
+					if( $invert == 1 ) {
+						$animDetail2 = (uiRes("m_spriteWizard.kDownLinearly"));
+					} else {
+						$animDetail2 = (uiRes("m_spriteWizard.kUpLinearly"));
+					}
+					break;
+				case 3:
+					if( $invert == 1 ) {
+						$animDetail2 = (uiRes("m_spriteWizard.kEaseDownUpOnce"));
+					} else {
+						$animDetail2 = (uiRes("m_spriteWizard.kEaseUpDownOnce"));
+					}
+					break;
+				case 4:
+					$animDetail2 = (uiRes("m_spriteWizard.kAnimationPP"));
+					break;
+				case 5:
+					$animDetail2 = (uiRes("m_spriteWizard.kRampCycleOnce"));
+					break;
+			}
+		} else {
+			string $fmt2;
+			switch( $cycle ) {
+				case 0:
+					if( $invert == 1 ) {
+						$fmt2 = (uiRes("m_spriteWizard.kCycleDown"));
+					} else {
+						$fmt2 = (uiRes("m_spriteWizard.kCycleUp"));
+					}
+					break;
+				case 1:
+					if( $invert == 1 ) {
+						$fmt2 = (uiRes("m_spriteWizard.kEaseDown"));
+					} else {
+						$fmt2 = (uiRes("m_spriteWizard.kEaseUp"));
+					}
+					break;
+				case 2:
+					if( $invert == 1 ) {
+					    $fmt2 = (uiRes("m_spriteWizard.kDownLin"));
+					} else {
+						$fmt2 = (uiRes("m_spriteWizard.kUpLin"));
+					}	
+					break;
+				case 3:
+					if( $invert == 1 ) {
+						$fmt2 = (uiRes("m_spriteWizard.kEaseDownUp"));
+					} else {
+						$fmt2 = (uiRes("m_spriteWizard.kEaseUpDown"));
+					}
+					break;
+				case 4:
+					$fmt2 = (uiRes("m_spriteWizard.kAnimPP"));
+					break;
+				case 5:
+					$fmt2 = (uiRes("m_spriteWizard.kRampCycle"));	
+					break;
+			}
+		    $animDetail2 = `format -s $cycleLength $fmt2`;
+		}
+		$summary += `format -s $animDetail1 -s $animDetail2 $animFmt`;
+	}
+
+	scrollField -e -text $summary swSummaryField;
+
+	//
+	// Display the summary frame.
+	//
+	textField -e -text "summary" swGlobalCurrentFrame;
+	tabLayout -edit
+		-selectTab swSummaryLayout WizardExampleWindowTabs;
+
+	button -e -label (uiRes("m_spriteWizard.kApply"))  applyContinueButton;
+	button -e -enable true backButton;
+}
+
+global proc swApplyContinueCallback()
+//
+//  Description: 
+//    This is the callback for when the the "apply"/"continue" button
+//    in the sprite wizard is pushed.
+{
+	string $currentFrame = `textField -q -text swGlobalCurrentFrame`;
+	if ( $currentFrame == "file" ) {
+		int $frameRange = swFrameRange();
+		if ($frameRange == 0) {
+			wizardExampleWindowSelectSummary();			
+		} else {
+			wizardExampleWindowSelectAnimation();
+		}
+	}
+	else if ( $currentFrame == "animation" ) {
+		if (`radioButton -q -sl swSameSetupButton`) {
+			doApplySprites();
+		} else {
+			wizardExampleWindowSelectImageSelection();
+		}
+	}
+	else if ( $currentFrame == "imageSelection" ) {
+		if (`radioButton -q -sl swCycleButton`) {
+			wizardExampleWindowSelectCycle();
+		} else {
+			wizardExampleWindowSelectSummary();
+		}
+	}
+	else if ( $currentFrame == "cycle" ) {
+		wizardExampleWindowSelectSummary();
+	}
+	else if ( $currentFrame == "summary" ) {
+		doApplySprites();
+	}			
+}
+
+global proc swBackCallback()
+//
+//  Description: 
+//    This is the callback for the "back" button in the sprite wizard. 
+{
+	string $currentFrame = `textField -q -text swGlobalCurrentFrame`;
+	if( $currentFrame == "file" )
+	{
+		//
+		// This should never happen, but if it does,
+		// reset the animation frame.
+		//
+		wizardExampleWindowSelectFileSelection();
+	}
+	else if( $currentFrame == "animation" )
+	{
+		wizardExampleWindowSelectFileSelection();
+	}
+	else if( $currentFrame == "imageSelection" )
+	{
+		wizardExampleWindowSelectAnimation();
+	}
+	else if( $currentFrame == "cycle" )
+	{
+		wizardExampleWindowSelectImageSelection();
+	}
+	else if( $currentFrame == "summary" )
+	{
+		int $frameRange = swFrameRange();
+		if (0 == $frameRange) {
+			wizardExampleWindowSelectFileSelection();
+		} else {
+			if (`radioButton -q -sl swCycleButton`) {
+				wizardExampleWindowSelectCycle();
+			} else {		
+				wizardExampleWindowSelectImageSelection();
+			}
+		}
+	}
+}
+
+global proc swCloseCallback()
+//
+//  Description: 
+//    This is the callback for the "close" button in the sprite wizard. 
+{
+	deleteUI -window WizardExampleWindow;
+	if (`window -exists WizardHelpWindow`) {
+		deleteUI -window WizardHelpWindow;
+	}
+}
+
+global proc resetSpriteSettings()
+//
+//  Description:  
+//    This is the callback for the "reset settings" button.
+//    Resets settings depending on the screen the user is on.
+//
+{
+	string $currentFrame = `textField -q -text swGlobalCurrentFrame`;
+
+	if ($currentFrame == "file") {
+		textFieldButtonGrp -e -fileName "" swFileSelectionGroup;
+		updateSelectedFileInfo();
+	} else if ($currentFrame == "animation") {
+		radioButton -e -sl swSingleImageButton;
+	} else if ($currentFrame == "imageSelection") {
+		radioButton -e -sl swFirstImageButton;
+		checkBox -e -enable false swInvertRampCheckbox;
+		checkBox -e -value false swInvertRampCheckbox;		
+	} else if( $currentFrame == "cycle" ) {
+		radioButton -e -sl swLinearUpButton;
+		checkBox -e -value true swCycleOnceCheckBox;
+		floatSliderGrp -e -value 100.0c swCycleLengthValue;
+		floatSliderGrp -e -enable false swCycleLengthValue;
+		checkBox -e -value false swInvertCycleCheckBox;
+	}
+}
+
+
+global proc swMoreHelpCallback()
+//
+//  Description:  
+//    This is the callback for the "help" button.  Display help appropriate
+//  to the screen the user is on.
+{
+	string $currentFrame = `textField -q -text swGlobalCurrentFrame`;
+	string $result;
+
+	if ($currentFrame == "file") {
+		wizardHelpWindow("Sprite File Selection:",
+			{"Use the Browse button to select an image file. To use a sequence of image files, the image",
+			 "file name should be of the form name.number.fmt, for example: myImage.0007.iff. Any image",
+			 "in the sequence will do. Maya will be able to find the range of sequential images using",
+			 "the file names."});
+	}
+	else if ($currentFrame == "animation") {
+		wizardHelpWindow("Sprite Animation:",
+			{"Choose whether as the animation plays, the sprites display a fixed image or a sequence",
+				 "of images."});
+	} else if ($currentFrame == "imageSelection") {
+		wizardHelpWindow("Sprite Images:",
+			{"Choose which image is used for each particle."});
+	} else if( $currentFrame == "cycle" ) {
+		wizardHelpWindow("Sprite Cycling:",
+			{"Choose how each sprite cycles the images."});
+	}
+	else if( $currentFrame == "summary" ) {
+		wizardHelpWindow("Summary Help:",
+			{"The sprite wizard summary window shows you the options you have selected for your sprite.",
+				 "If you are happy with the options listed, click `Apply`. If you want to modify",
+				 "the options, click `Back` to edit the desired options."});
+	}
+}
+
+global proc updateAnimationApplyButton()
+{
+	int $sameSetup = `radioButton -q -select swSameSetupButton`;
+	if( $sameSetup == 1 )
+	{
+		button -e -label (uiRes("m_spriteWizard.kApply2"))  applyContinueButton;
+	}
+	else
+	{
+		button -e -label (uiRes("m_spriteWizard.kContinue4"))  applyContinueButton;
+	}
+}
+
+proc createGlobalsFrame(string $parent)
+//
+// This frame is used strictly to hold global
+// variable values.  It is never actually displayed.
+//
+{
+	setParent $parent;
+
+	columnLayout swGlobalsLayout;
+	textField
+		-text $parent
+		-editable false
+		swGlobalParent;
+	textField
+		-text ""
+		-editable false
+		swGlobalImageName;
+	textField
+		-text ""
+		-editable false
+		swGlobalParticleShape;
+	intField
+		-value 0
+		-editable false
+		swGlobalSingleFrame;
+	intField
+		-value 0
+		-editable false
+		swGlobalStartFrame;
+	intField
+		-value 0
+		-editable false
+		swGlobalEndFrame;
+
+	textField
+		-text ""
+		-editable false
+		swGlobalCurrentFrame;
+}
+
+global proc getSpriteBaseFile()
+{
+	string $dirMask = `workspace -q -rd`;
+	string $sourceImg = `workspace -fileRuleEntry sourceImages`;
+	if (size($sourceImg) > 0) {
+		$dirMask += $sourceImg;
+	} else {
+		$sourceImg = `workspace -fre sourceImages`;
+		if (size($sourceImg) > 0) {
+			$dirMask += $sourceImg;
+		} else if (`file -q -ex ($dirMask+"sourceimages")`) {
+			$dirMask += "sourceImages";
+		}
+	}
+	$dirMask += ("/*");
+	string $spriteFile = `fileDialog -dm $dirMask`;
+	textFieldButtonGrp -e -fileName $spriteFile swFileSelectionGroup;
+	updateSelectedFileInfo();
+}
+
+
+global proc updateSelectedFileInfo()
+{
+	string $selectedFile =
+		`textFieldButtonGrp -q -fileName swFileSelectionGroup`;
+
+	int $badFileName = 0;
+
+	if( ( $selectedFile == "" ) ||
+		( `filetest -r $selectedFile` == 0 ) )
+	{
+		if( `button -exists applyContinueButton` )
+		{
+			button -e -enable false applyContinueButton;
+		}
+
+		if( $selectedFile != "" )
+		{
+			$badFileName = 1;
+		}
+
+		$selectedFile = "";
+	}
+	else
+	{
+		if( `button -exists applyContinueButton` )
+		{
+			button -e -enable true applyContinueButton;
+		}
+	}
+
+	string $fileInfo[];
+	if ($selectedFile != "") {
+		$fileInfo = getConnectedFrameRange( $selectedFile );
+	}
+
+	string $parent = `textField -q -text swGlobalParent`;
+	string $range = ($parent+"|swFileSelectionLayout|swFileRangeLayout|swFileRangeInt|");
+
+	int $currentMin1 = `intField -q -min ($range+"field1")`;
+	int $currentMin2 = `intField -q -min ($range+"field2")`;
+	intFieldGrp -e -value1 (max(0,$currentMin1)) swFileRangeInt;
+	intFieldGrp -e -value2 (max(0,$currentMin2)) swFileRangeInt;
+	intField -e -min 0 ($range+"field1");
+	intField -e -min 0 ($range+"field2");
+	intField -e -max 99999 ($range+"field1");
+	intField -e -max 99999 ($range+"field2");
+	intFieldGrp -e -value1 0 swFileRangeInt;
+	intFieldGrp -e -value2 0 swFileRangeInt;
+
+	int $infoSize = size( $fileInfo );
+	if( $infoSize == 0 )
+	{
+		//
+		// There is no selected file. Go to the defaults.
+		//
+		textFieldGrp -e -text "" swSelectedFileText;
+		intFieldGrp -e -enable false swFileRangeInt;
+		columnLayout -e -visible false swFileRangeLayout;
+		intField -e -value 1 swGlobalSingleFrame;
+	}
+	else if( $infoSize == 2 )
+	{
+		//
+		// The selected file was not numbered.
+		// This is not an error.
+		//
+		textFieldGrp -e -text $fileInfo[1] swSelectedFileText;
+		intFieldGrp -e -enable false swFileRangeInt;
+		columnLayout -e -visible false swFileRangeLayout;
+		intField -e -value 1 swGlobalSingleFrame;
+	}
+	else if( $infoSize == 4 )
+	{
+		//
+		// The file is numbered.
+		//
+		textFieldGrp -e -text $fileInfo[1] swSelectedFileText;
+		int $firstFile = $fileInfo[2];
+		int $lastFile = $fileInfo[3];
+
+		intFieldGrp -e -value1 $firstFile swFileRangeInt;
+		intFieldGrp -e -value2 $lastFile swFileRangeInt;
+
+		intField -e -step 1 ($range+"field1");
+		intField -e -step 1 ($range+"field2");
+		intField -e -min $firstFile ($range+"field1");
+		intField -e -min $firstFile ($range+"field2");
+		intField -e -max $lastFile ($range+"field1");
+		intField -e -max $lastFile ($range+"field2");
+
+		intFieldGrp -e -enable true swFileRangeInt;
+		string $minLabel = (uiRes("m_spriteWizard.kMinLabel"));
+		string $maxLabel = (uiRes("m_spriteWizard.kMaxLabel"));
+		intFieldGrp -e -label `format -s $firstFile $minLabel` swFileRangeInt;
+		intFieldGrp -e -annotation 
+			(uiRes("m_spriteWizard.kIndexOfFirstAndLastFileToUseAnnot"))
+			-extraLabel `format -s $lastFile $maxLabel` swFileRangeInt;
+
+		columnLayout -e -visible true swFileRangeLayout;
+		intField -e -value 0 swGlobalSingleFrame;
+	}
+
+	if( $badFileName == 1)
+	{
+		textFieldGrp -e
+			-text (uiRes("m_spriteWizard.kBadFile")) 
+			swSelectedFileText;
+	} else {
+		int $newFileName = newImageFileName($selectedFile);
+		if (`radioButton -ex swSameSetupButton`) {
+			radioButton -e -enable $newFileName swSameSetupButton;
+		}
+	}
+}
+
+proc createFileSelectionFrame(string $parent)
+{
+	setParent $parent;
+
+	columnLayout swFileSelectionLayout;
+	text
+		-label (uiRes("m_spriteWizard.kImageFileSelection")) ;
+	text
+		-label (uiRes("m_spriteWizard.kClickOnTheBrowseButtonTo")) ;
+	textFieldButtonGrp
+		-label (uiRes("m_spriteWizard.kSpriteFile")) 
+		-annotation (uiRes("m_spriteWizard.kSpecifyTheFileNameOfOneOfTheAnnot")) 
+		-text ""
+		-buttonLabel (uiRes("m_spriteWizard.kBrowse"))
+		-buttonCommand "getSpriteBaseFile()"
+		-changeCommand "updateSelectedFileInfo()"
+		swFileSelectionGroup;
+	textFieldGrp
+		-label (uiRes("m_spriteWizard.kBaseName")) 
+		-text ""
+		-annotation (uiRes("m_spriteWizard.kThisFieldWillBeFilledAnnot")) 
+		-editable false
+		swSelectedFileText;
+	columnLayout -visible false swFileRangeLayout;
+	text -label "";
+	text
+		-label (uiRes("m_spriteWizard.kChooseFilesWithinAvailable")) ;
+	intFieldGrp
+		-cw 4 150
+		-label (uiRes("m_spriteWizard.kMin")) 
+		-extraLabel (uiRes("m_spriteWizard.kMax"))
+		-numberOfFields 2
+		-value1 0
+		-value2 0
+		-enable false
+		swFileRangeInt;
+
+	updateSelectedFileInfo();
+}
+
+proc createAnimationFrame(string $parent)
+// 
+//	Description:
+//		Create the Frame 1 UI.
+//
+//	Arguments:
+//		The parent argument is assumed to be a tabLayout.
+
+//
+{
+	setParent $parent;
+
+	columnLayout swAnimationOptionsLayout;
+	text
+		-label (uiRes("m_spriteWizard.kImageAssignment")) ;
+
+	radioCollection
+		swAnimationOptionCollection;
+
+	radioButton
+		-label (uiRes("m_spriteWizard.kNoAnimationUseASingleImage")) 
+		-annotation (uiRes("m_spriteWizard.kEachParticleUsesSomeFixedAnnot")) 
+		-sl
+		swSingleImageButton;
+
+	radioButton
+		-label (uiRes("m_spriteWizard.kCycleThroughTheImagesForEach")) 
+		-annotation (uiRes("m_spriteWizard.kEachParticleDisplaysAAnnot")) 
+		swCycleButton;
+
+	string $selectedFile = 	`textFieldButtonGrp -q -fileName swFileSelectionGroup`;
+	int $newFileName = newImageFileName($selectedFile);	
+	radioButton
+		-label (uiRes("m_spriteWizard.kUseExistingSetupWithNewImages")) 
+		-annotation (uiRes("m_spriteWizard.kUseTheNewImageSequenceJustAnnot")) 
+		-cc "updateAnimationApplyButton()"
+		-enable $newFileName
+		swSameSetupButton;
+}
+
+global proc updateInvertRampCheckbox()
+{
+	int $useRamp = `radioButton -q -select swRampButton`;
+	checkBox -e -enable $useRamp swInvertRampCheckbox;
+}
+
+proc createImageSelectionFrame(string $parent)
+// 
+//	Description:
+//		Create the Frame 2 UI.
+//
+//	Arguments:
+//		The parent argument is assumed to be a tabLayout.
+//
+{
+	setParent $parent;
+
+	columnLayout swImageSelectionLayout;
+	text -label (uiRes("m_spriteWizard.kInitialSpriteAssignment")) ;
+	text
+		-label (uiRes("m_spriteWizard.kSelectTheTechniqueUsedTo")) ;
+
+	radioCollection swImageSelectionOptionCollection;
+	radioButton
+		-label (uiRes("m_spriteWizard.kUseTheFirstImageInTheSequence")) 
+		-annotation (uiRes("m_spriteWizard.kEveryParticleWillUseTheFirstAnnot")) 
+		-sl
+		swFirstImageButton;
+	radioButton
+		-label (uiRes("m_spriteWizard.kUseEachParticlesParticleId")) 
+		-annotation (uiRes("m_spriteWizard.kTheParticleWillUseItsAnnot")) 
+		swParticleIdButton;
+	radioButton
+		-label (uiRes("m_spriteWizard.kRandom")) 
+		-annotation (uiRes("m_spriteWizard.kEachParticleWillChooseAAnnot")) 
+		swRandomButton;
+	radioButton
+		-label (uiRes("m_spriteWizard.kCustomStart")) 
+		-annotation (uiRes("m_spriteWizard.kTheParticleWillUseItsSpriteAnnot")) 
+		swSpriteNumPPButton;
+	radioButton
+		-label (uiRes("m_spriteWizard.kUseARamp")) 
+		-annotation (uiRes("m_spriteWizard.kARampWillBeConnectedToTheAnnot")) 
+		swInitRampButton;
+
+}
+
+global proc updateCycleLength()
+{
+	int $cycleOnce = `checkBox -q -value swCycleOnceCheckbox`;
+	floatSliderGrp -e -enable (!$cycleOnce) swCycleLengthValue;
+}
+
+proc createCycleOptionsFrame(string $parent)
+// 
+//	Description:
+//		Create the Frame 3 UI.
+//
+//	Arguments:
+//		The parent argument is assumed to be a tabLayout.
+//
+{
+	setParent $parent;
+
+	columnLayout swCycleOptionsLayout;
+	text -label (uiRes("m_spriteWizard.kAnimationAssignment")) ;
+	text
+		-label (uiRes("m_spriteWizard.kHowDoYouWantTheImagesToBe")) ;
+
+	radioCollection swCycleOptionCollection;
+	radioButton
+		-label (uiRes("m_spriteWizard.kLinearlyIncreasing")) 
+		-annotation (uiRes("m_spriteWizard.kPlayThroughTheImageSequenceAnnot")) 
+		-sl
+		swLinearUpButton;
+	radioButton
+		-label (uiRes("m_spriteWizard.kEaseInEaseOutIncreasing")) 
+		-annotation (uiRes("m_spriteWizard.kEaseinAndEaseoutTheRateThatAnnot")) 
+		swSmoothUpButton;
+	radioButton
+		-label (uiRes("m_spriteWizard.kLinearlyIncreasingAnd")) 
+		-annotation (uiRes("m_spriteWizard.kPlayThroughImageSequenceAtAnAnnot")) 
+		swLinearUpDownButton;
+	radioButton
+		-label (uiRes("m_spriteWizard.kEaseInEaseOutIncreasingAnd")) 
+		-annotation (uiRes("m_spriteWizard.kEaseinAndEaseoutTheRateThat2Annot")) 
+		swSmoothUpDownButton;
+
+	radioButton
+		-label (uiRes("m_spriteWizard.kUseARamp2")) 
+		-annotation (uiRes("m_spriteWizard.kARampWillBeConnectedToThe2Annot")) 
+		-cc "updateInvertRampCheckbox()"
+		swRampButton;
+
+	checkBox
+		-label (uiRes("m_spriteWizard.kInvertRamp")) 
+		-value false
+		-enable false
+		-annotation (uiRes("m_spriteWizard.kInvertTheMeaningOfTheRampsAnnot")) 
+		swInvertRampCheckbox;
+
+	radioButton
+		-label (uiRes("m_spriteWizard.kCustomCycling")) 
+		-annotation (uiRes("m_spriteWizard.kTheParticleWillUseItsSprite2Annot")) 
+		swSpriteCustomButton;
+	
+	separator -w 200 -h 5;
+
+	checkBox
+		-label (uiRes("m_spriteWizard.kCycleOnlyOnceDuringLifespan")) 
+		-annotation (uiRes("m_spriteWizard.kTheAnimationWillBeTimedToAnnot")) 
+		-value true
+		-changeCommand "updateCycleLength()"
+		swCycleOnceCheckbox;
+
+	floatSliderGrp
+		-label (uiRes("m_spriteWizard.kCycleLengthInFrames")) 
+		-annotation (uiRes("m_spriteWizard.kThisOptionIsOnlyValidIfTheAnnot")) 
+		-field true
+		-min 1
+		-precision 1
+		-step 1.0
+		-value 100.0
+		-enable false
+		swCycleLengthValue;
+
+	checkBox
+		-label (uiRes("m_spriteWizard.kInvertCycle")) 
+		-value false
+		swInvertCycleCheckbox;
+	
+}
+
+proc createSummaryFrame(string $parent)
+// 
+//	Description:
+//		Create the Frame 3 UI.
+//
+//	Arguments:
+//		The parent argument is assumed to be a tabLayout.
+//
+{
+	setParent $parent;
+
+	columnLayout swSummaryLayout;
+	text
+		-label (uiRes("m_spriteWizard.kSummary2")) ;
+	scrollField
+		-width 442
+		-height 150
+		-editable false
+		-font "smallPlainLabelFont"
+		-text (uiRes("m_spriteWizard.kThisIsASummaryOfTheSprite")) 
+		swSummaryField; 
+}
+
+proc createTabs(string $parent)
+// 
+//	Description:
+//
+//	Arguments:
+//		The parent argument is assumed to be a tabLayout.
+//
+{
+	createGlobalsFrame($parent);
+	createFileSelectionFrame($parent);
+	createAnimationFrame($parent);
+	createImageSelectionFrame($parent);
+	createCycleOptionsFrame($parent);
+	createSummaryFrame($parent);
+}
+
+
+
+proc createButtons(string $parent)
+// 
+//	Description:
+//		Create buttons (one for each frame) that also switch between
+//		the tabs.
+//
+//	Arguments:
+//		The parent argument is assumed to be a formLayout.
+//
+{
+	setParent $parent;
+
+	string $frame1 = `button   -label (uiRes("m_spriteWizard.kContinue5")) 
+									-annotation (uiRes("m_spriteWizard.kMakeThisChoiceAndGoOnToTheAnnot"))  
+                                    -command "swApplyContinueCallback"
+											 applyContinueButton`;
+
+   	string $frame2 = `button   -label (uiRes("m_spriteWizard.kBack")) 
+									-enable false
+									-annotation (uiRes("m_spriteWizard.kReturnToThePreviousScreenAnnot"))  
+                                    -command "swBackCallback"
+											 backButton`;
+
+//    string $frame3 = `button   -label _L10N( kMoreHelp, "More Help" )  
+//									-annotation _L10N( kExplainSomeMoreAboutThisTopicAnnot, "Explain some more about this topic" ) 
+//                                    -command "swMoreHelpCallback"
+//											 moreHelpButton`;
+
+    string $frame4 = `button  -label (uiRes("m_spriteWizard.kClose2"))  
+									-annotation (uiRes("m_spriteWizard.kQuitTheWizardAndCloseTheAnnot")) 
+									-command "swCloseCallback"
+                                             closeButton`;
+
+	formLayout -edit
+		-attachForm     $frame1 "top"    5
+		-attachForm     $frame1 "left"   5
+		-attachForm     $frame1 "bottom" 5
+		-attachPosition $frame1 "right"  2 33
+
+		-attachForm     $frame2 "top"    5
+		-attachPosition $frame2 "left"   2 33
+		-attachPosition $frame2 "right"  2 66
+		-attachForm     $frame2 "bottom" 5
+
+//		-attachForm     $frame3 "top"    5
+//		-attachPosition $frame3 "left"   2 50
+//		-attachPosition $frame3 "right"  2 75
+//		-attachForm     $frame3 "bottom" 5
+
+		-attachForm     $frame4 "top"    5
+		-attachPosition $frame4 "left"   2 66
+		-attachForm     $frame4 "bottom" 5
+		-attachForm     $frame4 "right"  5
+
+		$parent;
+}
+
+
+global proc wizardWindow( string $particle, string $newImage )
+// 
+//	Description:
+//
+{
+	global string $gSpriteWizardParticle;
+	$gSpriteWizardParticle = $particle;
+
+	//	If the window already exists then just show it and return.
+	//
+	if (`window -exists SpriteWizardWindow`) {
+		deleteUI -window SpriteWizardWindow;
+	}
+
+	//	Otherwise, build the window.
+	//
+	window -title `format -s $particle (uiRes("m_spriteWizard.kSpriteWizardTitle"))`
+		-iconName (uiRes("m_spriteWizard.kSpriteWizard2")) 
+		-width    475
+		-height   300
+		-sizeable true
+		WizardExampleWindow;
+
+	string $menuBarLayout = `menuBarLayout`;
+	menu -label (uiRes("m_spriteWizard.kEdit")) ;
+	    menuItem -label (uiRes("m_spriteWizard.kResetSettings"))  -c "resetSpriteSettings";
+    menu -label (uiRes("m_spriteWizard.kHelp"))  -helpMenu true;
+        menuItem -label (uiRes("m_spriteWizard.kHelpOnTheSpriteWizard"))  -c "showHelp SpriteWizard";
+	setParent ..;
+
+	string $form = `formLayout SpriteWizardForm`;
+
+	string $tabs = `tabLayout -tabsVisible true
+		-innerMarginWidth 5 -innerMarginHeight 5
+		WizardExampleWindowTabs`;
+	setParent ..;
+
+	string $buttons = `formLayout`;
+	setParent ..;
+
+	createTabs($tabs);
+	createButtons($buttons);
+	wizardExampleWindowSelectFileSelection();
+	
+	tabLayout -edit
+		-tabLabelIndex 1 "Globals"
+		-tabLabelIndex 2 "Sprite File Selection"
+		-tabLabelIndex 3 "Sprite Animation Options"
+		-tabLabelIndex 4 "Image Selection Options"
+		-tabLabelIndex 5 "Cycle Options"
+		-tabLabelIndex 6 "Summary"
+		$tabs;
+		
+	formLayout -edit
+		-attachForm    $tabs    "top"    0
+		-attachForm    $tabs    "left"   0
+		-attachControl $tabs    "bottom" 0 $buttons
+		-attachForm    $tabs    "right"  0
+
+		-attachNone    $buttons "top"
+		-attachForm    $buttons "left"   0
+		-attachForm    $buttons "bottom" 0
+		-attachForm    $buttons "right"  0
+		$form;
+
+	tabLayout -e -tabsVisible 0 WizardExampleWindowTabs;
+
+	initializeWizardFromParticleShape( $particle, $newImage );
+
+	showWindow WizardExampleWindow; 
+}
+
+global proc initializeWizardFromParticleShape( string $particle, string $newImage )
+{
+	if( $particle != "" )
+	{
+		string $particleChildren[] = `ls -dag -type particle $particle`;
+		if( size( $particleChildren ) == 0 )
+		{
+			$particle = "";
+		}
+		else if( size( $particleChildren ) > 1 )
+		{
+			string $fmt = (uiRes("m_spriteWizard.kMultiObj"));
+			error `format -s (size($particleChildren)) -s $particle`;
+		}
+		else
+		{
+			$particle = $particleChildren[0];
+		}
+	}
+
+	if( $particle == "" )
+	{
+		error (uiRes("m_spriteWizard.kNoObj"));
+	}
+
+	textField -e -text $particle swGlobalParticleShape;
+
+	if( $newImage == "" )
+	{
+		string $fileTexture = particleSpriteFileTexture( $particle );
+		if( $fileTexture != "" )
+		{
+			string $file = `getAttr ($fileTexture+".fileTextureName")`;
+			string $fileInfo[] = getConnectedFrameRange( $file );
+			if( size( $fileInfo ) == 0 )
+			{
+				$file = "";
+			}
+			textFieldButtonGrp -e -fileName $file swFileSelectionGroup;
+			updateSelectedFileInfo();
+
+			if( size( $fileInfo ) == 4 )
+			{
+				int $startFrame =
+					`getAttr ($fileTexture+".startCycleExtension")`;
+				int $endFrame =
+					`getAttr ($fileTexture+".endCycleExtension")`;
+				intFieldGrp -e -value1 $startFrame swFileRangeInt;
+				intFieldGrp -e -value2 $endFrame swFileRangeInt;
+			}
+		}
+	}
+	else
+	{
+		textFieldButtonGrp -e -fileName $newImage swFileSelectionGroup;
+		updateSelectedFileInfo();		
+	}
+
+	//
+	// Animation
+	//
+	if( `attributeQuery -exists -node $particle SpriteAnimation` )
+	{
+		int $animation = `getAttr ($particle+".SpriteAnimation")`;
+		switch( $animation )
+		{
+			case 0:
+				radioButton -e -select swSingleImageButton;
+				break;
+				case 1:
+				radioButton -e -select swCycleButton;
+				break;
+		}
+	}
+	else
+	{
+		radioButton -e -select swSingleImageButton;
+	}
+
+	//
+	// Image Selection
+	//
+	if( `attributeQuery -exists -node $particle SpriteStartOption` )
+	{
+		int $start = `getAttr ($particle+".SpriteStartOption")`;
+		switch( $start )
+		{
+			case 0:
+				radioButton -e -select swFirstImageButton;
+				break;
+			case 1:
+				radioButton -e -select swParticleIdButton;
+				break;
+			case 2:
+				radioButton -e -select swRandomButton;
+				break;
+			case 3:
+				radioButton -e -select swSpriteNumPPButton;
+				break;
+			case 4:
+				radioButton -e -select swInitRampButton;
+				break;
+		}
+	}
+	else
+	{
+		radioButton -e -select swFirstImageButton;
+	}
+	updateInvertRampCheckbox();
+
+	//
+	// Cycle Pattern
+	//
+	if( `attributeQuery -exists -node $particle SpriteCyclePattern` )
+	{
+		int $cycle = `getAttr ($particle+".SpriteCyclePattern")`;
+		switch( $cycle )
+		{
+			case 0:
+				radioButton -e -select swLinearUpButton;
+				break;
+			case 1:
+				radioButton -e -select swSmoothUpButton;
+				break;
+			case 2:
+				radioButton -e -select swLinearUpDownButton;
+				break;
+			case 3:
+				radioButton -e -select swSmoothUpDownButton;
+				break;
+			case 4:
+				radioButton -e -select swSpriteCustomButton;
+				break;
+			case 5:
+				radioButton -e -select swRampButton;
+				break;
+		}
+	}
+	else
+	{
+		radioButton -e -select swLinearUpButton;
+	}
+
+	//
+	// Cycle Length
+	//
+	if( `attributeQuery -exists -node $particle SpriteCycleLength` )
+	{
+		float $cycleLength =
+			`getAttr ($particle+".SpriteCycleLength")`;
+		floatSliderGrp -e -value $cycleLength swCycleLengthValue;
+		if( $cycleLength == 0 )
+		{
+			checkBox -e -value 1 swCycleOnceCheckbox;
+			floatSliderGrp -e -value 100.0 swCycleLengthValue;
+		}
+		else
+		{
+			checkBox -e -value 0 swCycleOnceCheckbox;
+		}
+	}
+	else
+	{
+		checkBox -e -value 1 swCycleOnceCheckbox;
+		floatSliderGrp -e -value 100.0 swCycleLengthValue;
+	}
+	updateCycleLength();
+
+	//
+	// Invert
+	//
+	if( `attributeQuery -exists -node $particle SpriteInvertCycle` )
+	{
+		int $invert = `getAttr ($particle+".SpriteInvertCycle")`;
+		checkBox -e -value $invert swInvertRampCheckbox;
+		checkBox -e -value $invert swInvertCycleCheckbox;
+	}
+	else
+	{
+		checkBox -e -value 0 swInvertRampCheckbox;
+		checkBox -e -value 0 swInvertCycleCheckbox;
+	}
+}
+
+global proc string particleSpriteFileTexture( string $particle )
+{
+	string $result = "";
+	if( size( `ls -type particle $particle` ) == 1 )
+	{
+		if( `getAttr ($particle+".particleRenderType")` == 5 )
+		{
+			string $shadingGroups[] =
+				`listConnections -source false -destination true
+				-plugs false -type shadingEngine ($particle+".instObjGroups")`;
+			int $i;
+			for( $i = 0; $i < size( $shadingGroups ); $i ++ )
+			{
+				string $shaders[] =
+					`listConnections -source true
+					-destination false -plugs false
+					($shadingGroups[$i]+".surfaceShader")`;
+				$shaders = `ls -type lambert $shaders`;
+				int $j;
+				for( $j = 0; $j < size( $shaders ); $j ++ )
+				{
+					string $drivingColor[] =
+						`listConnections -plugs false
+						-source true -destination false
+						($shaders[$j]+".color")`;
+					if( size( $drivingColor ) > 0 )
+					{
+						string $fileTx[] = `ls -type file $drivingColor[0]`;
+						if( size( $fileTx ) > 0 )
+						{
+							$result = $fileTx[0];
+							return $result;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return $result;
+}
+
+global proc string[] getConnectedFrameRange( string $fileName )
+{
+	string $result[];
+	clear( $result );
+
+	//
+	// First, make sure that the given string.
+	// is a readable file.
+	//
+	if( `filetest -r $fileName` == 0 )
+	{
+		string $fmt = (uiRes("m_spriteWizard.kErrorFmt"));
+		print `format -s $fileName $fmt`;
+		return $result;
+	}
+
+	//
+	// Now get the path to the file.
+	//
+	string $path[];
+	clear( $path );
+	tokenize( $fileName, "/", $path );
+	int $pathCount = size( $path );
+
+	string $pathDir = "";
+	if( substring( $fileName, 1, 1 ) == "/" )
+	{
+		$pathDir = "/";
+	}
+	string $fileBase = $path[$pathCount-1];
+	int $j;
+	for( $j = 0; $j < ( $pathCount - 1 ); $j ++ )
+	{
+		$pathDir = ( $pathDir + $path[$j] + "/" );
+	}
+
+	//
+	// Now try to find which part of the file's name contains
+	// the extensions.
+	//
+	string $parts[];
+	clear( $parts );
+	tokenize( $fileBase, ".", $parts );
+	int $partCount = size( $parts );
+	int $numberPart[];
+	int $isFileNumbered = 0;
+	int $extension = 0;
+	for( $j = 0; $j < $partCount; $j ++ )
+	{
+		if( `gmatch $parts[$j] "[0-9]*"` == 1 )
+		{
+			$numberPart[$j] = 1;
+			$isFileNumbered = 1;
+			$extension = $j;
+		}
+		else
+		{
+			$numberPart[$j] = 0;
+		}
+	}
+
+	if( $isFileNumbered == 0 )
+	{
+		clear( $result );
+		$result[0] = $pathDir;
+		$result[1] = $fileBase;
+		return $result;
+	}
+
+	int $selectedImageNumber = $parts[$extension];
+
+	int $fileIsPadded = 0;
+	if( size( $parts[$extension] ) > 1 )
+	{
+		if( substring( $parts[$extension], 1, 1 ) == "0" )
+		{
+			//
+			// Since the numbering is more than 1 character long,
+			// and the first character is "0", we assume that
+			// the file numbering is using padding.
+			//
+			$fileIsPadded = 1;
+		}
+	}
+
+	string $format = "";
+	for( $j = 0; $j < $partCount; $j ++ )
+	{
+		if( $j == $extension )
+		{
+			if( $fileIsPadded == 1 )
+			{
+				$format += "????";
+			}	
+			else
+			{
+				$format += "*";
+			}
+		}
+		else
+		{
+			$format += $parts[$j];
+		}
+
+		if( $j < ( $partCount - 1 ) )
+		{
+			$format += ".";
+		}
+	}
+
+	string $candidateFiles[];
+	clear( $candidateFiles );
+	if( $pathDir != "" )
+	{
+		$candidateFiles =
+			`getFileList -folder $pathDir -filespec $format`;
+	}
+	else
+	{
+		$candidateFiles =
+			`getFileList -filespec $format`;
+	}
+	int $fileCount = size( $candidateFiles );
+	if( $fileCount == 1 )
+	{
+		clear( $result );
+		if( $fileBase == $candidateFiles[0] )
+		{
+			$result[0] = $pathDir;
+			$result[1] = $fileBase;
+		}
+		else
+		{
+			//
+			// If the one matching file is not the
+			// selected file, then something is
+			// really messed up.
+			//
+		}
+		return $result;
+	}
+
+	//
+	// Loop over all of the files that match the format to
+	// find ones that are within the continuous range that
+	// includes the selected file.
+	//
+	int $numbers[];
+	clear( $numbers );
+	for( $j = 0; $j < size( $candidateFiles ); $j ++ )
+	{
+		string $candidateParts[];
+		tokenize( $candidateFiles[$j], ".", $candidateParts );
+		string $ext = $candidateParts[$extension];
+		int $padded = 0;
+		if( size( $ext ) > 1 )
+		{
+			if( substring( $ext, 1, 1 ) == "0" )
+			{
+				$padded = 1;
+			}
+		}
+
+		//
+		// Only keep the files that seem to match the
+		// format.
+		//
+		if( $fileIsPadded == $padded )
+		{
+			$numbers[size( $numbers )] = $ext;
+		}
+	}
+	$numbers = sort( $numbers );
+
+	int $selectedLocation = -1;
+	for( $j = 0; $j < size( $numbers ); $j ++ )
+	{
+		if( $numbers[$j] == $selectedImageNumber )
+		{
+			$selectedLocation = $j;
+			break;
+		}
+	}
+
+	if( $selectedLocation == -1 )
+	{
+		//
+		// The selected file was not in the matching list.
+		// That means that something got really messed up.
+		//
+		clear( $result );
+		return $result;
+	}
+
+	//
+	// Starting at the location of the selected image, work
+	// up and down the $numbers array to find the maximum range
+	// of continuous numbers.
+	//
+	int $minimumIndex = -1;
+	if( $selectedLocation == 0 )
+	{
+		$minimumIndex = 0;
+	}
+	int $maximumIndex = -1;
+	if( $selectedLocation == ( size( $numbers ) - 1 ) )
+	{
+		$maximumIndex = $selectedLocation;
+	}
+
+	if( $minimumIndex == -1 )
+	{
+		int $lastValue = $numbers[$selectedLocation];
+		for( $j = $selectedLocation - 1; $j >= 0; $j -- )
+		{
+			if( ( $lastValue - $numbers[$j] ) > 1 )
+			{
+				break;
+			}
+			$lastValue = $numbers[$j];
+			$minimumIndex = $j;
+		}
+	}
+	if( $minimumIndex == -1 )
+	{
+		$minimumIndex = $selectedLocation;
+	}
+
+	if( $maximumIndex == -1 )
+	{
+		int $lastValue = $numbers[$selectedLocation];
+		for( $j = $selectedLocation + 1; $j < size( $numbers ); $j ++ )
+		{
+			if( ( $numbers[$j] - $lastValue ) > 1 )
+			{
+				break;
+			}
+			$lastValue = $numbers[$j];
+			$maximumIndex = $j;
+		}
+	}
+	if( $maximumIndex == -1 )
+	{
+		$maximumIndex = $selectedLocation;
+	}
+
+	$result[0] = $pathDir;
+	$result[1] = $fileBase;
+
+	if( $numbers[$maximumIndex] != $numbers[$minimumIndex] )
+	{
+		$result[2] = $numbers[$minimumIndex];
+		$result[3] = $numbers[$maximumIndex];
+	}
+
+	return $result;
+}
+

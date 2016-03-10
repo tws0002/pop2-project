@@ -1,0 +1,355 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Procedure Name:
+//	AEgreasePlaneTemplate
+//
+//  Description Name;
+//	Creates the attribute editor controls for the greasePlane Node
+//
+//  Input Value:
+//	nodeName 
+//
+//  Output Value:
+//	None
+// 
+
+proc string getPlugNode( string $plug )
+{
+    string $buffer[];
+    tokenize($plug, ".", $buffer);
+    return size($buffer) > 0 ? $buffer[0] : "";
+}
+
+proc int isAttachedToCamera(string $attribute)
+{
+	string $imagePlane = getPlugNode($attribute);
+	string $message = $imagePlane + ".message";
+	string $list[] = `listConnections -shapes 1 $message`;
+	int $result = 0;
+	int $i;
+	for($i = 0; $i < size($list); $i++)
+	{
+		if (`objectType -isa "camera" $list[$i]`)
+		{
+			$result = 1;
+			break;
+		}
+	}
+	return $result;
+}
+
+//
+//  Procedure Name:
+//	AEgreaseDisplayCurrentNew
+//
+
+global proc AEgreaseDisplayCurrentNew( string $displayOnlyIfCurrent )
+{
+	setUITemplate -pst attributeEditorTemplate;
+	columnLayout;
+	string $collection = `radioButtonGrp -numberOfRadioButtons 1 
+								-label (uiRes("m_AEgreasePlaneTemplate.kDisplay"))  
+								-label1 (uiRes("m_AEgreasePlaneTemplate.kLookingthroughcamera"))  displayOnlyIfCurrent`;
+	radioButtonGrp -numberOfRadioButtons 1 
+								-label1 (uiRes("m_AEgreasePlaneTemplate.kInallviews"))  
+								-shareCollection $collection displayOnlyIfCurrent1;
+	setUITemplate -ppt;
+
+    AEgreaseDisplayCurrentReplace $displayOnlyIfCurrent;
+}
+
+//
+//  Procedure Name:
+//	AEgreaseDisplayCurrentReplace
+//
+
+global proc AEgreaseDisplayCurrentReplace( string $displayOnlyIfCurrent )
+{
+    int $allViews = !`getAttr $displayOnlyIfCurrent`;
+
+	setUITemplate -pst attributeEditorTemplate;
+    radioButtonGrp -e
+        -onCommand1 ("setAttr "+$displayOnlyIfCurrent+" on")
+        displayOnlyIfCurrent;
+    radioButtonGrp -e
+        -onCommand1 ("setAttr "+$displayOnlyIfCurrent+" off")
+        displayOnlyIfCurrent1;
+
+	if ($allViews == 0) {
+	    radioButtonGrp -e -select 1 displayOnlyIfCurrent;
+	} else {
+	    radioButtonGrp -e -select 1 displayOnlyIfCurrent1;
+	}
+
+	radioButtonGrp -e -enable `isAttachedToCamera($displayOnlyIfCurrent)` displayOnlyIfCurrent;
+	radioButtonGrp -e -enable `isAttachedToCamera($displayOnlyIfCurrent)` displayOnlyIfCurrent1;
+
+	setUITemplate -ppt;
+}
+
+//
+//  Procedure Name:
+//	AEgreaseLockedToCameraNew
+//
+
+global proc AEgreaseLockedToCameraNew( string $lockedToCamera )
+{
+	setUITemplate -pst attributeEditorTemplate;
+    radioButtonGrp -numberOfRadioButtons 2
+        -label (uiRes("m_AEgreasePlaneTemplate.kImagePlane")) 
+        -label1 (uiRes("m_AEgreasePlaneTemplate.kAttachedToCamera"))  // default setting
+        -label2 (uiRes("m_AEgreasePlaneTemplate.kFixed")) 
+        lockedToCamera;
+	setUITemplate -ppt;
+
+    AEgreaseLockedToCameraReplace $lockedToCamera;
+}
+
+//
+//  Procedure Name:
+//	AEgreaseLockedToCameraReplace
+//
+
+global proc AEgreaseLockedToCameraReplace( string $lockedToCamera )
+{
+	setUITemplate -pst attributeEditorTemplate;
+    radioButtonGrp -e
+        -onCommand1 ( "setAttr " + $lockedToCamera + " on"  )
+        -onCommand2 ( "setAttr " + $lockedToCamera + " off" )
+        lockedToCamera;
+	setUITemplate -ppt;
+	scriptJob -rp
+		-p lockedToCamera -attributeChange $lockedToCamera
+		("greaseUpdateLockedPositionControls " + $lockedToCamera);
+
+	radioButtonGrp -e -enable `isAttachedToCamera($lockedToCamera)` lockedToCamera;
+
+	//sometimes the width and height controls get updated before the template
+	//is refreshed and so the dimming is incorrect and thus we must defer the call
+	//to greaseUpdateLockedPositionControls
+	evalDeferred ("greaseUpdateLockedPositionControls(\""+$lockedToCamera + "\")");
+}
+
+global proc greaseUpdateLockedPositionControls(string $lockedToCamera)
+{
+	string $imagePlaneName[];
+	$numTokens = tokenize($lockedToCamera, ".", $imagePlaneName );
+
+	if(!`objExists $imagePlaneName[0]`){
+		return ;
+	}
+
+	int $isLockedToCamera = `getAttr $lockedToCamera`;
+
+	if ($isLockedToCamera) {
+		// update the UI
+		radioButtonGrp -e -select 1 lockedToCamera;
+	} else {
+		// update the UI
+		radioButtonGrp -e -select 2 lockedToCamera;
+	}
+	
+	editorTemplate -dimControl $imagePlaneName[0] "fit" (!$isLockedToCamera);
+	editorTemplate -dimControl $imagePlaneName[0] "size" (!$isLockedToCamera);
+	editorTemplate -dimControl $imagePlaneName[0] "offset" (!$isLockedToCamera);
+	editorTemplate -dimControl $imagePlaneName[0] "imageCenter" $isLockedToCamera;
+	editorTemplate -dimControl $imagePlaneName[0] "width" $isLockedToCamera;
+	editorTemplate -dimControl $imagePlaneName[0] "height" $isLockedToCamera;
+}
+
+//
+//  Procedure Name:
+//  AEgreaseFitGate
+//
+
+global proc AEgreaseFitGate ( string $sizeX, string $sizeY )
+{
+    setUITemplate -pst attributeEditorTemplate;
+
+    rowLayout -nc 2;
+    text -l "";
+    button -label (uiRes("m_AEgreasePlaneTemplate.kFittoResolutionGate")) 
+           -c ("AEgreaseInvokeFitRezGate "+ $sizeX + " " + $sizeY) fitRezButton;
+    setParent ..;
+
+    rowLayout -nc 2;
+    text -l "";
+    button -label (uiRes("m_AEgreasePlaneTemplate.kFittoFilmGate")) 
+           -c ("AEgreaseInvokeFitFilmGate "+ $sizeX + " " + $sizeY) fitFilmButton;
+    setParent ..;
+
+    setUITemplate -ppt;
+}
+
+//
+//  Procedure Name:
+//  AEgreaseRepFitGate
+//
+
+global proc AEgreaseRepFitGate ( string $sizeX, string $sizeY )
+{
+	button -e -c ("AEgreaseInvokeFitRezGate "+ $sizeX + " " + $sizeY) fitRezButton;
+	button -e -c ("AEgreaseInvokeFitFilmGate "+ $sizeX + " " + $sizeY) fitFilmButton;
+
+	button -e -enable `isAttachedToCamera($sizeX)` fitRezButton; 
+	button -e -enable `isAttachedToCamera($sizeX)` fitFilmButton; 
+}
+
+//
+//	Procedure Name:
+//	AEgreaseInvokeFitFilmGate
+//
+
+global proc AEgreaseInvokeFitFilmGate ( string $sizeX, string $sizeY )
+{
+    // Get imageplane name
+    string $imgplane[];
+    tokenize ($sizeX, ".", $imgplane);
+
+    // Get camera info
+    string $camera[] = `listConnections ($imgplane[0] + ".message")`;
+	int $i, $j;
+	for ($i = 0; $i < size($camera); $i++) {
+		if (`objectType -isa "camera" $camera[$i]`) break;
+		string $shapes[] = `listRelatives -shapes ($camera[$i])`;
+		for ($j = 0; $j < size($shapes); $j++) 
+			if (`objectType -isa "camera" $shapes[$j]`) break;
+		if ($j != size($shapes)) break;
+	}
+    if ($i == size ($camera)) return;
+    float $camX = `getAttr ($camera[$i] + ".horizontalFilmAperture")`;
+    float $camY = `getAttr ($camera[$i] + ".verticalFilmAperture")`;
+
+	// Set the image plane + camera sizes to be the same.
+	setAttr $sizeX $camX;
+	setAttr $sizeY $camY;
+}
+
+//
+//  Procedure Name:
+//  AEgreaseInvokeFitRezGate
+//
+
+global proc AEgreaseInvokeFitRezGate ( string $sizeX, string $sizeY )
+{
+	// Get resolution info
+	string $globals[] = `ls -renderGlobals`;
+	string $rez[] = `listConnections ($globals[0] + ".resolution")`;
+	float $rezAspect = `getAttr ($rez[0] + ".deviceAspectRatio")`;
+
+	// Get imageplane name
+	string $imgplane[];
+	tokenize ($sizeX, ".", $imgplane);
+
+	// Get camera info
+	string $camera[] = `listConnections ($imgplane[0] + ".message")`;
+    int $i, $j;
+    for ($i = 0; $i < size($camera); $i++) {
+        if (`objectType -isa "camera" $camera[$i]`) break;
+        string $shapes[] = `listRelatives -shapes ($camera[$i])`;
+        for ($j = 0; $j < size($shapes); $j++) 
+            if (`objectType -isa "camera" $shapes[$j]`) break;
+        if ($j != size($shapes)) break;
+    }
+    if ($i == size ($camera)) return;
+	float $camX = `getAttr ($camera[$i] + ".horizontalFilmAperture")`;
+	float $camY = `getAttr ($camera[$i] + ".verticalFilmAperture")`;
+	int $fitType = `getAttr ($camera[$i] + ".filmFit")`;
+
+	// Based on camera + resolution info, provide best fit.
+	if ($fitType == 0) {		// FILL
+		float $camAspect = $camX / $camY;
+		if ($rezAspect < $camAspect) {
+			setAttr $sizeY $camY;
+			setAttr $sizeX ($camY * $rezAspect);
+		} else {
+			setAttr $sizeX $camX;
+			setAttr $sizeY ($camX / $rezAspect);
+		}
+	} else if ($fitType == 1) { // HORIZONTAL
+		setAttr $sizeX $camX;
+		setAttr $sizeY ($camX / $rezAspect);
+	} else if ($fitType == 2) { // VERTICAL
+		setAttr $sizeY $camY;
+		setAttr $sizeX ($camY * $rezAspect);
+    } else if ($fitType == 3) { // OVERSCAN
+		float $camAspect = $camX / $camY;
+		if ($rezAspect < $camAspect) {
+			setAttr $sizeX $camX;
+			setAttr $sizeY ($camX / $rezAspect);
+		} else {
+			setAttr $sizeX ($camY * $rezAspect);
+			setAttr $sizeY $camY;
+		}
+    }
+}
+
+
+//
+//  Procedure Name:
+//	AEgreaseImagePlaneFitUpdateCallback
+//
+global proc AEgreaseImagePlaneFitUpdateCallback( string $imgPlane )
+{
+    string	$nodeAttr = ($imgPlane + ".fit");
+	int		$fitValue = `getAttr $nodeAttr`;
+	int		$isToSize = ($fitValue != 4);	//kFitToSize
+
+
+	// The "Squeeze Correction" only makes sense whent the image plane is
+	// using the "To Size" fit algorithm. BUG 107886
+
+	editorTemplate -dimControl $imgPlane "squeezeCorrection" ($isToSize);
+}
+
+
+//
+//  Procedure Name:
+//	AEgreasePlaneTemplate
+//
+global proc AEgreasePlaneTemplate ( string $nodeName )
+{
+	AEswatchDisplay $nodeName;
+	editorTemplate -beginScrollLayout;
+
+		editorTemplate -beginLayout (uiRes("m_AEgreasePlaneTemplate.kPlacement"))  -collapse 0;
+			editorTemplate -addControl "fit" "AEgreaseImagePlaneFitUpdateCallback";
+			editorTemplate -callCustom "AEgreaseFitGate" "AEgreaseRepFitGate" "sizeX" "sizeY";
+			editorTemplate -addControl "size";
+			editorTemplate -suppress "squeezeCorrection";
+			editorTemplate -suppress "offset";
+			editorTemplate -suppress "depth";
+			editorTemplate -suppress "rotate"; 
+		editorTemplate -endLayout;
+
+		// include/call base class/node attributes
+		AEshapeTemplate $nodeName;
+
+		// suppressed attribute
+		editorTemplate -suppress "coverage";
+		editorTemplate -suppress "coverageOrigin";
+
+
+	editorTemplate -addExtraControls;
+	editorTemplate -endScrollLayout;
+}

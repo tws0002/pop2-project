@@ -1,0 +1,129 @@
+// phong_preLighting_fragment.cg
+//
+// This file cannot be directly compiled through CG... it first must be
+// parsed to insert channel-specific instructions.
+//
+
+struct vert2frag
+{
+    float4 hPosition            : POSITION;
+    float4 wPosition            : TEXCOORD0;
+	float4 ambientTexUv			: TEXCOORD2;
+	float3 wNormal				: TEXCOORD1;
+
+#if defined(COLOR_PER_VERTEX_AMBIENT)
+	float4 colorPerVertex		: COLOR0;
+#endif // COLOR_PER_VERTEX_AMBIENT
+
+#if defined(COLOR_PER_VERTEX_MASK)
+	// Optional color per vertex mask, mapped to
+	// user attribute 0
+	float colorPerVertexMask;
+#endif	
+};
+
+
+
+float4 main(vert2frag        IN,
+			uniform float4  gWorldEyePos,
+			uniform float	normalMultiplier,	// -1 if normal needs to be inverted, 1 otherwise.
+			uniform float3	lightColor,			// pre-multiplied by intensity.
+			uniform float3  wLightPos,
+			uniform float	ambientShade,
+			//
+			// ambient texture placement
+			uniform sampler2D ambientTex,
+			uniform float4	ambientTexMatrix0,
+			uniform float4	ambientTexMatrix1	) : COLOR
+{     
+	// The default output color of this fragment program
+	float4 finalColor = float4(1,1,1,1);
+
+
+#if defined( COLOR_PER_VERTEX_AMBIENT )
+
+	// Compute the geometrical properties of the ambient light
+    //
+    float3 wLightVector = (wLightPos - IN.wPosition.xyz).xyz;
+    float3 wLightDir	= normalize(wLightVector);
+    float3 wViewDir		= normalize(gWorldEyePos.xyz - IN.wPosition.xyz);
+	float3 wNormal		= normalize(IN.wNormal);
+	wNormal				= normalMultiplier * wNormal;
+
+	// Compute the surface lighting intensity
+	//
+    float	LDotN = dot(wLightDir, wNormal);
+
+	// Process the cases of not COLOR_PER_VERTEX_OPERATOR_replace.
+
+	// Get the surface, possibly textured, color for this fragment
+	//
+	float4 ambientTexUv = float4(IN.ambientTexUv.xy, 0.0, 1.0);
+
+	float2 placedAmbientTexUv;
+	placedAmbientTexUv.x = dot(ambientTexMatrix0, ambientTexUv);
+	placedAmbientTexUv.y = dot(ambientTexMatrix1, ambientTexUv);
+	float4 ambientInputColor = tex2D(ambientTex, placedAmbientTexUv);
+
+	float3 newAmbientInputColor;
+
+	#if defined(COLOR_PER_VERTEX_MASK)
+
+		float3 mask = IN.colorPerVertexMask.rrr;
+		float3 invMask = float3(1.0, 1.0, 1.0) - mask;
+
+		#if defined(COLOR_PER_VERTEX_OPERATOR_replace)
+				newAmbientInputColor = (IN.colorPerVertex.rgb * mask) + (ambientInputColor.rgb * invMask);
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_add)
+				newAmbientInputColor = ambientInputColor.rgb + (IN.colorPerVertex.rgb * mask);
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_subtract)
+				newAmbientInputColor = ambientInputColor.rgb - (IN.colorPerVertex.rgb * mask);
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_modulate)
+				newAmbientInputColor = ambientInputColor.rgb * (IN.colorPerVertex.rgb * mask);
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_divide)
+				newAmbientInputColor = ambientInputColor.rgb / (IN.colorPerVertex.rgb * mask);
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_average)
+				newAmbientInputColor = 0.5 * (ambientInputColor.rgb + (IN.colorPerVertex.rgb * mask));
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_modulate2x)
+				newAmbientInputColor = ambientInputColor.rgb * (IN.colorPerVertex.rgb * mask) * 2.0;
+		#else
+				newAmbientInputColor = IN.colorPerVertex.rgb;			
+		#endif
+	#else
+		#if defined(COLOR_PER_VERTEX_OPERATOR_replace)
+				newAmbientInputColor = IN.colorPerVertex.rgb;
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_add)
+				newAmbientInputColor = ambientInputColor.rgb + IN.colorPerVertex.rgb;
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_subtract)
+				newAmbientInputColor = ambientInputColor.rgb - IN.colorPerVertex.rgb;
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_modulate)
+				newAmbientInputColor = ambientInputColor.rgb * IN.colorPerVertex.rgb;
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_divide)
+				newAmbientInputColor = ambientInputColor.rgb / IN.colorPerVertex.rgb;
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_average)
+				newAmbientInputColor = 0.5 * (ambientInputColor.rgb + IN.colorPerVertex.rgb);
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_modulate2x)
+				newAmbientInputColor = ambientInputColor.rgb * IN.colorPerVertex.rgb * 2.0;
+		#else
+				newAmbientInputColor = IN.colorPerVertex.rgb;			
+		#endif
+	#endif
+
+	// The alpha is always taken from the texture
+	finalColor.a = IN.colorPerVertex.a;	// ambientInputColor.a;
+
+	float3 litAmbientColor	 = lightColor * newAmbientInputColor;
+	float3 ambientOnlyColor  = (1.0 - ambientShade) * litAmbientColor;
+	float3 diffuseColor		 = ambientShade * LDotN * litAmbientColor;
+
+	finalColor.rgb  = ambientOnlyColor + diffuseColor;
+
+#if defined( OPACITY_IN_COLOR_ALPHA )
+	finalColor.rgb = finalColor.a * finalColor.rgb;
+	finalColor.a = 1;
+#endif
+
+#endif	// COLOR_PER_VERTEX_AMBIENT
+
+	return finalColor;
+}

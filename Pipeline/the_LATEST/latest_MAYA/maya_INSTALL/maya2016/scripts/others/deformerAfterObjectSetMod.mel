@@ -1,0 +1,106 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//
+//  Creation Date:  Jan, 2004
+//
+//  Description:
+//	This method is called when a deformer is added to a shape in "after" 
+//  mode. It transfers shaders and any other sets from the original shape onto the deformed shape.
+//	For shaders, it removes the deformed shape from any shading groups it belongs to and copies
+// 	the shading from the original shape.
+//
+//  Input Arguments:
+//	  	$origShape: the original, undeformed shape
+//  	$newShape:  the deformed shape
+//
+proc int checkIsTransform(string $obj)
+{
+	string $nt[] = `ls -type transform $obj`;
+	return size($nt);
+}
+
+global proc
+deformerAfterObjectSetMod(string $origShape, string $newShape)
+{
+	// Create a do-nothing command that sets a value to its original value.
+	// We execute this command to ensure that this script does something and gets
+	// placed as a chunk on the undo queue. Otherwise the calling method in C++
+	// confused and thinks something went wrong because the undo queue was empty
+	// even after executing the command.
+	//
+	int $ihi = `getAttr time1.ihi`;
+	setAttr time1.ihi $ihi;
+
+	
+	if (nodeType($newShape) == "particle") {
+		return;
+	}
+	
+	string $setsOrigAll[] = `listConnections -type objectSet $origShape`;
+	string $setsCurrentAll[] = `listConnections -type objectSet $newShape`;
+	string $setsOrig[] = stringArrayRemoveDuplicates($setsOrigAll);
+	string $setsCurrent[] = stringArrayRemoveDuplicates($setsCurrentAll);	
+	if (size($setsOrig) == 1 && size($setsCurrent) == 1) {
+		if ($setsCurrent[0] == $setsOrig[0]) {
+			// They already have the same set.
+			//
+			return;
+		}
+	}
+
+	string $set;
+	for ($set in $setsCurrent) {
+		// only remove newShape from its current shading engines
+		// (some deformers like sculpt will use sets on the deformed
+		// shape, so we shouldn't remove it from those)
+		//
+		if( `objectType -isa shadingEngine $set` ) {
+			sets -rm $set $newShape;
+		}
+	}
+
+	string $origParent[] = `listRelatives -path -parent $origShape`;
+	string $uniqueName[] = `ls $origShape`;
+	
+	for ($set in $setsOrig) {
+		string $mems[] = `sets -q $set`;
+		for ($mem in $mems) {
+			string $buff[];
+			tokenize($mem,".",$buff);
+
+			string $toMatch = checkIsTransform($buff[0]) ? $origParent[0] : $uniqueName[0];
+			string $matching = `match $toMatch $mem`;
+			if (size($matching) == size($toMatch)) {
+				// Do not move deformer sets
+				//
+				string $dfmCnx[] = `listConnections -type geometryFilter $set`;
+				if ( 0 == size( $dfmCnx ) ) {
+					string $subst = `substitute $toMatch $mem $newShape`;
+					string $setsCmd = ("sets -forceElement "+$set+" \""+$subst+"\"");
+					catch(`eval $setsCmd`);
+				}
+			}
+		}
+	}
+}

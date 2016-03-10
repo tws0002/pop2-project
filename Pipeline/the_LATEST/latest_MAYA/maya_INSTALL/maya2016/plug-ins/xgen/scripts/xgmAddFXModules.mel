@@ -1,0 +1,395 @@
+// Copyright (C) 1997-2013 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+/**
+ * @file xgmAddFXModules.mel
+ * @brief Contains the xgmAddFXModules MEL procedure.
+ *
+ * <b>CONFIDENTIAL INFORMATION: This software is the confidential and
+ * proprietary information of Walt Disney Animation Studios ("WDAS").
+ * This software may not be used, disclosed, reproduced or distributed
+ * for any purpose without prior written authorization and license
+ * from WDAS. Reproduction of any section of this software must include
+ * this legend and all copyright notices.
+ * Copyright Disney Enterprises, Inc. All rights reserved.</b>
+ *
+ * @author Lee Gramling
+ * @author Ying Liu
+ * @author Thomas V Thompson II
+ *
+ * @version Created 05/17/06
+ */
+
+proc string getPresetPath()
+{
+    // need to replace this with something thats more correct
+    python("import xgenm as xgen");
+    string $root = python("xgen.rootDir()");
+    string $path = $root+"presets/";
+    return $path;
+}
+
+proc string xgmGetPresetName(string $module)
+{
+    string $path = getPresetPath();
+    string $type = `getAttr ($module+".type")`;
+    string $modPathName = ($path+"/"+$module+"."+$type+".xpreset"); 
+    return $modPathName;
+}
+
+
+proc string getPresetType(string $filename)
+{
+    string $type="";
+    string $stok[] = stringToStringArray($filename,"."); 
+    if(size($stok)>2){
+        $type = $stok[1];
+        $type = `substitute "FXModule" $type ""`; 
+    }
+    return $type;
+}
+
+proc string getPresetPrefix(string $filename)
+{
+    string $prefix="";
+    string $stok[] = stringToStringArray($filename,"."); 
+    if(size($stok)>2){
+        $prefix = $stok[0];
+    }
+    return $prefix;
+}
+
+global proc xgmPTSaveOkPressed(string $module,
+                               string $filename)
+{
+    string $modType = `getAttr ($module+".type")`;
+    if(!endsWith($filename,("."+$modType+".xpreset"))){
+      $filename +=  ("."+$modType+".xpreset");
+    }
+    string $no = (uiRes("m_xgmAddFXModules.kNo"));
+    string $confirm = $no;
+    if ( `file -q -exists $filename`) {
+       	string $yes = (uiRes("m_xgmAddFXModules.kYesButton"));
+        $confirm = `confirmDialog -title (uiRes("m_xgmAddFXModules.kFileExists"))
+                                  -message (uiRes("m_xgmAddFXModules.kFileExistsOverwrite")) 
+                                  -button $yes -button $no  
+                                  -defaultButton $yes
+                                  -cancelButton $no -dismissString $no`;
+        // check to see if file exists
+        if($confirm==$no){
+            return;
+        }
+    }
+    xgmPTSaveNewPreset($module,$filename);
+}
+
+global proc xgmPTSaveNewPreset(string $modName,string $file)
+{
+    // New Preset only
+    if(`objExists($modName)`){
+        int $fh = fopen($file,"w");
+        string $attrs[] = `listAttr -k $modName`;
+        string $each;
+        string $type = `getAttr ($modName+".type")`;
+        string $module = $type;
+        fprint($fh,"#XGen Preset file\n");
+        fprint($fh,"#FX module\n");
+        fprint($fh,$type+"\n");
+        fprint($fh,"    name       "+$modName+"\n");   
+        for($each in $attrs){
+            if($each == "type") continue;//we don't want to print type again
+            if($each == "visibility") continue;
+            if($each == "translateX") continue;
+            if($each == "translateY") continue;
+            if($each == "translateZ") continue;
+            if($each == "rotateX") continue;
+            if($each == "rotateY") continue;
+            if($each == "rotateZ") continue;
+            if($each == "scaleX") continue;
+            if($each == "scaleY") continue;
+            if($each == "scaleZ") continue;
+            string $value = `getAttr ($modName+"."+$each)`;
+            fprint($fh,"    "+$each+"       "+$value+"\n");   
+        }
+        fprint($fh,"    endAttrs\n");   
+        fclose($fh);
+    }
+}
+
+global proc xgmPTLoadOkPressed(string $module,
+                               string $textWidget,
+                               string $win)
+{
+    // query textWidget and call xgmPTAssignPreset();
+
+    string $filename = `textFieldGrp -q -text $textWidget`; 
+    // check to see if file exists
+    if (`file -q -exists $filename`) {
+        xgmPTAssignPreset($module,$filename);
+    }
+    window -e -vis false $win;
+}
+
+global proc xgmPTAssignPreset(string $module,string $filename)
+{
+    if(!`objExists($module)`){
+	string $fmt = (uiRes("m_xgmAddFXModules.kErrorUnableToAssignToModule"));
+	print `format -s $module $fmt`;
+        return;
+    }
+    int $fh = fopen($filename,"r");
+    // read file until end
+    string $line = fgetline($fh);
+    while(!feof($fh) && startsWith($line,"#")){
+        $line = fgetline($fh);
+    }
+    string $modType = $line;
+    $modType = strip($modType);
+    string $mod = `getAttr ($module+".type")`;
+    if($modType != $mod){
+    	string $fmt = (uiRes("m_xgmAddFXModules.kPresetTypeDoesNotMatchFxModuleType"));
+        confirmDialog -m `format -s $modType $mod $fmt`
+                       -button (uiRes("m_xgmAddFXModules.kOk"));
+        return;
+    }
+    while(!feof($fh)){
+        $line = strip($line);
+        if(startsWith($line,"endAttrs")){
+            break;
+        }
+        // Skip comments
+        if (!startsWith($line,"#")){
+            string $attrValue[] = stringToStringArray($line," ");
+            if(size($attrValue)<2){
+                $line = fgetline($fh);
+                continue;
+            }
+            string $attr = strip($attrValue[0]);
+            // value should be rest of the line
+            $attrValue[0]="";
+            string $val = stringArrayToString($attrValue," ");
+            $val = strip($val);
+            string $value = string($val);
+            if(`attributeQuery -ex -node $module $attr` 
+              && (`getAttr -type ($module+"."+$attr)`=="string")){
+                setAttr -type "string" ($module+"."+$attr) $value;
+            }
+        }
+        $line = fgetline($fh);
+    }
+    fclose($fh);
+}
+
+global proc xgmPTSavePreset(string $module,
+                            string $ui)
+{
+    string $path = getPresetPath();
+    xgmFileBrowserDlg( "XGen Preset", "", "" , 0, 0, "", 0, "*",
+                       $path, "xgmPTSaveOkPressed \"" + $module + "\"", 1 );
+}
+
+
+global proc xgmPTLoadPreset(string $module,
+                            string $modType,
+                            string $ui)
+{
+    string $path = getPresetPath();
+    xgmFileBrowserDlg( "XGen Preset", "", "", 0, 0, "", 0, ("*"+$modType+"*"),
+                       $path, "xgmPTAssignPreset \"" + $module + "\"", 1 );
+}
+
+global proc xgmPTNewAddFXModule()
+{
+    string $sel[] = `textScrollList -q -selectItem  xgmCreateSelectList`;
+    if(size($sel)<1){
+        string $msg = (uiRes("m_xgmAddFXModules.kErrorSelectDescriptionsToAddFxModule"));
+        confirmDialog -m $msg -button (uiRes("m_xgmAddFXModules.kOk2"));
+        return;
+    }
+
+    // get selected optionMenu
+    string $module = `optionMenu -q -value xgmPTNewModuleOption`;
+    string $preset= "";
+
+    // Get module name
+    $preset = `optionMenu -q -value xgmPTPresetMenu`;
+    int $menuNo = `optionMenu -q -select xgmPTPresetMenu`;
+
+    int $isPreset=0;// flag used to tell if we are an fx module
+
+    // this might change based on user input
+    if($menuNo > 1){ // this first item is "Don't use"
+        $isPreset = 1;
+		string $fmt = (uiRes("m_xgmAddFXModules.kModulePreset"));
+		print `format -s $module -s $preset $fmt`;
+    }
+    // Get Fx module type
+
+    string $path = getPresetPath();
+    string $presetName = ($preset+"."+$module+"FXModule.xpreset");
+    string $filename = ($path+"/"+$presetName);
+    string $descr;
+    for($descr in $sel){
+		$cmd = ("xgmFXModuleAdd "+$descr+" "+$module);
+		string $newMod = `evalEcho $cmd`;
+		if ($isPreset) {
+			xgmPTAssignPreset($newMod,$filename);
+		}
+    }
+
+    xgmDEFXRefreshChain;
+    xgmJiggleWindowCB;
+}
+
+global proc xgmPTAddPresetMenuItems(string $module)
+{
+    // load all names for now
+    string $xgenPresetDir = getPresetPath();
+    string $modFiles[] = `getFileList -folder $xgenPresetDir 
+                                      -filespec ("*.xpreset")`;
+    string $mod;
+    for($mod in $modFiles){
+        string $prefix = getPresetPrefix($mod);
+        string $type = getPresetType($mod);
+        if($prefix!=""){
+            if($type == $module){
+               menuItem -label $prefix;
+            }
+        }
+    }
+}
+
+global proc xgmAddFXModules()
+{
+  // pop up window with option menu and close/apply button
+    /*
+    ************************************
+    *  Module:[ - modules]  [presets]  *
+    *  ------------------------------  *
+    *  | XgDescription             []| *
+    *  | XgDescription1              | *
+    *  | XgDescription2              | *
+    *  |                             | *
+    *  |                             | *
+    *  ------------------------------  *
+    *                 [Add]  [cancel]  *
+    ************************************
+    */
+    if(`window -exists xgmCreateDefWin`){
+       deleteUI -window xgmCreateDefWin;
+    }
+    string $win = `window -sizeable true  
+                           -minimizeButton false 
+                           -maximizeButton false
+                           -menuBar false 
+                           -width 400 
+                           -height 600 
+                           -title (uiRes("m_xgmAddFXModules.kAddFxModulesToSelected")) 
+                           -retain 
+                            xgmCreateDefWin`;
+
+    // Fx Modules names
+    string $formLayt = `formLayout`;
+    string $modules[] = `xgmDEFXFindFXModules`;
+    $modules = stringArrayRemoveDuplicates($modules);
+
+    // Option menu
+    string $each;
+    string $optMenu = `optionMenu 
+                       -label (uiRes("m_xgmAddFXModules.kFxModules")) 
+                       -ann (uiRes("m_xgmAddFXModules.kTypeOfFxModuleToCreate"))
+                       -changeCommand xgmPTOptionChanged
+                       xgmPTNewModuleOption`;
+    for($each in $modules){
+        menuItem -label $each;
+    }
+    setParent ..;
+
+    string $presetMenu = `optionMenu -label (uiRes("m_xgmAddFXModules.kPresets")) 
+                          -ann (uiRes("m_xgmAddFXModules.kLoadAPresetAfterCreatingFxModule"))
+                          xgmPTPresetMenu`;
+    menuItem -label (uiRes("m_xgmAddFXModules.kNone"));
+    xgmPTOptionChanged();
+
+
+    // Descriptions text scroll list
+
+    string $dlist[] = xgmDescriptions("");
+    $dlist = `sort($dlist)`;
+    int $rowSize = size($dlist);
+    string $textScroll = `textScrollList -numberOfRows $rowSize
+                          -allowMultiSelection 1
+                          -ann (uiRes("m_xgmAddFXModules.kSelectTheDescriptionsToAddFxModulesTo"))
+                          xgmCreateSelectList`;
+    for($each in $dlist){
+        textScrollList -e -append $each $textScroll;
+    }
+
+    // Buttons
+    string $cancelBut = `button -width 80 -label  (uiRes("m_xgmAddFXModules.kDone")) 
+                            -ann (uiRes("m_xgmAddFXModules.kFinishAddModulesAndCloseTheWindow"))
+                            -command "window -e -vis false xgmCreateDefWin"`;
+    string $addBut = `button -width 80 
+		-label (uiRes("m_xgmAddFXModules.kAdd")) 
+        -ann (uiRes("m_xgmAddFXModules.kAddAnnot"))
+        -command "xgmPTNewAddFXModule"`;
+
+    setParent ..;
+    formLayout -edit
+        -attachForm $optMenu "top"    5
+        -attachForm $optMenu "left"   5
+
+        -attachForm $presetMenu "top" 5
+        -attachForm $presetMenu "right" 5
+
+        -attachControl $textScroll "top" 5 $optMenu
+        -attachForm $textScroll "left"   5
+        -attachForm $textScroll "right"  5
+
+        -attachControl $addBut "right" 10  $cancelBut
+        -attachForm $addBut "bottom"    5
+
+        -attachForm $cancelBut "right"   5
+        -attachForm $cancelBut "bottom"    5
+
+        -attachControl $textScroll "bottom" 5 $cancelBut
+
+        $formLayt;
+    showWindow $win;
+}
+
+global proc xgmPTOptionChanged()
+{
+    string   $module = `optionMenu -q -value xgmPTNewModuleOption`;
+
+    //update preset menu to show matching presets
+    //first delete old menuItems
+    string $oldMenus[] = `optionMenu -q -ill xgmPTPresetMenu`;
+    string $menu;
+    for($menu in $oldMenus){
+        deleteUI $menu;
+    }
+    
+    //get list of presets that match type in FX option menu
+    //add preset names
+    menuItem -label (uiRes("m_xgmAddFXModules.kDoNotUse")) -parent xgmPTPresetMenu;
+    xgmPTAddPresetMenuItems($module);
+}

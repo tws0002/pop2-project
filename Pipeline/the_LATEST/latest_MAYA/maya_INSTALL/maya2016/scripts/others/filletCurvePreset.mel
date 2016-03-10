@@ -1,0 +1,279 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  April 17, 1997
+//
+//  Description:
+//      The filletCurvePreset() procedure executes a fillet curve operation on 
+//      a pair of curves based on the fillet option vars. In general if
+//		you have n curves selected, only the last 2 curves would be filleted.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+
+proc string pieceTogetherFilletCurveCmd(
+ 	int $history,
+	int $replaceOriginal,
+ 	int $trim,
+	int $join,
+	int $isCircular,
+	float $radius,
+	int $freeformStyle,
+	int $blendControl,
+	float $depth,
+	float $bias )
+//
+//	Description :
+//		Piece together a filletCurve command.
+//
+{
+	string $cmd;
+	$cmd = "filletCurve ";
+
+	// construction history
+	$cmd = $cmd + " -ch ";
+	if ( $history == 1 ) $cmd = $cmd + "on";
+	else  $cmd = $cmd + "off";
+	
+	// trim
+	if ( $trim == 1 )
+	{
+		if ( $replaceOriginal == 1 ) $cmd = $cmd + " -rpo on";
+		else $cmd = $cmd + " -rpo off";
+		$cmd = $cmd + " -t true";
+		if ( $join == 1 ) $cmd = $cmd + " -jn true";
+		else $cmd = $cmd + " -jn false";
+	}
+	else
+	{
+		// when trim is off, replace original and join cannot be done
+		$cmd = $cmd + " -rpo false -t false -jn false";
+	}
+
+	// fillet style
+	if ( $isCircular == 1 )
+	{
+		// circular fillet
+		$cmd = $cmd + " -cir true -r " + $radius;
+	}
+	else
+	{
+		// freeform fillet
+		$cmd = $cmd + " -cir false";
+		if ( $freeformStyle == 1 ) $cmd = $cmd + " -fb true";
+		else $cmd = $cmd + " -fb false";
+	}
+
+	// blend control
+	if ( $blendControl == 1 )
+	{
+		// blend control is on
+		$cmd = $cmd + " -bc true -d " + $depth + " -b " + $bias;
+	}
+	else
+	{
+		// no blend control
+		$cmd = $cmd + " -bc false";
+	}
+
+	return $cmd;
+
+}
+
+global proc filletCurvePreset(
+ 	int $history,
+	int $replaceOriginal,
+ 	int $trim,
+	int $join,
+	int $isCircular,
+	float $radius,
+	int $freeformStyle,
+	int $blendControl,
+	float $depth,
+	float $bias )
+//
+//	FilletCurve with the preset options.
+//	Use this proc when operation dragged to Shelf.
+//
+{
+	string $cmd = pieceTogetherFilletCurveCmd( $history, $replaceOriginal, $trim, $join, $isCircular, $radius, $freeformStyle, $blendControl, $depth, $bias );
+
+	int $nitems = 2;
+	$cmd = appendToCmdPlaceHoldersForSelectionItems( $cmd, $nitems );
+
+	// Get the list of nurbs curves selected.
+	//
+	global int $gSelectNurbsCurvesBit;
+	global int $gSelectCurvesOnSurfacesBit;
+	global int $gSelectCurveParmPointsBit;
+	global int $gSelectEditPointsBit;
+	string $curvesList[] = `filterExpand -ex true -sm $gSelectNurbsCurvesBit -sm $gSelectCurvesOnSurfacesBit -sm $gSelectCurveParmPointsBit -sm $gSelectEditPointsBit`;
+
+	int $numCurves = size($curvesList);
+	if ( $numCurves == 0 )
+	{
+		string $msg = (uiRes("m_filletCurvePreset.kNoCurveToFillet"));
+		error($msg);
+	}
+	else if ( $numCurves >= 1 )
+	{
+		// just use the last 2 selected curves
+		//
+		if ( $numCurves > 2 ) 
+		{
+			string $msg = (uiRes("m_filletCurvePreset.kTwoCurveWarning"));
+			warning($msg);
+		}
+
+		string $curvePair[2];
+		if ( $numCurves == 1 )
+		{
+			// fillet between the same curve, so add it twice to the cmd list
+			//
+			$curvePair[0] = $curvesList[0];
+			$curvePair[1] = $curvesList[0];
+		}
+		else
+		{
+			$curvePair[0] = $curvesList[$numCurves-2];
+			$curvePair[1] = $curvesList[$numCurves-1];
+		}
+
+		if ( $history == 0 && $replaceOriginal == 1 && $join == 1 )
+		{
+			// delete history on each input to fillet cmd (so that command 
+			// won't force history on)
+			//
+			string $buffer[];
+			tokenize($curvePair[0], ".", $buffer);
+			string $curveName = $buffer[0];
+			$buffer = `listHistory -pdo 1 $curveName`;
+			if ( size($buffer) > 0 )
+			{
+				// the first curve has history so delete it
+				//
+				string $msg = (uiRes("m_filletCurvePreset.kFirstCurveWarning"));
+				warning($msg);
+				evalEcho("delete -ch " + $curveName);
+			}
+
+			tokenize($curvePair[1], ".", $buffer);
+			$curveName = $buffer[0];
+			$buffer = `listHistory -pdo 1 $curveName`;
+			if ( size($buffer) > 0 )
+			{
+				// the second curve has history so delete it
+				//
+				string $msg = (uiRes("m_filletCurvePreset.kSecondCurveWarning"));
+				warning($msg);
+				evalEcho("delete -ch " + $curveName);
+			}
+		}
+
+		string $results[] = executeCmdOnItems( $cmd, $curvePair );
+
+		// select the results.
+		//
+		int $resultCount = size($results);
+		if ( $resultCount > 0 )
+		{
+			string $selectString;
+        	$selectString = "select ";
+			if ( $replaceOriginal && $join )
+			{
+				if ( $history == 0 )
+				{
+					if ( $resultCount == 4 && $results[1] != $results[2] )
+					{
+						// delete the third object since it is no longer 
+						// required (in this case the first result is the 
+						// fillet, the 2nd and 3rd results are the original 2
+						// curves trimmed and the last result is the fillet 
+						// node. If the 2nd and 3rd results are the same just
+						// delete it once here <- this happens when filleting 
+						// between one curve.)
+						//
+						evalEcho("delete " + $results[2]);
+					}
+
+					// delete the second object since it is no longer required
+					//
+					if ( $resultCount > 1 && $results[0] != $results[1] )
+					{
+						evalEcho("delete " + $results[1]);
+					}
+				}
+				else
+				{
+					if ( $resultCount == 4 && $results[1] != $results[2] )
+					{
+						// make the third curve an intermediate object (so that
+						// the user won't ever see it). Note: can't do "delete"
+						// here or else fillet result will go away due to
+						// history on.
+						//
+						string $resultShapes[] = `listRelatives -s $results[2]`;
+						int $shapeCount = size($resultShapes);
+						if ( $shapeCount > 0 )
+						{
+							evalEcho("setAttr " + $resultShapes[0] + ".io true");
+						}
+					}
+
+					// make the second curve an intermediate object (so that
+					// the user won't ever see it). Note: can't do "delete"
+					// here or else fillet result will go away due to history 
+					// on.
+					//
+					if ( $resultCount > 1 && $results[0] != $results[1] )
+					{
+						string $resultShapes[] = `listRelatives -s $results[1]`;
+						int $shapeCount = size($resultShapes);
+						if ( $shapeCount > 0 )
+						{
+							evalEcho("setAttr " + $resultShapes[0] + ".io true");
+						}
+					}
+				}
+
+				$selectString +=  $results[0];
+			}
+			else
+			{
+				int $i;
+				for ( $i = 0; $i < $resultCount; $i++ )
+				{
+					$selectString +=  $results[$i];
+					$selectString += " ";
+				}
+			}
+			$selectString += ";";
+			select -cl;
+			eval($selectString);
+		}
+	}
+}

@@ -1,0 +1,1132 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:	July 11, 1997
+//
+//  Procedure Name:
+//		AEgenericPerParticle
+//
+//  Description:
+//		Create attribute editor controls for per particle attributes.
+//
+//  Input Value:
+//		nodeAttr ("nodeName.attributeName")
+//
+//  Output Value:
+//		None
+//
+
+
+global string	$gAEgenericSuppress[] = 
+					{
+						"acceleration",
+						"velocity",
+						"position",
+						"mass",
+						"ageNormalized",
+						"inputForce",
+						"uvSetTweakLocation",
+						"ghostFrames"
+					};
+
+//  ========== AEgenericReset ==========
+//
+//  Description:
+//		Locate the parent column layout and the enclosing frame
+//		layout. This is needed later to add/delete children and
+//		to open/close the frame layout. At any time, the parents
+//		might get deleted, so we always need to verify.
+//
+
+proc  AEgenericReset()
+{
+
+	global string	$gAEgenericColumnLayout;
+	global string	$gAEgenericFrameLayout;
+	string			$currentParent = `setParent -q`;
+
+
+	if ($gAEgenericColumnLayout != $currentParent)
+	{
+		// There is a new parent. Save the new colum layout
+		// parent, and find the enclosing frame layout.
+		//
+		$gAEgenericColumnLayout = $currentParent;
+
+		int		$columnLytCnt = size( $gAEgenericColumnLayout );
+		int		$count = 0;
+
+		for ($i = $columnLytCnt; $i >= 1; $i--)
+		{
+			if (substring( $gAEgenericColumnLayout, $i, $i ) == "|") $count++;
+
+			if ($count == 2)
+			{
+				$gAEgenericFrameLayout = substring( $gAEgenericColumnLayout, 1, ($i - 1) );
+				break;
+			}
+		}
+	}
+
+
+}  // AEgenericReset //
+
+
+
+//  ========== AEokayAttr ==========
+//
+//  Description:
+//		Check the given attribute with the list of
+//		attributes to suppress.
+//
+
+proc int  AEokayAttr( string $shapeName, string $attrName )
+{
+	global string	$gAEgenericSuppress[];
+	int				$count = size( $gAEgenericSuppress );
+
+	// First check whether this is among our fixed list of
+	// attributes which we suppress, but then make appear
+	// at a fixed place at the top of the list.
+	//
+	for ($i = 0; $i < $count; $i++)
+	{
+		if ($attrName == $gAEgenericSuppress[$i])
+		{
+			return( 0 );
+		}
+	}
+
+	// Also check whether this attribute has been marked HIDDEN.
+	// These don't appear in the list at all.
+	// The listAttr command below will return something if this
+	// attribute is visible. 
+	//
+	if( `objExists $shapeName` )
+	{
+		string $returnName[] = `listAttr -v -w -st $attrName $shapeName`;
+		if (size($returnName) == 0)
+		{
+			return 0;
+		}
+	}
+	else
+	{
+		//	sometimes this routine gets called when the AE is updating to
+		//	reflect a new scene that has been loaded.  If the new scene contains
+		//	a particle system with the same name as a particle system that was
+		//	selected in the previous scene, then we can get into a situation
+		//	where this code thinks an attribute exists on the new scene's
+		//	particle system but it doesn't.  Hence, we added this check
+		//	to make sure the attr actually exists.
+		//
+		return 0;
+	}
+
+	return( 1 );
+
+
+}  // AEokayAttr //
+
+
+
+//  ========== AEdynAryAttr ==========
+//
+//  Description:
+//		Return a sorted list of dynamic attributes on the
+//		particle shape. This list is filtered to remove the
+//		hidden attributes that the user should not be using.
+//		Each attribute has its type appended to it. For example,
+//		example, "radiusPP.Float", "rgbPP.Vector".
+//		This is used by the component editor.
+//
+
+proc  AEdynAryAttr( string $node, string $attrList[] )
+{
+
+	// Clear the array in case there are no attributes.
+	//
+	int		$attrCnt = 0;
+
+	clear( $attrList );
+
+
+	// Create place holders for the static attributes
+	// which will be added later.
+	//
+	$attrList[$attrCnt++] = "aaaa";
+	$attrList[$attrCnt++] = "aaaa";
+	$attrList[$attrCnt++] = "aaaa";
+	$attrList[$attrCnt++] = "aaaa";
+	$attrList[$attrCnt++] = "aaaa";
+	$attrList[$attrCnt++] = "aaaa";
+	$attrList[$attrCnt++] = "aaaa";
+
+
+	// Make a list of per particle attributes. Pass
+	// the list through the suppression filter. While
+	// making the list, append the attribute type.
+	//
+	string	$dblAttrAry[] = `particle -q -ppd $node`;
+	string	$vecAttrAry[] = `particle -q -ppv $node`;
+	int		$dblAttrCnt = size( $dblAttrAry );
+	int		$vecAttrCnt = size( $vecAttrAry );
+
+	for ($i = 0; $i < $dblAttrCnt; $i++)
+	{
+		if (AEokayAttr( $node, $dblAttrAry[$i] ))
+		{
+			$attrList[$attrCnt++] = ($dblAttrAry[$i]+".Float");
+		}
+	}
+
+	for ($i = 0; $i < $vecAttrCnt; $i++)
+	{
+		if (AEokayAttr( $node, $vecAttrAry[$i] ))
+		{
+			$attrList[$attrCnt++] = ($vecAttrAry[$i]+".Vector");
+		}
+	}
+
+
+	// Finally, sort the list.
+	//
+//	$attrList = sort( $attrList );
+
+
+	// After the list has been sorted, add the static
+	// attributes to the beginning of the list.
+	//
+	$attrList[0] = "position.Vector";
+	$attrList[1] = "rampPosition.Vector";
+	$attrList[2] = "velocity.Vector";
+	$attrList[3] = "rampVelocity.Vector";
+	$attrList[4] = "acceleration.Vector";
+	$attrList[5] = "rampAcceleration.Vector";
+	$attrList[6] = "mass.Double";
+
+
+}  // AEdynAryAttr //
+
+
+
+//  ========== AEgenericIsExpression ==========
+//
+//  Description:
+//		Inspect the attribute connection to see if it
+//		is an expression connection. The format
+//		of the input string is: nodeName.attName.
+//
+
+proc int  AEgenericIsExpression( string $attrConnection )
+{
+
+	if (match( "output", $attrConnection ) == "")
+	{
+		return( 0 );
+	}
+	else
+	{
+		return( 1 );
+	}
+
+}  // AEgenericIsExpression //
+
+
+
+//  ========== AEgenericIsArrayMapper ==========
+//
+//  Description:
+//		Inspect the attribute connection to see if it
+//		is connected to an array mapper node. The format
+//		of the input string is: nodeName.attName.
+//
+
+proc int  AEgenericIsArrayMapper( string $attrConnection )
+{
+	string	$words[];
+
+	tokenize( $attrConnection, ".", $words );
+
+	if (`nodeType $words[0]` == "arrayMapper")
+	{
+		return( 1 );
+	}
+	else
+	{
+		return( 0 );
+	}
+
+
+}  // AEgenericIsArrayMapper //
+
+
+
+//  ========== AEgenericConnectText ==========
+//
+//  Description:
+//		Return a text description of what this attribute
+//		is connected to. If there is an upstream connection,
+//		then this gets placed in the textfield. If there are
+//		(only) one or more downstream connections, then the
+//		special "-> " string is used. Otherwise the textfield
+//		is blank.
+//
+
+global proc string  AEgenericConnectText( string $nodeName, string $attrName )
+{
+	string	$cnctAry[];
+
+	//	sometimes when you have a scene with a particleShape that has a bunch of
+	//	dynamic attrs and is selected, then you suddenly load in another scene that
+	//	has a node with the same name but fewer dynamic attrs, we wind up in this 
+	//	routine trying to update the per-particle attr entries for attributes that
+	//	don't exist.  Let's make sure we exit in this case - just return an empty string.
+	//
+	if( !`attributeQuery -ex -n $nodeName $attrName` )
+	{
+		return "";
+	}
+
+	// Check for upstream connections.
+	//
+	$cnctAry = `listConnections -s true -d false -p true ($nodeName+"."+$attrName)`;
+
+	if (size( $cnctAry ))
+	{
+		if (AEgenericIsExpression( $cnctAry[0] ))
+		{
+			// Special case for expressions.
+			//
+			return (uiRes("m_AEgenericPerParticle.kExpression"));
+		}
+		else
+		{
+			// Show the upstream connection.
+			//
+			return( "<- "+$cnctAry[0] );
+		}
+	}
+
+	// Check for downstream connections.
+	//
+	else
+	{
+		$cnctAry = `listConnections -s false -d true ($nodeName+"."+$attrName)`;
+		
+		if (size( $cnctAry ))
+		{
+			return( "->..." );
+		}
+		else
+		{
+			return( "" );
+		}
+	}
+
+
+}  // AEgenericConnectText //
+
+
+
+//  ========== AEgenericBreakConnection ==========
+//
+//  Description:
+//		Break the connection between the particle shape
+//		and the array mapper node. Clear the textfield.
+//
+
+global proc  AEgenericBreakConnection( string $node, string $srcAttr, string $dstAttr )
+{
+	
+	disconnectAttr $srcAttr $dstAttr;
+	AEgenericUpdateAllTextfields( $node );
+
+
+}  // AEgenericBreakConnection //
+
+
+
+//  ========== AEgenericBreakAllConnection ==========
+//
+//  Description:
+//		Break all the connections between the particle shape
+//		and the array mapper node. Clear the textfield.
+//
+
+global proc  AEgenericBreakAllConnections( string $psNode, string $amNode )
+{
+	string	$downCnctAry[];
+	int		$downCnctCnt;
+	string	$upCnctAry[];
+	string	$words[];
+
+	
+	// Break all the downstream connections from the array
+	// mapper node to the particle shape node.
+	//
+	$downCnctAry = `listConnections -s false -d true -p true $amNode`;
+	$downCnctCnt = size( $downCnctAry );
+
+	for ($i = 0; $i < $downCnctCnt; $i++)
+	{
+		tokenize( $downCnctAry[$i], ".", $words );
+
+		if ($words[0] == $psNode)
+		{
+			$upCnctAry = `listConnections -s true -d false -p true $downCnctAry[$i]`;
+			disconnectAttr $upCnctAry[0] $downCnctAry[$i];
+		}
+	}
+
+
+	// Break all the downstream connections from the particle
+	// shape to the array mapper node.
+	//
+	$downCnctAry = `listConnections -s false -d true -p true $psNode`;
+	$downCnctCnt = size( $downCnctAry );
+
+	for ($i = 0; $i < $downCnctCnt; $i++)
+	{
+		tokenize( $downCnctAry[$i], ".", $words );
+
+		if ($words[0] == $amNode)
+		{
+			$upCnctAry = `listConnections -s true -d false -p true $downCnctAry[$i]`;
+			disconnectAttr $upCnctAry[0] $downCnctAry[$i];
+		}
+	}
+
+
+	// Update the attribute editor.
+	//
+	AEgenericUpdateAllTextfields( $psNode );
+
+
+}  // AEgenericBreakAllConnection //
+
+
+
+//  ========== AEgenericDeleteMapper ==========
+//
+//  Description:
+//		Break all connections to the mapper node, and then
+//		delete the mapper node. If the ramp node is left
+//		without any connections, delete it also.
+//
+
+global proc  AEgenericDeleteMapper( string $psNode, string $amNode, string $rowLyt )
+{
+	string	$cnctAry[];
+	string	$rampNode;
+
+
+	// Get the ramp node.
+	//
+	$cnctAry = `listConnections -s true -d false ($amNode+".computeNode")`;
+
+	if (size( $cnctAry ) == 1)
+	{
+		$rampNode = $cnctAry[0];
+		disconnectAttr ($rampNode+".message") ($amNode+".computeNode");
+
+
+		// If the ramp node has no more connections, then delete it.
+		// Note: there is always one connection for classification which
+		// can be ignored.
+		//
+		$cnctAry = `listConnections $rampNode`;
+
+		if (size( $cnctAry ) <= 1)
+		{
+			delete $rampNode;
+		}
+	}
+
+
+	// Now delete the array mapper node along with any orphaned nodes.
+	//
+	delete $amNode;
+
+
+	// Update the attribute editor.
+	//
+	AEgenericUpdateAllTextfields( $psNode );
+
+
+}  // AEgenericDeleteMapper //
+
+
+
+//  ========== AEconnectAttrDoIt ==========
+//
+//  Description:
+//		Make the attribute connection, and update the layout.
+//		If the source attribute does not exist, add it.
+//
+
+global proc  AEconnectAttrDoIt( string $psNode, string $psAttr, string $dstNodeAttr )
+{
+
+	// If the source attribute does not exists, create it.
+	// Always add the initial state attribute in case the
+	// user does a "save initial state" command.
+	//
+	if (AEattrDblExists( $psNode, $psAttr ) == 0)
+	{
+		addAttr -ln ($psAttr+"0") -dt doubleArray $psNode;
+		addAttr -ln $psAttr -dt doubleArray  $psNode;
+	}
+
+
+	// Now make the connection.
+	//
+	connectAttr ($psNode+"."+$psAttr) $dstNodeAttr;
+	AEgenericUpdateAllTextfields( $psNode );
+
+
+}  // AEconnectAttrDoIt //
+
+
+
+//  ========== AEgenericDeleteAttr ==========
+//
+//  Description:
+//		Delete the given attribute. Also check for initial state
+//		attribute, and delete it also.
+//
+
+global proc  AEgenericDeleteAttr( string $node, string $attr )
+{
+
+	// Delete the given attribute.
+	//
+	deleteAttr -at $attr $node;
+
+
+	// Look for all occurrences of the initial state attribute
+	// and delete them.
+	//
+	string 	$attrName0 = $attr+"0";
+	string	$attrAry[] = `listAttr -array -string $attrName0 $node`;
+	int		$attrCnt = size( $attrAry );
+
+	for ($i = 0; $i < $attrCnt; $i++)
+	{
+		deleteAttr -at $attrAry[$i] $node;
+	}
+
+
+}  // AEgenericDeleteAttr //
+
+
+
+//  ========== AEgenericUpdateOneTextfield ==========
+//
+//  Description:
+//		Update the textfield text for the given layout.
+//
+
+global proc  AEgenericUpdateOneTextfield( string $node, string $attr, string $rowLyt )
+{
+	global string	$gAEgenericColumnLayout;
+	setParent $gAEgenericColumnLayout;
+
+	string	$childAry[] = `rowLayout -q -childArray $rowLyt`;
+	string	$text = AEgenericConnectText( $node, $attr );
+
+	textField -e -text $text $childAry[1];
+
+}  // AEgenericUpdateOneTextfield //
+
+
+
+//  ========== AEgenericUpdateAllTextfields ==========
+//
+//  Description:
+//		Update the text displayed in all the textfields based
+//		on the current state of the attribute. If the attribute
+//		is connected, display the source attribute or expression
+//		text. Otherwise clear the textfield. This is a convenience
+//		method that can be called from other editors to update
+//		the array attribute layout.
+//
+
+global proc  AEgenericUpdateAllTextfields( string $nodeName )
+{
+	//	sometimes this routine gets called when the AE is updating to
+	//	reflect a new scene that has been loaded.  If the new scene doesn't 
+	//	contain an object with the same name as the one that was previously
+	//	selected, the routine will fail.  Hence, we add the check to make
+	//	sure that the object exists.
+	//	
+	if( !`objExists $nodeName` )
+	{
+		return;
+	}
+
+	global string	$gAEgenericColumnLayout;
+	setParent $gAEgenericColumnLayout;
+
+	string	$attrList[];
+	AEdynAryAttr( $nodeName, $attrList );
+
+	string	$rowLytAry[] = `columnLayout -q -childArray $gAEgenericColumnLayout`;
+	int		$rowLytCnt = size( $rowLytAry );
+
+	string	$childAry[];
+	string	$words[];
+
+	for ($i = 0; $i < $rowLytCnt; $i++)
+	{
+		tokenize( $attrList[$i], ".", $words );
+		AEgenericUpdateOneTextfield( $nodeName, $words[0], $rowLytAry[$i] );
+	}
+
+
+}  // AEgenericUpdateAllTextfields //
+
+
+
+//  ========== AEattrDblExists ==========
+//
+//  Description:
+//		Check if the given double array attribute already
+//		exists on the given particle shape.
+//
+
+global proc int  AEattrDblExists( string $node, string $attr )
+{
+	string	$dblAttrAry[] = `particle -q -ppd $node`;
+	int		$dblAttrCnt = size( $dblAttrAry );
+
+
+	for ($i = 0; $i < $dblAttrCnt; $i++)
+	{
+		if ($attr == $dblAttrAry[$i])
+		{
+			return( 1 );
+		}
+	}
+
+	return( 0 );
+
+
+}  // AEattrDblExists //
+
+
+
+//  ========== AEcreateConnectAttr ==========
+//
+//  Description:
+//		Add a special case menu item to the popup menu. If the
+//		attribute is connected to an arrayMapper, then inspect
+//		arrayMapper node to see if it has an available connection.
+//		If so, then add a menu item which will connect a new
+//		attribute to the arrayMapper. Also inspect the particle
+//		shape, and if the attribute is not present, create it.
+//
+
+proc  AEcreateConnectAttr( string $psNode, string $psAttr, string $amNode, string $amAttr )
+{
+	string	$connections[];
+	string	$newAttr;
+
+
+	// Check if the arrayMapper attribute is available for a connection.
+  	//
+	$connections = `listConnections -s true -d false ($amNode+"."+$amAttr)`;
+
+	if (size( $connections ) == 0)
+	{
+		// Create a new attribute name to connect to uCoordPP.
+		//
+		if ($amAttr == "uCoordPP")
+		{
+			$newAttr = substitute( "PP", $psAttr, "UPP" );
+			if ($newAttr == $psAttr) $newAttr = $psAttr+"UPP";
+		}
+		else
+		{
+			$newAttr = substitute( "PP", $psAttr, "VPP" );
+			if ($newAttr == $psAttr) $newAttr = $psAttr+"VPP";
+		}
+
+
+		// Use "Connect" if the attribute exists, otherwise
+		// use "Create".
+		//
+		if (AEattrDblExists( $psNode, $newAttr ))
+		{
+			string $fmt = (uiRes("m_AEgenericPerParticle.kConnect"));
+			menuItem
+				-label `format -s $newAttr -s ($amNode+"."+$amAttr) $fmt`
+				-c ("AEconnectAttrDoIt "+$psNode+" "+$newAttr+" "+$amNode+"."+$amAttr);
+		}
+		else
+		{
+			string $fmt = (uiRes("m_AEgenericPerParticle.kCreate"));
+			menuItem
+				-label `format -s $newAttr -s ($amNode+"."+$amAttr) $fmt`
+				-c ("AEconnectAttrDoIt "+$psNode+" "+$newAttr+" "+$amNode+"."+$amAttr);
+		}
+	}
+
+
+}  // AEcreateConnectAttr //
+
+
+
+//  ========== AEgenericCreateRamp ==========
+//
+//  Description
+//		Create a ramp node, an array mapper node, and make the
+//		necessary connections to the particle shape.
+//
+
+global proc  AEgenericCreateRamp( string $node, string $attr, string $rowLyt )
+{
+	string	$cmd;
+
+	$cmd = "arrayMapper -target "+$node+" -destAttr "+$attr+" -inputV ageNormalized -type ramp";
+	evalEcho( $cmd );
+
+
+	if (AEattrDblExists( $node, $attr ))
+	{
+		if (!`exists makeMonochromRampAMW`)
+		{
+			source ArrayMapperWnd;
+		}
+
+		makeMonochromRampAMW( $node, $attr );
+	}
+
+
+	AEgenericUpdateOneTextfield( $node, $attr, $rowLyt );
+
+
+}  // AEgenericCreateRamp //
+
+
+
+//  ========== AEgenericAttrPopupMenu ==========
+//
+//  Description:
+//		Build the popup menu for generic array attributes.
+//		The current state of the attribute determines what
+//		items are added to the menu. If the attribute is
+//		connected, then navigation items are added. If
+//		the attribute has an expression, then just the
+//		expression editor is available. If the attribute
+//		is not connected, then the default buttons are added.
+//
+
+global proc  AEgenericAttrPopupMenu( string $parent, string $nodeName, string $attrName, string $attrType, string $rowLyt )
+{
+	string	$cnctAry[];
+	int		$cnctCnt;
+	string	$words[];
+	string	$amNode;
+	int		$deleteBtnOkay = 0;
+
+
+	// Delete the old buttons.
+	//
+	popupMenu -e -deleteAllItems $parent;
+	setParent -menu $parent;
+
+	// Save this value for later use...
+	//
+	string $breakConnection = (uiRes("m_AEgenericPerParticle.kBreakConnection")) ;
+
+	// Check for upstream connections.
+	//
+	$cnctAry = `listConnections -s true -d false -p true ($nodeName+"."+$attrName)`;
+
+	if (size( $cnctAry ))
+	{
+		tokenize( $cnctAry[0], ".", $words );
+
+		if (AEgenericIsExpression( $cnctAry[0] ))
+		{
+			menuItem
+				-label (uiRes("m_AEgenericPerParticle.kCreationExpression")) 
+				-c ("expressionEditor creation "+$nodeName+" "+$attrName);
+
+			menuItem
+				-label (uiRes("m_AEgenericPerParticle.kRuntimeBeforeDynamicsExpression")) 
+				-c ("expressionEditor runtimeBeforeDynamics "+$nodeName+" "+$attrName);
+
+			menuItem
+				-label (uiRes("m_AEgenericPerParticle.kRuntimeAfterDynamicsExpression")) 
+				-c ("expressionEditor runtimeAfterDynamics "+$nodeName+" "+$attrName);
+		}
+		else if (AEgenericIsArrayMapper( $cnctAry[0] ))
+		{
+			$amNode = $words[0];
+
+			menuItem
+				-l ("<- "+$cnctAry[0])
+				-subMenu true;
+
+			string	$ramp[] = `listConnections -s true -d false ($amNode+".computeNode")`;
+
+			if (size( $ramp ) == 1)
+			{
+				menuItem
+					-label (uiRes("m_AEgenericPerParticle.kEditRamp"))
+					-c ("showEditor "+$ramp[0]);
+			}
+
+			menuItem
+				-label (uiRes("m_AEgenericPerParticle.kEditArrayMapper"))
+				-c ("showEditor "+$amNode);
+
+			AEcreateConnectAttr( $nodeName, $attrName, $amNode, "uCoordPP" );
+			AEcreateConnectAttr( $nodeName, $attrName, $amNode, "vCoordPP" );
+
+			menuItem
+				-label $breakConnection
+				-c ("AEgenericBreakAllConnections "+$nodeName+" "+$amNode );
+
+			menuItem
+				-label (uiRes("m_AEgenericPerParticle.kDeleteArrayMapper"))
+				-c ("AEgenericDeleteMapper "+$nodeName+" "+$amNode+" "+$rowLyt);
+
+			setParent -menu ..;
+		}
+		else
+		{
+			menuItem
+				-label ("<- "+$cnctAry[0])
+				-subMenu true;
+
+			string $label = (uiRes("m_AEgenericPerParticle.kEdit"));
+			menuItem
+				-label `format -s $words[0] $label`
+				-c ("showEditor "+$words[0]);
+
+			menuItem
+				-label $breakConnection
+				-c ("AEgenericBreakConnection "+$nodeName+" "+$cnctAry[0]+" "+$nodeName+"."+$attrName);
+
+			setParent -menu ..;
+		}
+	}
+
+
+	// When there are no upstream connections, add the default buttons
+	// regardless if there are any downstream connections.
+	//
+	else
+	{
+		// Do not allow expressions or component editor on the following:
+		// rampPosition, rampVelocity, rampAcceleration.
+		//
+		int $isNotRampAttr = 0;
+		if  ( ($attrName != "rampPosition") &&
+			 ($attrName != "rampVelocity") &&
+			 ($attrName != "rampAcceleration") )
+			$isNotRampAttr = 1;
+
+		if ($isNotRampAttr)
+		{
+			menuItem
+				-label (uiRes("m_AEgenericPerParticle.kCreationExpression2")) 
+				-c ("expressionEditor creation "+$nodeName+" "+$attrName);
+
+			menuItem
+				-label (uiRes("m_AEgenericPerParticle.kRuntimeExpressionBeforeDynamics")) 
+				-c ("expressionEditor runtimeBeforeDynamics "+$nodeName+" "+$attrName);
+
+			menuItem
+				-label (uiRes("m_AEgenericPerParticle.kRuntimeExpressionAfterDynamics")) 
+				-c ("expressionEditor runtimeAfterDynamics "+$nodeName+" "+$attrName);
+		}
+
+		// Do not allow ramp on the following attributes:
+		// lifespanPP, position, velocity, acceleration.
+		// Not possible to ramp these attributes.
+		//
+		int $isRampable = 1;
+
+		if ( ($attrName != "lifespanPP") &&
+			 ($attrName != "position") &&
+			 ($attrName != "velocity") &&
+			 ($attrName != "acceleration") )
+		{
+			menuItem 
+				-label (uiRes("m_AEgenericPerParticle.kCreateRamp")) 
+				-c ("AEgenericCreateRamp "+$nodeName+" "+$attrName+" "+$rowLyt);
+			menuItem 
+				-optionBox true
+				-c ("ArrayMapperWnd "+$nodeName+" "+$attrName+" "+$rowLyt);
+		}
+
+		// Also do not allow component editor on
+		// the ramp-specific attributes
+		//
+		if ($isNotRampAttr)
+		{
+			menuItem
+				-label (uiRes("m_AEgenericPerParticle.kComponentEditor")) 
+				-c "ComponentEditor";
+		}
+
+		$deleteBtnOkay = 1;
+
+		// Do not allow deleting lifespanPP (v 3.0 and after)
+		//
+		if ($attrName == "lifespanPP")
+			$deleteBtnOkay = 0;
+	}
+
+
+	// Add the standard navigation and disconnect buttons for all
+	// of the downstream connections.
+	//
+	$cnctAry = `listConnections -s false -d true -p true ($nodeName+"."+$attrName)`;
+	$cnctCnt = size( $cnctAry );
+
+	if (size( $cnctAry ))
+	{
+		menuItem -divider true;
+
+		string $edit = (uiRes("m_AEgenericPerParticle.kEditIt"));
+		for ($i = 0; $i < $cnctCnt; $i++)
+		{
+			tokenize( $cnctAry[$i], ".", $words );
+
+			menuItem
+				-label ("-> "+$cnctAry[$i])
+				-subMenu true;
+
+			menuItem
+				-label `format -s $words[0] $edit`
+				-c ("showEditor "+$words[0]);
+
+			menuItem
+				-label $breakConnection
+				-c ("AEgenericBreakConnection "+$nodeName+" "+$nodeName+"."+$attrName+" "+$cnctAry[$i]);
+
+			setParent -menu ..;
+		}
+	}
+	else
+	{
+		if ($deleteBtnOkay)
+		{
+			if (AEokayAttr( $nodeName, $attrName ))
+			{
+				menuItem
+					-label (uiRes("m_AEgenericPerParticle.kDeleteAttribute")) 
+					-c ("AEgenericDeleteAttr "+$nodeName+" "+$attrName);
+			}
+		}
+	}
+
+
+}  // AEgenericAttrPopupMenu //
+
+
+
+//  ========== AEaddUI ==========
+//
+//  Description:
+//		Create new ui for the array attribute, and add 
+//		it to the layout. This creates a label, a read-only
+//		textfield, and registers the callback for the popup menu.
+//
+
+proc  AEaddUI( string $nodeName, string $attrNameType )
+{
+	global int $gTextColumnWidthIndex;
+
+	string	$words[]; tokenize( $attrNameType, ".", $words );
+	string	$attrName = $words[0];
+	string	$attrType = $words[1];
+	string	$uiName = `attributeName -nice ($nodeName + "." + $attrName )`;
+	string  $annotation = "";
+
+	if ($attrName == "worldVelocityInObjectSpace") {
+		$uiName = (uiRes("m_AEgenericPerParticle.kWorldVelocity"));
+		$annotation = (uiRes("m_AEgenericPerParticle.kWorldVelocityAnnot"));
+	}
+
+	// Make sure the parent is selected.
+	//
+	global string	$gAEgenericColumnLayout;
+
+	setParent $gAEgenericColumnLayout;
+
+
+	// Make a unique name for the layout. Cannot use attribute name,
+	// because the layouts are reused. Use the child count instead.
+	//
+	int		$childCnt = `columnLayout -q -numberOfChildren $gAEgenericColumnLayout`;
+	string	$lytName = "DynAryAttrRowLayout"+$childCnt;
+
+
+	// Add the new buttons.
+	//
+	setUITemplate -pst attributeEditorPresetsTemplate;
+
+	rowLayout 
+		-nc 3 -vis 0
+		-columnWidth 1 $gTextColumnWidthIndex
+		-columnWidth 2 238
+		-columnAttach 2 both 0
+		-columnAttach 1 right 5
+		$lytName;
+
+		if ($annotation == "") {
+			text -l $uiName;
+		} else {
+			text -l $uiName -annotation $annotation;		
+		}
+
+		string	$text = AEgenericConnectText( $nodeName, $attrName );
+		textField -tx $text -editable false  ("ExprField"+$childCnt);
+		string	$menuName = "ExprField"+$childCnt+"Menu";
+		popupMenu 
+			-allowOptionBoxes true
+			-postMenuCommand ("AEgenericAttrPopupMenu "+$menuName+" "+$nodeName+" "+$attrName+" "+$attrType+" "+$lytName)
+			$menuName;
+	
+		setParent ..;
+
+	rowLayout -e -vis 1 $lytName;
+
+	string $plugName = $nodeName+"."+$attrName;
+	scriptJob -p $lytName -rp -con $plugName ("AEgenericUpdateAllTextfields \""+$nodeName+"\"");
+
+	setUITemplate -ppt;
+
+
+}  // AEaddUI //
+
+
+
+//  ========== AEreplaceUI ==========
+//
+//  Description:
+//		Replace the current ui with new labels and callbacks.
+//
+
+proc  AEreplaceUI( string $nodeName, string $attrNameType, string $rowLyt )
+{
+	string	$childAry[] = `rowLayout -q -childArray $rowLyt`;
+	string	$words[]; tokenize( $attrNameType, ".", $words );
+	string	$name = $words[0];
+	string	$type = $words[1];
+	string	$uiName = `attributeName -nice ($nodeName + "." + $name)`;
+	string  $annotation = "";
+
+	if ($name == "worldVelocityInObjectSpace") {
+		$uiName = uiRes( "m_AEgenericPerParticle.kWorldVelocity" );
+		$annotation = uiRes( "m_AEgenericPerParticle.kWorldVelocityAnnot" );
+	}
+	setParent $rowLyt;
+	text -e -l $uiName $childAry[0];
+	if ($annotation != "") {
+		text -e -annotation $annotation $childAry[0];
+	}
+	AEgenericUpdateOneTextfield( $nodeName, $name, $rowLyt );
+	popupMenu -e -pmc ("AEgenericAttrPopupMenu "+$childAry[1]+"Menu "+$nodeName+" "+$name+" "+$type+" "+$rowLyt) ($childAry[1]+"Menu");
+	string $plugName = $nodeName+"."+$name;
+	scriptJob -p $rowLyt -rp -con $plugName ("AEgenericUpdateAllTextfields \""+$nodeName+"\"");
+
+}  // AEreplaceUI //
+
+
+
+//  ========== AEgenericPerParticle ==========
+//
+//  Description:
+//		Called whenever the Attribute Editor is building or updating the 
+//		Per Particle Attribute layout.
+//
+
+global proc  AEgenericPerParticle( string $unused, string $nodeAttr )
+{
+	string	$words[]; tokenize( $nodeAttr, ".", $words );
+	string	$nodeName = $words[0];
+
+
+	// Make sure the correct parent layout names have been saved.
+	//
+	global string	$gAEgenericColumnLayout;
+	global string	$gAEgenericFrameLayout;
+
+	AEgenericReset();
+
+
+	// Get sorted list of dynamic array attributes and list
+	// of existing rowColumn layouts for array attributes.
+	//
+	string	$attrList[];
+	string	$rowLytAry[];
+
+	AEdynAryAttr( $nodeName, $attrList );
+	$rowLytAry = `columnLayout -q -childArray $gAEgenericColumnLayout`;
+
+	// Update the ui. Reuse the existing widgets before creating
+	// new ones. The extra layouts will be deleted later.
+	//
+	int		$attrCnt = size( $attrList );
+	int		$rcCnt = size( $rowLytAry );
+
+	for ($i = 0; $i < $attrCnt; $i++)
+	{
+		if ($i < $rcCnt)
+		{
+			AEreplaceUI( $nodeName, $attrList[$i], $rowLytAry[$i] );
+		}
+		else
+		{
+			AEaddUI( $nodeName, $attrList[$i] );
+		}
+	}
+
+	// Delete any extra layouts that are no longer needed.
+	//
+	if ($attrCnt < $rcCnt)
+	{
+		for ($i = $rcCnt - 1; $i >= $attrCnt; $i--)
+		{
+			deleteUI -layout $rowLytAry[$i];
+		}
+	}
+
+
+	// Expand the Per Particle Attribute panel to make sure
+	// the user can find the new attributes.
+	//
+	if (size( $gAEgenericColumnLayout ))
+	{
+		frameLayout -e -collapse 0 $gAEgenericFrameLayout;
+	}
+
+
+}  // AEgenericPerParticle //

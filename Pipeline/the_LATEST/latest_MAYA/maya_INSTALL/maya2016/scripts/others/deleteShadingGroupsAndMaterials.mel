@@ -1,0 +1,226 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+// Creation Date:  14 May 1997
+//
+//  File Name:
+//      deleteShadingGroupsAndMaterials.mel
+//
+//  Description:
+//		This file holds useful delete utilities used in
+//	various spots in the UI.
+//
+//////////////////////////////////////////////////////////////////////
+//
+//  Procedure Name:
+//      resetDefaultShadingGroup
+//
+//  Description:
+//
+//	Pick the first renderable shading group
+//	and set it to be the default.  If the geometry string
+//	is not "", take the given geometry and assign it
+//	to the new default.
+//
+//	This proc is most useful when deleting the default shading group.
+//
+//  Input Arguments:
+//      $geometry - string in the form "obj1 obj2 ... objx"
+//		where objx is the name of an object to be reassigned to
+//		the new default shader.
+//
+//  Return Value:
+//      None.
+//
+// Examples:
+// 		resetDefaultShadingGroup ""; // choose a new one, no assignments
+// 		// choose a new one, and assign nurbsSphere3 nurbsPlane1 to it.
+// 		resetDefaultShadingGroup "nurbsSphere3 nurbsPlane1"; 
+//
+global proc resetDefaultShadingGroup(string $geometry) 
+{
+	// check for reassigning default SG
+	string $sets[] = `ls -sets`;
+	// find the first renderable SG
+	string $surface[];
+	string $surfacePlug;
+	int $numSurfs;
+	
+	for($set in $sets) {
+		if (`sets -q -renderable $set`) {
+			$numSurfs = 0;
+			// renderable set 
+			// check if this guy has a surface shader.
+			$surfacePlug = ($set + ".surfaceShader");
+			catch ( $surface = `listConnections -source true -destination false $surfacePlug` );
+			$numSurfs = `size $surface`;
+			if($numSurfs > 0) {
+				string $msg = (uiRes("m_deleteShadingGroupsAndMaterials.kSetDefault"));
+				print (`format -stringArg $set $msg`);
+				setDefaultShadingGroup $set;
+				break;
+			} else {
+				string $msg = (uiRes("m_deleteShadingGroupsAndMaterials.kNoSurfaceShader"));
+				warning (`format -stringArg $set $msg`);
+				clear $surface;
+			}
+		}
+	}
+
+	if ($geometry != "") {
+		string $cmd = ("sets -e -forceElement " + $set + " " + $geometry);
+		eval $cmd;
+	}
+}
+
+//////////////////////////////////////////////////////////////////////
+//
+//  Procedure Name:
+//      deleteShadingGroups
+//
+//  Description:
+//		Safely deletes all the given shading groups.  It	
+//	Checks each element for whether it's 1) a set and
+//  2) renderable.  Gemoetry is moved from the deleted groups
+//	to the default shading group.  If the default group is
+//	among the deleted, a new default group is arbitrarily picked.
+//
+//  Input Arguments:
+//      $sets - array of set names.  These are assumed to be sets or shading groups.
+//
+//  Return Value:
+//      None.
+//
+//  Examples:
+//		string $SGs[] = `ls -type shadingEngine`;
+// 		deleteShadingGroups $SGs;
+//
+global proc deleteShadingGroups(string $sets[]) 
+{
+	string $defaultSG = `setDefaultShadingGroup -q`;
+	string $reAssign[];
+	string $objs[];
+	
+	int $newDefault = false;
+	int $count = 0;
+	int $numObjs = `size $sets`;
+	
+	if($numObjs > 0 ) {
+		// deactivate swatch rendering
+		renderThumbnailUpdate false;
+	}
+	
+	// Delete all shadinggroups first.
+	string $objList = "";
+	for ($set in $sets) {
+
+		if (`sets -q -renderable $set`) {
+			// renderable set 
+			$objs = `sets -q $set`;
+			for($obj in $objs) {
+				$objList += ($obj + " ");
+			}
+			
+			string $cmd = ("delete " + $set);
+			if((catch (`eval ($cmd)`)) &&
+			  $newDefault == false &&
+			  $set == $defaultSG) {
+				$newDefault = true;
+			}
+		}
+	}
+
+	if($newDefault) {
+		resetDefaultShadingGroup $objList;
+	} else if ($objList != "") {
+		string $cmd = ("sets -e -forceElement " + $defaultSG + " " + $objList);
+		eval $cmd;
+	}
+
+	// reactivate swatch rendering
+	renderThumbnailUpdate true;
+}
+
+////////////////////////////////////////////////////////////////////////
+//  Procedure Name:
+//      deleteShadingGroupsAndMaterials
+//
+//  Description:
+//		Deletes all shading groups and everything
+//	returned by "ls -materials".  Geometry in the
+//  shading groups is reassigned to the 
+//	intialShadingGroup, which cannot be deleted.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//<doc>
+//
+//<name>
+//	deleteShadingGroupsAndMaterials
+//
+//<synopsis>
+//	deleteShadingGroupsAndMaterials
+//
+//<returns>
+//	None
+//
+//<flags>
+//	None
+//
+//<description>
+//		Deletes all shading groups and everything
+//	returned by "ls -materials".  Geometry in the
+//  shading groups is reassigned to the 
+//	intialShadingGroup, which cannot be deleted.
+//
+//<examples>
+//		
+//    deleteShadingGroupsAndMaterials;
+//</doc>
+//
+global proc deleteShadingGroupsAndMaterials( ) 
+{
+	// deactivate swatch rendering
+	renderThumbnailUpdate false;
+
+	// first the shading groups
+	string $targets[] = `ls -sets`;
+	deleteShadingGroups	$targets;
+	
+	// then the materials
+	int $issueCmd = false;
+	$targets = `ls -mat`;
+	string $cmd = "delete ";
+	for($target in $targets) {
+		$cmd += ($target + " ");
+		$issueCmd = true;
+	}
+	if($issueCmd) {
+		eval $cmd;
+	}
+	// reactivate swatch rendering
+	renderThumbnailUpdate true;
+}

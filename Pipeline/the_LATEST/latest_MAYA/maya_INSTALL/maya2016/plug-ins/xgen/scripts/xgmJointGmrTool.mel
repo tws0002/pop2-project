@@ -1,0 +1,441 @@
+// Copyright (C) 1997-2013 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+/**
+ * @file xgmJointGmrTool.mel
+ * @brief Tool for grooming xgen guides using fx and spline ik chains
+ *
+ * <b>CONFIDENTIAL INFORMATION: This software is the confidential and
+ * proprietary information of Walt Disney Animation Studios ("WDAS").
+ * This software may not be used, disclosed, reproduced or distributed
+ * for any purpose without prior written authorization and license
+ * from WDAS. Reproduction of any section of this software must include
+ * this legend and all copyright notices.
+ * Copyright Disney Enterprises, Inc. All rights reserved.</b>
+ *
+ * @author Lee Gramling
+ * @author Ying Liu
+ *
+ * @version Created 11/17/05
+ */
+
+
+// set the guide visibility based on the temp curve names
+proc xgmJgtGuidesVisibility(string $curves[],int $vis)
+{
+    string $curve;
+    for($curve in $curves){
+        //get name of guild;
+        string $guide;
+        // get last part of name without _tempCurves
+        $guide = `match "[^|]*$" $curve`;
+        $guide = `substitute "_tempCurve" $guide ""`;
+        // set visibility
+        setAttr ($guide+".visibility") $vis;
+    }
+}
+
+
+global proc string[] xgmJgtCreateJointsOnCurve(string $parent,string $curve,
+                                               int $numJnts)
+{
+    //create joints down the z axis so all the joints are aligned
+    float $dist = `arclen -ch 0 $curve`;
+    $dist = $dist/$numJnts;
+    float $c1[]  = `pointPosition -w ($curve+".cv[0]")`;
+    vector $v1 = <<$c1[0],$c1[1],$c1[2]>>;
+    string $joints[];
+    string $joint = `joint -p ($v1.x) ($v1.y) ($v1.z)`;
+    $joints[0] = $joint;
+    int $i;
+    for($i=0;$i<$numJnts;$i++){
+        $v1 += <<0,0,-($dist)>>; // down the z axis
+        $joint =  `joint -p ($v1.x) ($v1.y) ($v1.z)`; // by creating the joints down the z axis I can keep all the joint orientations the same
+        joint -e -zso -oj xyz $joint;
+        if(size($joint)>0){
+            $joints[size($joints)]=$joint;
+        }
+    }
+    // snap the joints to the curve
+
+    string $ik[] = `ikHandle -pcv 0 -sol ikSplineSolver -ccv false -snc true -ns 3
+                    -startJoint $joints[0] -endEffector $joints[size($joints)-1] -curve $curve`;
+
+    select -cl;
+    // this is sort of a hack because I could not get things to work if I deleted the IkHandle right after snapping the joints to the curve
+    string $newJoints[];
+    for($i=0;$i<=$numJnts;$i++){
+        string $oldJoint = $joints[$i];
+        $joint = `joint -name ($parent+"_joint"+($i+1))`;
+        //copy the old joint position and orientation to the new  joints
+        setAttr ($joint+".tx") `getAttr ($oldJoint+".tx")`;
+        setAttr ($joint+".ty") `getAttr ($oldJoint+".ty")`;
+        setAttr ($joint+".tz") `getAttr ($oldJoint+".tz")`;
+        setAttr ($joint+".rx") `getAttr ($oldJoint+".rx")`;
+        setAttr ($joint+".ry") `getAttr ($oldJoint+".ry")`;
+        setAttr ($joint+".rz") `getAttr ($oldJoint+".rz")`;
+        $newJoints[size($newJoints)]= $joint;
+    }
+    parent $newJoints[0] $parent;
+    delete $ik;
+    delete $joints;
+    return $newJoints;
+}
+
+
+global proc  xgmJgtCreateStretchyIk(string $joints[],string $ikHandle,
+                                    string $ikc)
+{
+    //modified from pmCurveToSkel by Peter Megow
+    string $firstJoint = $joints[0];
+    string $targetArclenNode, $sourceArclenNode, $multNode, $childJoints[];
+    string $refCurve;
+
+    //--- create a reference shape to keep track of original curve length
+    string $refCurve = `match "[^|]*$" $ikc`; 
+
+    duplicate -name ($refCurve +"_reference") $ikc;
+    setAttr ($refCurve +"_referenceShape.v") 1;
+    $targetArclenNode = `arclen -ch 1 $ikc`;
+
+    $targetArclenNode = `rename $targetArclenNode ($refCurve +"_arclenNode")`;
+    $sourceArclenNode = `arclen -ch 1 ($refCurve +"_reference")`;
+    $sourceArclenNode = `rename $sourceArclenNode ($refCurve +"_reference_arclenNode")`;
+    disconnectAttr ($refCurve +"_referenceShape.worldSpace[0]") ($sourceArclenNode+ ".inputCurve");
+    parent -add -shape ($refCurve +"_referenceShape") $ikc; 
+    delete ($refCurve +"_reference");
+    connectAttr ($refCurve +"_referenceShape.worldSpace") ($sourceArclenNode +".inputCurve");
+
+    //--- create and hook up the math nodes for the scale
+    $multNode = `createNode "multiplyDivide" -name ($refCurve +"_multNode")`;
+    setAttr ($multNode +".operation") 2;
+    connectAttr ($sourceArclenNode +".arcLength") ($multNode +".input2X");
+    connectAttr ($targetArclenNode +".arcLength") ($multNode +".input1X");
+    connectAttr ($multNode +".outputX") ($firstJoint +".scaleZ");
+
+    //--- hook up the child joints to the first joint
+    $childJoints = `listRelatives -ad -type "joint" $firstJoint`;
+    for ($joint in $childJoints){
+        connectAttr ($firstJoint +".sz") ($joint +".sz");
+    }
+}
+
+
+// Create a FK chain from a curve
+global proc string xgmJgtCreateFKChain(string $parent,string $curve,
+                                       int $numJnts)
+{
+    //create joints along curve
+    string $joints[] = xgmJgtCreateJointsOnCurve($parent,$curve,$numJnts);
+    return $joints[0];
+}
+
+
+// Create Cluster handles at each cv and put in clusterHdlGrp
+global proc xgmJgtCreateClusterHandles(string $parent,string $curve)
+{
+    // get numCvs
+    int $spans = `getAttr ($curve+".spans")`;
+    int $deg = `getAttr ($curve+".degree")`;
+    int $numcvs = $spans+$deg-1;
+    // create a clusterHdlGrp
+    string $clusterHdlGrp = ($parent+"|"+$parent+"_clusterHdl1");
+    if(!`objExists($clusterHdlGrp)`){
+        $clusterHdlGrp = `group -em -parent $parent -name ($parent+"_clusterHdl1")`;
+    }
+    int $i;
+    for($i=2;$i<=$numcvs;$i++){
+        string $grpname = ($parent+"_cluster"+$i);  
+        // for each cv create cluster handle
+        string $cvs = ($curve+".cv["+$i+"] ");
+        string $clstr[] = `cluster -name ($grpname) $cvs`;
+        // create circles and parent cluster to it.
+        string $cir[];
+        $cir = `circle -c 0 0 0 -nr 1 0 0 -sw 360 -r 0.25 -d 3 -ut 0 -tol 0.01 -s 8 -ch 1`;
+        $cir[0] = `rename $cir[0] ($parent+"_control#")`;
+        // move the circle to the cluster handle
+        string $pntCnst[] = `pointConstraint $clstr[1] $cir[0]`;
+        delete $pntCnst[0];
+        parent $cir[0] $clusterHdlGrp;
+        parent $clstr[1] $cir[0];
+        // hide the cluster handle
+        setAttr ($clstr[1]+".visibility") 0;
+        // set the color of the circleshape
+        string $cirShape[] = `listRelatives -s $cir[0]`;
+        setAttr ($cirShape[0]+".overrideEnabled") 1;
+        setAttr ($cirShape[0]+".overrideColor") 18;
+    }
+}
+
+
+// Create a IK chain from a curve
+global proc string xgmJgtCreateIKChain(string $parent,string $curve,
+                                       int $numJnts,int $isStretchy)
+{
+    string $joints[] = xgmJgtCreateJointsOnCurve($parent,$curve,$numJnts);
+    xgmJgtCreateClusterHandles($parent,$curve);
+    // create ikHandle
+    string $ikHandle[] = `ikHandle -name ($joints[0]+"_ikh") 
+                            -ccv 0
+                            -startJoint $joints[0]
+                            -endEffector $joints[size($joints)-1]
+                            -sol "ikSplineSolver" 
+                            -curve $curve`;
+    // hide the ikHandle
+    setAttr ($ikHandle[0]+".visibility") 0;
+    // the ikHandle command moved the curve so we need to put it back in jntGrp#_curves group
+    $curve = `substitute "_curves" $curve ""`;
+    string $result[] = `parent $curve ($parent+"_curves")`;
+    $curve = $result[0];
+    $ikHandle = `parent $ikHandle[0] $parent`;
+    if($isStretchy){
+        xgmJgtCreateStretchyIk($joints,$ikHandle[0],$curve);
+    } 
+    return $joints[0];
+}
+
+
+// Create maya group to put joints and curves into to keep organized
+proc string xgmJgtCreateGroomerGrp()
+{
+    //look for xgGroom and xgJointGroom
+    string $parent = "xgGroom";
+    if(!`objExists($parent)`){
+        $parent = `group -em -name $parent`;
+    }
+    // create xgJointGrm group
+    string $xgJointGrm = "xgJointGrm";
+    if(!`objExists($xgJointGrm)`){
+        $xgJointGrm = `group -em -parent $parent -name $xgJointGrm`;
+    }
+    return $xgJointGrm;
+}
+
+
+// User pressed the Create Joint button in Joint Groomer interface
+global proc xgmJgtCreatePressed()
+{
+    int $isIk = `radioButton -q -select xgmJgtIkRadioBtn`;
+    int $ikType = `radioButtonGrp -q -select xgmJgtIkTypeRadioBtn`;
+    int $isStretchy=1,$isCurveLocked=0;
+    if($ikType == 1){
+        $isCurveLocked = 1;
+        $isStretchy = 0;
+    }else{
+        $isCurveLocked = 0;
+        $isStretchy = 1;
+    }
+    
+    int $numJnts = `intSliderGrp -q -value xgmJgtNumJointTxtFld`;
+    if($numJnts < 2){
+        error (uiRes("m_xgmJointGmrTool.kTwoJointsMinimum"));
+        return;
+    }
+
+    string $curves[] = xgmCreateCurvesFromGuides(1,$isCurveLocked);
+    string $xgJointGrm = xgmJgtCreateGroomerGrp();
+
+    // create curve group
+    for($cur in $curves){
+        string $parent = `createNode "transform" -parent $xgJointGrm -name ("jntGrp1")`;
+        string $newCurveGrp= `group -em -name ($parent+"_curves") -parent $parent`;
+
+        string $results[] = `parent $cur $newCurveGrp`;
+        $cur = $results[0];
+
+        // rebuild curve
+        string $newname = `match "[^|]*$" $cur`; 
+        string $newcurve[]  = `rebuildCurve -kr 0 -rpo false -degree 2 
+                               -name ($newname+"_reduced") -spans $numJnts $cur`;
+        setAttr ($newcurve[0]+".visibility") 0;
+
+        $newcurve = `parent $newcurve[0] $newCurveGrp`;
+        string $rootJoint;
+        if($isIk){
+            $rootJoint = xgmJgtCreateIKChain($parent,$newcurve[0],$numJnts,$isStretchy);
+            // hide the ik joint chain
+            //setAttr ($rootJoint+".visibility") 0;
+            setAttr ($rootJoint+".template") 1;
+        } else{
+            $rootJoint = xgmJgtCreateFKChain($parent,$newcurve[0],$numJnts);
+        }
+        bindSkin $cur $rootJoint;
+    }
+    select -cl; // may change later to have created objects selected
+}
+
+
+// select the joint hierarchy for compound rotations
+global proc xgmJgtSelectHierarchy()
+{
+    select -hi;
+    string $sel[] = `ls -sl`;
+    int $selsize = size($sel);
+    if($selsize==0){
+        return;
+    }
+    string $rev[];
+    int $i;
+    for($i=0;$i<$selsize;$i++){
+        $rev[$i] = $sel[$selsize-$i-1];
+    }
+    select -r $rev;
+}
+
+
+// get selected joint groups
+global proc string[] xgmJgtGetSelectedJointGroups()
+{
+    string $sel[] = `ls -sl`;
+    string $object;
+    string $jointGroups[];
+    for($object in $sel){
+        if(`gmatch $object "jntGrp*" `){
+            string $jntGrp = `match "^[^_.]*" $object`;
+            $jointGroups[size($jointGroups)] = $jntGrp;
+        }
+    }
+    $jointGroups = `stringArrayRemoveDuplicates $jointGroups`;
+    return $jointGroups;
+}
+
+
+// Undo or delete the jointGroomer for the selected joints or cluster handle
+global proc xgmJgtUndoPressed()
+{
+    string $jointGroups[] = xgmJgtGetSelectedJointGroups();
+    if(size($jointGroups)<1){
+        error (uiRes("m_xgmJointGmrTool.kSelectAJointOrClusterHandleOfJointGroomerToUndo"));
+        return;
+    }
+
+    string $each;
+    select -cl;
+    for($each in $jointGroups){
+        select -add ($each+"_curves|*_tempCurve");
+    }
+    string $curves[] = `ls -sl`;
+    xgmJgtGuidesVisibility($curves,1);
+    for($each in $jointGroups){
+        delete $each;
+    }
+}
+
+
+// select the first cluster handle for the select joint chains
+global proc xgmJgtSelectClusterHdl()
+{
+    string $jointGroups[] = xgmJgtGetSelectedJointGroups();
+    string $each;
+    select -cl;
+    for($each in $jointGroups){
+        select -add ($each+"_control1");
+    }
+}
+
+
+// convert the deformed curve back into the guide
+global proc xgmJgtAcceptPressed()
+{
+    string $jointGroups[] = xgmJgtGetSelectedJointGroups();
+    string $each;
+    select -cl;
+    for($each in $jointGroups){
+        select -add ($each+"_curves|*_tempCurve");
+    }
+    xgmSelectedCurvesToGuidesByName;
+}
+
+
+// Gui interface for jointGroomer
+global proc xgmJointGmrTool(string $parent)
+{
+    int $inWindow = 0;
+
+    // create window
+    if($parent == ""){
+        $inWindow = 1;
+        if(`window -exists xgmJgtWin`){
+            deleteUI -window xgmJgtWin;
+        }
+        window -sizeable true -minimizeButton false -maximizeButton false
+            -menuBar false -width 400 -height 300 -topLeftCorner 500 500
+            -title (uiRes("m_xgmJointGmrTool.kXgenJointGroomer")) xgmJgtWin;
+        $parent = "xgmJgtWin";
+    }
+    setParent $parent;
+
+    columnLayout -adj on -cat "both" 10 -rs 5;
+
+    //radio buttons for move or duplicate
+    radioCollection ;
+    radioButton -label (uiRes("m_xgmJointGmrTool.kFkJointChain")) 
+        -ann (uiRes("m_xgmJointGmrTool.kFkJointChainAnn"))
+        -select xgmJgtFkRadioBtn;
+    separator;
+
+    radioButton -label (uiRes("m_xgmJointGmrTool.kSplineIkJointChain")) 
+        -ann (uiRes("m_xgmJointGmrTool.kSplineIkJointChainAnn"))
+        xgmJgtIkRadioBtn;
+    radioCollection;
+    radioButtonGrp -numberOfRadioButtons 2 
+        -labelArray2 (uiRes("m_xgmJointGmrTool.kLockLength")) 
+		     (uiRes("m_xgmJointGmrTool.kStretchyCurve")) 
+        -ann (uiRes("m_xgmJointGmrTool.kChangedInCurveAnn"))
+        -select 1
+        xgmJgtIkTypeRadioBtn;
+    separator;
+
+    intSliderGrp -label (uiRes("m_xgmJointGmrTool.kNumberOfJointsCvs")) 
+        -ann (uiRes("m_xgmJointGmrTool.kNumberOfJointsAnn"))
+        -min 2
+        -max 10
+        -field true
+        -fieldMinValue 2
+        -fieldMaxValue 100
+        -value 2 xgmJgtNumJointTxtFld;
+    separator;
+
+    rowColumnLayout -numberOfColumns 3;
+    text -label (uiRes("m_xgmJointGmrTool.kSelection")) ;
+    button -label (uiRes("m_xgmJointGmrTool.kFirstCluster")) 
+    	   -ann (uiRes("m_xgmJointGmrTool.kFirstClusterAnn"))
+        -command "xgmJgtSelectClusterHdl"; 
+    button -label (uiRes("m_xgmJointGmrTool.kJointHierarchy")) -width 60 
+        -ann (uiRes("m_xgmJointGmrTool.kJointHierarchyAnn"))
+        -command "xgmJgtSelectHierarchy";
+    setParent ..;
+    separator;
+    rowColumnLayout -numberOfColumns 3;
+    button -label (uiRes("m_xgmJointGmrTool.kCreateJoints")) 
+        -ann (uiRes("m_xgmJointGmrTool.kCreateJointsAnn"))
+        -command "xgmJgtCreatePressed";
+    button -label (uiRes("m_xgmJointGmrTool.kAcceptResults")) 
+        -ann (uiRes("m_xgmJointGmrTool.kAcceptResultsAnn"))
+        -command "xgmJgtAcceptPressed"; 
+    button -label (uiRes("m_xgmJointGmrTool.kUndoResults")) 
+        -ann (uiRes("m_xgmJointGmrTool.kUndoResultsAnn"))
+        -command "xgmJgtUndoPressed"; 
+
+    if($inWindow){
+        showWindow $parent;
+    }
+}

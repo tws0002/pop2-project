@@ -1,0 +1,1223 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  December 8/2000
+//
+// Description:
+//
+//		This file contains the procedures which implement a portable (can be
+//		used anywhere) user interface for viewing collections of nodes in the
+//		current Maya scene using a graphical layout. This file also contains 
+//		the procedures used to manipulate that user interface once it has been 
+//		created.
+//												
+
+// ---------------------------------------------------------------------------
+// Special names and things like that
+//
+// "collectionForm": the name of the form which contains the graph
+// 
+
+// ---------------------------------------------------------------------------
+// Local procedures
+// 
+
+global string $gCollectionUILookupTable[];
+global int $gCollectionUILookupTableCreated = false;
+
+proc createCollectionUILookupTable()
+{
+	//
+	// Description:
+	//	This procedure is called every time the user creates a collectionUI
+	//	component, but only has any effect the first time it is called.
+	//	This procedure initializes the string array $gCollectionUILookupTable[]
+	//	for use as a lookup table. The lookup table will contain information
+	//	about all collectionUI components which exist in the current Maya
+	//	session.
+	//
+
+	global string $gCollectionUILookupTable[];
+	global int $gCollectionUILookupTableCreated;
+
+	if (!$gCollectionUILookupTableCreated)
+	{
+		// The lookup table has not yet been initialized, so we will do so now.
+		//
+		string $columns[];
+
+		$columns[0] = "collectionUI";		// formLayout that is the parent of
+											// the collection UI
+
+		$columns[1] = "hypershadeName";		// name of the hyperGraph control
+											// for the collection
+
+		$columns[2] = "popupMenuScript";	// RMB menu for this collection
+
+		$columns[3] = "filter";				// what the collection is displaying
+											// name is an "internal" filter name
+											// (see Collection Filtering section
+											// below) 
+		
+		$columns[4] = "filterBox";			// control for specifying wildcard
+											// patterns for nodes to be displayed
+											// in the collection
+
+		$columns[5] = "filterButton";		// "Show" button for specifying what
+											// types are to be displayed in
+											// the collection
+
+		$columns[6] = "advancedFilter";		// name of an actual objectFilter node
+											// associated with the view.  Set by
+											// the filterUI code (filterUI.mel),
+											// based on the implicit filter
+											// ("filter" column), modified by the
+											// node name wildcard specified in the
+											// filterBox, and the node type filter
+											// specified by the filterButton 
+											// popup menu
+
+
+		$columns[7] = "viewOption";         // Describes how items are displayed
+                                            // in the view: either "asIcons" or
+                                            // "asList" (no swatches).
+
+		$columns[8] = "sortOption";         // Describes how items are ordered
+                                            // in the view: "byName", "byType",
+                                            // or "byTime".
+
+		$columns[9] = "reverseOption";     // Describes whether the order of
+											// items should be reversed.
+
+		lookupTable($gCollectionUILookupTable, $columns);
+		$gCollectionUILookupTableCreated = true;
+	}
+}
+
+proc registerCollectionUI(
+	string $collectionUI)
+{
+	//
+	// Description:
+	//	This procedure is used to register a collectionUI component by entering
+	//	it as a row in the lookup table which contains information about all
+	//	collectionUI components that currently exist in Maya.
+	//	The row created is initially blank except for the collectionUI name.
+	//	Further information about the collectionUI component must be
+	//	subsequently added to the lookup table.
+	//
+
+	global string $gCollectionUILookupTable[];
+	string $row[];
+
+	$row[0] = $collectionUI;
+	$row[1] = "";
+	$row[2] = "";
+	$row[3] = "";
+	$row[4] = "";
+	$row[5] = "";
+	$row[6] = "";
+	$row[7] = ""; // viewOption
+	$row[8] = ""; // sortOption
+	$row[9] = ""; // reverseOption
+
+	lookupTableAddRow($gCollectionUILookupTable, $row);
+}
+
+proc deregisterCollectionUI(
+	string $collectionUI)
+{
+	//
+	// Description:
+	//	De-registers a collection UI component by removing
+	//	its row from the collection UI lookup table.  This
+	//	is called from the collectionUIDelete() procedure.
+	//
+	global string $gCollectionUILookupTable[];
+
+	lookupTableRemoveRow(
+		$gCollectionUILookupTable,
+		"collectionUI",
+		$collectionUI);
+}
+
+proc registerHypershadeName(
+	string $collectionUI,
+	string $hypershadeName)
+{
+	//
+	// Description:
+	//	This procedure associates the hypershadeName with the collectionUI 
+	// 	in the lookup table.
+	//
+
+	global string $gCollectionUILookupTable[];
+
+	// ASSUMPTION:
+	// We assume that a row already exists for this collectionUI, as it should
+	// have been created by a call to registerCollectionUI() as the UI was being
+	// created.
+	//
+	lookupTableEdit(
+		$gCollectionUILookupTable,
+		"collectionUI",
+		$collectionUI,
+		"hypershadeName",
+		$hypershadeName);
+}
+
+global proc string lookupHypershadeName(
+	string $collectionUI)
+{
+	//
+	// Description:
+	//	This procedure looks up the hypershade name associated with the
+	//	specified collectionUI name in the lookup table.
+	//
+	// Returns: 
+	//	The hypershade name, if one is associated with the specified
+	//	collection UI name.
+	//	Otherwise: "".
+	//
+
+	global string $gCollectionUILookupTable[];
+
+	return (lookupTableLookup(
+		$gCollectionUILookupTable,
+		"collectionUI",
+		$collectionUI,
+		"hypershadeName"));
+}
+
+proc string generateUniqueHypershadeName()
+{
+	//
+	// Description:
+	//	This procedure is usually called just before creating a new hypershade
+	//	for a collectionUI.
+	//	This procedure generates a unique name for a hypershade by
+	//	creating a string of the form collection#HyperShadeEd and incrementing 
+	//	the # part until no hypershade by that name exists.
+	//
+	// Returns: 
+	//	A unique name by which a hypershade can be created.
+	//
+
+	int $i = 1;
+	while (`hyperGraph -exists ("collection" + $i + "HyperShadeEd")`)
+	{
+		$i++;
+	}
+	return ("collection" + $i + "HyperShadeEd");
+}
+
+proc registerFilter(
+	string $collectionUI,
+	string $filter)
+{
+	//
+	// Description:
+	//	This procedure associates the filter with the collectionUI 
+	// 	in the lookup table.
+	//
+
+	global string $gCollectionUILookupTable[];
+
+	// ASSUMPTION:
+	// We assume that a row already exists for this collectionUI, as it should
+	// have been created by a call to registerCollectionUI() as the UI was being
+	// created.
+	//
+	lookupTableEdit(
+		$gCollectionUILookupTable,
+		"collectionUI",
+		$collectionUI,
+		"filter",
+		$filter);
+}
+	
+proc registerAdvancedFilter(
+	string $collectionUI,
+	string $advancedFilter)
+{
+	//
+	// Description:
+	//	Registers the name of the objectFilter node that is used
+	//	to determine this tab's contents.  This procedure is called
+	//	when the user modifies the tab's filter controls (the
+	//	node name wildcard box or the type filter).
+	//
+	global string $gCollectionUILookupTable[];
+
+	// ASSUMPTION:
+	// We assume that a row already exists for this collectionUI, as it should
+	// have been created by a call to registerCollectionUI() as the UI was being
+	// created.
+	//
+	lookupTableEdit(
+		$gCollectionUILookupTable,
+		"collectionUI",
+		$collectionUI,
+		"advancedFilter",
+		$advancedFilter);
+}
+
+// ---------------------------------------------------------------------------
+// Global procedures
+// 
+global proc registerViewOption(
+	string $collectionUI,
+	string $viewOption)
+{
+    // Description:
+    //  Registers the view option (as Icons/as List) that is used for this tab.
+    //  This procedure is called when the user changes this tab's
+    //  view option.
+    //
+    global string $gCollectionUILookupTable[];
+
+    // ASSUMPTION:
+    // We assume that a row already exists for this collectionUI, as it should
+    // have been created by a call to registerCollectionUI() as the UI was being
+    // created.
+    //
+    lookupTableEdit(
+        $gCollectionUILookupTable,
+        "collectionUI",
+        $collectionUI,
+        "viewOption",
+        $viewOption);
+}
+
+global proc registerSortOption(
+	string $collectionUI,
+	string $sortOption)
+{
+    // Description:
+    //  Registers the sort option (by Name/Type/Time) that is used for this tab.
+    //  This procedure is called when the user changes this tab's
+    //  sort option.
+    //
+    global string $gCollectionUILookupTable[];
+
+    // ASSUMPTION:
+    // We assume that a row already exists for this collectionUI, as it should
+    // have been created by a call to registerCollectionUI() as the UI was being
+    // created.
+    //
+    lookupTableEdit(
+        $gCollectionUILookupTable,
+        "collectionUI",
+        $collectionUI,
+        "sortOption",
+        $sortOption);
+}
+
+global proc registerReverseOption(
+	string $collectionUI,
+	string $reverseOption)
+{
+    // Description:
+    //  Registers the reverse option ("true"/"false") that is used for this tab.
+    //  This procedure is called when the user changes this tab's
+    //  reverse option.
+    //
+    global string $gCollectionUILookupTable[];
+
+    // ASSUMPTION:
+    // We assume that a row already exists for this collectionUI, as it should
+    // have been created by a call to registerCollectionUI() as the UI was being
+    // created.
+    //
+    lookupTableEdit(
+        $gCollectionUILookupTable,
+        "collectionUI",
+        $collectionUI,
+        "reverseOption",
+        $reverseOption);
+}
+
+global proc string hypershadeCollectionUIName(
+	string $hypershade)
+{
+	//
+	// Description:
+	//	This procedure returns the name of the collectionUI component
+	//	associated with the specified hypershade editor.
+	//
+
+	global string $gCollectionUILookupTable[];
+
+	return (lookupTableLookup(
+		$gCollectionUILookupTable,
+		"hypershadeName",
+		$hypershade,
+		"collectionUI"));
+}
+	
+
+global proc string collectionUIHypershadeName(
+	string $collectionUI)
+{
+	//
+	// Description:
+	//	This procedure returns the name of the hypershade editor associated
+	//	with the specified collectionUI component.
+	//
+
+	return lookupHypershadeName($collectionUI);
+}
+
+global proc string[] collectionUIFilterControls( string $collectionUI )
+{
+	//
+	// Description:
+	//	Retrieves the name of the filter controls for the given
+	//	collectionUI.  The filter controls consist of a text box
+	//	for specifying node name wildcards and a button whose
+	//	popup menu contains controls for specifying the node
+	//	types that should be displayed in the view.  These
+	//	controls are created by the functions in filterUI.mel.
+	//
+	//
+	//	The proc returns 3 controls:
+	//
+	//	1) hyperShade editor
+	//	2) filter box
+	//	3) filter button
+	//
+	global string $gCollectionUILookupTable[];
+
+	string $hs = lookupTableLookup( $gCollectionUILookupTable,
+									"collectionUI",
+									$collectionUI,
+									"hypershadeName" );
+
+	string $filterBox = lookupTableLookup( $gCollectionUILookupTable,
+									"collectionUI",
+									$collectionUI,
+									"filterBox" );
+
+	string $filterButton = lookupTableLookup( $gCollectionUILookupTable,
+									"collectionUI",
+									$collectionUI,
+									"filterButton" );
+
+
+	string $res[];
+	$res[0] = $hs;
+	$res[1] = $filterBox;
+	$res[2] = $filterButton;
+	return $res;
+}
+
+global proc collectionUISetFilterControls( 
+	string $collectionUI,
+	string $filterBox, 
+	string $filterButton)
+{
+	// Description:
+	//	Registers the controls used for filtering the given
+	//	collectionUI.
+	//
+	global string $gCollectionUILookupTable[];
+
+	lookupTableEdit( $gCollectionUILookupTable,
+					"collectionUI",
+					$collectionUI,
+					"filterBox",
+					$filterBox );
+
+	lookupTableEdit( $gCollectionUILookupTable,
+					"collectionUI",
+					$collectionUI,
+					"filterButton",
+					$filterButton );
+}
+
+global proc string collectionUIAdvancedFilter(
+	string $collectionUI)
+{
+	//
+	// Description:
+	//	This procedure looks up the name of the objectFilter
+	//	node associated with the specified collectionUI.
+	//	This node encapsulates the cumulative filter for
+	//	the view.
+	//
+
+	global string $gCollectionUILookupTable[];
+
+	return (lookupTableLookup(
+		$gCollectionUILookupTable,
+		"collectionUI",
+		$collectionUI,
+		"advancedFilter"));
+}
+
+
+global proc string collectionUIFilter(
+	string $collectionUI)
+{
+	//
+	// Description:
+	//	This procedure looks up the filter associated with the
+	//	specified collectionUI name in the lookup table.
+	//
+	// Returns: 
+	//	The hypershade name, if one is associated with the specified
+	//	collection UI name.
+	//	Otherwise: "".
+	//
+
+	global string $gCollectionUILookupTable[];
+
+	return (lookupTableLookup(
+		$gCollectionUILookupTable,
+		"collectionUI",
+		$collectionUI,
+		"filter"));
+}
+
+global proc string collectionUIViewOption( string $collectionUI )
+{
+    // Description:
+    //  This procedure looks up the view option (as Icons/as List) associated
+	//  with the specified collectionUI name in the lookup table.
+    //
+    // Returns:
+    //  The view option if one is associated with the specified collection
+    //  UI name.
+    //  Otherwise: "".
+    //
+    global string $gCollectionUILookupTable[];
+
+    return (lookupTableLookup(
+        $gCollectionUILookupTable,
+        "collectionUI",
+        $collectionUI,
+        "viewOption"));
+}
+
+global proc string collectionUISortOption( string $collectionUI )
+{
+    // Description:
+    //  This procedure looks up the sort option (by Name/Type/Time) associated
+	//  with the specified collectionUI name in the lookup table.
+    //
+    // Returns:
+    //  The sort option if one is associated with the specified collection
+    //  UI name.
+    //  Otherwise: "".
+    //
+    global string $gCollectionUILookupTable[];
+
+    return (lookupTableLookup(
+        $gCollectionUILookupTable,
+        "collectionUI",
+        $collectionUI,
+        "sortOption"));
+}
+
+global proc string collectionUIReverseOption( string $collectionUI )
+{
+    // Description:
+    //  This procedure looks up the sort option (by Name/Type/Time) associated
+	//  with the specified collectionUI name in the lookup table.
+    //
+    // Returns:
+    //  The sort option if one is associated with the specified collection
+    //  UI name.
+    //  Otherwise: "".
+    //
+    global string $gCollectionUILookupTable[];
+
+    return (lookupTableLookup(
+        $gCollectionUILookupTable,
+        "collectionUI",
+        $collectionUI,
+        "reverseOption"));
+}
+
+global proc int collectionUIIsManaged(
+	string $collectionUI)
+{
+	//
+	// Description:
+	//	This procedure is used to query whether the overall layout of the
+	//	specified collectionUI component is managed or not. 
+	//
+	// Returns: 
+	//	This procedure returns true if the overall layout is managed, false if
+	//	not.
+	//
+
+	return `formLayout -query -manage $collectionUI`;
+}
+
+global proc collectionUIManage(
+	string $collectionUI,
+	int $manage)
+{
+	//
+	// Description:
+	//	This procedure lets the caller manage or unmanage the overall layout of
+	//	the specified collectionUI component.
+	//
+
+	formLayout -edit -manage $manage $collectionUI;
+}
+
+global proc string collectionUIPopupMenuScript(
+	string $collectionUI)
+{
+	//
+	// Description:
+	//	This procedure looks up the name of the popup menu script associated
+	//	with the specified collectionUI component.
+	//
+	// Returns: 
+	//	The name of the popup menu script.
+	//
+
+	// Lookup the name of the popup menu script in the lookup table
+	//
+	global string $gCollectionUILookupTable[];
+
+	return lookupTableLookup(
+		$gCollectionUILookupTable,
+		"collectionUI",
+		$collectionUI,
+		"popupMenuScript");
+}
+
+global proc collectionUISetPopupMenuScript(
+	string $collectionUI,
+	string $scriptName)
+{
+	//
+	// Description:
+	//	This procedure sets the popup menu script which is invoked when the
+	//	user RMB clicks in the hyperShade element of the specified collectionUI
+	//	component. The script will be called with two arguments: the name of
+	//	the hyperShade editor from which the menu was invoked, and the name of
+	//	the popupMenu object to which the menu items are to be added.
+	//
+	//	If $scriptName is "", no popup menu will be invoked when the user RMB
+	//	clicks in the hyperShade editor.
+	//
+
+	// Find the name of the control that the menu will be attached to
+	//
+	string $hypershadeName = lookupHypershadeName($collectionUI);
+
+	string $parent				= `hyperGraph -query -control $hypershadeName`;
+	string $popupMenuName		= ($hypershadeName + "PopupMenu");
+
+	if ($scriptName == "")
+	{
+		if (`popupMenu -exists $popupMenuName`) 
+		{
+			deleteUI $popupMenuName;
+		}
+	}
+	else
+	{
+		// Create the popup menu
+		//	
+		if (!`popupMenu -exists $popupMenuName`) 
+		{
+			string $fullMenuName ;
+			// Declare popupMenu to be a marking menu (to fix bug #322241).
+			//
+			$fullMenuName = `popupMenu -parent $parent -mm 1 -aob 1 $popupMenuName`;
+			popupMenu 
+				-edit
+				-allowOptionBoxes 1
+				-postMenuCommand 
+					($scriptName
+						+ " "
+						+ $hypershadeName 
+						+ " " 
+						+ $popupMenuName)
+				$fullMenuName;	
+		}
+	}
+
+	// Store the name of the popup menu script in the lookup table
+	// 
+	// ASSUMPTION:
+	// We assume that a row already exists for this collectionUI, as it should
+	// have been created by a call to registerCollectionUI() as the UI was being
+	// created.
+	//
+	global string $gCollectionUILookupTable[];
+
+	lookupTableEdit(
+		$gCollectionUILookupTable,
+		"collectionUI",
+		$collectionUI,
+		"popupMenuScript",
+		$scriptName);
+}
+
+global proc collectionUISetFilter(
+	string $collectionUI,
+	string $filter)
+{
+	//
+	// Description:
+	//	This procedure sets the filter which defines what nodes will appear in
+	//	the specified collectionUI component.  This filter is then 
+	//	augmented by the additional filter specified via the 
+	//	collectionUISetAdvancedFilter() method.
+	//
+
+	registerFilter($collectionUI, $filter);
+
+	//	First, check to see if the given filter name corresponds
+	//	to one of the predefined "filtered collection" types.
+	//	If it does, then we don't need to do any work here
+	//	beyond registering the name of the filter.  The real
+	//	work will be done when collectionUISetAdvancedFilter()
+	//	is called.
+	//
+	if( filteredCollection_RealFilterName($filter) == "" )
+	{
+		string $hypershadeName = lookupHypershadeName($collectionUI);
+
+		if ($filter == "CharacterClips")
+		{
+			visor 
+				-addFolder 
+				-name "Character Clips"
+				-type command
+				-cmd "currentCharacterClips"
+				$hypershadeName;
+		}
+		else if ($filter == "CharacterPoses")
+		{
+			visor 
+				-addFolder 
+				-name "Character Poses"
+				-type command
+				-cmd "currentCharacterPoses"
+				$hypershadeName;
+		}
+		else if ($filter == "UnusedClips")
+		{
+			visor 
+				-addFolder 
+				-name "Unused Clips"
+				-type command
+				-cmd "unusedClips"
+				$hypershadeName;
+		}
+		else if ($filter == "UnusedPoses")
+		{
+			visor 
+				-addFolder 
+				-name "Unused Poses"
+				-type command
+				-cmd "unusedPoses"
+				$hypershadeName;
+		}
+		else
+		{
+			string $err = (uiRes("m_collectionUI.kUnrecognizedFilterTypeErr"));
+			error (`format -stringArg $filter $err`);
+		}
+	}
+}
+
+// Description:  This procedure is called to compare if two arrays
+//  are the same.  If they are identical, then return true.  
+//  Otherwise, return false.
+//
+proc int sameArray(string $array1[], string $array2[])
+{
+    int $size = size($array1);
+    if (size($array2) != $size)
+    {
+        return false;
+    }
+
+    int $i;
+    for ($i = 0; $i < $size; $i++)
+    {
+        if ($array1[$i] != $array2[$i])
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+global proc collectionUISetAdvancedFilter(
+	string $collectionUI,
+	string $filter, int $frameGraph,
+    string $previousNodeSet[])
+{
+	// Description:
+	//	Sets the real filter to be used by the collectionUI.
+	//	This filter was constructed by the code in filterUI.mel,
+	//	and is based on 3 user-specified filters:
+	//
+	//	1) an "implicit" filter that is associated with the
+	//	   collection when the user creates the HyperShade
+	//	   tab.  For example, a Materials tab has an associated
+	//	   implicit filter that shows only materials in the scene.
+	//
+	//	2) a node name wildcard pattern specified in the 
+	//	   "filter box" on the collection.  Only nodes whose
+	//	   name satisfies the given regexp will be displayed.
+	//
+	//	3) a node type filter specified in the popup menu
+	//	   for the "Show" button on the view.  Only nodes
+	//	   of the specified types will be displayed.
+	//
+	//	All the work of constructing the final filter that
+	//	satisfies all these requirements is done in filterUI.mel.
+	//	The name of the final filter is passed to this routine.
+	//
+
+	//	store the name of the filter for the collectionUI
+	//
+	registerAdvancedFilter($collectionUI, $filter);
+
+	string $hypershadeName = lookupHypershadeName($collectionUI);
+
+	//	construct a MEL command that will list all nodes that
+	//	satisfy the filter.  The special filter name "0" means
+	//	"no filter".
+	//
+	//	Each HyperShade collectionUI will execute this command
+	//	whenever it needs to refresh itself, to ensure that
+	//	its contents are currently in sync with the scene.
+	//	For large scenes, this command can take a long time
+	//	to execute, so we would like to ensure that it gets
+	//	executed as few times as possible
+	//
+	string $cmd;
+	if( $filter == "0" )
+	{
+		$cmd = "ls -dep";
+	}
+	else
+	{
+		string $sortOption = collectionUISortOption( $collectionUI );
+		string $reverseOption = collectionUIReverseOption( $collectionUI );
+		$cmd = "lsThroughFilter -na " + $filter
+			+ " -sort " + $sortOption
+			+ " -reverse " + $reverseOption;
+	} 
+
+	//	During the course of building or destroying the
+	//	HyperShade, or moving tabs around, a number of
+	//	refresh requests are sent to the HyperShade.  This
+	//	can significantly reduce the performance of these
+	//	"construction" operations.  The work is also largely
+	//	useless, since each collection refreshes itself 
+	//	whenever it becomes visible anyway.  For this reason,
+	//	we would like to disable all work when the HyperShade
+	//	is in the midst of a construction operation.
+	//
+	int $inConstruction = hyperShadeIsInConstruction("");
+
+	if( ! $inConstruction )
+	{
+		//	if the HyperShade is not in construction, then
+		//	the user has specified a new filter, so we must
+		//	update the contents of the collection.
+		//
+
+		//	first, remove any folders in the HyperShade
+		//
+		string $fl[] = `visor -q -fl $hypershadeName`;
+		string $f;
+		for( $f in $fl )
+		{
+			visor -deleteFolder $f $hypershadeName;
+		}
+
+		//	create a new folder that displays the nodes
+		//	specified by our filter
+		//
+		visor
+			-addFolder 
+			-name "foobar"
+			-type command
+			-cmd $cmd
+			$hypershadeName;
+
+		//	if the user is zoomed into part of a large
+		//	collection of nodes and they change the filter
+		//	so that the collection now shows only a few nodes,
+		//	the view may be left in a position where no nodes
+		//	are visible.  Doing a "Frame All" would fix this,
+		//	but that can be expensive as it will re-execute the
+		//	filter command.  
+		//
+		//	Instead, we do a "frame graph no refresh" to simply
+		//	move the view to the place where the nodes are.  The
+		//	only time we don't do this is if the filter reverts
+		//	to "0", which means "display everything".  In that
+		//	case, framing the entire graph can mean refreshing
+		//	thousands of nodes in a large scene.
+		//
+        //  We do a "frame graph no refresh", unless user specified
+        //  not to frame graph.
+        // 
+		if( $filter != "0" && $frameGraph)
+		{
+            // If the node set has changed, then frame graph.
+            // Otherwise, we don't need to.
+            // 
+			$newCmd = "sort `lsThroughFilter -na " + $filter + "`";
+            string $newNodeSet[] = {};
+            $newNodeSet = eval($newCmd);
+            if (!sameArray($previousNodeSet, $newNodeSet))
+            {
+			    hyperGraph -e -fgn $hypershadeName;
+            }
+		}
+	}
+}
+
+global proc collectionUIEnableFilter(
+	string $collectionUI,
+	int $enable )
+{
+	//
+	// Description:
+	//	Used to enable or disable refresh handling for a particular
+	//	collectionUI.  This is useful for disabling the collection
+	//	during construction operations, when many refresh requests
+	//	will be sent, which ordinarily would trigger many executions
+	//	of the lsThroughFilter command, which can be expensive.
+	//
+
+    if ($collectionUI == "")
+    {
+        // No collectionUI is built, so there is nothing to enable.
+        //
+        return;
+    }
+
+	if( $enable )
+	{
+		string $hypershadeName = lookupHypershadeName($collectionUI);
+
+		//	Figure out what folders are being displayed in the 
+		//	collection.  For disabled filters, we create a single
+		//	filter called "EMPTY".  This folder takes almost no
+		//	time to refresh, so everything works very quickly.
+		//
+		string $fl[] = `visor -q -fl $hypershadeName`;
+		if( (size($fl) == 0) || ($fl[0] == "EMPTY") )
+		{
+			//	this collection is disabled, so we need to
+			//	re-enable it.  First, delete all folders in
+			//	the collection
+			//
+			string $f;
+			for( $f in $fl )
+			{
+				visor -deleteFolder $f $hypershadeName;
+			}
+
+			//	now, construct the command to display the nodes
+			//	that are supposed to be displayed in the collection
+			//
+			string $filter = collectionUIAdvancedFilter( $collectionUI );
+			string $cmd;
+			if( $filter == "0" )
+			{
+				$cmd = "ls -dep";
+			}
+			else
+			{
+				string $sortOption = collectionUISortOption( $collectionUI );
+				string $reverseOption = collectionUIReverseOption( $collectionUI );
+				$cmd = "lsThroughFilter -na " + $filter
+					+ " -sort " + $sortOption
+					+ " -reverse " + $reverseOption;
+			} 
+
+			//	add a new folder to display the nodes
+			//
+			if( $filter == "" )
+			{
+				//	Fix for bug 193658 on the Mac.  Sometimes
+				//	on the Mac, this routine will get called for
+				//	a tab that has not yet been displayed.  This
+				//	means that its filter controls have not been
+				//	created, and its "advancedFilter" has not been
+				//	assigned.  In such cases, the $filter variable
+				//	will be "".  We want to create an empty folder
+				//	in such cases, so that when the tab is enabled
+				//	(ie clicked on), this routine will create the
+				//	proper folder to display the tab's nodes.
+				//
+				visor 
+					-addFolder
+					-name "EMPTY"
+					-type command
+					-cmd "{}"
+					$hypershadeName;
+			}
+			else
+			{
+				visor
+					-addFolder 
+					-name "foobar"
+					-type command
+					-cmd $cmd
+					$hypershadeName;
+			}
+		}
+	}
+	else
+	{
+		//	"disable" the collection by deleting all of its folders,
+		//	then adding a single empty folder.
+		//
+		
+		string $hypershadeName = lookupHypershadeName($collectionUI);
+
+		//	delete all folders
+		//
+		string $fl[] = `visor -q -fl $hypershadeName`;
+		string $f;
+		for( $f in $fl )
+		{
+			visor -deleteFolder $f $hypershadeName;
+		}
+
+		//	add the empty folder
+		//
+		visor
+			-addFolder 
+			-name "EMPTY"
+			-type command
+			-cmd "{}"
+			$hypershadeName;
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Procedures for creating and deleting a graph UI
+// 
+
+global proc collectionUIDelete(
+	string $collectionUI,
+	int $alsoDeleteHypershade)
+{
+	//
+	// Description:
+	//	This procedure deletes all UI associated with the specified
+	//	collectionUI component. 
+	//	If $alsoDeleteHypershade is true, the hyperShade editor associated
+	//	with the collectionUI component is also deleted. If
+	//	$alsoDeleteHypershade is false, the hyperShade editor is simply
+	//	unparented from the layout and will persist after the layout has been
+	//	deleted. Typically you would want to do this if you were deleting
+	//	the collectionUI component but planned to create an identical new one.
+	//	By not deleting the hyperShade editor, you will be able to reparent
+	//	it to the new collectionUI component, hence preserving the state of
+	//	things being displayed by that editor. See the description in
+	//	collectionUI() for more details.
+	//
+
+	if (!$alsoDeleteHypershade)
+	{
+		// The caller has asked us not to delete the hypershade object along 
+		// with the UI, so we unparent it from the UI before we delete the UI.
+		//
+		string $hypershadeName = lookupHypershadeName($collectionUI);
+		hyperGraph -edit -unParent $hypershadeName;
+	}
+
+
+	//	delete the filtering controls for the view
+	//
+	string $filterControls[] = `collectionUIFilterControls( $collectionUI )`;
+	string $hs = $filterControls[0];
+	string $filterBox = $filterControls[1];
+	string $filterButton = $filterControls[2];
+    int $filterUIExisted = false;
+		
+	//	delete the node name wildcard box
+	//
+	if( `control -ex $filterBox` )
+	{
+        $filterUIExisted = true; 
+		deleteUI $filterBox;
+	}
+
+	//	delete the Show button
+	//
+	if( `control -ex $filterButton` )
+	{
+        $filterUIExisted = true; 
+		deleteUI $filterButton;
+	}
+
+    // If this hypershade had filter UI associated to it, then
+    // we need to deregister the filters.
+    // But if this hypershade never had filter UI associated to it,
+    // then there is no filter to deregister. 
+    // 
+    if ($filterUIExisted)
+    { 
+	    //	deregister the filters
+	    //
+	    filterUIRemoveView($hs);
+    }
+
+	//	remove this collection from the lookup table
+	//
+	deregisterCollectionUI( $collectionUI );
+
+	deleteUI $collectionUI;
+}
+
+global proc string collectionUI(
+	string $parentFormLayout,
+	string $hypershadeName)
+{
+	//
+	// Description:
+	//	This procedure is called from any piece of UI which wants to create a
+	//	collection UI within itself. 
+	//	This procedure creates the collection UI.
+	//	If the stateDescription is specified, this code will use it to create 
+	//	a UI with the characteristics described therein.
+	//	In particular, this is designed to allow the collection UI to be moved 
+	//	from layout to layout without dramatically changing its appearance. 
+	// 	Otherwise (if no stateDescription is provided), new UI is created with 
+	// 	the default configuration.
+	//	The $reuseEditors argument is used to specify whether the hyperShade 
+	// 	editor whose name is contained in the $stateDescription should be
+	// 	parented to the new UI rather than creating a new hyperShade editor.
+	//
+	// Returns: 
+	//	This method returns the name of the UI which should be stored by the
+	//	caller for later use in performing operations on the collection UI.
+	//
+
+	// Create the lookup table if it does not already exist.
+	//
+	createCollectionUILookupTable();
+
+	if ($hypershadeName == "")
+	{
+		// There is no existing hyperShade editor to reuse, so we will create a
+		// new one.
+		//
+		$hypershadeName = generateUniqueHypershadeName();
+		hyperGraph -unParent $hypershadeName;
+
+		hyperShade
+			-setAllowsRegraphing false
+			$hypershadeName;
+		hyperUserInit($hypershadeName);
+	}
+
+    string $collectionForm = `formLayout`; 
+
+	    string $collectionUI;
+	    $collectionUI = `formLayout collection`;
+		// Register the collectionUI in the lookup table
+		//
+		registerCollectionUI($collectionUI);
+		registerHypershadeName($collectionUI, $hypershadeName);
+
+		    hyperGraph -edit -unParent $hypershadeName;
+
+		    hyperGraph 
+			    -edit
+			    -parent $collectionUI
+			    $hypershadeName;
+
+		    formLayout
+			    -edit
+			    -af $hypershadeName top		0
+			    -af $hypershadeName bottom	0
+			    -af $hypershadeName left	0 
+			    -af $hypershadeName right	0 
+                $collectionUI;
+
+        setParent ..;  // from  $collectionUI
+
+        string $scrollBar =
+              `floatScrollBar
+                  -parent $collectionForm 
+                  -horizontal false
+                  -width 20
+                  scrollBar`;
+
+
+        floatScrollBar
+              -edit
+              -dragCommand 
+                  ("activateCorrespondingTabLayout "+$collectionUI)
+              $scrollBar;
+        floatScrollBar
+              -edit
+              -changeCommand
+                  ("visor -scrollPercent "
+                      + "`floatScrollBar -query -value "
+                      + $scrollBar
+                      + "` "
+                      + $hypershadeName)
+              $scrollBar;
+        visor
+              -scrollBar $scrollBar
+              $hypershadeName;
+
+		formLayout
+			-edit
+			-af $collectionUI top		0
+			-af $collectionUI bottom	0
+			-af $collectionUI left	0 
+			-ac $collectionUI right	0 $scrollBar
+
+            -af $scrollBar top 0
+            -af $scrollBar bottom 0
+            -an $scrollBar left
+            -af $scrollBar right 0
+
+			$collectionForm;
+	setParent ..; // from $collectionForm
+	formLayout 
+		-edit
+		-af $collectionForm top 		0
+		-af $collectionForm bottom 	0
+		-af $collectionForm left 		0
+		-af $collectionForm right 		0
+		$parentFormLayout;
+
+	return $collectionUI;
+}

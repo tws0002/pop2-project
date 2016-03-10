@@ -1,0 +1,883 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//
+//
+//
+//
+//
+//  Creation Date:  Oct 1997
+//
+//  Description:
+//     This is an example script for the Maya Artisan Script
+//     Paint tool. It will paint geometry onto the selected surfaces.
+//     Various aspects of the geometry are controlled by the painted
+//     values.
+//
+// Usage:
+// 1) Place this script into your scripts directory (usually the
+//    maya/scripts directory in your home directory
+// 2) Select the Script Paint Tool (Modify->Script Paint Tool)
+//    and bring up the Tool Settings window
+// 3) Go to the Setup tab and enter "geometryPaint" into the
+//    "Tool Setup Cmd" field and hit enter
+// 4) Paint Geometry
+//
+// Tips:
+// Once you have the Geometry Paint Tool setup you may want to drag
+// it from the minibar to the shelf so that it is always accessible
+//
+// These are global variables used to keep track of multiple
+// surfaces and the name prefixes used for the geometries on each
+// surface
+//
+global string $geometryNamePrefix[];
+global string $geometryParentName[];
+global string $geometryGroupName[];
+global int $geometryType[];		// 0 - NURBS surface, 1 - mesh, 2 - subd
+global int $geometryPaintFreeSlot = 0;
+global int $geometryPaintSlots = 0;
+
+global string $geometryGeom[];
+global string $geometryValidGeom[];
+
+// determines which operation we are in:
+// 1 - create/modify, 2 - modify, 3 - remove
+//
+global int $geometryOperation = 1;
+
+// These are global variables used to control what will happen
+// during painting. These globals are modified using a separate
+// UI window created when this tool becomes active.
+//
+global int $geometryUseGrid = 1;
+global int $geometryGridSizeU = 20;
+global string $geometryGridSizeUSlider;
+global int $geometryGridSizeV = 20;
+global string $geometryGridSizeVSlider;
+global int $geometryJitterGrid = 1;
+global float $geometryJitterValueAmt = 0.0;
+global int $geometryAttachToSrf = 1;
+global int $geometryAlignToSrf = 0;
+global int $geometryDuplicate = 1;
+global int $geometryGroup = 1;
+global int $geometryProportional = 0;
+global int $geometryIsolate = 1;
+global string $geometryAttrName[] = { ".sx", ".sy", ".sz", ".rx", ".ry", ".rz", ".tx", ".ty", ".tz" };
+global int $geometryModifyAttr[] = { 1, 1, 1, 0, 0, 0, 0, 0, 0 };
+global float $geometryModifyAttrNorm[] = { 1, 1, 1, 360, 360, 360, 1, 1, 1 };
+global int $geometryModifyAttrWrap[] = { 0, 0, 0, 1, 1, 1, 0, 0, 0 };
+global string $geometryIdentifier = "Geom";
+global string $geometryAlignChkBoxGrp;
+
+proc chkRotateHelperPlugin()
+{
+	global int $geometryAlignToSrf;
+	global string $geometryAlignChkBoxGrp;
+
+	if ( $geometryAlignToSrf && !`pluginInfo -q -loaded rotateHelper.so` ) {
+		if ( catch( `loadPlugin rotateHelper.so` ) ) {
+			warning (uiRes("m_geometryPaint.kPlugInWarning"));
+			$geometryAlignToSrf = 0;
+
+			// disable Align option
+			//
+			checkBoxGrp -e -en3 0 -v3 0 $geometryAlignChkBoxGrp;
+		}
+	}
+}
+
+global proc geometryPaintAlignToSrfCB( int $align )
+{
+	global int $geometryAlignToSrf;
+	
+	$geometryAlignToSrf = $align;
+	chkRotateHelperPlugin;
+}
+
+// This procedure creates the dialog box used to control various
+// parameters that control what happens when painting.
+// NOTE: This is in no way meant to be an example of good UI
+// design!
+//
+proc geometryPaintUI( string $context ) 
+{
+	global int $geometryOperation;
+	global int $geometryUseGrid;
+	global int $geometryGridSizeU;
+	global int $geometryGridSizeV;
+	global string $geometryGridSizeUSlider;
+	global string $geometryGridSizeVSlider;
+	global string $geometryAlignChkBoxGrp;
+	global int $geometryJitterGrid;
+	global int $geometryAttachToSrf;
+	global int $geometryAlignToSrf;
+	global int $geometryDuplicate;
+	global int $geometryGroup;
+	global int $geometryProportional;
+	global int $geometryIsolate;
+	global string $geometryGeom[];
+	global int $geometryModifyAttr[];
+	global float $geometryJitterValueAmt;
+	global string $geometryIdentifier;
+
+	if ( `window -ex geometryPaintWindow` )
+	{
+		showWindow geometryPaintWindow ;
+		return ;
+	}
+	
+	setUITemplate -pushTemplate DefaultTemplate;
+	window -title (uiRes("m_geometryPaint.kGeometryPaintSettings"))  geometryPaintWindow;
+	columnLayout -adj false -cal left
+		column;
+
+			string $geom;
+			int $numGeoms = size($geometryGeom);
+			int $g;
+			for ( $g = 0; $g < $numGeoms; $g++ ) {
+				$geom = ($geom + " " + $geometryGeom[$g]);
+			}
+			textFieldGrp -label (uiRes("m_geometryPaint.kGeometry")) 
+						 -text $geom
+						 -cc "tokenize( \"#1\", $geometryGeom )"
+						 geometryName; 
+			textFieldGrp -label (uiRes("m_geometryPaint.kIdentifier")) 
+						 -text $geometryIdentifier
+						 -cc "$geometryIdentifier = \"#1\""
+						 geometryIdentifier; 
+			radioButtonGrp -label (uiRes("m_geometryPaint.kOperation"))  -nrb 3
+				-label1 (uiRes("m_geometryPaint.kCreateModify")) 
+				-on1 "$geometryOperation = 1"
+				-label2 (uiRes("m_geometryPaint.kModify")) 
+				-on2 "$geometryOperation = 2"
+				-label3 (uiRes("m_geometryPaint.kRemove")) 
+				-on3 "$geometryOperation = 3"
+				-sl $geometryOperation 
+				operation;
+			checkBoxGrp -ncb 2 -label ""
+						-label1 (uiRes("m_geometryPaint.kGrid")) 
+						-v1 $geometryUseGrid
+						-cc1 "$geometryUseGrid = #1; intSliderGrp -e -en $geometryUseGrid $geometryGridSizeUSlider; intSliderGrp -e -en $geometryUseGrid $geometryGridSizeVSlider"
+						-label2 (uiRes("m_geometryPaint.kJitterGrid")) 
+						-v2 $geometryJitterGrid
+						-cc2 "$geometryJitterGrid = #1"
+						useGrid;
+			$geometryGridSizeUSlider=`
+				intSliderGrp -field true -label (uiRes("m_geometryPaint.kUGridSize"))  -min 2 -max 100
+						 -v $geometryGridSizeU
+						 -cc "$geometryGridSizeU = #1"
+						 -en $geometryUseGrid
+						 uGrid`; 
+			$geometryGridSizeVSlider=`
+				intSliderGrp -field true -label (uiRes("m_geometryPaint.kVGridSize"))  -min 2 -max 100
+						 -v $geometryGridSizeV
+						 -cc "$geometryGridSizeV = #1"
+						 -en $geometryUseGrid
+						 vGrid`;
+			checkBoxGrp -ncb 3 -label (uiRes("m_geometryPaint.kControl")) 
+						-label1 (uiRes("m_geometryPaint.kXScale"))  -v1 $geometryModifyAttr[0]
+						-cc1 "$geometryModifyAttr[0] = #1"
+						-label2 (uiRes("m_geometryPaint.kYScale"))  -v2 $geometryModifyAttr[1]
+						-cc2 "$geometryModifyAttr[1] = #1"
+						-label3 (uiRes("m_geometryPaint.kZScale"))  -v3 $geometryModifyAttr[2]
+						-cc3 "$geometryModifyAttr[2] = #1"
+						control0;
+			checkBoxGrp -ncb 3 -label ""
+						-label1 (uiRes("m_geometryPaint.kXRot"))  -v1 $geometryModifyAttr[3]
+						-cc1 "$geometryModifyAttr[3] = #1"
+						-label2 (uiRes("m_geometryPaint.kYRot"))  -v2 $geometryModifyAttr[4]
+						-cc2 "$geometryModifyAttr[4] = #1"
+						-label3 (uiRes("m_geometryPaint.kZRot"))  -v3 $geometryModifyAttr[5]
+						-cc3 "$geometryModifyAttr[5] = #1"
+						control1;
+			checkBoxGrp -ncb 3 -label ""
+						-label1 (uiRes("m_geometryPaint.kXTrans"))  -v1 $geometryModifyAttr[6]
+						-cc1 "$geometryModifyAttr[6] = #1"
+						-label2 (uiRes("m_geometryPaint.kYTrans"))  -v2 $geometryModifyAttr[7]
+						-cc2 "$geometryModifyAttr[7] = #1"
+						-label3 (uiRes("m_geometryPaint.kZTrans"))  -v3 $geometryModifyAttr[8]
+						-cc3 "$geometryModifyAttr[8] = #1"
+						control2;
+			checkBoxGrp -ncb 3 -label (uiRes("m_geometryPaint.kOptions")) 
+						-label1 (uiRes("m_geometryPaint.kProportional")) 
+						-v1 $geometryProportional
+						-cc1 "$geometryProportional = #1"
+						-label2 (uiRes("m_geometryPaint.kAttach")) 
+						-v2 $geometryAttachToSrf
+						-cc2 "$geometryAttachToSrf = #1"
+						-label3 (uiRes("m_geometryPaint.kDuplicate")) 
+						-v3 $geometryDuplicate
+						-cc3 "$geometryDuplicate = #1"
+						options0;
+
+			$geometryAlignChkBoxGrp = `
+				checkBoxGrp -ncb 3 -label ""
+						-label1 (uiRes("m_geometryPaint.kGroup")) 
+						-v1 $geometryGroup
+						-cc1 "$geometryGroup = #1"
+						-label2 (uiRes("m_geometryPaint.kIsolate")) 
+						-v2 $geometryIsolate
+						-cc2 "$geometryIsolate = #1"
+						-label3 (uiRes("m_geometryPaint.kAlign")) 
+						-v3 $geometryAlignToSrf
+						-cc3 "geometryPaintAlignToSrfCB( #1 )"
+						options1`;
+			floatSliderGrp -field true -label (uiRes("m_geometryPaint.kJitterValue"))  -min 0 -max 1 -pre 2
+						 -v $geometryJitterValueAmt
+						 -cc "$geometryJitterValueAmt = #1"
+						 jitterRange;
+		setParent ..;
+	setParent ..;
+	showWindow geometryPaintWindow;
+	setUITemplate -popTemplate;
+}
+
+// This procedure should be set as the "Tool Setup Cmd" in the 
+// Setup tab of the Maya Artisan Script Paint tool's tool
+// settings window. The tool context is supplied as an argument.
+//
+global proc geometryPaint( string $context )
+{
+	// initialize all the other commands in this scriptable 
+	// paint tool context.
+	// 
+	artUserPaintCtx -e
+		-ic "initGeometryPaint"
+		-fc "finishGeometryPaint"
+		-svc "setGeometryPaintValue"
+		-gvc "getGeometryPaintValue"
+		-gsc ""
+		-cc ""
+		-tcc "cleanupGeometryPaint"
+		-gac ""
+		$context;
+		
+	// create the dialog box to control various parameters
+	//
+	geometryPaintUI( $context );
+
+	// We force the tool to use texture paint
+	// mode (as opposed to projection paint mode)
+	//
+	// userPaintCtx -e -painttype "forceTexture" $context;
+}
+
+// This is the "Tool Cleanup Cmd". It is called when the tool is
+// exited. In this case, the special dialog window that was created
+// is deleted
+//
+global proc cleanupGeometryPaint( string $context )
+{
+	if ( `window -ex geometryPaintWindow` ) {
+		deleteUI geometryPaintWindow;
+	}
+}
+
+global proc int checkForValidGeometry()
+{
+	global string $geometryGeom[];
+	global string $geometryValidGeom[];
+
+	int $numGeom = size($geometryGeom);
+	int $g, $fg;
+
+	clear($geometryValidGeom);
+	for( $g = 0, $fg = 0; $g < $numGeom; $g++ ) {
+		// check if geometry exists
+		//
+		if ( `objExists $geometryGeom[$g]` ) {
+			$geometryValidGeom[$fg] = $geometryGeom[$g];
+			$fg++;
+		}
+	}
+	return $fg;
+}
+
+// This is the "Initialize Cmd". This procedure is called once
+// for every selected surface when an intial click is received
+// on any surface. The argument is the name of the surface. This
+// procedure returns a string which indicates to the scriptable
+// tool how to behave for the duration of the stroke. 
+//
+global proc string initGeometryPaint( string $name )
+{
+	global string $geometryNamePrefix[];
+	global string $geometryParentName[];
+	global string $geometryGroupName[];
+	global int $geometryType[];
+	global int $geometryPaintFreeSlot;
+	global int $geometryPaintSlots;
+	global int $geometryUseGrid;
+	global int $geometryGridSizeU;
+	global int $geometryGridSizeV;
+	global int $geometryJitterGrid;
+	global int $geometryGroup;
+	global int $geometryAttachToSrf;
+	global int $geometryAlignToSrf;
+	global int $geometryOperation;
+	global string $geometryIdentifier;
+
+	if ( checkForValidGeometry() == 0 ) {
+		// return enough to make sure the set method gets
+		// called correctly
+		//
+		warning (uiRes("m_geometryPaint.kGeometryWarning"));
+		return "-uv surface -position local -normal world";
+	}
+
+	// find a free slot for this surface in the global arrays
+	//
+	int $slot;
+
+	for ( $slot = $geometryPaintFreeSlot; $slot < $geometryPaintSlots; $slot++ ) {
+		if ( $geometryNamePrefix[$slot] == "" ) {
+			break;
+		}
+	}  
+
+	if ( $slot == $geometryPaintSlots ) {
+		$geometryPaintSlots++;
+		$geometryPaintFreeSlot = $geometryPaintSlots;
+	}
+
+	int		$paintableObject = 1;
+
+	if ( `nodeType $name` == "nurbsSurface" ) {
+		$geometryType[$slot] = 0;
+	} else if ( `nodeType $name` == "mesh" ) {
+		$geometryType[$slot] = 1;
+	} else if ( `nodeType $name` == "subdiv" ) {
+		$geometryType[$slot] = 2;
+	} else {
+		$paintableObject = 0;
+	}
+
+	if ( $paintableObject ) {
+		// save the name of the parent of this shape as well
+		// as a prefix to use when creating the geometrys and
+		// and a group name if $geometryGroup is true
+		//
+		string $parent[] = `listRelatives -p $name`;
+		$geometryParentName[$slot] = $parent[0];
+		$geometryNamePrefix[$slot] = $parent[0] + $geometryIdentifier;
+		$geometryGroupName[$slot] = $parent[0] + $geometryIdentifier + "Grp";
+
+		if ( $geometryOperation == 1 && $geometryGroup && ! `objExists $geometryGroupName[$slot]` ) {
+			// Make a group for the painted geometries. Place it at the
+			// same level as the surface
+			//
+			string $parentParent[] = `listRelatives -p $geometryParentName[$slot]`;
+
+			if ( size($parentParent) > 0 ) {
+				group -em -p $parentParent[0] -n $geometryGroupName[$slot];
+			} else {
+				group -em -w -n $geometryGroupName[$slot];
+			}
+
+			// Connect this new transform to the surface's transform
+			//
+			string $from = $geometryParentName[$slot];
+			string $to = $geometryGroupName[$slot];
+			string $attr[] = { "t", "r", "ro", "s", "sh",
+							   "rp", "rpt", "sp", "spt" };
+
+			for ( $a = 0; $a < size($attr); $a++ ) {
+				connectAttr ($from + "." + $attr[$a]) ($to + "." + $attr[$a]);
+			}
+		}
+
+		if ( $geometryAlignToSrf ) {
+			// check if we have rotateHelper plugin
+			// - this may change $geometryAlignToSrf flag
+			//
+			chkRotateHelperPlugin;
+
+			// if geometry alignment is desired but geometry attachment isn't, create
+			// some dependency nodes to help out with this and create the constant
+			// connections
+			// - at the current time only NURBS surfaces can be attached to
+			//
+			if ( $geometryAlignToSrf
+			  && ( ! $geometryAttachToSrf || $geometryType[$slot] != 0 ) ) {
+				int $created = 0;
+	
+				if ( ! `objExists geometryPaintPOSNode` ) {
+					createNode pointOnSurfaceInfo -name geometryPaintPOSNode;
+					$created = 1;
+				}
+				if ( ! `objExists geometryPaintBRNode` ) {
+					createNode rotateHelper -name geometryPaintBRNode;
+					$created = 1;
+				}
+				if ( ! `objExists geometryPaintMeshBRNode` ) {
+					createNode rotateHelper -name geometryPaintMeshBRNode;
+					$created = 1;
+				}
+				if ( ! `objExists geometryPaintSubdBRNode` ) {
+					createNode rotateHelper -name geometryPaintSubdBRNode;
+					$created = 1;
+				}
+				if ( $created ) {
+					connectAttr geometryPaintPOSNode.normal geometryPaintBRNode.up;
+					connectAttr geometryPaintPOSNode.tangentU geometryPaintBRNode.forward;
+				}
+			}
+		}
+	}
+
+	// Return an argument string which:
+	// - tells the tool what surface ID to use for this surface
+	// - indicate that the associated surface parameter location
+	//   should also be passed to the "Set Value Cmd".
+	//
+	string $jitter;
+	string $position;
+	string $grid;
+
+	if ( $geometryJitterGrid ) {
+		$jitter = "true";
+	} else { 
+		$jitter = "false";
+	}
+	if ( $geometryGroup ) {
+		$position = "local";
+	} else { 
+		$position = "world";
+	}
+	if ( $geometryUseGrid ) {
+		$grid = (" -grid " + $geometryGridSizeU  + " " + $geometryGridSizeV);
+	} else {
+		$grid = "";
+	}
+	return ( "-id " + $slot
+		   + $grid
+		   + " -jitter " + $jitter
+		   + " -uv surface"
+		   + " -position " + $position
+		   + " -normal " + $position );
+}
+
+// This is the "Finalize Cmd". This procedure is called at the
+// end of the stroke. It is passed the surface ID, that was
+// generated by the "Initialize Cmd".
+//
+global proc finishGeometryPaint( int $slot )
+{
+	global string $geometryNamePrefix[];
+	global int $geometryPaintFreeSlot;
+
+	// clear out the slot that was used for this surface
+	//
+	if ( $slot >= 0 ) {
+		$geometryNamePrefix[$slot] = "";
+		if ( $slot < $geometryPaintFreeSlot ) {
+			$geometryPaintFreeSlot = $slot;
+		}
+	}
+}
+
+proc string getRandomGeometry()
+{
+	global string $geometryValidGeom[];
+
+	int $index = trunc( rand( size($geometryValidGeom) - 0.5 ) );
+	return $geometryValidGeom[$index];
+}
+
+proc setGeometryAttributes(
+	string $objname,
+	float $val
+)
+{
+	global int $geometryModifyAttr[];
+	global float $geometryModifyAttrNorm[];
+	global string $geometryAttrName[];
+	global int $geometryModifyAttrWrap[];
+	global int $geometryProportional;
+	global float $geometryJitterValueAmt;
+
+	int $attr;
+	int $numAttr = size($geometryModifyAttr);
+	float $normVal;
+
+	if ( $geometryJitterValueAmt > 0 ) {
+		float $jitterRange = abs( $val ) * $geometryJitterValueAmt;
+
+		$val = rand( $val - $jitterRange, $val + $jitterRange );
+	}
+
+	if ( $geometryProportional ) {
+		float $proportions[];
+		float $total;
+		float $curVal;
+
+		// proportionally split the passed in value across all
+		// modifiable attributes 
+		//
+
+		// find the proportions of all modifiable attributes
+		//
+		for ( $attr = 0; $attr < $numAttr; $attr++ ) {
+			if ( $geometryModifyAttr[$attr] ) {
+				$curVal = `getAttr ($objname + $geometryAttrName[$attr])`;
+				
+				if ( $geometryModifyAttrNorm[$attr] != 1 ) {
+					$curVal /= $geometryModifyAttrNorm[$attr];
+				}
+				if ( $geometryModifyAttrWrap[$attr] ) {
+					$curVal = fmod( $curVal, 1.0 );
+				}
+				$proportions[$attr] = $curVal;
+				$total += abs( $curVal );
+			}
+		}
+
+		// go through them all again and split the passed in
+		// value proportionately
+		//
+		for ( $attr = 0; $attr < $numAttr; $attr++ ) {
+			if ( $geometryModifyAttr[$attr] ) {
+				if ( $total > 0 ) {
+					$normVal = $val * $proportions[$attr] / $total;
+				} else {
+					$normVal = $val;
+				}
+
+				if ( $geometryModifyAttrNorm[$attr] != 1 ) {
+					$normVal = $normVal * $geometryModifyAttrNorm[$attr];
+				}
+
+				// print ($objname + $geometryAttrName[$attr] + " set to " + $normVal + "\n");
+				setAttr ($objname + $geometryAttrName[$attr]) $normVal;
+			}
+		}
+	} else {
+		// replace all modifiable attributes with normalized value
+		//
+		for ( $attr = 0; $attr < $numAttr; $attr++ ) {
+			if ( $geometryModifyAttr[$attr] ) {
+				if ( $geometryModifyAttrNorm[$attr] != 1 ) {
+					$normVal = $val * $geometryModifyAttrNorm[$attr];
+				} else {
+					$normVal = $val;
+				}
+
+				// print ($objname + $geometryAttrName[$attr] + " set to " + $normVal + "\n");
+				setAttr ($objname + $geometryAttrName[$attr]) $normVal;
+			}
+		}
+	}
+}
+
+// This is the "Set Value Cmd". It is called everytime a value
+// on the surface is changed. A surface ID, a grid index
+// on the surface and the value associated with that grid index
+// is passed. There can be additional arguments depending on the
+// options generated by the return value of the "Initialize Cmd".
+// In this case the (u,v) surface parameter position for this
+// grid point as well as its local position is passed.
+// 
+global proc setGeometryPaintValue(
+	int $slot,
+	int $index,
+	float $val,
+	float $u,
+	float $v,
+	float $x,
+	float $y,
+	float $z,
+	float $nx,
+	float $ny,
+	float $nz
+)
+{
+	global string $geometryNamePrefix[];
+	global string $geometryParentName[];
+	global string $geometryGroupName[];
+	global int $geometryType[];
+	global int $geometryAttachToSrf;
+	global int $geometryAlignToSrf;
+	global int $geometryDuplicate;
+	global int $geometryGroup;
+	global int $geometryOperation;
+	global int $geometryIsolate;
+
+	if ( $slot < 0 ) {
+		return;
+	}
+
+	if ( $geometryNamePrefix[$slot] != "" ) {
+		// determine the name of the geometry associated with this
+		// grid location as well as the name of the
+		// pointOnSurfaceInfo node that attaches the geometry to
+		// the surface
+		//
+		string $objname = $geometryNamePrefix[$slot] + $index;
+		string $srfpoint = ($objname + "Loc");
+		string $alignGeom = ($objname + "Align");
+		string $posname = ($objname + "Pos");
+
+		if ( `objExists $objname` ) {
+			// the geometry already exists
+			//
+			if ( $geometryOperation == 3 ) {
+				// we are removing geometry; only remove if val > 0
+				//
+				if ( $val > 0 ) {
+					if ( `objExists $posname` ) {
+						delete $posname;
+					} else {
+						delete $objname;
+					}
+					if ( `objExists $srfpoint` ) {
+						delete $srfpoint;
+					}
+					if ( `objExists $alignGeom` ) {
+						delete $alignGeom;
+					}
+
+					// if there is a group and it's empty delete it
+					//
+					if ( `objExists $geometryGroupName[$slot]` ) {
+						string $children[] = `listRelatives -c $geometryGroupName[$slot]`;
+
+						if ( size($children) == 0 ) {
+							delete $geometryGroupName[$slot];
+						}
+					}
+				}
+			} else {
+				// modify geometry attributes
+				//
+				setGeometryAttributes( $objname, $val );
+			}
+		} else if ( $val > 0 && $geometryOperation == 1 ) {
+			// the geometry doesn't exist
+			//
+			string $sname[];
+			string $geom = getRandomGeometry();
+
+			// create a geometry with the proper name, scale it by
+			// the passed value
+			//
+			if ( $geometryDuplicate ) {
+				$sname=`duplicate -n $objname $geom`;
+			} else {
+				$sname=`instance -n $objname $geom`;
+			}
+			if ( $sname[0] != $objname ) {
+				string $geometryNameError =(uiRes("m_geometryPaint.kGeometryNameError"));
+				error (`format -s $objname -s $sname[0] $geometryNameError`);
+				return;
+			}
+			showHidden $objname;
+
+			if ( $geometryIsolate ) {
+				group -n $posname $objname;
+
+				// make sure the rotate and scale pivots and
+				// translations are the same in $posname as
+				// they are in $objname
+				//
+				float $p[3];
+				
+				$p = `xform -q -os -rp $objname`;
+				xform -p false -os -rp $p[0] $p[1] $p[2];
+				$p = `xform -q -os -rt $objname`;
+				xform -p false -os -rt $p[0] $p[1] $p[2];
+				$p = `xform -q -os -sp $objname`;
+				xform -p false -os -sp $p[0] $p[1] $p[2];
+				$p = `xform -q -os -st $objname`;
+				xform -p false -os -st $p[0] $p[1] $p[2];
+			} else {
+				$posname = $objname;
+			}
+			if ( $geometryGroup ) {
+				parent -r $posname $geometryGroupName[$slot];
+			}
+			setGeometryAttributes( $objname, $val );
+
+			string $outSrfAttr;
+
+			if ( $geometryGroup ) {
+				$outSrfAttr = ".local";
+			} else {
+				$outSrfAttr = ".worldSpace";
+			}
+
+			// attach only works on NURBS surfaces right now
+			//
+			if ( $geometryAttachToSrf && $geometryType[$slot] == 0 ) {
+				// create point on surface node which will be used to
+				// attach the geometry to the surface
+				//
+				createNode pointOnSurfaceInfo -n $srfpoint;
+				setAttr ($srfpoint + ".u") $u;
+				setAttr ($srfpoint + ".v") $v;
+				connectAttr ($geometryParentName[$slot] + $outSrfAttr) ($srfpoint + ".is");
+				connectAttr ($srfpoint + ".position") ($posname + ".translate");
+
+				if ( $geometryAlignToSrf ) {
+					createNode rotateHelper -n $alignGeom;
+
+					connectAttr ($srfpoint + ".normal") ($alignGeom + ".up");
+					connectAttr ($srfpoint + ".tangentU") ($alignGeom + ".forward");
+					connectAttr ($alignGeom + ".rotate") ($posname + ".rotate");				
+				}
+			} else {
+				if ( $geometryGroup ) {
+					move -ls $x $y $z $posname;
+				} else {
+					move -ws $x $y $z $posname;
+				}
+
+				if ( $geometryAlignToSrf ) {
+					string	$helperNode;
+					string	$outSrf;
+
+					switch ( $geometryType[$slot] ) {
+					case 0:	// NURBS surface
+						// use global nodes to calculate required rotation
+						//
+						$outSrf = ($geometryParentName[$slot] + $outSrfAttr);
+						connectAttr $outSrf geometryPaintPOSNode.is;
+						setAttr geometryPaintPOSNode.u $u;
+						setAttr geometryPaintPOSNode.v $v;
+						$helperNode = "geometryPaintBRNode";
+						break;
+					case 1:	// poly mesh
+						setAttr geometryPaintMeshBRNode.upX $nx;
+						setAttr geometryPaintMeshBRNode.upY $ny;
+						setAttr geometryPaintMeshBRNode.upZ $nz;
+						$helperNode = "geometryPaintMeshBRNode";
+						break;
+					case 2:	// subd
+						setAttr geometryPaintSubdBRNode.upX $nx;
+						setAttr geometryPaintSubdBRNode.upY $ny;
+						setAttr geometryPaintSubdBRNode.upZ $nz;
+						$helperNode = "geometryPaintSubdBRNode";
+						break;
+					}
+
+
+					// set rotation of object 
+					// - rotateHelper plugin has a bug where it doesn't recompute
+					//   unless asked for rotate attribute
+					//
+					getAttr ($helperNode + ".rotate");
+					rotate `getAttr ($helperNode + ".rx")`
+						   `getAttr ($helperNode + ".ry")`
+						   `getAttr ($helperNode + ".rz")` $posname;
+
+					switch ( $geometryType[$slot] ) {
+					case 0:	// NURBS surface
+						// disconnect the surface
+						//
+						disconnectAttr $outSrf geometryPaintPOSNode.is;
+						break;
+					case 1:	// poly mesh
+						break;
+					case 2:	// subd
+						break;
+					}
+				}
+			}
+		}
+	}
+}
+
+// This is the "Get Value Cmd". It is called everytime a value
+// on the surface is needed by the scriptable paint tool. A
+// surface ID and a grid index is passed in. This procedure should
+// return the value for this grid location on the specified surface.
+// 
+global proc float getGeometryPaintValue( int $slot, int $index )
+{
+	global string $geometryNamePrefix[];
+	global int $geometryModifyAttr[];
+	global int $geometryModifyAttrWrap[];
+	global float $geometryModifyAttrNorm[];
+	global string $geometryAttrName[];
+	global int $geometryOperation;
+	global int $geometryProportional;
+
+	if ( $slot >= 0 && $geometryNamePrefix[$slot] != "" ) {
+		// if this slot is valid, generate the name for the
+		// geometry at this grid index
+		//
+		string $objname = $geometryNamePrefix[$slot] + $index;
+
+		if ( `objExists $objname` ) {
+			if ( $geometryOperation == 3 ) {
+				// we are removing geometry
+				//
+				return 0.0;
+			} else {
+				float $total = 0;
+				int $num = 0;
+				int $attr;
+				int $numAttr = size($geometryModifyAttr);
+				float $val;
+	
+				// get the sum of normalized attributes
+				//
+				for ( $attr = 0; $attr < $numAttr; $attr++ ) {
+					if ( $geometryModifyAttr[$attr] ) {
+						$val = `getAttr ($objname + $geometryAttrName[$attr])`;
+						
+						// print ("getAttr " + $objname + $geometryAttrName[$attr] + " = " + $val);
+						if ( $geometryModifyAttrNorm[$attr] != 1 ) {
+							$val /= $geometryModifyAttrNorm[$attr];
+						}
+						if ( $geometryModifyAttrWrap[$attr] ) {
+							$val = fmod( $val, 1.0 );
+						}
+						// print (" normalized = " + $val + "\n");
+						if ( $geometryProportional ) {
+							$val = abs( $val );
+						}
+						$total += $val;
+						$num++;
+					}
+				}
+				if ( $num > 0 ) {
+					if ( $geometryProportional ) {
+						return $total;
+					} else {
+						return $total / $num;
+					}
+				} else {
+					return 0.0;
+				}
+			}
+		} else {
+			// the geometry doesn't exist, therefore return 0 as
+			// the value for this grid location
+			//
+			return 0.0;
+		}
+	} else {
+		return 0.0;
+	}
+}

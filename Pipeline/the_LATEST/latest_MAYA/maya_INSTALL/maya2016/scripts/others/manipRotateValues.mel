@@ -1,0 +1,158 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+global int $showRotateManipPivotWarning = 1;
+
+global proc manipRotateValues ( string $toolName ) {
+
+	global int $showRotateManipPivotWarning;
+
+	string $parent = (`toolPropertyWindow -q -location` + "|manipRotate");
+	setParent $parent;
+
+	// Initialize settings
+	//
+	string $axisLabel = "";
+	int $manipMode = `manipRotateContext -q -mode $toolName`;
+	switch ($manipMode)	{
+	case 0: $axisLabel = `uiRes("m_manipMoveProperties.kObject")`; break;
+	case 1: $axisLabel = `uiRes("m_manipMoveProperties.kWorld")`; break;
+	case 2: $axisLabel = `uiRes("m_manipRotateProperties.kGimbal")`; break;
+	case 3: $axisLabel = `uiRes("m_manipMoveProperties.kCustomAxisOrientation")`; break;
+	case 9: $axisLabel = `uiRes("m_manipMoveProperties.kAutoAlign")`; break;
+	}
+	textField -e -tx $axisLabel axisOrientField;
+
+	float $ori[] = `manipRotateContext -q -orientAxes $toolName`;
+	floatField -e -v (rad_to_deg($ori[0])) manipRotateOrientFieldX;
+	floatField -e -v (rad_to_deg($ori[1])) manipRotateOrientFieldY;
+ 	floatField -e -v (rad_to_deg($ori[2])) manipRotateOrientFieldZ;
+
+	// edit pivot
+	int $editMode = `manipRotateContext -q -editPivotMode $toolName`;
+	if ($editMode) {
+		iconTextButton -e -bgc 0.32 0.52 0.65 -c "ctxEditMode" editPivotButton; // use our unified Maya highligh color #5285A6 
+	} else {
+		iconTextButton -e -bgc 0.37 0.37 0.37 -c "ctxEditMode" editPivotButton;
+		// off the background and then turn it on to reset it
+		iconTextButton -e -nbg 1 editPivotButton;
+		iconTextButton -e -nbg 0 editPivotButton;
+	}
+	iconTextButton -e
+		-c ("{ string $objs[] = `ls -sl -type transform -type geometryShape`;" +
+			"if (size($objs) > 0) { xform -cp; } manipPivot -rp -ro; }")
+		resetPivotButton;
+
+	int $pivotMode = 1;
+	if( `manipRotateContext -q -useCenterPivot $toolName` )
+	{
+		$pivotMode = 4;
+	}
+	else if( `manipRotateContext -q -useManipPivot $toolName`)
+	{
+		$pivotMode = 3;
+		if( $showRotateManipPivotWarning )
+		{
+			warning (uiRes("m_manipRotateValues.kManipPivotNotForAnimation"));
+			$showRotateManipPivotWarning = 0;
+		}
+	}
+	else if( `manipRotateContext -q -useObjectPivot $toolName`)
+	{
+		$pivotMode = 2;
+	}
+	radioButtonGrp -e
+		-nrb 4
+		-on1 ("manipRotateContext -e -useManipPivot 0 -useObjectPivot 0 -useCenterPivot 0 " + $toolName)
+		-on2 ("manipRotateContext -e -useManipPivot 0 -useObjectPivot 1 -useCenterPivot 0 " + $toolName)
+		-on3 ("manipRotateContext -e -useManipPivot 1 -useObjectPivot 0 -useCenterPivot 0 " + $toolName)
+		-on4 ("manipRotateContext -e -useManipPivot 0 -useObjectPivot 0 -useCenterPivot 1 " + $toolName)
+		-select $pivotMode
+		manipPivotRadio;
+		
+	reflectionValues( );
+	softSelectValues( $parent );
+	commonSelectValues( $parent );
+
+	int $trackball = `manipRotateContext -q -ctb $toolName`;
+	checkBoxGrp -e -v1 $trackball manipCenterTrackball;
+
+	checkBoxGrp -e 
+		-cc1 ("manipRotateContext -e -centerTrackball #1 " + $toolName)
+		manipCenterTrackball;
+
+	string $label = "";
+	int $snapMode = manipRotateGetSnapMode();
+	switch ($snapMode) {
+	default:
+	case 0: $label = `uiRes("m_manipMoveProperties.kOff")`; break;
+	case 1: $label = `uiRes("m_manipMoveProperties.kRelative")`; break;
+	case 2: $label = `uiRes("m_manipMoveProperties.kAbsolute")`; break;
+	}
+	textField -e -tx $label manipRotateSnapModeLabel;
+	floatField -e -en ($snapMode != 0) -v (`manipRotateContext -q -snapValue Rotate`) manipRotateSnapValue;
+	
+	int 	$pcp = `manipRotateContext -q -preserveChildPosition $toolName`;
+	int 	$puv = `manipRotateContext -q -preserveUV $toolName`;
+	int 	$mt = `manipRotateContext -q -modifyTranslation $toolName`;
+
+	checkBoxGrp -e -v1 $pcp rotatePreserveChildCheckBx;
+	checkBoxGrp -e -v1 $puv rotatePreserveUVCheckBx;
+	checkBoxGrp -e -v1 $mt rotateModifyTranslationCheckBx;
+
+	checkBoxGrp -e -cc1 ("setTRSPreserveChildPosition #1")
+		rotatePreserveChildCheckBx;
+
+	checkBoxGrp -e -cc1 ("setTRSPreserveUVs #1")
+		rotatePreserveUVCheckBx;
+
+	int $pin = `manipRotateContext -q -pinPivot $toolName`;
+	checkBoxGrp -e -v1 $pin pinComponentPivotCheckBx;
+
+	int $snapPos = `manipRotateContext -q -snapPivotPos $toolName`;
+	int $snapOri = `manipRotateContext -q -snapPivotOri $toolName`;
+	checkBoxGrp -e -v1 $snapPos snapPivotPosCheckBx;
+	checkBoxGrp -e -v1 $snapOri snapPivotOriCheckBx;
+
+	string $xformCns = `xformConstraint -q -type -live`;
+	if ($xformCns == "live") {
+		textField -e -en 0 -tx `uiRes("m_manipMoveValues.kManipMoveXformConstraintLive")` manipRotateXformConstraintModeLabel;
+		iconTextButton -e -en 0 manipRotateXformConstraintButton;
+	} else {
+		string $label = "";
+		if ($xformCns == "edge") $label = `uiRes("m_manipMoveProperties.kManipMoveXformConstraintEdge")`;
+		else if ($xformCns == "surface") $label = `uiRes("m_manipMoveProperties.kManipMoveXformConstraintSurf")`;
+		else $label = `uiRes("m_manipMoveProperties.kManipMoveXformConstraintNone")`;
+		textField -e -en 1 -tx $label manipRotateXformConstraintModeLabel;
+		iconTextButton -e -en 1 manipRotateXformConstraintButton;
+	}
+
+	int $tweakMode = `manipRotateContext -q -tweakMode $toolName`;
+	checkBoxGrp -e  -cc ("strsTweakMode #1") -v1 $tweakMode tweakModeCheckBox;
+
+	checkBoxGrp -e 
+		-cc1 ("manipRotateContext -e -modifyTranslation #1 " + $toolName)
+		rotateModifyTranslationCheckBx;
+
+	string $helpTag = "RotateTool";
+	toolPropertySetCommon $toolName "rotate_M.png" $helpTag;
+	toolPropertySelect "manipRotate";
+}

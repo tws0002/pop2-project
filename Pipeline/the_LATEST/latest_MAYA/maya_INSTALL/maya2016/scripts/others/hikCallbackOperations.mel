@@ -1,0 +1,267 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// hikCallbackOperations.mel
+//
+// Description:
+//		Contains methods that are called from callbacks such as scriptJobs 
+//		and the various hik plugins. Will trigger UI updates where appropriate.
+//
+//		External entities should not call into any of the methods in the
+//		hik* scripts directly. If you need to, please add a wrapper method
+//		here and call the internal method. Please be sure to include a very
+//		good description of when and where it is being called as well.
+//
+
+
+
+///////////////////////////////////////////////////////////////////////
+// Local methodes...
+///////////////////////////////////////////////////////////////////////
+
+
+proc fixRolls( string $charNodes[] )
+{
+	// In Maya 2013, we added roll extraction and changed the roll handling
+	// to base it on different values. This code initializates the roll
+	// extraction and the new roll values.
+	//
+	string $old_rolls[] = { "LeftUpLegRoll",	"LeftLegRoll", 
+							"RightUpLegRoll",	"RightLegRoll",
+							"LeftArmRoll",		"LeftForeArmRoll",
+							"RightArmRoll",		"RightForeArmRoll" };
+	string $new_rolls[] = { "leftHipRoll",	"leftKneeRoll",
+							"rightHipRoll",	"rightKneeRoll",
+							"leftShoulderRoll",	"leftElbowRoll",
+							"rightShoulderRoll", "rightElbowRoll" };
+	int $invert_rolls[] = { 0, 1, 0, 1, 0, 1, 0, 1 };
+	
+	for ($charNode in $charNodes) {
+		string $propertyState = hikGetProperty2StateFromCharacter($charNode);
+		if( $propertyState != "" )
+		{
+			for( $ii = 0; $ii < size($old_rolls); $ii++ )
+			{
+				// Get the old roll value from the file
+				//
+				string $roll = $old_rolls[$ii];
+				float $rVal = `getAttr ($propertyState+"."+$roll)`;
+				string $rollSk = hikGetSkNode($charNode,hikGetNodeIdFromName( $roll ));
+				int $rollMode = `getAttr ($propertyState+"."+$roll+"Mode")`;
+				if ($rollMode == 0) {
+					// When the roll mode on old files is off, it
+					// correlates to a roll value of 1.0
+					//
+					$rVal = ($invert_rolls[$ii]) ? 0.0 : 1.0;
+				}
+
+				// If there is no roll bone, initialize the extraction to
+				// 1.0, otherwise, initialize it to the roll value.
+				//
+				if ($rollSk == "") {
+					setAttr ($propertyState+"."+$roll+"Ex") 1.0;
+				} else {
+					setAttr ($propertyState+"."+$roll+"Ex") (1.0-$rVal);
+				}
+
+				// Initialize the new roll values with (1.0-old roll).
+				// This also happens whenever an old roll value is set,
+				// but since default values are not written out, we need
+				// to do it after file io.
+				//
+				float $newRoll = ($invert_rolls[$ii]) ? (1.0-$rVal) : ($rVal);
+				setAttr ($propertyState+"."+$new_rolls[$ii]) $newRoll;
+			}
+		}
+	}
+}
+
+proc fixSegmentScaleCompensate( string $charNodes[] )
+{
+	for ( $charNode in $charNodes )
+	{
+		// Find the state 2k node
+		string $state2sk[] = hikGetState2SKFromCharacter( $charNode );
+		if ( size ( $state2sk ) < 1 )
+			continue;
+		// Walk all HIK bones
+		for( $i = 0; $i < hikGetNodeCount(); $i++ )
+		{
+			// Find if the bone is connected
+			string $skNode = hikGetSkNode( $charNode, $i );
+			if ( size( $skNode ) < 1 )
+				continue;
+			// Get the bones HIK string name
+			string $hikNodeName = GetHIKNodeName( $i );
+			// Skip the reference bone
+			if( $hikNodeName == "Reference" )
+				continue;
+			string $characterState = $state2sk[0];
+			// This character may have never been locked so don't create the new connections
+			// if the parentMatrix is not connected
+			int $parentMatrixConnected = `isConnected ($skNode+".parentMatrix") ($characterState+"."+$hikNodeName + "PGX")`;
+			if ( ! $parentMatrixConnected )
+				continue;
+			if ( size( $characterState ) > 0 )
+			{
+				// All the above checks passed so now make the new connections
+
+				// segmentScaleCompensate ( boolean ) 
+				connectAttr -f ($skNode+".segmentScaleCompensate") ($characterState+"."+$hikNodeName + "SC");
+				// inverseScale ( 3 doubles ) used if segmentScaleCompensate is true 
+				connectAttr -f ($skNode+".inverseScaleX") ($characterState+"."+$hikNodeName + "ISx"); 
+				connectAttr -f ($skNode+".inverseScaleY") ($characterState+"."+$hikNodeName + "ISy"); 
+				connectAttr -f ($skNode+".inverseScaleZ") ($characterState+"."+$hikNodeName + "ISz"); 
+			}
+		}
+	}
+}
+
+
+///////////////////////////////////////////////////////////////////////
+// Global methodes...
+///////////////////////////////////////////////////////////////////////
+
+
+global proc hikDefinitionFileNewCallback()
+// Description:
+//		Called from the "deleteAll" scriptJob
+//		to update the skeleton definition ui
+{
+	//print _NOL10N("===> skeleton definition file new callback\n");
+	hikUpdateCharacterControlsUI(false);
+	hikDefinitionUpdateCharacterLists();
+}
+
+global proc hikDefinitionPostSceneReadCallback()
+// Description:
+//		Called from the "PostSceneRead" scriptJob
+//		to update the skeleton defintion ui
+{
+	// print _NOL10N( "===> hikDefinitionPostSceneReadCallback\n" );
+
+	// Check the number of HIK character nodes in the scene. If there are any
+	// bring up the unified character context. This is needed so we can correctly
+	// setup the state for each character.
+    
+	hikUpdateCharacterControlsUI(true);
+	
+	string $current = hikGetCurrentCharacter();
+	hikSetCurrentCharacter $current;
+
+	// if UI isn't visible, don't try to update.
+	// Note that FBX import can trigger this callback even
+	// though the UI isn't loaded. The methods above to
+	// update the character list etc. already check for
+	// the existence of the dockControl
+	//
+	if( !`dockControl -exists hikCharacterControlsDock` )
+		return;
+
+	// Switch contextual UI
+	hikSelectLastTab $current;
+	hikUpdateCurrentCharacterFromUI;
+	hikUpdateContextualUI;
+	hikRefreshWidgetScale;
+
+	// Update for definition UI -- character lists and bone assignments
+	hikDefinitionUpdateCharacterLists;
+	hikDefinitionUpdateBones;
+}
+
+global proc hikPostSceneReadEvent( int $fileVersion, string $charNodes[] )
+{
+	if ($fileVersion <= 161 /* 2012 */) {
+		// Roll fix
+		fixRolls( $charNodes );
+		// Segment scale compensate fix
+		fixSegmentScaleCompensate( $charNodes );
+	}
+}
+
+global proc hikControlRigSelectionChangedCallback()
+// Description:
+//		Called from the "SelectionChanged" scriptJob to
+//		update the control rig sliders and the
+//		pinning buttons
+//
+{
+	if( !hikIsControlRigTabSelected() )
+		return;
+
+	//print _NOL10N("===> control rig select changed callback\n");
+	hikUpdateControlRigSliders();
+	hikUpdateControlRigPinningButtons();
+}
+
+global proc hikUpdateCharacterControlsUICallback()
+// Description:
+//		Called from the Characterization plugin to update the 
+//		dcc's character ui
+//
+{
+	//print _NOL10N("~~~~~~~~ --> hikUpdateCharacterControlsUICallback\n");
+	hikUpdateCharacterControlsUIEvalDeferred();
+}
+
+global proc hikUpdateCharacterListCallback()
+// Description:
+//		Called from the hik character node to update
+//		the character list. Will be called when character
+//		node is added, removed or renamed. Since changing
+//		the character also needs to change the contextual
+//		UI, just update the entire character controls
+//		ui.
+//
+{
+	//print _NOL10N("===> hikUpdateCharacterListCallback\n");
+	hikUpdateCharacterControlsUIEvalDeferred();
+}
+
+global proc hikCharacterToolCmdRefreshCallback()
+// Description:
+//		Called from the hikcharatertoolcmd's Maya Listener
+//		to update the pinning state buttons in the control
+//		rig tab.
+//
+{
+	if( !hikIsControlRigTabSelected() )
+		return;
+
+	//print _NOL10N("===> hikCharacterToolCmdRefreshCallback\n");
+	hikUpdateControlRigPinningButtons();
+}
+
+
+global proc hikCharacterToolCreateCallback( string $characterTool )
+// Callback invoked when the character tool gets created
+// good place to create script jobs and attach them to the UI
+{
+    // $gHIKneedSyncOnSetKeyframe management
+   	global int $gHIKneedSyncOnSetKeyframe;
+
+    $gHIKneedSyncOnSetKeyframe = 1;
+    scriptJob -permanent -parent $characterTool -e "SelectionChanged" "$gHIKneedSyncOnSetKeyframe=1;";
+    scriptJob -permanent -parent $characterTool -e "timeChanged" "$gHIKneedSyncOnSetKeyframe=1;";
+
+}
+

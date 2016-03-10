@@ -1,0 +1,690 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// hikCustomRigUI.mel
+//
+// Description:
+//		Methods for creating and updating the custom rig UI
+//
+
+
+///////////////////////////////////////////////////////////////////
+// Local Methods...
+///////////////////////////////////////////////////////////////////
+
+
+
+// Change the min/max range limits on a float slider, such that min <= $val <= max
+proc updateFloatSliderGrpRange( string $slider, float $val, float $mn, float $mx, float $lim )
+{
+	floatSliderGrp -e
+		-minValue ( ( $val >= $mn ) ? $mn : $val )
+		-maxValue ( ( $val <= $mx ) ? $mx : $val )
+		-fieldMinValue ( -1.0 * $lim )
+		-fieldMaxValue (        $lim )
+		-value $val
+		$slider ;
+}
+
+proc enableCustomRigMapMode( string $type, int $val )
+{
+	if ( $type == "T" )
+	{
+		iconTextCheckBox -e -enable $val -v false hikCustomRigTranslateButton;
+		checkBox         -e -enable $val -v false hikCustomRigCheckBoxTrans;
+	}
+	else if ( $type == "R" )
+	{
+		iconTextCheckBox -e -enable $val -v false hikCustomRigRotateButton;
+		checkBox         -e -enable $val -v false hikCustomRigCheckBoxRot;
+	}
+}
+
+proc setCustomRigSliderValues( string $type, float $val[] )
+{
+	if ( $type == "T" )
+	{
+		updateFloatSliderGrpRange( "hikCustomRigSliderTransX", $val[0], -10.0, 10.0, 1000. );
+		updateFloatSliderGrpRange( "hikCustomRigSliderTransY", $val[1], -10.0, 10.0, 1000. );
+		updateFloatSliderGrpRange( "hikCustomRigSliderTransZ", $val[2], -10.0, 10.0, 1000. );
+	}
+	else if ( $type == "R" )
+	{
+		updateFloatSliderGrpRange( "hikCustomRigSliderRotX", $val[0], -360.0, 360.0, 360.0 );
+		updateFloatSliderGrpRange( "hikCustomRigSliderRotY", $val[1], -360.0, 360.0, 360.0 );
+		updateFloatSliderGrpRange( "hikCustomRigSliderRotZ", $val[2], -360.0, 360.0, 360.0 );
+	}
+}
+
+
+proc customRigWidgetFatalError( string $filename )
+{
+	string $err = `format -s $filename (uiRes("m_hikCustomRigUI.kWidgetFatalErr"))`;
+	catch( `error $err` );
+}
+
+proc enableCustomRigMapping( string $type, int $show )
+{
+	enableCustomRigMapMode( $type, $show );
+	hikEnableCustomRigSliders( $type, $show );
+}
+
+proc enableCustomRigMappingOptions( int $show )
+{
+	enableCustomRigMapping( "T", $show );
+	enableCustomRigMapping( "R", $show );
+}
+
+proc updateCustomRigButtonState()
+{
+	int $exists = RetargeterExists( RetargeterGetName( hikGetCurrentCharacter() ) );
+
+	iconTextButton -e -enable ( $exists == true )              hikCustomRigDeleteButton;
+	iconTextButton -e -enable ( $exists == true )              hikCustomRigOpenButton;
+	iconTextButton -e -enable ( $exists == true )              hikCustomRigSaveButton;
+}
+
+proc updateCustomRigSliders()
+{
+
+	// Disable all sliders and checkboxes
+	enableCustomRigMappingOptions( false );
+	hikSetCustomRigMapMode( "T", false );
+	hikSetCustomRigMapMode( "R", false );
+
+	// If there is nothing selected in the CustomRigToolWidget bail
+	int $inx = `hikCustomRigToolWidget -q -sl`;
+	if ( $inx == -1 )
+		return;
+
+	// Make sure the selected id corresponds to a valid name 
+	string $body = hikCustomRigElementNameFromId( hikGetCurrentCharacter(), $inx );
+	if ( size( $body ) == 0 )
+	{
+		print ( uiRes( "m_hikCustomRigOperations.kInvalidIndex" ) );
+		return;
+	}
+
+	// Bail if the selected item is not assigned or if there 
+	// is no retargeter for the selected body
+	string $name = RetargeterGetName( hikGetCurrentCharacter() );
+	if( RetargeterHasMapping( $name, $body ) == false )
+		return;
+
+	// Re-enable specific portions of the UI.
+	string $types[] = { "T", "R" };
+
+	int $i;
+	for ( $i=0; $i<size($types); $i++ )
+	{
+		string $type = $types[$i];
+		enableCustomRigMapMode( $type, true );
+
+		float $offset[] = RetargeterGetMappingOffsets( $name, $body, $type );
+		if ( size($offset) == 0 )
+			continue;
+
+		hikEnableCustomRigSliders( $type, true );
+		setCustomRigSliderValues( $type, $offset );
+		hikSetCustomRigMapMode( $type, true );
+	}
+}
+
+proc buildCustomRigSchematicWidget( )
+{
+	global int $gHIKSchematicWidgetMinWidth;
+
+	string $defConfigFilename = hikGetDefaultResourcesDir();
+	$defConfigFilename        = $defConfigFilename + "CustomRigControlsConfig.xml";
+	string $configFilename    = $defConfigFilename;
+
+	if( `optionVar -exists hikCustomRigUIPath` == false )
+		optionVar -stringValue hikCustomRigUIPath $defConfigFilename;
+
+	$configFilename = `optionVar -q hikCustomRigUIPath`;
+
+	string $parent = `columnLayout -adjustableColumn true hikCustomRigResizableLayout`;
+
+	if( catch( `hikCustomRigToolWidget
+			-configFilename   $configFilename
+			-layoutParentName $parent
+			-minimumSize $gHIKSchematicWidgetMinWidth 0
+			-popupMenuItem  0 (uiRes("m_hikCustomRigUI.kHIKCustomRigAssign")) "hikCustomRigAssignEffector"
+			-popupMenuItem  1 (uiRes("m_hikCustomRigUI.kHIKCustomRigReplace")) "hikCustomRigReplaceEffector"
+			-popupMenuItem  2 (uiRes("m_hikCustomRigUI.kHIKCustomRigClear")) "hikCustomRigClearMapping"
+			-popupMenuItem  3 (uiRes("m_hikCustomRigUI.kHIKCustomRigClearAllView")) "hikCustomRigClearAllMappingsinView"
+			-popupMenuItem  4 (uiRes("m_hikCustomRigUI.kHIKCustomRigClearAll")) "hikCustomRigClearAllMappings"
+			-updateCallback "{ int $undo = hikTurnOffUndo(); hikUpdateCustomRigUI; hikRestoreUndo( $undo ); }"
+			-navigationPostCallback "hikNavigationPostCustomRig"
+	` ) )
+	{
+		if( $configFilename != $defConfigFilename )
+			hikCustomRigSetDefaultUIConfig( );
+		else
+			customRigWidgetFatalError( $defConfigFilename );
+	}
+
+	setParent ..;
+}
+
+proc buildCustomRigEffectorAttributes( )
+{
+	string $commonCmd =
+		"{ global int $gHIKCustomRigAuxHeight; " +
+		"global int $gHIKCustomRigCollapseExpandHeightDiff; " +
+		"$gHIKCustomRigAuxHeight = $gHIKCustomRigAuxHeight + ";
+	string $collapseCmd =
+		$commonCmd +
+		"(-1*$gHIKCustomRigCollapseExpandHeightDiff); " +
+		"hikResizeContextualTabRelative (-1*$gHIKCustomRigCollapseExpandHeightDiff); }";
+	string $expandCmd =
+		$commonCmd +
+		"$gHIKCustomRigCollapseExpandHeightDiff; " +
+		"hikResizeContextualTabRelative $gHIKCustomRigCollapseExpandHeightDiff; }";
+	frameLayout
+		-label (uiRes("m_hikCustomRigUI.kHIKCustomRigMappingControls"))
+		-collapsable true
+		-collapseCommand $collapseCmd
+		-expandCommand $expandCmd
+		hikCustomRigMappingControlsTitle;
+
+		int $labelWidth = 110;
+		int $valueWidth = 50;
+
+		columnLayout -adjustableColumn true;
+
+			rowLayout -nc 1 -cat 1 right 0 -cw1 200 ;
+				checkBox
+					-label (uiRes("m_hikGlobalUtils.kMapTranslation"))
+					-changeCommand "hikCustomRigAddRemoveMapping( \"T\", `checkBox -q -v hikCustomRigCheckBoxTrans` )"
+					hikCustomRigCheckBoxTrans;
+			setParent ..;
+
+			floatSliderGrp
+				-label          (uiRes("m_hikCustomRigUI.kHIKCustomRigTranslationOffsetX"))
+				-minValue      -10.0
+				-maxValue       10.0
+				-step           0.01
+				-precision      2
+				-columnWidth    1 $labelWidth
+				-columnWidth    2 $valueWidth
+				-field          true
+				-fieldMinValue -1000.
+				-fieldMaxValue  1000.
+				-changeCommand  "hikCustomRigSetOffset( \"T\" )"
+				-dragCommand    "hikCustomRigSetOffset( \"T\" )"
+				hikCustomRigSliderTransX;
+
+			floatSliderGrp
+				-label          (uiRes("m_hikCustomRigUI.kHIKCustomRigTranslationOffsetY"))
+				-minValue      -10.0
+				-maxValue       10.0
+				-step           0.01
+				-precision      2
+				-columnWidth    1 $labelWidth
+				-columnWidth    2 $valueWidth
+				-field          true
+				-fieldMinValue -1000.
+				-fieldMaxValue  1000.
+				-changeCommand  "hikCustomRigSetOffset( \"T\" )"
+				-dragCommand    "hikCustomRigSetOffset( \"T\" )"
+				hikCustomRigSliderTransY;
+
+			floatSliderGrp
+				-label          (uiRes("m_hikCustomRigUI.kHIKCustomRigTranslationOffsetZ"))
+				-minValue      -10.0
+				-maxValue       10.0
+				-step           0.01
+				-precision      2
+				-columnWidth    1 $labelWidth
+				-columnWidth    2 $valueWidth
+				-field          true
+				-fieldMinValue -1000.
+				-fieldMaxValue  1000.
+				-changeCommand  "hikCustomRigSetOffset( \"T\" )"
+				-dragCommand    "hikCustomRigSetOffset( \"T\" )"
+				hikCustomRigSliderTransZ;
+
+			rowLayout -nc 1 -cat 1 right 0 -cw1 189;
+				checkBox -label (uiRes("m_hikGlobalUtils.kMapRotation"))
+					-changeCommand "hikCustomRigAddRemoveMapping( \"R\", `checkBox -q -v hikCustomRigCheckBoxRot` )"
+					hikCustomRigCheckBoxRot;
+			setParent ..;
+
+			floatSliderGrp
+				-label          (uiRes("m_hikCustomRigUI.kHIKCustomRigRotationOffsetX"))
+				-minValue      -360.0
+				-maxValue       360.0
+				-step           0.01
+				-precision      2
+				-columnWidth    1 $labelWidth
+				-columnWidth    2 $valueWidth
+				-field          true
+				-fieldMinValue -360.
+				-fieldMaxValue  360.
+				-changeCommand  "hikCustomRigSetOffset( \"R\" )"
+				-dragCommand    "hikCustomRigSetOffset( \"R\" )"
+				hikCustomRigSliderRotX;
+
+			floatSliderGrp
+				-label          (uiRes("m_hikCustomRigUI.kHIKCustomRigRotationOffsetY"))
+				-minValue      -360.0
+				-maxValue       360.0
+				-step           0.01
+				-precision      2
+				-columnWidth    1 $labelWidth
+				-columnWidth    2 $valueWidth
+				-field          true
+				-fieldMinValue -360.
+				-fieldMaxValue  360.
+				-changeCommand  "hikCustomRigSetOffset( \"R\" )"
+				-dragCommand    "hikCustomRigSetOffset( \"R\" )"
+				hikCustomRigSliderRotY;
+
+			floatSliderGrp
+				-label          (uiRes("m_hikCustomRigUI.kHIKCustomRigRotationOffsetZ"))
+				-minValue      -360.0
+				-maxValue       360.0
+				-step           0.01
+				-precision      2
+				-columnWidth    1 $labelWidth
+				-columnWidth    2 $valueWidth
+				-field          true
+				-fieldMinValue -360.
+				-fieldMaxValue  360.
+				-changeCommand  "hikCustomRigSetOffset( \"R\" )"
+				-dragCommand    "hikCustomRigSetOffset( \"R\" )"
+				hikCustomRigSliderRotZ;
+
+		setParent ..;
+	setParent ..;
+
+}
+
+proc string createVisibilityCommand(string $currChar, string $prefix, int $IDs[])
+{
+	if( $prefix != "Neck" && $prefix != "Spine" )
+		return "";
+
+	int $i;
+	string $cmd = "";
+	int $count = hikGetCharacterizedLinkCount( $currChar, $prefix );
+	for( $i = 0; $i < 10; $i++ )
+	{
+		int $enabled = ( $i < $count );
+		$cmd = $cmd + " -vis " + $IDs[$i] + " " + $enabled;
+	}
+
+	return $cmd;
+}
+
+
+
+
+
+////////////////////////////////////////////////////////////////////////
+// Global methods...
+////////////////////////////////////////////////////////////////////////
+
+
+global proc hikBuildCustomRigUI()
+{
+	global int $gHIKCustomRigAuxHeight;
+	global int $gHIKCustomRigFrameLayoutHeight;
+	$gHIKCustomRigAuxHeight = $gHIKCustomRigFrameLayoutHeight;
+
+	columnLayout -adjustableColumn true;
+		buildCustomRigSchematicWidget();
+		buildCustomRigEffectorAttributes();
+	setParent ..;
+}
+
+global proc hikBuildCustomRigButtons()
+{
+	rowLayout -numberOfColumns 7 hikCustomRigButtons;
+
+		iconTextCheckBox
+			-image         "HIKCustomRigToolTranslate.png"
+			-value         false
+			-style         "iconOnly"
+			-changeCommand "hikCustomRigAddRemoveMapping( \"T\", `iconTextCheckBox -q -v hikCustomRigTranslateButton` )"
+			-annotation    (uiRes( "m_hikGlobalUtils.kMapTranslation" ))
+			hikCustomRigTranslateButton;
+
+		iconTextCheckBox
+			-image          "HIKCustomRigToolRotate.png"
+			-value          false
+			-style          "iconOnly"
+			-changeCommand  "hikCustomRigAddRemoveMapping( \"R\", `iconTextCheckBox -q -v hikCustomRigRotateButton` )"
+			-annotation     (uiRes( "m_hikGlobalUtils.kMapRotation" ))
+			hikCustomRigRotateButton;
+
+		iconTextButton
+			-image          "HIKCustomRigToolOpen.png"
+			-style          "iconOnly"
+			-annotation     (uiRes("m_hikCustomRigUI.kOpen"))
+			-command        "hikImportCustomRigMapping( hikGetCurrentCharacter() )"
+			hikCustomRigOpenButton;
+
+		iconTextButton
+			-image          "HIKCustomRigToolSave.png"
+			-style          "iconOnly"
+			-annotation     (uiRes("m_hikCustomRigUI.kSave"))
+			-command        "hikExportCustomRigMapping( hikGetCurrentCharacter() )"
+			hikCustomRigSaveButton;
+
+		iconTextButton
+			-image          "HIKCustomRigToolDelete.png"
+			-style          "iconOnly"
+			-command        "hikDeleteCustomRig( hikGetCurrentCharacter() )"
+			-annotation     (uiRes("m_hikCustomRigUI.kHIKCustomRigDelete"))
+			hikCustomRigDeleteButton;
+
+		setParent ..;
+}
+
+global proc hikUpdateCustomRigUI()
+{
+	if( !hikIsCustomRigTabSelected() )
+		return;
+
+	// Get the name of current character
+	string $character = hikGetCurrentCharacter();
+
+	// and tell the widget to display assigned mappings
+	hikUpdateCustomRigAssignedMappings( $character );
+
+	int $show = RetargeterExists( RetargeterGetName( $character ) );
+
+	// Store the name of the new character in the hikCustomRigToolWidget.
+	// Use "" if no retargeter exists
+	hikCustomRigToolWidget -edit -setupCharacter ( ( $show ) ? $character : "" );
+
+	// Make sure the context menu is enabled if the retargeter exists
+	hikCustomRigToolWidget -e -popupMenuState $show;
+
+	// Update various UI components
+	updateCustomRigButtonState();
+	updateCustomRigSliders();
+
+	// If a user has selected an element in the custom rig widget
+	// check if it is assigned. If so, select this item in the viewport
+	int $selected   = `hikCustomRigToolWidget -q -selected`;
+	int $assigned[] = `hikCustomRigToolWidget -q -assigned`;
+	int $inx = intArrayFind( $selected, 0, $assigned );
+	if ( ( $inx != -1 ) && ( $assigned[$inx] != -1 ) )
+	{
+		string $body = hikCustomRigElementNameFromId( hikGetCurrentCharacter(), $assigned[$inx] );
+		string $name = RetargeterGetName( $character );
+
+		string $m; 
+		string $mappings[] = RetargeterGetDestinationsForMapping( $name, $body );
+		for ( $m in $mappings ) {
+			if ( size($m) && objExists( $m ) )
+				select -r $m;
+		}
+	}
+
+	// Only display/allow interaction with the spine/neck joints that are active
+	if( size( $character ) )
+	{
+		// These are hik node ids
+		int $spineIDs[] = {  8, 23, 24, 25, 26, 27, 28, 29, 30, 31 };
+		int $neckIDs[]  = { 20, 32, 33, 34, 35, 36, 37, 38, 39, 40 };
+
+		string $cmd = "hikCustomRigToolWidget -edit ";
+		$cmd += createVisibilityCommand( $character, "Spine", $spineIDs );
+		$cmd += createVisibilityCommand( $character, "Neck" , $neckIDs );
+		eval( $cmd );
+	}
+}
+
+
+
+global proc hikOnSwitchCustomRig()
+{
+	global int $gHIKRigTabsAuxWidth;
+	global int $gHIKDockMinWidth;
+	global int $gHIKSchematicWidgetMinWidth;
+
+	int $maxDockSize[] = `hikCustomRigToolWidget -q -backgroundSize`;
+	int $maxDockWidth;
+
+	if( $maxDockSize[0] == $gHIKSchematicWidgetMinWidth )
+		$maxDockWidth = $gHIKDockMinWidth + 1;
+	else
+		$maxDockWidth = $maxDockSize[0] + $gHIKRigTabsAuxWidth;
+
+	if( !`optionVar -exists hikCustomRigTabWidth` )
+		optionVar -iv hikCustomRigTabWidth $maxDockWidth;
+
+	// clamp the controls tab width between min and max value
+	// 
+	$dockWidth = `optionVar -q hikCustomRigTabWidth`;
+	if ( $dockWidth > $maxDockWidth )
+	{
+		$dockWidth = $maxDockWidth;
+		optionVar -iv hikCustomRigTabWidth $dockWidth;
+	}
+	else if ( $dockWidth < $gHIKDockMinWidth )
+	{
+		$dockWidth = $gHIKDockMinWidth;
+		optionVar -iv hikCustomRigTabWidth $dockWidth;
+	}
+
+	dockControl -e -width $dockWidth hikCharacterControlsDock;
+	HIKUiControl -edit -maxWidth $maxDockWidth -minWidth $gHIKDockMinWidth -ctrlName "hikCharacterControlsDock";
+}
+
+
+
+
+
+global proc hikUpdateCustomRigAssignedMappings( string $character )
+{
+	string $name = RetargeterGetName( $character );
+
+	int $indices[] = RetargeterAssignedElementIndices( $name );
+	if ( size( $indices ) == 0 )
+		$indices = { -1 };
+
+	string $cmd = intArrayToString( $indices, "  -assigned " );
+	eval( `format -s $cmd "hikCustomRigToolWidget -e -assigned ^1s"` );
+}
+
+global proc hikUpdateEditCustomRigMenu()
+{
+	menuItem -e -enable false -checkBox false hikMapTranslationMenuItem;
+	menuItem -e -enable false -checkBox false hikMapRotationMenuItem;
+
+	// TODO: refactor this, since this is essentially the same as the 
+	// update sliders method above!
+	//
+
+	// If there is nothing selected in the CustomRigToolWidget bail
+	int $inx = `hikCustomRigToolWidget -q -sl`;
+	if ( $inx == -1 )
+		return;
+
+	// Make sure the selected id corresponds to a valid name 
+	string $body = hikCustomRigElementNameFromId( hikGetCurrentCharacter(), $inx );
+	if ( size( $body ) == 0 ) {
+		print ( uiRes( "m_hikCustomRigOperations.kInvalidIndex" ) );
+		return;
+	}
+
+	// Bail if the selected item is not assigned or if there 
+	// is no retargeter for the selected body
+	string $name = RetargeterGetName( hikGetCurrentCharacter() );
+	if( RetargeterHasMapping( $name, $body ) == false )
+		return;
+
+	// Re-enable specific portions of the UI.
+	string $types[] = { "T", "R" };
+
+	int $i;
+	for ( $i=0; $i<size($types); $i++ )
+	{
+		string $type = $types[$i];
+		if( $type == "T" )
+			menuItem -e -enable true hikMapTranslationMenuItem;
+		else
+			menuItem -e -enable true hikMapRotationMenuItem;
+
+		float $offset[] = RetargeterGetMappingOffsets( $name, $body, $type );
+		if ( size($offset) == 0 )
+			continue;
+
+		if( $type == "T") 
+			menuItem -e -checkBox true hikMapTranslationMenuItem;
+		else
+			menuItem -e -checkBox true hikMapRotationMenuItem;
+	}
+
+}
+
+global proc hikSetCustomRigMapMode( string $type, int $val )
+{
+	if ( $type == "T" )
+	{
+		iconTextCheckBox -e -v $val hikCustomRigTranslateButton;
+		checkBox         -e -v $val hikCustomRigCheckBoxTrans;
+	}
+	else if ( $type == "R" )
+	{
+		iconTextCheckBox -e -v $val hikCustomRigRotateButton;
+		checkBox         -e -v $val hikCustomRigCheckBoxRot;
+	}
+}
+
+
+
+
+
+global proc hikEnableCustomRigSliders( string $type, int $show )
+{
+	if ( $type == "T" )
+	{
+		if ( `floatSliderGrp -q -exists hikCustomRigSliderTransX` )
+			floatSliderGrp -e -enable $show hikCustomRigSliderTransX;
+
+		if ( `floatSliderGrp -q -exists hikCustomRigSliderTransY` )
+			floatSliderGrp -e -enable $show hikCustomRigSliderTransY;
+
+		if ( `floatSliderGrp -q -exists hikCustomRigSliderTransZ` )
+			floatSliderGrp -e -enable $show hikCustomRigSliderTransZ;
+	}
+	else if ( $type == "R" ) 
+	{
+		if ( `floatSliderGrp -q -exists hikCustomRigSliderRotX` )
+			floatSliderGrp -e -enable $show hikCustomRigSliderRotX;
+
+		if ( `floatSliderGrp -q -exists hikCustomRigSliderRotY` )
+			floatSliderGrp -e -enable $show hikCustomRigSliderRotY;
+
+		if ( `floatSliderGrp -q -exists hikCustomRigSliderRotZ` )
+			floatSliderGrp -e -enable $show hikCustomRigSliderRotZ;
+	}
+
+	if ( $show == false )
+		setCustomRigSliderValues( $type, { 0., 0., 0. } );
+}
+
+
+
+
+global proc hikCustomRigSetDefaultUIConfig()
+{
+	string $defConfigFilename = hikGetDefaultResourcesDir();
+	$defConfigFilename        = $defConfigFilename + "CharacterControlsConfig.xml";
+
+	string $customConfigFilename = `optionVar -q hikCustomRigUIPath`;
+	warning `format -s $customConfigFilename (uiRes("m_hikCustomRigUI.kUIConfFileError"))`;
+	optionVar -stringValue hikCustomRigUIPath $defConfigFilename;
+
+	if( catch( `hikCustomRigToolWidget -e -configFilename $defConfigFilename` ) )
+		customRigWidgetFatalError( $defConfigFilename );
+}
+
+global proc hikUpdateCustomRigConfigFromFile( string $configFilename )
+{
+	if( catch( `hikCustomRigToolWidget -edit -configFilename $configFilename` ) )
+		hikCustomRigSetDefaultUIConfig( );
+
+	hikOnSwitchCustomRig;
+	hikUpdateContextualUI;
+	hikCustomRigToolWidget -e -refreshScale;
+}
+
+
+
+
+///////////////////////////////////////////////////////////////////
+// Script jobs...
+///////////////////////////////////////////////////////////////////
+
+global int $gCustomRigUndoId = -1;
+if ( $gCustomRigUndoId == -1 )
+	$gCustomRigUndoId = `scriptJob -e "Undo" "eval( \"hikCustomRigUndoRedo\" );"`;
+
+global int $gCustomRigRedoId = -1;
+if ( $gCustomRigRedoId == -1 )
+	$gCustomRigRedoId = `scriptJob -e "Redo" "eval( \"hikCustomRigUndoRedo\" );"`;
+
+global proc hikCustomRigUndoRedo()
+{
+	// If no character controls window exists, there is nothing to do.
+	if ( hikCharacterControlsWindowExists() == false )
+		return;
+
+	// If a custom rig was deleted and the undo function restores it,
+	// the (custom rig) suffix will not appear next to the character name.
+	// To make sure this happens, we update the drop down containing the
+	// list of character names.
+	hikUpdateCharacterList;
+
+	// Update the list of possible source too. If a source (eg. control rig) has 
+	// been deleted, we want to make sure we aren't displaying an invalid source.
+	hikUpdateSourceList;
+
+	string $character = hikGetCurrentCharacter();
+
+	// Next we temporarily disable maya's undo mechanism ...
+	int $undo = hikTurnOffUndo();
+
+	// ... force a UI refresh
+	hikUpdateContextualUI;
+
+	// ... update the custom rig window (if necessary)
+	int $hasRig = hikHasCustomRig( $character );
+	if ( $hasRig )
+		hikUpdateCustomRigUI;
+
+	// ... and restore undo (if it was orignally active)
+	hikRestoreUndo( $undo );
+
+	// Lastly we push the custom rig tab to the top of the
+	// tab stack if a custom rig exists
+	if ( $hasRig )
+		hikSelectCustomRigTab;
+
+}

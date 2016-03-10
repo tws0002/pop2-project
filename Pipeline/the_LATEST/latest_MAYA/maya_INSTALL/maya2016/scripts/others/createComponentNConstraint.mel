@@ -1,0 +1,256 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+proc setConstraintIndicesForMesh( string $mesh, string $comp1, string $comp2, int $doEdgeLinks, int $doCrossLinks, int $singleEdge, int $doBend)
+{
+	// Get the selection( including vertices )
+	string $selected[] = `ls -sl -flatten`;
+	string $t[];
+	tokenize $selected[0] "." $t;
+	int $doComponents = (size($t) > 1 );
+
+	int $i=0;
+	string $c1 = ($comp1 + ".componentIndices");
+	string $c2 = "";
+	if( !$doBend ){
+		$c2 = ($comp2 + ".componentIndices");
+	}
+
+	if( $doEdgeLinks ){
+		if( $singleEdge == 0 ){
+			string $edgeList[];
+			if( $doComponents ){
+				ConvertSelectionToEdges;
+				$edgeList = `polyInfo -ev`;
+			} else {
+				$edgeList = `polyInfo -ev $mesh`;
+			}
+			string $e[];
+			int $i1, $i2;
+			while( $i < size($edgeList) ){
+				string $edge = $edgeList[$i];
+				tokenize $edge " :" $e;
+				if( $doBend ){
+					$i1 = $e[1]; // set both nComponents to the same edge indice
+				} else {
+					$i1 = $e[2];
+					$i2 = $e[3];
+					string $c2i = ($c2 + "["+$i+"]");
+					setAttr $c2i $i2;
+				}
+				string $c1i = ($c1 + "["+$i+"]");
+				setAttr $c1i $i1;			
+				$i++;
+			}
+		} else {
+			if( $doBend ){
+				string $faceEdgeList[];
+				if( $doComponents ){
+					ConvertSelectionToFaces;
+					$faceEdgeList = `polyInfo -fe`;
+				} else {
+					$faceEdgeList = `polyInfo -fe $mesh`;
+				}
+				string $f[];
+				string $face;
+				for( $face in $faceEdgeList ){
+					tokenize $face " " $f;
+					int $edgeCount = size( $f) -3;
+					
+					if( $singleEdge  <= $edgeCount ){
+						int $i1 = $f[1+$singleEdge];
+						string $c1i = ($c1 + "["+$i+"]");
+						setAttr $c1i $i1;
+						$i++;
+					}
+				}			
+			} else {
+				string $faceVertList[];
+				if( $doComponents ){
+					ConvertSelectionToFaces;
+					$faceVertList = `polyInfo -fv`;
+				} else {
+					$faceVertList = `polyInfo -fv $mesh`;
+				}
+				string $f[];
+				string $face;
+				for( $face in $faceVertList ){
+					tokenize $face " " $f;
+					int $vertCount = size( $f) -3;
+					int $i1, $i2;
+					if( $singleEdge  <= $vertCount ){
+						$i1 = $f[1+$singleEdge];
+						if( $singleEdge == $vertCount ){
+							$i2 = $f[2];
+						} else {
+							$i2 = $f[2+$singleEdge];
+						}
+						string $c1i = ($c1 + "["+$i+"]");
+						string $c2i = ($c2 + "["+$i+"]");
+						setAttr $c1i $i1;
+						setAttr $c2i $i2;
+						$i++;
+					}
+				}
+			}
+		}
+	}
+	if( $doCrossLinks && !$doBend){
+		// connect all face verts that are not connected by an edge
+		int $j, $k;
+		string $faceVertList[];
+		if( $doComponents ){
+			if( $doEdgeLinks ){
+				select -r $selected; // in case the selection was converted to edges
+			}
+			ConvertSelectionToFaces;
+			$faceVertList = `polyInfo -fv`;
+		} else {
+			$faceVertList = `polyInfo -fv $mesh`;
+		}
+		string $f[];
+		string $face;
+		for( $face in $faceVertList ){
+			tokenize $face " " $f;
+			int $vertCount = size( $f) -3;
+
+			if( $vertCount > 3 ){
+				for( $j = 0; $j< $vertCount-1; $j++ ){
+					if( $singleEdge != 0 && $singleEdge != $j+1){
+						continue;
+					}
+					int $maxKcount = $vertCount;
+					if( $j == 0 ){
+						$maxKcount -= 1;
+					}
+					for( $k = $j+2; $k < $maxKcount; $k++ ){
+						string $c1i = ($c1 + "["+$i+"]");
+						string $c2i = ($c2 + "["+$i+"]");
+						int $i1 = $f[$j+2];
+						int $i2 = $f[$k+2];
+						setAttr $c1i $i1;
+						setAttr $c2i $i2;
+						$i++;
+					}
+				}			
+			}
+		}
+	}
+
+	// clear unused entries, if any
+	int $lastIndex = $i;
+	int $c1Size = `getAttr -size $c1`;
+	
+	for( $i = $lastIndex; $i < $c1Size; $i++){
+		removeMultiInstance ($c1+ "["+$i+"]");
+	}
+	if( !$doBend ){
+		int $c2Size = `getAttr -size $c2`;
+		for( $i = $lastIndex; $i < $c2Size; $i++){
+			removeMultiInstance ($c1+ "["+$i+"]");
+		}
+	}
+}
+
+proc int getFirstFreeConstraintIndex( string $nucleus )
+{
+	int $ind;
+	string $att = ($nucleus + ".inputStart");
+	int $numInputs = `getAttr -size $att`;
+	for( $ind = 0; $ind < $numInputs; $ind++ ){
+		string $input = ($att + "[" + $ind +"]");
+		string $con = `connectionInfo -sfd $input`;
+		if( size( $con ) == 0 ){
+			break;
+		}
+	}
+	return $ind;	
+}
+
+global proc createComponentNConstraint(int $doEdgeLinks, int $doCrossLinks, int $singleEdge, int $doBend)
+{
+	string $selectedObjects[] = `ls -sl -ni -o -dag -type mesh`;
+	string $sl[] = `ls -sl`;
+	int $numObjects = size( $selectedObjects );
+	string $warnStr = (uiRes("m_createComponentNConstraint.kNothingToConstrain"));
+	if( $numObjects  != 1 ){
+		warning($warnStr);
+		return;
+	}
+	string $mesh = $selectedObjects[0];
+
+	string $cloth =`findTypeInHistory $mesh "nCloth" 1 1`;
+	if( size($cloth) < 1 ){
+		warning($warnStr);
+		return;
+	}
+	string $cons[] = `listConnections -sh 1 -type nucleus $cloth`;
+	if( size( $cons ) < 0  ){
+		warning($warnStr);
+		return;
+	}
+
+	string $nucleus = $cons[0];
+			
+	int $nucleusConstraintIndex = getFirstFreeConstraintIndex( $nucleus );
+	string $constraint = `createNode dynamicConstraint`;
+	string $component1 = `createNode nComponent`;
+	string $component2 = "";
+	int $cType = 2; // point
+	if( $doBend ){
+		$cType = 3; // edge
+		$doCrosslinks = false;
+		$doEdgeLinks = true;
+		setAttr ($constraint + ".bend") 1;
+		setAttr ($constraint + ".bendStrength") 20;
+		setAttr ($constraint + ".strength") 0;
+		setAttr ($constraint + ".tangentStrength") 0;
+	} else {
+		$component2 = `createNode nComponent`;
+		setAttr ($component2+".componentType") $cType;
+	}
+		
+	setAttr ($component1+".componentType") $cType;
+	
+
+	select $sl; // restore selection for following call
+	setConstraintIndicesForMesh( $mesh, $component1, $component2, $doEdgeLinks, $doCrossLinks, $singleEdge, $doBend);
+
+	connectAttr ( $cloth + ".nucleusId") ($component1 + ".objectId");
+	
+	connectAttr ($component1 + ".outComponent") ($constraint + ".componentIds[0]");
+	if( $doBend ){
+		connectAttr ($component1 + ".outComponent") ($constraint + ".componentIds[1]"); // constrain component to its self
+	} else {
+		connectAttr ( $cloth + ".nucleusId") ($component2 + ".objectId");
+		connectAttr ($component2 + ".outComponent") ($constraint + ".componentIds[1]");
+	}
+	
+	connectAttr "time1.outTime" ($constraint + ".currentTime" );
+
+	connectAttr -f ($constraint + ".evalStart[0]") ($nucleus + ".inputStart[" + $nucleusConstraintIndex + "]");
+	connectAttr -f ($constraint + ".evalCurrent[0]") ($nucleus + ".inputCurrent[" + $nucleusConstraintIndex + "]");
+
+	// force update of nucleus for new constraint if start frame
+	getAttr ($nucleus + ".forceDynamics" );
+	select -r $constraint;
+}

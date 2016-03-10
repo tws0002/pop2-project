@@ -1,0 +1,175 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+// Creation Date:  Oct 4, 2004
+//
+//  Procedure Name:
+//      proxyUtils
+//
+//  Description:
+//      Utilities for managing proxies
+//
+
+global proc string proxyManagerTag( string $proxyManager )
+//
+//	Description:
+//		Given the proxyManager name, strip off the PM is it is there, and
+//	return the shortened name as the proxyManagerTag.
+//
+{
+	int $length = size( $proxyManager );
+	if( $length > 1 ){
+		if( substring( $proxyManager, $length-1, $length) == "PM" ){
+			return( substring( $proxyManager, 1, $length-2 ) );
+		}
+	}
+	return( $proxyManager );
+}
+
+global proc string proxyManager( string $refNode )
+//
+//	Description:
+//		Given a reference node.
+//		If $refNode is a proxy, return the associated proxyManager.
+//		If $refNode is not a proxy, return "".
+//
+{
+	string $proxyManagerPlug = `connectionInfo -sfd ( $refNode + ".proxyMsg" )`;
+	if( $proxyManagerPlug == "" )
+	{
+		return "";
+	}
+	string $proxyManager = `plugNode( $proxyManagerPlug )`;
+	
+	return $proxyManager;
+}
+
+global proc int isActiveProxy( string $refNode )
+//
+//	Description:
+//		Given a reference node, return 1 if it's an active proxy, 0 otherwise.
+//	Recall that the active proxy points to the entry in the proxyList that is
+//	the active one, and not directly to the reference node (to avoid a fan-in).
+//	So we just need to check if the connection to the refNode.proxyMsg comes
+//	from the same entry as the destination of the proxyManager.activeProxy
+//	connection.
+//
+{
+	// First, get the proxy manager
+	//
+	string $proxyManagerPlug = `connectionInfo -sfd ( $refNode + ".proxyMsg" )`;
+	if( $proxyManagerPlug == "" )
+	{
+		return( 0 );
+	}
+	string $proxyManager = `plugNode( $proxyManagerPlug )`;
+	if( $proxyManager == "" )
+	{
+		return( 0 );
+	}
+
+	// Next, get the active proxy
+	//
+	string $dstPlugs[] = `connectionInfo -dfs ($proxyManager + ".activeProxy")`;
+	if( size( $dstPlugs ) > 0 ){
+		if( $dstPlugs[0] == $proxyManagerPlug ){
+			return( 1 );
+		}
+	}
+	return( 0 );
+}
+
+global proc int isValidReference( string $nodeName )
+//
+//	Description:
+//		Returns 1 iff the given nodeName is that of a reference node.
+//
+{
+	if( $nodeName == "" ){
+		return( 0 );
+	}
+	if( !`objExists $nodeName` ){
+		return( 0 );
+	}
+	string $nodeType = `objectType $nodeName`;
+	if( $nodeType != "reference" ){
+		return( 0 );
+	}
+	return( 1 );
+}
+
+global proc int usedTag( string $proxyManager, string $tag )
+//
+//	Description:
+//		Given a proxy manager and a tag, return true iff the tag is currently
+//	being used by a reference node associated with this proxy.
+//
+{		
+	string $nodeType = `objectType $proxyManager`;
+	if( $nodeType == "proxyManager" ){
+		// Go through all tags, and return true if we find a match
+		//
+		string $refNodes[] = `listConnections -type reference ($proxyManager + ".proxyList")`;
+		int $refSize = size($refNodes);
+		int $refIndex = 0;
+		
+		while( $refIndex < $refSize ){
+			$refTag = `getAttr ($refNodes[$refIndex] + ".proxyTag")`;			
+			if( $tag == $refTag ){
+				return( true );
+			}
+			$refIndex++;
+		}
+	}
+	return( false );
+}
+
+global proc string shortNameProxy(string $proxyName)
+//
+//	Description:
+//		Return the last name of the full proxy name path
+//      (ie): AAA:BBB:CCC return CCC
+//
+{
+
+	string $parts[];
+	int $numParts = tokenize( $proxyName, ":", $parts );
+	return $parts[$numParts - 1];
+}
+
+global proc string uniqueTag( string $proxyManager )
+//
+//	Description:
+//		Return a tag that is unique to this proxy manager
+//
+{
+	int $index = 1;
+	string $proxyName = shortNameProxy($proxyManager);
+	string $tag = $proxyName + $index;
+	while( usedTag( $proxyManager, $tag ) ){
+		$index++;		
+		$tag = $proxyName + $index;		
+	}
+	return( $tag );
+}
+

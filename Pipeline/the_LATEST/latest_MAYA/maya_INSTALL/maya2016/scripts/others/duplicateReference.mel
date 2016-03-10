@@ -1,0 +1,168 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Procedure Name:
+//      assembleDuplicateReferenceCmd
+//
+//  Description:
+//		This proc builds the command used by duplicateReference to
+//		reference the target file a second time (duplicate it).
+//		
+//  Input Arguments:
+//
+//		string $namespace: the new namespace name
+//		string $filename: the existing file's name		
+//
+//  Return Value:
+//      string
+//
+
+global proc string assembleDuplicateReferenceCmd(string $namespace, string $filename)
+{
+	//check create ref options
+	//
+	int $createLocator = `optionVar -query referenceOptionsLocator`;
+	int $createGroup = `optionVar -query referenceOptionsGrouping`;
+	int $shareLayers = `optionVar -query referenceOptionsShareDisplayLayers`;
+	int $shareShaders = `optionVar -query referenceOptionsShareShaders`;
+	string $groupName = `optionVar -q referenceOptionsGroupName`;
+
+	string $cmd = "file -r -namespace ";
+	$cmd += "\"";
+	$cmd += $namespace;
+	$cmd += "\" ";
+
+	if($createGroup)
+		$cmd += "-gr ";
+	if(`size $groupName` != 0)
+	    $cmd += "-gn " + $groupName;
+	if($createLocator)
+		$cmd += "-gl ";
+	if($shareLayers)
+		$cmd += "-shd displayLayers ";
+	if($shareShaders)
+		$cmd += "-shd shadingNetworks ";
+	$cmd += "\"" + $filename + "\"";
+
+	return $cmd;
+
+}
+
+//
+//  Procedure Name:
+//      duplicateReference
+//
+//  Description:
+//		if the selected objects are from a reference, this proc
+//		finds the referenced file and creates another reference to 
+//		it.
+//
+//		if the selected objects are from a reference that belongs
+//		to a proxy manager, the proxy manager and alll of its references 
+//		are recreated
+//		
+//  Input Arguments:
+//
+//		int $fromReferenceEditor: true if this command is called from 
+//		the reference editor
+//		int $sceneEditor: name of the sceneEditor that made the call		
+//
+//  Return Value:
+//      None
+//
+
+global proc duplicateReference(int $fromReferenceEditor, string $sceneEditor){
+
+	string $objects[];
+	if ($fromReferenceEditor){
+		$objects = `sceneEditor -q -selectItem $sceneEditor`;
+	} else {
+		$objects = `ls -sl`;
+	}
+
+	for ($object in $objects){
+
+		string $filename;
+		if ($fromReferenceEditor){
+			$filename = $object;
+		} else {
+			//get the filename for the specified object
+			$filename = `referenceQuery -filename $object`;
+		}
+		//get the reference node for the specified file
+		string $reference = `file -q -rfn $filename`;
+		//get the proxy manager for the specified object
+		string $proxyManager[] = `listConnections -type "proxyManager" $reference`;
+		//get the namespace
+		string $namespace = `file -q -namespace $filename`;
+
+		//create proxy set
+		if (`size $proxyManager` != 0){
+
+			//$proxyReference points to the first reference node in the proxy set
+			string $proxyReference;
+			//get all references in the proxy set
+			string $referenceProxies[] = `listConnections -s 0 -type "reference" $proxyManager[0]`;
+
+			int $i = 0;
+			for ($reference in $referenceProxies){
+				//get the proxy tag for the specified reference
+				string $proxyTag = `getAttr ($reference + ".proxyTag")`;
+				//add references to the proxy set
+				if ($i != 0){
+					//get the filename for the specified reference
+					$filename = `reference -rfn $reference -q -filename`;
+					//add the reference to the proxy with the appropriate tag
+					proxyAdd $proxyReference $filename $proxyTag;
+				} 
+				//create the first reference in the proxy set
+				else 
+				{
+					//get the filename for the specified reference
+					$filename = `reference -rfn $reference -q -filename`;
+					//reference the file
+
+					string $cmd = `assembleDuplicateReferenceCmd $namespace $filename`;
+					$filename = `eval ($cmd)`;
+
+					//get the name of that file's reference node
+					$reference = `file -q -referenceNode $filename`;
+					//set that to be the proxy to add all subsequent references to
+					$proxyReference = $reference ;
+					//set the proxyTag
+					setAttr -type "string" ($reference + ".proxyTag") $proxyTag;
+				}
+				$i++;
+
+			}
+		}
+		//just reference the file
+		else
+		{
+			string $cmd = `assembleDuplicateReferenceCmd $namespace $filename`;
+			$filename = `eval ($cmd)`;
+
+			string $nodes[] = `reference -f $filename -q -node`;
+			select -r `ls -dag $nodes`;
+		}
+	}
+}

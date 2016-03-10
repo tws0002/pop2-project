@@ -1,0 +1,258 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Sept 30, 1998
+//
+//  Description:
+//      The nurbsBooleanPreset() procedure executes a boolean operation on 
+//      the selected objects. 
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+
+
+proc string pieceTogetherBooleanCmd( string $srfList[],
+									 string $version, string $args[])
+//
+//	Description :
+//		Put together a boolean Cmd. 
+//
+{
+	if( size($args) < 2 ) {
+		error (uiRes("m_nurbsBooleanPreset.kWrongVersion"));
+	}
+
+	// Some options don't exist for some commands:
+
+	string $cmd = "nurbsBoolean ";
+
+	if( size($args) >= 3 ) {
+		$cmd += ("-ch " + $args[0]);
+		$cmd += (" -nsf " + $args[1]);
+		$cmd += (" -op " + $args[2]);
+		$cmd += " ";
+	}
+	
+	// Add surfaces:	
+	int $n = size($srfList) ;
+	for( $i = 0 ; $i < $n ; $i++ ) {
+		$cmd += $srfList[$i] ;
+		$cmd += " " ;
+	}
+
+	return $cmd ;
+}
+
+proc int validItemsInList( int $mask, string $item )
+//
+//	Description :
+//
+{
+	string $list[] = `filterExpand -ex true -sm $mask $item `;
+	if( size($list) == 0 ) return 0 ;
+	return size($list) ;
+}
+
+proc string collapseTo( string $list[] )
+//
+//	Description :
+//		Attempt to collapse one or more surface shapes
+//		under a surfaceVarGroup as its parent transform
+//		item.
+//	
+{
+	string $collapseTo = "" ;
+	int $l = size($list) ;
+	int $i ;
+	int $level = 1;
+	int $firstTime = 0 ;
+	int $collapse = 1 ;	
+	for( $i = 0 ; $i < $l ; $i++ ) {
+		string $h[] = `listHistory -lv $level $list[$i]` ;
+		if( size($h) < 2 ) {
+			$collapseTo = "" ;
+			return $collapseTo;
+		} else {
+			string $n = $h[1] ;
+			if( nodeType($n) == "surfaceVarGroup" ) {
+				if( $firstTime == 0 ) {
+					$collapseTo = $n ;	
+					$firstTime = 1 ;
+				} else if( $collapseTo != $n ) {
+					 return "" ;
+				}
+			} else {
+				$collapse = 0 ;
+				return "" ;
+			}
+		}
+	}
+	return $collapseTo;
+}
+
+proc string pieceTogetherDeleteCmd( 
+	string $list[],
+	int $start,
+	int $end ) 
+//
+//	Description : put together a delete cmd 
+//	for elements from $start to $end in $list[].
+//	Note : the delete is issued on the parent of each item
+//
+{
+	int $i ;
+	int $toDel = 0 ;
+	string $cmd = "delete " ;
+	for( $i = $start ; $i < $end ; $i++ ) {
+		string $item = $list[$i] ;
+		string $p[] = `listRelatives -p $item` ;
+		if( size($p) > 0 ) {
+			$cmd += $p[0] ;
+			$cmd += " " ;
+			$toDel = 1 ;
+		}
+	}
+	$cmd += ";" ;
+	if( $toDel ) return $cmd ;
+	else return " " ;
+}
+
+global proc nurbsBooleanPreset( string $version, string $args[] )
+
+//
+//	Description :
+//		Proc to do the boolean operation.
+//		Note : The input selection items will be deleted only if
+//		the operation is performed without history. Well, one could
+//		delete the input selection items.
+//
+{
+
+	int $nsf = $args[1] ; // number of items in first selection set.
+
+	//---------------------------------------------
+	// Get the list of nurbs surfaces in select list. 
+	//---------------------------------------------
+	//
+	int $i, $j ;
+	global int $gSelectNurbsSurfacesBit;
+	string $list[] = `filterExpand -ex true -sm $gSelectNurbsSurfacesBit` ;
+	string $srfList[] ;
+	int $n = size($list) ;
+
+	if( $nsf >=  $n ) {
+		error (uiRes("m_nurbsBooleanPreset.kFirstSelection"));
+		return ;
+	}
+
+	//----------------------------------------------------------------
+	// seperate the surfaces comprising the first and second shell in
+	// to the two lists list1, list2.
+	//----------------------------------------------------------------
+	//
+	$j = 0;
+	string $list1[] ;
+	string $list2[] ;
+	for( $i = 0 ; $i < $nsf ; $i++ ) {
+		$list1[$i] = $list[$i] ;
+	}	
+	for( $i = $nsf ; $i < $n ; $i++ ) {
+		$list2[$i-$nsf] = $list[$i] ;
+	}	
+
+	string $finalList[] ;
+
+
+	//----------------------------------------------------------------
+	// Attempt to make each of the two lists list1, list compact.
+	// By compact I mean, if two or  more nurbs surfaces have a
+	// a surface var node in common we replace the surfaces by the
+	// single transform in the list.	
+	//----------------------------------------------------------------
+	//
+
+	// list1 made compact.
+	//
+	string $collapseList1 = collapseTo( $list1 ) ;
+	if( $collapseList1 != "" ) {
+		$finalList[0] = $collapseList1 ;
+		$args[1] = 1 ;
+	}
+	else {
+		for( $i = 0 ; $i < $nsf ; $i++ ) {
+			$finalList[$i] = $list[$i] ;
+		}	
+	}
+
+	// list2 made compact.
+	//
+	string $collapseList2 = collapseTo( $list2 ) ;
+	if( $collapseList2 != "" ) {
+		int $cs = size($finalList) ;
+		$finalList[$cs] = $collapseList2 ;
+	}
+	else {
+		int $cs = size($finalList) ;
+		for( $i = $nsf ; $i < $n ; $i++ ) {
+			$finalList[$cs + $i - $nsf ] = $list[$i] ;
+		}	
+	}
+
+	//----------------------------------------------------------------
+	// we now have the final list which comprises the
+	// surfaces to boolean inbetween.
+	//----------------------------------------------------------------
+	//	
+	int $Count = size($finalList);
+	if( $Count < 2 ) {
+		error (uiRes("m_nurbsBooleanPreset.kMustSelect"));
+	}
+	else {
+
+		// put together a boolean cmd and execute.
+		//
+		string $cmd = pieceTogetherBooleanCmd( $finalList, $version, $args );
+		string $results[];
+		if( catch( $results = evalEcho( $cmd ))) {
+		} else {
+
+			// do we delete inputs ?
+			//
+			int $doesOpHaveHistory = $args[0];
+			int $delItems = $args[3];
+			if( !$doesOpHaveHistory && $delItems ) {
+				string $delCmd1 = pieceTogetherDeleteCmd( $finalList, 0, $args[1] ) ;
+				string $delCmd2 = pieceTogetherDeleteCmd( $finalList, $args[1], size($finalList) ) ;
+				evalEcho($delCmd1) ;	
+				evalEcho($delCmd2) ;	
+			} else {
+				if( $delItems ) warning (uiRes("m_nurbsBooleanPreset.kInputNotDeleted"));
+			}
+		}
+		select -r $results;
+	}
+}

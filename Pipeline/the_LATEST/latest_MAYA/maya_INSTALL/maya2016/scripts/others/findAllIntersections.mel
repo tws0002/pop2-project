@@ -1,0 +1,185 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  April 22, 1998
+//<doc>
+//<name findAllIntersections>
+//
+//<keywords>
+//		curve NURBS intersect
+//
+//<synopsis>
+//	string[] findAllIntersections(string $crvs[], int $numCrvsToIntersect,
+//			int $useDir, float $dirX, float $dirY, float $dirZ, 
+//			float $tolerance, int $sorted, int $history,
+//			string $intersectNodes[] )
+//
+//<description>
+//      Find all intersections between a list of curves, two at a time.
+//		If there are no intersections, then no nodes are created.
+//
+//<flags>
+//      string[]	$crvs	List of curves to intersect
+//      int			$crvCount	Number of curves on the list
+//      int			$useDir	Use the direction for intersection
+//      float		$dirX	X Direction for intersection
+//      float		$dirY	Y Direction for intersection
+//      float		$dirZ	Z Direction for intersection
+//      float		$tolerance	Intersection tolerance
+//      int			$sorted	Sort the parameter list?
+//      int			$history	Remember construction history?
+//      string[]	$intersectNodes	List of intersection nodes created
+//
+//<returns>
+//      void :
+//
+//<examples>
+//	curve -d 3 -p -1.16652 0 11.032493 -p -1.944098 0 9.982625 -p -3.499254 0 7.882891 -p -3.360333 0 -5.757598 -p 3.819598 0 -1.063913 -p 7.409563 0 1.282929 -k 0 -k 0 -k 0 -k 1 -k 2 -k 3 -k 3 -k 3 ;
+//	curve -d 3 -p -7.921998 0 -6.423076 -p -2.89468 0 -2.134852 -p 7.159956 0 6.441594 -p 8.281336 0 7.981051 -p 8.842026 0 8.75078 -k 0 -k 0 -k 0 -k 1 -k 2 -k 2 -k 2 ;
+//	string $curves[2] = {"curve1","curve2"};
+//	global string $nodes[];
+//	findAllIntersections($curves, size($curves), 0, 0,0,0, 0, 0, 0, $nodes);
+//	// Result:  1.851245417  0.3818904997 //
+
+//</doc>
+
+//  Description:
+// 		This proc creates a crv-crv intersection node with two curves
+// 		and returns the name of the new crv-intersect DN.  Also returns
+// 		the parameters at which the curves intersect each other.
+//		If there are no intersections, then no node is created and
+//		nothing is returned.
+//
+proc string createCrvCrvIntersect( string $crv1, string $crv2,
+	int $useDir, float $dirX, float $dirY, float $dirZ,
+	float $tolerance,
+	float $intersections1[], float $intersections2[] )
+{
+	// Create the intersect node
+	//
+	string $intersectNode = `createNode curveIntersect`;
+	setAttr ($intersectNode + ".tolerance") $tolerance;
+	connectAttr ($crv1 + ".worldSpace") ($intersectNode + ".inputCurve1");
+	connectAttr ($crv2 + ".worldSpace") ($intersectNode + ".inputCurve2");
+
+	setAttr ($intersectNode + ".useDirection") $useDir;
+	setAttr ($intersectNode + ".direction") -type "double3" $dirX $dirY $dirZ;
+
+	// Check if there are any intersections.  If not, then delete
+	// the node and return nothing.
+	//
+	$intersections1 = `getAttr ($intersectNode + ".parameter1")`;
+	int $numIparms = size($intersections1);
+	if( $numIparms == 0 ) {
+		delete $intersectNode;
+		$intersectNode = "";
+	} else {
+		$intersections2 = `getAttr ($intersectNode + ".parameter2")`;
+	}
+	return $intersectNode;
+}
+
+/////////////////////////////////////////////////////////////////////
+//	Description:
+//		Takes a list of curves and intersects with a specified number
+//		of other curves in the list.
+//		
+global proc string[] findAllIntersections( 
+	string $crvs[], int $numCrvsToIntersect,
+	int $useDir, float $dirX, float $dirY, float $dirZ, 
+	float $tolerance,
+	int $sorted,
+	int $history, string $intersectNodes[] )
+{
+	int $i;
+	int $j;
+	int $numCrvs = size($crvs) - 1;
+	string $parms[];
+	for( $i = 0; $i < $numCrvs;  $i ++ ) {
+		for( $j = 0; $j < $numCrvsToIntersect; $j ++ ) {
+
+			if( ($numCrvs-$j) > $i ) {
+				int $tmp = $numCrvs-$j;
+				// intersect $crvs[$i] with $crvs[$numCrvs-$j]
+				float $intsx1[];
+				float $intsx2[];
+				string $intsx = createCrvCrvIntersect( 
+					$crvs[$i], $crvs[$numCrvs-$j],
+					$useDir, $dirX, $dirY, $dirZ, $tolerance,
+					$intsx1, $intsx2 );
+				int $numIntsx = size($intsx1);
+				if( $numIntsx > 0 ) {
+					// add the parameter into ordered list for $crvs[$i]
+					// and $crvs[$numCrvs-$j]
+					for( $p = 0; $p < $numIntsx; $p ++ ) {
+						$parms[$i] = $parms[$i] + " " + $intsx1[$p];
+						$parms[$numCrvs-$j] = $parms[$numCrvs-$j] + " " + $intsx2[$p];
+						if( $history == 1 ) {
+							$intersectNodes[$i] = $intersectNodes[$i] + 
+								$intsx + ".p1["+$p+"] ";
+							$intersectNodes[$numCrvs-$j] = 
+								$intersectNodes[$numCrvs-$j] + $intsx + ".p2["+$p+"] ";
+						}
+					}
+				}
+				if( $history == 0 && (size($intsx1) > 0) ) {
+					delete $intsx;
+				}
+				clear( $intsx1 );
+				clear( $intsx2 );
+			}
+		}
+	}
+
+	// Go through the $parms list and sort each one into ascending order
+	//
+	if( $sorted == 1 ) {
+		int $numTokens;
+		float $floatParms[];
+		float $sortedParms[];
+		string $tokens[];
+		string $parmsNew;
+		for( $i = 0; $i <= $numCrvs;  $i ++ ) {
+			$numTokens = 0;
+			if( size($parms[$i]) > 0 ) {
+				$numTokens = `tokenize $parms[$i] " " $tokens`;
+				for( $j = 0; $j < $numTokens; $j ++ ) {
+					if( size( $tokens[$j]) > 0 ) {
+						$floatParms[size($floatParms)] = $tokens[$j];
+					}
+				}
+			}
+			$sortedParms = `sort $floatParms`;
+	
+			$parmsNew = "";
+			for( $j = 0; $j < $numTokens; $j ++ ) {
+				$parmsNew += " ";
+				$parmsNew += $sortedParms[$j];
+			}
+			$parms[$i] = $parmsNew;
+			clear( $floatParms );
+			clear( $sortedParms );
+		}
+	}
+	return $parms;
+}

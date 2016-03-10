@@ -1,0 +1,179 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Procedure Name:
+//		createSuitesInteractionModeDialog
+//
+//  Description:
+//      Create dialog to confirm with the user what application mode
+//		they want to set their mouse and keyboard interaction to, and
+//		whether they want to apply it to the entire Suite (if Maya is
+//		part of a Suites install) or only to that specific application.
+//
+//  Return Value:
+//		None.
+//
+global proc createSuitesInteractionModeDialog()
+{
+	// Get the dialog's formLayout.
+    //
+    string $form = `setParent -q`;
+
+    formLayout -e -h 120 $form;
+
+    string $setInteractionText = `text -l (uiRes("m_createSuitesInteractionModeDialog.kSetInteractionTo"))`;
+
+	int $isInstalledAsSuite = `suitePrefs -q -installedAsSuite`;
+	int $isCompleteSuite = `suitePrefs -q -isCompleteSuite`;
+    string $interactionModeUI = "";
+
+	string $mayaLabel = (uiRes("m_createSuitesInteractionModeDialog.kMaya"));
+	if($isCompleteSuite) {
+		$interactionModeUI = `optionMenu -w 90 -changeCommand "updateSuitesSelectInteractionModeOptions" SuitesSelectInteractionModeOptionMenu`;
+		menuItem -label $mayaLabel;
+		menuItem -label (uiRes("m_createSuitesInteractionModeDialog.kMax"));
+
+		optionMenu -e -value $mayaLabel $interactionModeUI;
+	} else {
+		$interactionModeUI = `text -w 90 -label $mayaLabel -align "center" SuitesSelectInteractionModeOptionLabel`;
+	}
+
+	string $applyToMenu = `optionMenu -w 220 SuitesApplyInteractionModeToOptionMenu`;
+	if($isInstalledAsSuite) {
+		menuItem -label (uiRes("m_createSuitesInteractionModeDialog.kForSuite")) SuitesApplyInteractionModeToSuiteMenuItem;
+	}
+
+	string $forMayaLabel = (uiRes("m_createSuitesInteractionModeDialog.kForMaya"));
+	menuItem -label $forMayaLabel SuitesApplyInteractionModeToMayaMenuItem;
+
+	optionMenu -e -value $forMayaLabel $applyToMenu;
+
+	string $sep = `separator`;
+
+    string $okButton = `button -l (uiRes("m_createSuitesInteractionModeDialog.kOk")) -w 75 -c "updateSuitesInteractionModeSettings; layoutDialog -dismiss \"OK\";"`;
+
+    formLayout -edit
+		-attachForm				$setInteractionText  "top"    20
+		-attachForm				$setInteractionText  "left"   25
+
+		-attachControl			$interactionModeUI "top"    8 $setInteractionText
+		-attachForm				$interactionModeUI "left"   23
+
+		-attachControl			$applyToMenu "top"    8  $setInteractionText
+		-attachControl			$applyToMenu "left"   10 $interactionModeUI
+		-attachForm				$applyToMenu "right"  10
+        
+		-attachForm				$okButton  "bottom"    10
+		-attachForm				$okButton  "left"      275
+		-attachForm				$okButton  "right"     10
+        
+		-attachControl			$sep  "bottom"    5 $okButton
+		-attachForm				$sep  "right"     10
+		-attachForm				$sep  "left"      10
+
+    $form;
+}
+
+global proc updateSuitesInteractionModeSettings()
+{
+	global string $gSuitesInteractionMode;
+	if(`optionMenu -exists SuitesApplyInteractionModeToOptionMenu`) {
+		if(`optionMenu -exists SuitesSelectInteractionModeOptionMenu`) {
+			if(`optionMenu -q -select SuitesSelectInteractionModeOptionMenu` == 1) {
+				if(`optionMenu -q -select SuitesApplyInteractionModeToOptionMenu` == 1) {
+					$gSuitesInteractionMode = "Maya";
+				} else {
+					$gSuitesInteractionMode = "undefined";
+				}
+			} else {
+				$gSuitesInteractionMode = "3dsMax";
+			}
+		} else if(`text -exists SuitesSelectInteractionModeOptionLabel`) {
+			if(`suitePrefs -q -installedAsSuite` && `optionMenu -q -select SuitesApplyInteractionModeToOptionMenu` == 1) {
+				$gSuitesInteractionMode = "Maya";
+			} else {
+				$gSuitesInteractionMode = "undefined";
+			}
+		}
+	}
+}
+
+global proc string getSuitesInteractionModeSettings()
+{
+	global string $gSuitesInteractionMode;
+	return $gSuitesInteractionMode;
+}
+
+global proc initializeSuitesInteractionModeSettings()
+{
+	global string $gSuitesInteractionMode = "undefined";
+	global string $gSuitesInteractionModeChange = "none";
+}
+
+global proc restoreSuitesInteractionModeSettings(int $updateInteractionMode)
+{
+	global string $gSuitesInteractionMode;
+
+	if(`suitePrefs -q -installedAsSuite`) {
+		// Interaction mode has been changed since last Maya session,
+		// so update the optionVar.
+		//
+		if($updateInteractionMode) {
+			// If 3ds Max interaction mode is set but this suite does not include
+			// the 3ds Max application, switch to "undefined" interaction mode
+			// (to clarify that the Maya interaction mode is only set for Maya,
+			// and not any other application in the suite).
+			//
+			string $newInteractionMode = `suitePrefs -q -applyToSuite`;
+			if(!`suitePrefs -q -isCompleteSuite` && $newInteractionMode == "3dsMax") {
+				optionVar -sv interactionModeToSuite "undefined";
+			} else {
+				optionVar -sv interactionModeToSuite `suitePrefs -q -applyToSuite`;
+			}
+		}
+
+		if(`optionVar -exists interactionModeToSuite`) {
+			$gSuitesInteractionMode = `optionVar -q interactionModeToSuite`;
+		}
+	}
+}
+
+global proc updateSuitesSelectInteractionModeOptions()
+{
+	if(`optionMenu -exists SuitesSelectInteractionModeOptionMenu`) {
+		if(`optionMenu -q -select SuitesSelectInteractionModeOptionMenu` == 1) {
+			if(`menuItem -exists SuitesApplyInteractionModeToSuiteMenuItem`) {
+				menuItem -e -label (uiRes("m_createSuitesInteractionModeDialog.kForTheSuite")) SuitesApplyInteractionModeToSuiteMenuItem;
+			}
+			if(!`menuItem -exists SuitesApplyInteractionModeToMayaMenuItem` && `optionMenu -exists SuitesApplyInteractionModeToOptionMenu`) {
+				menuItem -p SuitesApplyInteractionModeToOptionMenu -label (uiRes("m_createSuitesInteractionModeDialog.kForMayaOnly")) SuitesApplyInteractionModeToMayaMenuItem;
+			}
+		} else {
+			if(`menuItem -exists SuitesApplyInteractionModeToSuiteMenuItem`) {
+				menuItem -e -label (uiRes("m_createSuitesInteractionModeDialog.kForTheSuiteExceptMaya")) SuitesApplyInteractionModeToSuiteMenuItem;
+			}
+			if(`menuItem -exists SuitesApplyInteractionModeToMayaMenuItem`) {
+				deleteUI -menuItem SuitesApplyInteractionModeToMayaMenuItem;
+			}
+		}
+	}
+}

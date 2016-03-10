@@ -1,0 +1,200 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+global proc manipMoveValues ( string $toolName ) {
+
+	string $parent = (`toolPropertyWindow -q -location` + "|manipMove");
+	setParent $parent;
+
+	// Initialize settings 
+	//
+	string $axisLabel = "";
+	int $manipMode = `manipMoveContext -q -mode $toolName`;
+	switch ($manipMode)	{
+	case 0: $axisLabel = `uiRes("m_manipMoveProperties.kObject")`; break;
+	case 1: $axisLabel = `uiRes("m_manipMoveProperties.kLocal")`; break;
+	case 2: $axisLabel = `uiRes("m_manipMoveProperties.kWorld")`; break;
+	case 3: $axisLabel = `uiRes("m_manipMoveProperties.kNormal")`; break;
+	case 4: $axisLabel = `uiRes("m_manipMoveProperties.kAlongRotationAxis")`; break;
+	case 5: $axisLabel = `uiRes("m_manipMoveProperties.kAlongLiveObjectAxis")`; break;
+	case 6: $axisLabel = `uiRes("m_manipMoveProperties.kCustomAxisOrientation")`; break;
+	case 9: $axisLabel = `uiRes("m_manipMoveProperties.kAutoAlign")`; break;
+	}
+	textField -e -tx $axisLabel axisOrientField;
+
+	float $ori[] = `manipMoveContext -q -orientAxes $toolName`;
+	floatField -e -v (rad_to_deg($ori[0])) manipMoveOrientFieldX;
+	floatField -e -v (rad_to_deg($ori[1])) manipMoveOrientFieldY;
+	floatField -e -v (rad_to_deg($ori[2])) manipMoveOrientFieldZ;
+
+	// edit pivot
+	int $editMode = `manipMoveContext -q -editPivotMode $toolName`;
+	if ($editMode) {
+		iconTextButton -e -bgc 0.32 0.52 0.65 -c "ctxEditMode" editPivotButton; // use our unified Maya highligh color #5285A6 
+	} else {
+		iconTextButton -e -bgc 0.37 0.37 0.37 -c "ctxEditMode" editPivotButton;
+		// off the background and then turn it on to reset it
+		iconTextButton -e -nbg 1 editPivotButton;
+		iconTextButton -e -nbg 0 editPivotButton;
+	}
+	iconTextButton -e
+		-c ("{ string $objs[] = `ls -sl -type transform -type geometryShape`;" +
+			"if (size($objs) > 0) { xform -cp; } manipPivot -rp -ro; }")
+		resetPivotButton;
+
+	// preserve child transform
+	int 	$pcp = `manipMoveContext -q -preserveChildPosition $toolName`;
+	checkBoxGrp -e -v1 $pcp preserveChildCheckBx;
+	checkBoxGrp -e 
+		-cc1 ("setTRSPreserveChildPosition #1")
+		preserveChildCheckBx;
+	
+	// preserve UV 
+	int 	$puv = `manipMoveContext -q -preserveUV $toolName`;
+	checkBoxGrp -e -v1 $puv preserveUVCheckBx;
+	checkBoxGrp -e 
+		-cc1 ("setTRSPreserveUVs #1")
+		preserveUVCheckBx;
+
+	int $pin = `manipMoveContext -q -pinPivot $toolName`;
+	checkBoxGrp -e -v1 $pin pinComponentPivotCheckBx;
+
+	int $snapPos = `manipMoveContext -q -snapPivotPos $toolName`;
+	int $snapOri = `manipMoveContext -q -snapPivotOri $toolName`;
+	checkBoxGrp -e -v1 $snapPos snapPivotPosCheckBx;
+	checkBoxGrp -e -v1 $snapOri snapPivotOriCheckBx;
+
+	string $xformCns = `xformConstraint -q -type -live`;
+	if ($xformCns == "live") {
+		textField -e -en 0 -tx (uiRes("m_manipMoveValues.kManipMoveXformConstraintLive")) manipMoveXformConstraintModeLabel;
+		iconTextButton -e -en 0 manipMoveXformConstraintButton;
+	} else {
+		string $label = "";
+		if ($xformCns == "edge") $label = `uiRes("m_manipMoveProperties.kManipMoveXformConstraintEdge")`;
+		else if ($xformCns == "surface") $label = `uiRes("m_manipMoveProperties.kManipMoveXformConstraintSurf")`;
+		else $label = `uiRes("m_manipMoveProperties.kManipMoveXformConstraintNone")`;
+		textField -e -en 1 -tx $label manipMoveXformConstraintModeLabel;
+		iconTextButton -e -en 1 manipMoveXformConstraintButton;
+	}
+
+    {
+        // Query the manip for the current orient joint settings and set the menus accordingly
+        int    $oje    = `manipMoveContext -q -oje $toolName`;
+        string $oj     = `manipMoveContext -q -oj  $toolName`;
+        string $sao    = `manipMoveContext -q -sao $toolName`;
+
+        // Update the UI with these values ...
+        string $prev = `setParent -q`;
+        setParent $parent;
+        
+        // ... first take care of the checkbox that enables/disable auto orientation
+        checkBoxGrp -e -v1 $oje orientJointCheckBox;
+        manipMoveOrientJointPrefs( $parent );
+
+        // ... second, take care of remaining options ( primary, secondary, secondary world orient, etc.)
+        jointOrientSetOrientAxes( $parent, { $oj, $sao } );
+
+        // Edit change command callbacks
+        checkBoxGrp    -e -cc ( "setTRSOrientJoint " + $parent + " {0} " + $toolName ) orientJointCheckBox;
+        checkBoxGrp    -e -cc ( "setTRSOrientJoint " + $parent + " {1} " + $toolName ) ojWorldAxisGrp;
+        radioButtonGrp -e -cc ( "setTRSOrientJoint " + $parent + " {2} " + $toolName ) ojPrimaryAxisGrp;
+        radioButtonGrp -e -cc ( "setTRSOrientJoint " + $parent + " {3} " + $toolName ) ojSecondaryAxisGrp;
+        radioButtonGrp -e -cc ( "setTRSOrientJoint " + $parent + " { } " + $toolName ) ojSecondaryOrientGrp;
+        optionMenu     -e -cc ( "setTRSOrientJoint " + $parent + " { } " + $toolName ) ojSecondaryOrientSignGrp;
+        
+        setParent $prev;
+    }
+
+	int    $isSnapCompRelative = `manipMoveContext -q -snapComponentsRelative $toolName`;
+	int    $isSnapFaceCenter = `manipMoveContext -q -snapLiveFaceCenter $toolName`;
+	int    $isSnapVertex = `manipMoveContext -q -snapLivePoint $toolName`;
+	
+	checkBoxGrp -e -v1 $isSnapCompRelative manipSnapCompRelative;
+	checkBoxGrp -e -v1 $isSnapFaceCenter manipSnapFaceVertex;
+	checkBoxGrp -e -v2 $isSnapVertex manipSnapFaceVertex;
+
+	checkBoxGrp -e 
+		-cc1 ("manipMoveContext -e -snapComponentsRelative #1 " + $toolName)
+		manipSnapCompRelative;
+
+	checkBoxGrp -e 
+		-cc1 ("manipMoveContext -e -snapLiveFaceCenter #1 " + $toolName)
+		manipSnapFaceVertex;
+
+	checkBoxGrp -e 
+		-cc2 ("manipMoveContext -e -snapLivePoint #1 " + $toolName)
+		manipSnapFaceVertex;
+
+	int $snapMode = manipMoveGetSnapMode();
+	if ($manipMode != /*world*/2 && $snapMode == 2) {
+		// It has to be Discrete Relative
+		manipMoveSetSnapMode(1);
+		$snapMode = 1;
+	}
+	
+	string $label = "";
+	switch ($snapMode) {
+	default:
+	case 0: $label = `uiRes("m_manipMoveProperties.kOff")`; break;
+	case 1: $label = `uiRes("m_manipMoveProperties.kRelative")`; break;
+	case 2: $label = `uiRes("m_manipMoveProperties.kAbsolute")`; break;
+	}
+	textField -e -tx $label manipMoveSnapModeLabel;
+	floatField -e -en ($snapMode != 0) -v (`manipMoveContext -q -snapValue Move`) manipMoveSnapValue;
+
+	reflectionValues( );
+	// Update soft select values
+	softSelectValues( $parent );
+	commonSelectValues( $parent );
+
+	// set the state for the interactiveUpdate flag.
+	// valid only if mode is "vertex normal".
+    //
+    int $interactiveUpdate = `manipMoveContext -q -interactiveUpdate $toolName`;
+    checkBoxGrp -e  -onc ("manipMoveContext -e -iu 1 " + $toolName)
+          -ofc ("manipMoveContext -e -iu 0 " + $toolName) 
+          -v1 $interactiveUpdate UVNtriadUpdateCheckBox;
+
+	int $tweakMode = `manipMoveContext -q -tweakMode $toolName`;
+	checkBoxGrp -e  -cc ("strsTweakMode #1") -v1 $tweakMode TweakModeCheckBox;
+
+    // make the UVNtriadUpdateCheckBox visible or not ?	
+	// visible if manipMode is vertexNormal i.e. 4
+    //
+    if( $manipMode == /*normal*/3 ) {
+        checkBoxGrp -e -vis 1 UVNtriadUpdateCheckBox ;
+    } else {
+        checkBoxGrp -e -vis 0 UVNtriadUpdateCheckBox ;
+    }
+
+	string $icon;
+	string $helpTag;
+	if( $manipMode != /*normal*/3 ) {
+		$icon = "move_M.png";
+		$helpTag = "MoveTool";
+	} else {
+		$icon = "moveNormal.png";
+		$helpTag = "MoveNormalTool";
+	}
+	toolPropertySetCommon $toolName $icon $helpTag;
+	toolPropertySelect "manipMove";
+}
+

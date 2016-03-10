@@ -1,0 +1,150 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// hikLiveConnectionOperations.mel
+//
+// Description:
+//		Contains LiveConnection methods that affect the unified character context.
+//		These methods could trigger UI updates in any part of the
+//		unified character context.
+//
+
+///////////////////////////////////////////////////////////////////////
+// Local procedures
+///////////////////////////////////////////////////////////////////////
+
+// This proc take the IP adress prom the IP text field and set the attribute "serverName" with it
+proc setServerAttributeFromLiveUI( string $character )
+{
+	// verify if the control exists
+	if(`textField -exists ($character + "serverNameTextField")`)
+	{
+		string $node;
+		string $IP;
+		
+		// fetch test from text field
+		$IP = `textField -q -text ($character + "serverNameTextField")`;
+		
+		// fetch hikGetLiveStateClient with false if text is empty, else with true
+		if($IP == "")
+		{
+			$IP = "127.0.0.1";
+			$node = hikGetLiveStateClient($character,false);
+		}
+		else
+			$node = hikGetLiveStateClient($character,true);
+		
+		// we set the attribute only if there`s a node and if his servername attribute is different from the new IP
+		if($node != "" && getAttr ($node + ".serverName") != $IP)
+			setAttr ($node + ".serverName" ) -type "string" ($IP);
+	}
+}
+
+///////////////////////////////////////////////////////////////////////
+// Global LiveConnection operations.
+///////////////////////////////////////////////////////////////////////
+
+global proc hikDoLiveSendAndConnectCharacter( string $character )
+{
+	// disable the send button to avoid multiple send at once
+	hikEnableDisableLiveConnectionButton(0, $character);
+	
+	// If the character is unlocked, we must lock it before we send it
+	if( !hikIsDefinitionLocked($character) ) 
+	{
+		hikToggleLockDefinition();
+		// If the character is still unlock, it means that it couldn`t be locked. so we wont send
+		if(!hikIsDefinitionLocked($character) )
+		{
+			// enable the send button because the send wont happen
+			hikEnableDisableLiveConnectionButton(1, $character);
+			return;
+		}
+	}
+	
+	setServerAttributeFromLiveUI($character);
+	
+	if (! `pluginInfo -q -loaded "OneClick"`) {
+		loadPlugin "OneClick";
+	}
+
+	string $currSelection[ ] = `ls -selection`;
+	
+	// Select character hips
+	string $hips[ ] = `listConnections -d false -s true ( $character + ".Hips" )`;
+	if ( size( $hips ) > 0 )
+	{
+		string $liveNode = hikGetLiveStateClient( $character, true );
+		select -replace $hips[ 0 ];
+
+        string $remoteAddress;
+
+        if( size( $liveNode )>0 )
+        { 
+		    $remoteAddress = `getAttr ($liveNode + ".serverName")`;
+        }
+
+        OneClickMotionBuilderSendToCurrentScene $remoteAddress;
+
+		int $id = `OneClickAcknowledgeCallback -rcb ("hikDoLiveAcknowledgmentMakeCharacterLive "+$character)`;
+		OneClickSetupMotionBuilderCharacterStream $character $id $remoteAddress;
+
+	}
+	
+	// Revert back to previous selection
+	select -replace $currSelection;
+	
+	// here we start the timer to enable the send button in case that we receive nothing from MOBU
+	string $command = "hikEnableDisableLiveConnectionButton(1, \""+$character+"\");"; 
+	hikExecuteDelayedCommand(5, $command);
+}
+
+global proc hikDoLiveAcknowledgmentMakeCharacterLive( string $character, int $id, int $errorCode )
+{
+	if( $character !="" && `objExists $character` )
+	{
+		// string $lCharacter = hikGetCurrentCharacter();
+		string $lCharacter = $character;
+
+		if( $lCharacter != "" )
+		{
+			hikSetLiveCharacterInput( $lCharacter );
+		}
+
+		// update the live connection window if it is visible
+		hikUpdateLiveConnectionUI();	
+	}
+
+	// Unregister acknowledgement callback
+	OneClickAcknowledgeCallback -dcb $id;
+
+	hikSetCurrentSourceFromCharacter(hikGetCurrentCharacter());
+	hikUpdateSourceList();
+	hikUpdateContextualUI();
+	
+	// all data has been transfered, we can enable the send button
+	hikEnableDisableLiveConnectionButton(1, $character);
+}
+
+
+
+

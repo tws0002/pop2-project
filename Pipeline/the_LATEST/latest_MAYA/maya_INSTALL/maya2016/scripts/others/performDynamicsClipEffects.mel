@@ -1,0 +1,1417 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  July, 1998
+//
+//  Description:
+//      This script contains code to create clip effects for FX.
+//		performDynamicsClipEffects is called when a user selects
+//      a Dynamics Clip Effects menu item, or selects the "Create"
+//      button in a Dynamics Clip Effects option box.
+//
+//  Input Arguments to performDynamicsClipEffects():
+//
+//		string $clipEffect  -- the effect selected
+//				$flag		0 = execute the command
+//							1 = bring up the option box
+//							2 = dragging to shelf; 
+//								(just return the command string)
+//
+//  Return Value:
+//      None.
+
+
+// This routine validates user-entered object names before we try to use them 
+// in a command.  We currently check for multibyte characters in the string.
+
+proc validateNameField(string $nameStr)
+{
+    // Dis-allow multibyte characters 
+    if (containsMultibyte($nameStr))
+    {
+       string $fmt = (uiRes("m_performDynamicsClipEffects.kInvalidName"));
+       string $msg = `format -stringArg $nameStr $fmt`;
+       error($msg);
+    }    
+}
+
+//  ========== createClipEffectsOptions ==========
+//
+//  SYNOPSIS
+//      Create the Dynamics Clip Effects option box and option vars,
+//		and set up the appropriate layout for the selected command.
+//
+global proc int createClipEffectsOptions (string $clipEffect)
+{
+	string $layout = getOptionBox();
+
+	if (size($layout) == 0)
+		return 0;
+
+	setParent $layout;
+
+	// Build the window, with a tab layout
+	//
+	setUITemplate -pushTemplate DefaultTemplate;
+	waitCursor -state 1;
+
+	tabLayout -scr true -tv false;
+	string $parent = `columnLayout -adjustableColumn 1 -columnAttach "both" 5`;
+
+	// Create the layout for this option box.
+	//
+	dynCreateClipEffectsLayout $parent $clipEffect;
+
+	waitCursor -state 0;
+	setUITemplate -popTemplate;
+
+	// Setup the call to set the values of the option box controls based on
+	// the current values of the option vars.
+	//
+	string $setOptionControls = 
+			"dynSetClipEffectsOptionControls "+ $clipEffect + " " + $parent;
+
+	// Set up the callback that is called when the apply (create) button is
+	// selected by the user.
+	//
+	string $createCallback = 
+			"dynApplyClipEffectsCallback " + $clipEffect + " " + $parent;
+
+	// This will be used in the call to dynApplyClipEffectsCallback to
+	// tell whether to execute the clip effect command.
+	//
+	int $executeCmd;
+
+	// Get/set the standard option box buttons
+	//
+	string $buttonLab = (uiRes("m_performDynamicsClipEffects.kCreate"));
+	if( $clipEffect == "DeleteSurfaceFlow" )
+		$buttonLab = (uiRes("m_performDynamicsClipEffects.kDelete"));
+    string $applyBtn = getOptionBoxApplyBtn();
+	$executeCmd = 1;
+    button -edit
+		-label $buttonLab
+        -command ($createCallback +  " " + $executeCmd)
+        $applyBtn;
+
+    //  'Save' button.
+    //
+    string $saveBtn = getOptionBoxSaveBtn();
+	$executeCmd = 0;
+    button -edit
+        -command ($createCallback +  " " + $executeCmd + "; hideOptionBox")
+        $saveBtn;
+
+	// This will be used in the call to dynSetClipEffectsOptionControls to
+	// tell whether to set the option vars to their defaults if they
+	// already exist.
+	//
+	int $resetToDefaults;
+	$resetToDefaults = 1;
+    //  'Reset' button.
+    //
+    string $resetBtn = getOptionBoxResetBtn();
+    button -edit
+        -command ($setOptionControls + " " + $resetToDefaults)
+        $resetBtn;
+
+    // Set the option box title.    
+	//	Customize the 'Help' menu item text.
+	//
+	switch ($clipEffect) 
+	{
+		case "Flow":
+			setOptionBoxTitle( (uiRes("m_performDynamicsClipEffects.kFlowOptionTitle")) ); 
+			setOptionBoxHelpTag( "CreateCurveFlow" );
+			break;		
+
+		case "Fire":
+		    setOptionBoxTitle( (uiRes("m_performDynamicsClipEffects.kFireOptionTitle")) );
+			setOptionBoxHelpTag( "CreateFire" );
+			break;		
+
+		case "Fireworks":
+		    setOptionBoxTitle( (uiRes("m_performDynamicsClipEffects.kFireworksOptionTitle")) );
+			setOptionBoxHelpTag( "CreateFireworks" );
+			break;		
+
+		case "Lightning":
+		    setOptionBoxTitle( (uiRes("m_performDynamicsClipEffects.kLightningOptionTitle")) );
+			setOptionBoxHelpTag( "CreateLightning" );
+			break;		
+
+		case "Melt":
+		    setOptionBoxTitle( (uiRes("m_performDynamicsClipEffects.kMeltOptionTitle")) );
+			setOptionBoxHelpTag( "" );
+			break;		
+
+		case "Shatter":
+		    setOptionBoxTitle( (uiRes("m_performDynamicsClipEffects.kShatterOptionTitle")) );
+			setOptionBoxHelpTag( "CreateShatter" );
+			break;		
+
+		case "Smoke":
+		    setOptionBoxTitle( (uiRes("m_performDynamicsClipEffects.kSmokeOptionTitle")) );
+			setOptionBoxHelpTag( "CreateSmoke" );
+			break;		
+
+		case "SurfaceFlow":
+		    setOptionBoxTitle( (uiRes("m_performDynamicsClipEffects.kCreateSurfaceOptionTitle")) );
+			setOptionBoxHelpTag( "CreateSurfaceFlow" );
+			break;		
+
+		case "DeleteSurfaceFlow":
+		    setOptionBoxTitle( (uiRes("m_performDynamicsClipEffects.kDeleteSurfaceOptionTitle")) );
+			setOptionBoxHelpTag( "DeleteSurfaceFlow" );
+			break;		
+	}	
+
+
+	// Call the setupOptionControls proc to set the values of the option
+	// box controls (and the option vars).
+	//
+	$resetToDefaults = 0;
+	eval (($setOptionControls + " " + $resetToDefaults));      
+
+	showOptionBox();
+
+	return 1;
+}
+
+
+//  ========== performDynamicsClipEffects ==========
+//
+//  SYNOPSIS
+//		Called when a user selects a Dynamics Effects menu item, or
+//		selects the "Create" button in a Dynamics Effects option box.
+//
+//		Arguments:
+//			$clipEffect	clip effect name 
+//			$flag		0 = execute the command
+//						1 = bring up the option box
+//						2 = dragging to shelf; just return the command string
+//
+global proc string performDynamicsClipEffects( string $clipEffect, int $flag)
+{	
+	string $cmd = "";
+
+	if(!isValidClipEffect($clipEffect))
+		return $cmd;
+
+	if ($flag < 0 || $flag > 2)
+		return $cmd;
+
+	if ($flag == 1) 
+	{
+		// Create the options box and set the values of the
+		// controls based on the option vars.
+		//
+		int $created;
+		$created = createClipEffectsOptions($clipEffect);
+		if (!$created)
+			return $cmd;
+	}
+	else 
+	{
+		if( $flag == 0 )
+		{
+			if( !selectionListOk( $clipEffect ) )
+			{
+				return $cmd;
+			}
+		}
+		// Create and set the option vars, if they don't exist already.
+		//
+		dynSetClipEffectsOptionVars($clipEffect, 0);
+
+		// Create the command args for the selected command, and
+		// issue the command if flag is 0 (0 means the user has
+		// issued a command to create an effect; 2 means the user is
+		// dragging the current option box settings to the shelf, in
+		// case we had to make the command string, but not execute it.
+		//
+		switch ($clipEffect) 
+		{
+			case "Smoke":
+				$cmd = setSmokeCmdString();
+				if ($flag == 0)
+					dynExecuteSmokeCommand($cmd);
+				break;		
+			case "Fire":
+				$cmd = setFireCmdString();
+				if ($flag == 0)
+					dynExecuteFireCommand($cmd);
+				break;		
+			case "Fireworks":
+				$cmd = setFireworksCmdString();
+				if ($flag == 0)
+					dynExecuteFireworksCommand($cmd);
+				break;		
+			case "Flow":
+				$cmd = setFlowCmdString();
+				if ($flag == 0)
+					dynExecuteFlowCommand($cmd);
+				break;		
+			case "SurfaceFlow":
+				$cmd = setSurfaceFlowCmdString();
+				if ($flag == 0)
+					dynExecuteSurfaceFlowCommand($cmd);
+				break;		
+			case "DeleteSurfaceFlow":
+				$cmd = setDeleteSurfaceFlowCmdString();
+				if ($flag == 0)
+					dynExecuteDeleteSurfaceFlowCommand($cmd);
+				break;		
+			case "Lightning":
+				$cmd = setLightningCmdString();
+				if ($flag == 0)
+					dynExecuteLightningCommand($cmd);
+				break;		
+			case "Melt":
+				$cmd = setMeltCmdString();
+				if ($flag == 0)
+					dynExecuteMeltCommand($cmd);
+				break;		
+			case "Shatter":
+				$cmd = setShatterCmdString();
+				if ($flag == 0)
+					dynExecuteShatterCommand($cmd);
+				break;		
+		}	
+	}
+	return $cmd;
+}
+
+
+//  ============== setSmokeCmdString ==============
+//
+//  SYNOPSIS
+//		Set the command and command args string for the smoke clip effect
+//		command.
+//
+global proc string setSmokeCmdString()
+{
+
+	string $cmd;
+
+	string $particleName = `optionVar -query smokeParticleName`;
+	string $emitterName = `optionVar -query smokeEmitterName`;
+	string $turbulenceName = `optionVar -query smokeTurbulenceName`;
+	string $smokeImageName = `optionVar -query smokeImageName`;
+
+    // Check for illegal name strings before attempting to use them
+    // in the command. 
+	validateNameField($particleName);
+	validateNameField($emitterName);
+	validateNameField($turbulenceName);
+	validateNameField($smokeImageName);
+
+	$cmd = "spriteSmoke( ";
+
+	$cmd = $cmd + "\"" + $particleName + "\", ";
+	$cmd = $cmd + "\"" + $emitterName + "\", ";
+	$cmd = $cmd + "\"" + $turbulenceName + "\", ";
+
+	$cmd = $cmd + "\"" + $smokeImageName + "\", ";
+	$cmd = $cmd + `optionVar -query smokeStartImage` + ", ";
+	$cmd = $cmd + `optionVar -query smokeEndImage` + ", ";
+	$cmd = $cmd + `optionVar -query smokeCycleImages` + ", ";
+
+	$cmd = $cmd + `optionVar -query smokeMinLifespan` + ", ";
+	$cmd = $cmd + `optionVar -query smokeMaxLifespan` +", ";
+
+	$cmd = $cmd + `optionVar -query smokeThreshold` + ", ";
+	$cmd = $cmd + `optionVar -query smokeOpacity` + ", ";
+
+	$cmd = $cmd + `optionVar -query smokeUseTurbulence` + " );\n";
+
+	$cmd = $cmd + "spriteSmokeSetEmissionAttributes(";
+	$cmd = $cmd + "\"" + $emitterName + "\", ";
+	$cmd = $cmd + `optionVar -query smokeEmissionRate` + ", ";
+	$cmd = $cmd + `optionVar -query smokeEmissionSpread` + ", ";
+	$cmd = $cmd + `optionVar -query smokeEmissionSpeed` + ", ";
+	$cmd = $cmd + `optionVar -query smokeEmissionDirX` + ", ";
+	$cmd = $cmd + `optionVar -query smokeEmissionDirY` + ", ";
+	$cmd = $cmd + `optionVar -query smokeEmissionDirZ` + " );\n";
+
+	if (`optionVar -query smokeUseTurbulence`)
+	{	
+		$cmd = $cmd + "spriteSmokeSetTurbulenceAttributes( ";
+		$cmd = $cmd + "\"" + $turbulenceName + "\", ";
+		$cmd = $cmd + `optionVar -query smokeTurbulenceMagnitude` + ", ";
+		$cmd = $cmd + `optionVar -query smokeTurbulenceFrequency` + ", ";
+		$cmd = $cmd + `optionVar -query smokeTurbulenceAttenuation` + " );\n";
+	}
+
+	return $cmd;
+}
+
+
+//
+//  ============== dynExecuteSmokeCommand ==============
+//
+//  SYNOPSIS
+//		Get the values from the option box (from the optionVars) and issue
+//		the spriteSmoke command, and the commands to set the emission and
+//		turbulence attributes.
+//
+global proc dynExecuteSmokeCommand(string $cmd)
+{
+	// Get the attribute values from the option box.
+	//
+
+	// Image attribute values.
+	//
+	string $imageName =  `optionVar -query smokeImageName`;
+	int $startImage = `optionVar -query smokeStartImage`;
+	int $endImage = `optionVar -query smokeEndImage`;
+	int $cycleImages = `optionVar -query smokeCycleImages`;
+
+	// Smoke particle attribute values
+	//
+	string $particleName =  `optionVar -query smokeParticleName`;
+	float $minLifeSpan = `optionVar -query smokeMinLifespan`;
+	float $maxLifeSpan =  `optionVar -query smokeMaxLifespan`;
+	float $threshold = `optionVar -query smokeThreshold`;
+	float $opacity = `optionVar -query smokeOpacity`;
+
+	// Smoke emitter attribute values
+	//
+	string $emitterName =  `optionVar -query smokeEmitterName`;
+	float $rate = `optionVar -query smokeEmissionRate`;
+	float $spread = `optionVar -query smokeEmissionSpread`;
+	float $speed = `optionVar -query smokeEmissionSpeed`;
+	float $directionX = `optionVar -query smokeEmissionDirX`;
+	float $directionY = `optionVar -query smokeEmissionDirY`;
+	float $directionZ = `optionVar -query smokeEmissionDirZ`;
+
+	int $useTurbulence = `optionVar -query smokeUseTurbulence`;
+	string $turbulenceName =  `optionVar -query smokeTurbulenceName`;
+
+	string $objectNames[];
+
+	// Create the sprite smoke effect.
+	//
+	$objectNames = spriteSmoke($particleName, $emitterName, $turbulenceName,
+								$imageName, 
+								$startImage, $endImage, $cycleImages,
+								$minLifeSpan, $maxLifeSpan,
+								$threshold, $opacity, $useTurbulence);
+
+	//  Set the emission attributes.
+	//
+	if (size($objectNames) > 0)
+	{
+		string $emitterName = $objectNames[0];
+		if (objExists($emitterName))
+		{
+			spriteSmokeSetEmissionAttributes(
+										$emitterName, 
+										$rate, $spread, $speed,
+										$directionX, $directionY, $directionZ);
+		}
+	}
+
+	// Set the turbulence attributes, if the user wants a turbulence field.
+	//
+	if ($useTurbulence && size($objectNames) > 1)
+	{
+		string $turbulenceName = $objectNames[1];
+		if (objExists($turbulenceName))
+		{
+			float $magnitude = `optionVar -query smokeTurbulenceMagnitude`;
+			float $frequency = `optionVar -query smokeTurbulenceFrequency`;
+			float $attenuation = `optionVar -query smokeTurbulenceAttenuation`;
+			spriteSmokeSetTurbulenceAttributes( 
+											$turbulenceName,
+											$magnitude, $frequency,
+											$attenuation);
+		}
+	}
+	if (size($objectNames) > 0)
+	{
+		// The command succeeded, so print the command to the script window.
+		//
+		$cmd = $cmd + "\n";
+		print($cmd);
+	}
+}
+
+
+//  ============== setFireCmdString ==============
+//
+//  SYNOPSIS
+//		Set the command and command args string for the fire clip effect
+//		command "fireEffect()".
+//
+//		fireEffect(string $fireParticleName,
+//					string $fireObject,
+//					string $emitterType)
+//
+global proc string setFireCmdString()
+{
+	string $cmd;
+
+	// Set the arguments for the call to fireEffect().
+	//
+	$cmd = "fireEffect ";
+
+	// Set the arg for the name of the fire particle and fire object.
+	//
+	string $particleName = `optionVar -query fireParticleName`;
+	string $fireObjectName =  `optionVar -query fireObject`;
+
+    // Check for illegal name strings before attempting to use them
+    // in the command. 
+    validateNameField($particleName);
+    validateNameField($fireObjectName);
+
+	if (size($particleName) > 0)
+		$cmd = $cmd + "\"" + $particleName + "\"" + " ";
+	else
+		$cmd = $cmd + "\"\" ";
+
+	if (size($fireObjectName) > 0)
+		$cmd = $cmd + "\"" + $fireObjectName + "\"" + " ";
+	else
+		$cmd = $cmd + "\"\" ";
+
+	// Set the emitter type
+	//
+	int $emitterChoice = `optionVar -query  fireEmissionTypeOV`;
+
+	string $emitterType;
+	if ($emitterChoice == 1)
+		$emitterType = "omni";
+	else if ($emitterChoice == 2)
+		$emitterType = "direction";
+	else if ($emitterChoice == 3)
+		$emitterType = "surface";
+	else if ($emitterChoice == 4)
+		$emitterType = "curve";
+
+	$cmd  = $cmd + $emitterType + " ";
+
+	$cmd = $cmd + "; ";
+
+	return $cmd;
+}
+
+
+//  ============== dynExecuteFireCommand ==============
+//
+//  SYNOPSIS
+//		Issue the fireEffect command, which is sent into the proc in the arg "$cmd".
+//		Then get the values from the option box (from the optionVars) for the
+//		fire attributes and issue "fireEffectSetFireAttributes()" command.
+//
+global proc dynExecuteFireCommand(string $cmd)
+{
+	// Execute the fireEffect() command and print it to the script window.
+	//
+	string $fireParticleName = evalEcho($cmd);
+
+	if ((!size($fireParticleName)) || (!objExists($fireParticleName)))
+		return;
+	
+	// Now build the command string for the call to fireEffectSetFireAttributes().
+	// We had to build it after we have the name of the fire particle.
+	//
+	string $setAttrsCmd = "fireEffectSetFireAttributes ";
+
+	$setAttrsCmd = $setAttrsCmd + $fireParticleName + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fireScale` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fireDensity` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fireStartRadius` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fireEndRadius` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fireIntensity` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fireSpeed` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fireDirectionX` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fireDirectionY` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fireDirectionZ` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fireSpread`  + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fireTurbulence`  + ";";
+
+	// Execute the fireEffectSetFireAttributes() command and print it to the
+	// script window.
+	//
+	evalEcho($setAttrsCmd);
+}
+
+//  ============== setFlowCmdString ==============
+//
+//  SYNOPSIS
+//		Set the command and command args string for the flow-along-curves 
+//		clip effect.
+//		command "flowAlongCurves()".
+//
+//		flowAlongCurves( int $controlSegmentCount, 
+//							int $subSegmentCount, 
+//							int $attachEmitterToCurve, 
+//							float $emitterRate, 
+//							float $randomMotionSpeed, 
+//							float $lifespan, 
+//							float $goalWeight ) 
+//
+global proc string setFlowCmdString()
+{
+	string $cmd;
+
+	// Set the arguments for the call to meltEffect().
+	//
+	$cmd = "flowAlongCurves ";
+
+	// Set the arg for the name of the flow object.
+	//
+	string $flowObject = `optionVar -query flowObject`;
+
+    // Check for illegal name strings before attempting to use them
+    // in the command. 
+    validateNameField($flowObject);
+
+	$cmd = $cmd + "\"" + $flowObject +  "\" ";
+
+	$cmd = $cmd + `optionVar -query flowNumControlSegs` + " ";
+	$cmd = $cmd + `optionVar -query flowNumControlSubsegs` + " ";
+	$cmd = $cmd + `optionVar -query flowAttachEmitter` + " ";
+	$cmd = $cmd + `optionVar -query flowEmitterRate` + " ";
+	$cmd = $cmd + `optionVar -query flowRandomMotion` + " ";
+	$cmd = $cmd + `optionVar -query flowLifespan` + " ";
+	$cmd = $cmd + `optionVar -query flowGoalWeight` + ";";
+
+	return $cmd;
+}
+
+
+//  ============== dynExecuteFlowCommand ==============
+//
+//  SYNOPSIS
+//		Issue the flowAlonCurves command, which is sent into the proc in the
+//		arg "$cmd".
+//		Then get the values from the option box (from the optionVars) for the
+//		other flow attributes and issue "flowSetAttributes()" command.
+//
+global proc dynExecuteFlowCommand(string $cmd)
+{
+	// Execute the flowAlongCurves() command and print it to the script window.
+	//
+	// string $meltParticleName = evalEcho($cmd);
+	evalEcho($cmd);
+
+	// IF SETTING ADDITIONAL ATTRS FROM OPTION BOX
+	// if (!size($flowName) 
+	// 	return;
+	
+	// Now build the command string for the call to meltEffectSetAttributes().
+	// We had to build it after we have the name of the melt particle.
+	//
+	// string $setAttrsCmd = "meltEffectSetAttributes ";
+
+	//  $setAttrsCmd = $setAttrsCmd + $flowName + " ";
+	//  $setAttrsCmd = $setAttrsCmd + `optionVar -query meltSpeed` + " ";
+	// etc
+	// Execute the meltEffectSetAttributes() command and print it to the
+	// script window.
+	//
+	// evalEcho($setFlowAttrsCmd);
+}
+
+
+//  ============== setSurfaceFlowCmdString ==============
+//
+//  SYNOPSIS
+//		Set the command and command args string for the flow-along-surface 
+//		clip effect.  command "flowAlongSurfaces()".
+//
+//		flowAlongSurfaces( string $flowName,
+//							int $createParticle,
+//							int $createParticleForEachFlow,
+//							string $type,
+//							int $controlResolution, 
+//							int $subControlResolution, 
+//							int $manipResolution, 
+//							float $goalWeight, 
+//							float $emitterRate, 
+//							float $minAgeRatio, 
+//							float $maxAgeRatio ) 
+//
+global proc string setSurfaceFlowCmdString()
+{
+	string $cmd;
+
+	// Set the arguments for the call to flowAlongSurface().
+	//
+	$cmd = "flowAlongSurfaces ";
+
+	// Set the arg for the name of the flow object.
+	//
+	string $flowName = `optionVar -query surfaceFlowObject`;
+
+    // Check for illegal name strings before attempting to use them
+    // in the command. 
+    validateNameField($flowName);
+
+	$cmd = $cmd + "\"" + $flowName +  "\" ";
+
+	// Create particle object check box.
+	//
+	$cmd = $cmd + `optionVar -query surfaceFlowCreateParticle` + " ";
+	$cmd = $cmd + `optionVar -query surfaceFlowParticleLifespan` + " ";
+	$cmd = $cmd + `optionVar -query surfaceFlowCreateParticleForEachFlow`+" ";
+	
+	// Type of control manipulator.
+	//
+	string $type = "u";
+	int $typeId = `optionVar -query surfaceFlowManipTypeId`;
+	if( $typeId == 1) { $type = "u"; }
+	else if( $typeId == 2 ) { $type = "v"; }
+	else if( $typeId == 3 && `about -mac`) { $type = "minusU"; }
+	else if( $typeId == 3 ) { $type = "-u"; }
+	else if( $typeId == 4 && `about -mac`) { $type = "minusV"; }
+	else if( $typeId == 4 ) { $type = "-v"; }
+	$cmd = $cmd + "\"" + $type +  "\" ";
+
+	// Resolutions.
+	//
+	$cmd = $cmd + `optionVar -query surfaceFlowControlResolution` + " ";
+	$cmd = $cmd + `optionVar -query surfaceFlowSubControlResolution` + " ";
+	$cmd = $cmd + `optionVar -query surfaceFlowManipulatorResolution` + " ";
+	$cmd = $cmd + `optionVar -query surfaceFlowGoalWeight` + " ";
+	$cmd = $cmd + `optionVar -query surfaceFlowEmitterRate` + " ";
+	$cmd = $cmd + `optionVar -query surfaceFlowMinAgeRatio` + " ";
+	$cmd = $cmd + `optionVar -query surfaceFlowMaxAgeRatio` + ";";
+
+	return $cmd;
+}
+
+
+//  ============== dynExecuteSurfaceFlowCommand ==============
+//
+//  SYNOPSIS
+//		Issue the flowAlonSurface command, which is sent into the proc in the
+//		arg "$cmd".
+//		Then get the values from the option box (from the optionVars) for the
+//		other flow attributes and issue "flowSetAttributes()" command.
+//
+global proc dynExecuteSurfaceFlowCommand(string $cmd)
+{
+	// Execute the flowAlongSurface() command
+	// and print it to the script window.
+	//
+	evalEcho($cmd);
+}
+
+
+//  ============== setDeleteSurfaceFlowCmdString ==============
+//
+//  SYNOPSIS
+//		Set the command and command args string for deleting surface flow 
+//		clip effect.  command "deleteSurfaceFlows()".
+//
+global proc string setDeleteSurfaceFlowCmdString()
+{
+	string $cmd;
+
+	int $deleteFlow = 1;
+
+	int $radioSelected = `optionVar -q deleteSurfaceFlow`;
+	int $deleteParticle = `optionVar -q deleteSurfaceFlowParticles`;
+	if( $radioSelected != 1 )
+		$deleteFlow = 0;
+
+	$cmd = "deleteSurfaceFlows ";
+	$cmd = $cmd + " " + $deleteFlow + " " + $deleteParticle + ";";
+
+	return $cmd;
+}
+
+
+//  ============== dynExecuteDeleteSurfaceFlowCommand ==============
+//
+//  SYNOPSIS
+//		Issue the deleteSurfaceFlows command, which is sent into the proc
+//		in the arg "$cmd".
+//		Then get the values from the option box (from the optionVars) for the
+//		other flow attributes and issue "deleteSurfaceFlows()" command.
+//
+global proc dynExecuteDeleteSurfaceFlowCommand(string $cmd)
+{
+	// Execute the deleteSurfaceFlows() command
+	// and print it to the script window.
+	//
+	evalEcho($cmd);
+}
+
+
+//  ============== setLightningCmdString ==============
+//
+//  SYNOPSIS
+//		Set the command and command args string for the lightning 
+//		clip effect.  command "lightning()".
+//
+//		lightning( string $lightningGroupName,
+//							int $grouping,
+//							int $creationOption,
+//							int $segmentCount,
+//							float $thickness, 
+//							float $maxSpread, 
+//							float $lightningStart, 
+//							float $lightningEnd,
+//							float $glowIntensity ) 
+//
+global proc string setLightningCmdString()
+{
+	string $cmd;
+
+	// Set the arguments for the call to lightning().
+	//
+	$cmd = "lightning ";
+
+	// Set the arg for the name of the lightning object.
+	//
+	string $name = `optionVar -query lightningObject`;
+
+    // Check for illegal name strings before attempting to use them
+    // in the command. 
+    validateNameField($name);
+
+	$cmd = $cmd + "\"" + $name +  "\" ";
+
+	$cmd = $cmd + `optionVar -query lightningGrouping` + " ";
+	$cmd = $cmd + `optionVar -query lightningCreateOptions` + " ";
+	$cmd = $cmd + `optionVar -query lightningCurveSegments`+ " ";
+	$cmd = $cmd + `optionVar -query lightningThickness` + " ";
+	$cmd = $cmd + `optionVar -query lightningMaxSpread` + " ";
+	$cmd = $cmd + `optionVar -query lightningStart` + " ";
+	$cmd = $cmd + `optionVar -query lightningEnd` + " ";
+	$cmd = $cmd + `optionVar -query lightningGlowIntensity` + ";";
+
+	return $cmd;
+}
+
+
+//  ============== dynExecuteLightningCommand ==============
+//
+//  SYNOPSIS
+//		Issue the lightning command, which is sent into the proc
+//		in the arg "$cmd".
+//
+global proc dynExecuteLightningCommand(string $cmd)
+{
+	// Execute the lightning() command
+	// and print it to the script window.
+	//
+	evalEcho($cmd);
+}
+
+
+//  ============== setMeltCmdString ==============
+//
+//  SYNOPSIS
+//		Set the command and command args string for the melt clip effect
+//		command "meltEffect()".
+//
+//		meltEffect(string $meltObject, string $meltOnObject)
+//
+global proc string setMeltCmdString()
+{
+	string $cmd;
+
+	// Set the arguments for the call to meltEffect().
+	//
+	$cmd = "meltEffect ";
+
+	// Set the arg for the name of the melt object and melt-on object.
+	//
+	string $meltObject = `optionVar -query meltObject`;
+	string $meltOnObject =  `optionVar -query meltOnObject`;
+
+    // Check for illegal name strings before attempting to use them
+    // in the command. 
+    validateNameField($meltObject);
+    validateNameField($meltOnObject);
+
+	string $selectedList[];
+
+	if(size($meltObject) == 0)
+	{
+		$selectedList = `ls -sl`;
+
+		if (size($selectedList) == 0)
+		{
+			$cmd = $cmd + "\"\" ";
+		}
+		else
+		{
+			$meltObject = $selectedList[0];
+
+		}
+	}
+	$cmd = $cmd + "\"" + $meltObject + "\"" + " ";
+
+	if (size($meltOnObject) > 0)
+		$cmd = $cmd + "\"" + $meltOnObject + "\"" + " ";
+	else
+		$cmd = $cmd + "\"\" ";
+
+   	int $latticeResX = 2;
+   	int $latticeResY = 2;
+   	int $latticeResZ = 2;
+
+	int $userSetLatticeRes = `optionVar -query meltUseLatticeRes`;
+
+	if ((!$userSetLatticeRes) && (size($meltObject) > 0))
+	{
+   		float $bBoxX, $bBoxY, $bBoxZ;
+   		$bBoxX = `getAttr ($meltObject + ".boundingBoxSizeX")`;
+   		$bBoxY = `getAttr ($meltObject + ".boundingBoxSizeY")`;
+   		$bBoxZ = `getAttr ($meltObject + ".boundingBoxSizeZ")`;
+	
+   		// $latticeResX = $bBoxX ; // * 1.5;
+   		// $latticeResY = $bBoxY ; // * 1.5;
+   		// $latticeResZ = $bBoxZ ; // * 1.5;
+
+   		$latticeResX = $bBoxX  / 2;
+   		$latticeResY = $bBoxY / 2;
+   		$latticeResZ = $bBoxZ / 2;
+
+   		if ($latticeResX < 2)
+       		$latticeResX = 2;
+   		if ($latticeResY < 2)
+       		$latticeResY = 2;
+   		if ($latticeResZ < 2)
+       		$latticeResZ = 2;
+	}
+
+	if ($userSetLatticeRes)
+	{
+		$latticeResX = `optionVar -query meltLatticeResX`;
+		$latticeResY = `optionVar -query meltLatticeResY`;
+		$latticeResZ = `optionVar -query meltLatticeResZ`;
+	}
+
+	$cmd = $cmd + $latticeResX + " ";
+	$cmd = $cmd + $latticeResY + " ";
+	$cmd = $cmd + $latticeResZ + " ";
+
+	$cmd = $cmd + ";";
+
+	return $cmd;
+}
+
+
+//  ============== dynExecuteMeltCommand ==============
+//
+//  SYNOPSIS
+//		Issue the meltEffect command, which is sent into the proc in the arg "$cmd".
+//		Then get the values from the option box (from the optionVars) for the
+//		melt attributes and issue "meltEffectSetAttributes()" command.
+//
+global proc dynExecuteMeltCommand(string $cmd)
+{
+	// Execute the meltEffect() command and print it to the script window.
+	//
+	string $meltParticleName = evalEcho($cmd);
+
+	if ((!size($meltParticleName)) || (!objExists($meltParticleName)))
+		return;
+	
+	// Now build the command string for the call to meltEffectSetAttributes().
+	// We had to build it after we have the name of the melt particle.
+	//
+	string $setAttrsCmd = "meltEffectSetAttributes ";
+
+	$setAttrsCmd = $setAttrsCmd + $meltParticleName + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query meltSpeed` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query meltSpread` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query meltDistortion` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query meltDirectionX` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query meltDirectionY` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query meltDirectionZ` + " ";
+
+	// Execute the meltEffectSetAttributes() command and print it to the
+	// script window.
+	//
+	evalEcho($setAttrsCmd);
+}
+
+
+//  ============== setShatterCmdString ==============
+//
+//  SYNOPSIS
+//		Set the command and command args string for the shatter clip effect
+//		command.
+//
+global proc string setShatterCmdString()
+{
+	string $cmd;
+
+	string $shatterType = `optionVar -query shatterType`;
+
+	if ( $shatterType == "shatterSurfaceTab" )
+	{
+		$cmd = setSurfaceShatterCmdString();
+	}
+	else if ( $shatterType == "shatterSolidTab" )
+	{
+		$cmd = setSolidShatterCmdString();
+	}
+	else if ( $shatterType == "shatterCrackTab" )
+	{
+		$cmd = setCrackShatterCmdString();
+	}
+
+	return $cmd;
+}
+
+
+//  ============== setSurfaceShatterCmdString ==============
+//
+//  SYNOPSIS
+//		Set the command and command args string for the surface shatter clip effect
+//		command.
+//
+global proc string setSurfaceShatterCmdString()
+{
+	string $cmd;
+
+	string $shatterName   = `optionVar -query shatterSurfaceName`;
+	int    $shardCount    = `optionVar -query shatterSurfaceShardCount`;
+	int    $exactCount    = true;
+	int    $triangulate   = `optionVar -query shatterSurfaceTriangulate`;
+	int    $smoothing     = `optionVar -query shatterSurfaceSmoothing`;
+	float  $extrude       = `optionVar -query shatterSurfaceExtrude`;
+//	float  $perturbation  = `optionVar -query shatterSurfaceEdgePerturbation`;
+	float  $perturbation  = 0.0;
+	int    $seedValue     = `optionVar -query shatterSurfaceSeedValue`;
+	int    $original      = `optionVar -query shatterSurfaceOriginal`;
+
+
+
+    // Check for illegal name strings before attempting to use them
+    // in the command. 
+    validateNameField($shatterName);
+
+	
+	string $postOperation = "shapes";
+	int $postOp = `optionVar -query shatterSurfacePostOp`;
+	if( $postOp == 1 ) { $postOperation = "shapes"; }
+	else if( $postOp == 2 ) { $postOperation = "rigid bodies with collisions off"; }
+	else if( $postOp == 3 ) { $postOperation = "soft bodies with goals"; }
+	else if( $postOp == 4 ) { $postOperation = "soft bodies with lattice and goals"; }
+	else if( $postOp == 5 ) { $postOperation = "sets"; }
+
+	string $makeRigid     = `optionVar -query shatterSurfaceMakeRigidBody`;
+	int    $verbose       = `optionVar -query shatterSurfaceVerbose`;
+
+	if ( $original != 4 )
+	{
+		$makeRigid = 0;
+	}
+
+	$cmd = "surfaceShatter( ";
+
+	$cmd += "\"" +$shatterName + "\", ";
+	$cmd += $shardCount + ", ";
+	$cmd += $exactCount + ", ";
+	$cmd += $smoothing + ", ";
+	$cmd += $triangulate + ", ";
+	$cmd += $extrude + ", ";
+	$cmd += $perturbation + ", ";
+	$cmd += $seedValue + ", ";
+	$cmd += $original + ", ";
+	$cmd +=  "\"" + $postOperation + "\"" + ", ";
+	$cmd += $makeRigid + ", ";
+	$cmd += $verbose + ");\n";
+
+	return $cmd;
+}
+
+
+//  ============== setSolidShatterCmdString ==============
+//
+//  SYNOPSIS
+//		Set the command and command args string for the solid shatter clip effect
+//		command.
+//
+global proc string setSolidShatterCmdString()
+{
+	string $cmd;
+
+	string $shatterName    = `optionVar -query shatterSolidName`;
+	int    $shardCount     = `optionVar -query shatterSolidShardCount`;
+	int    $triangulate    = `optionVar -query shatterSolidTriangulate`;
+	int    $applyMaterial  = `optionVar -query shatterSolidInteriorMaterial`;
+	int    $removeInterior = `optionVar -query shatterSolidRemoveInterior`;
+	float  $extrude        = `optionVar -query shatterSolidExtrude`;
+	float  $perturbation   = `optionVar -query shatterSolidEdgePerturbation`;
+	int    $seedValue      = `optionVar -query shatterSolidSeedValue`;
+	int    $original       = `optionVar -query shatterSolidOriginal`;
+
+    // Check for illegal name strings before attempting to use them
+    // in the command. 
+    validateNameField($shatterName);
+	
+	string $postOperation  = "shapes";
+	int $postOp = `optionVar -query shatterSolidPostOp`;
+	if( $postOp == 1 ) { $postOperation = "shapes"; }
+	else if( $postOp == 2 ) { $postOperation = "rigid bodies with collisions off"; }
+	else if( $postOp == 3 ) { $postOperation = "soft bodies with goals"; }
+	else if( $postOp == 4 ) { $postOperation = "soft bodies with lattice and goals"; }
+	
+	string $makeRigid      = `optionVar -query shatterSolidMakeRigidBody`;
+	int    $verbose        = `optionVar -query shatterSolidVerbose`;
+
+	int $xRes = 20;
+	int $yRes = 20;
+	int $zRes = 40;
+
+	if ( $original != 4 )
+	{
+		$makeRigid = 0;
+	}
+
+	$cmd = "solidShatter( ";
+	$cmd += "\"" +$shatterName + "\", ";
+	$cmd += $shardCount + ", ";
+	$cmd += $triangulate + ", ";
+	$cmd += $applyMaterial + ", ";
+	$cmd += $removeInterior + ", ";
+	$cmd += $extrude + ", ";
+	$cmd += $perturbation + ", ";
+	$cmd += $seedValue + ", ";
+	$cmd += $original + ", ";
+	$cmd +=  "\"" + $postOperation + "\"" + ", ";
+	$cmd += $makeRigid + ", ";
+	$cmd += $verbose + ");\n";
+
+	return $cmd;
+}
+
+
+//  ============== setCrackShatterCmdString ==============
+//
+//  SYNOPSIS
+//		Set the command and command args string for the crack shatter clip effect
+//		command.
+//
+global proc string setCrackShatterCmdString()
+{
+	string $cmd;
+
+	string $shatterName   = `optionVar -query shatterCrackName`;
+	int    $crackCount    = `optionVar -query shatterCrackCount`;
+	int    $crackLength   = `optionVar -query shatterCrackLength`;
+	int    $triangulate   = `optionVar -query shatterCrackTriangulate`;
+	float  $extrude       = `optionVar -query shatterCrackExtrude`;
+	float  $perturbation  = `optionVar -query shatterCrackEdgePerturbation`;
+	int    $seedValue     = `optionVar -query shatterCrackSeedValue`;
+	
+    // Check for illegal name strings before attempting to use them
+    // in the command. 
+    validateNameField($shatterName);
+
+	string $postOperation = "shapes";
+	int $postOp = `optionVar -query shatterCrackPostOp`;
+	if( $postOp == 1 ) { $postOperation = "cracks on surface"; }
+	if( $postOp == 2 ) { $postOperation = "shapes"; }
+	else if( $postOp == 3 ) { $postOperation = "rigid bodies with collisions off"; }
+	else if( $postOp == 4 ) { $postOperation = "soft bodies with goals"; }
+	else if( $postOp == 5 ) { $postOperation = "soft bodies with lattice and goals"; }
+	else if( $postOp == 6 ) { $postOperation = "sets"; }
+
+;
+	
+	int    $original      = `optionVar -query shatterCrackOriginal`;
+	string $makeRigid     = `optionVar -query shatterCrackMakeRigidBody`;
+	int    $verbose       = `optionVar -query shatterCrackVerbose`;
+
+	if ( $original != 4 )
+	{
+		$makeRigid = 0;
+	}
+
+	$cmd = "crackShatter( ";
+
+	$cmd += "\"" +$shatterName + "\", ";
+	$cmd += $crackCount + ", ";
+	$cmd += $crackLength + ", ";
+	$cmd += $triangulate + ", ";
+	$cmd += $perturbation + ", ";
+	$cmd += $extrude + ", ";
+	$cmd += $seedValue + ", ";
+	$cmd += $original + ", ";
+	$cmd +=  "\"" + $postOperation + "\"" + ", ";
+	$cmd += $makeRigid + ", ";
+	$cmd += $verbose + ");\n";
+
+	return $cmd;
+}
+
+
+//  ============== dynExecuteShatterCommand ==============
+//
+//  SYNOPSIS
+//		Issue the shatter Effect command, which is sent into the proc in the arg "$cmd".
+//		Then get the values from the option box (from the optionVars) for the
+//		shatter attributes and issue "shatterEffectSetAttributes()" command.
+//
+global proc dynExecuteShatterCommand(string $cmd)
+{
+	// Execute the shatter effect command and print it to the script window.
+	//
+	string $shatterName[] = evalEcho($cmd);
+}
+
+
+
+
+//  ============== isValidClipEffect ==============
+//
+//  SYNOPSIS
+//		Return whether the specified clip effect is one we handle.
+//
+global proc int isValidClipEffect (string $clipEffect)
+{
+	if ($clipEffect == "Smoke"				|| 
+		$clipEffect == "Fire"				||
+		$clipEffect == "Fireworks"			||
+		$clipEffect == "Melt"				||
+		$clipEffect == "Lightning"			||
+		$clipEffect == "SurfaceFlow"		||
+		$clipEffect == "DeleteSurfaceFlow"	||
+		$clipEffect == "Flow" 				||
+		$clipEffect == "Shatter")
+	{
+		return 1;
+	}
+	else
+	{
+		warning (uiRes("m_performDynamicsClipEffects.kClipEffectRequested"));
+		return 0;
+	}
+}
+
+
+//  ============== selectionListOk ==============
+//
+//  SYNOPSIS
+//		Check whether the selection list is valid for the given clip effect.
+//
+global proc int selectionListOk(string $clipEffect)
+{
+	string $selectionList[] = `ls -sl`;
+
+	int $isOk = 1;
+
+	if ($clipEffect == "Smoke")
+	{
+		if (size($selectionList)  > 1) 
+		{
+			warning (uiRes("m_performDynamicsClipEffects.kForSpriteSmoke"));
+			$isOk = 0;
+		}
+	}
+	else if ($clipEffect == "Lightning")
+	{
+		if (size($selectionList)  < 2) 
+		{
+			warning (uiRes("m_performDynamicsClipEffects.kAtLeastTwoTransforms"));
+			$isOk = 0;
+		}
+	}
+	else if ($clipEffect == "SurfaceFlow" || $clipEffect == "Flow")
+	{
+		if (size($selectionList)  < 1) 
+		{
+			warning (uiRes("m_performDynamicsClipEffects.kAtLeastOneObjectFlow"));
+			$isOk = 0;
+		}
+	}
+	else if ($clipEffect == "Shatter")
+	{
+		if (size($selectionList)  < 1) 
+		{
+			warning (uiRes("m_performDynamicsClipEffects.kAtLeastOneObjectShatter"));
+			$isOk = 0;
+		}
+	}
+
+	return $isOk;
+}
+
+
+
+//  ============== setFireworksCmdString ==============
+//
+//  SYNOPSIS
+//		Set the command and command args string for the fireworks clip effect
+//		command "fireworks(...)".
+//
+//		fireWorks(string $fireworksName)
+//
+global proc string setFireworksCmdString()
+{
+
+	// The command line:
+	// fireworks <name> 
+	//			 <numTrailColors> <numSparksColors> 
+	//			 <trailColorCreationProc> <sparksColorCreationProc>
+	//			 <numRockets> 
+	//			 <launchPosX> <launchPosY> <launchPosZ>
+	//			 <burstPosCenterX> <burstPosCenterY> <burstPosCenterZ>
+	//			 <burstExtentsX> <burstExtentsY> <burstExtentsZ>
+	//			 <firstLaunchFrame> <launchRate> 
+	//			 <minFlightTime> <maxFlightTime>
+	//
+	string $cmd;
+
+	// Set the arguments for the call to fireworks().
+	//
+	$cmd = "fireworks ";
+
+	// Set the arg for the name of the fireworks
+	//
+	string $fireworksName = `optionVar -query fireworksName`;
+
+    // Check for illegal name strings before attempting to use them
+    // in the command. 
+    validateNameField($fireworksName);
+
+	if (size($fireworksName) > 0)
+		$cmd = $cmd + "\"" + $fireworksName + "\"" + " ";
+	else
+		$cmd = $cmd + "\"\" ";
+
+	int $numTrailColors = `optionVar -query fwTrailNumColors`;
+	int $numSparksColors = `optionVar -query fwSparksNumColors`;
+
+	$cmd = $cmd + $numTrailColors + " ";
+	$cmd = $cmd + $numSparksColors + " ";
+
+    // Get the color creation procs, if the user set them.
+	//
+	if (`optionVar -query fwTrailSetUserColor`)
+	{
+		string $colorProc = `optionVar -query fwTrailColorCreationProc`;
+		if (size($colorProc) > 0)
+			$cmd = $cmd + $colorProc + " ";
+		else
+			$cmd = $cmd + "\"\" ";
+	}
+	else
+	{
+		$cmd = $cmd + "\"\" ";
+	}
+
+	if (`optionVar -query fwSparksSetUserColor`)
+	{
+		string $colorProc = `optionVar -query fwSparksColorCreationProc`;
+		if (size($colorProc) > 0)
+			$cmd = $cmd + $colorProc + " ";
+		else
+			$cmd = $cmd + "\"\" ";
+	}
+	else
+	{
+		$cmd = $cmd + "\"\" ";
+	}
+
+	$cmd = $cmd + `optionVar -query fwNumRockets` + " ";
+	$cmd = $cmd + `optionVar -query fwLaunchPositionX` + " ";
+	$cmd = $cmd + `optionVar -query fwLaunchPositionY` + " ";
+	$cmd = $cmd + `optionVar -query fwLaunchPositionZ` + " ";
+	$cmd = $cmd + `optionVar -query fwBurstPosCenterX` + " ";
+	$cmd = $cmd + `optionVar -query fwBurstPosCenterY` + " ";
+	$cmd = $cmd + `optionVar -query fwBurstPosCenterZ` + " ";
+	$cmd = $cmd + `optionVar -query fwBurstExtentsX` + " ";
+	$cmd = $cmd + `optionVar -query fwBurstExtentsY` + " ";
+	$cmd = $cmd + `optionVar -query fwBurstExtentsZ` + " ";
+	$cmd = $cmd + `optionVar -query fwFirstLaunchFrame` + " ";
+	$cmd = $cmd + `optionVar -query fwLaunchRate` + " ";
+	$cmd = $cmd + `optionVar -query fwMinFlightTime` + " ";
+	$cmd = $cmd + `optionVar -query fwMaxFlightTime` + " ";
+	$cmd = $cmd + "; ";
+
+	return $cmd;
+}
+
+
+//  ============== dynExecuteFireworksCommand ==============
+//
+//  SYNOPSIS
+//		Issue the fireworks command, which is sent into the proc in the arg "$cmd".
+//		Then get the values from the option box (from the optionVars) for the
+//		fireworks attributes and issue the set attributes commands.
+//
+global proc dynExecuteFireworksCommand(string $cmd)
+{
+	// Execute the fireworks() command and print it to the script window.
+	//
+	string $fireworksGroup = evalEcho($cmd);
+
+	if ($fireworksGroup == "")
+		return;
+
+	string $setAttrsCmd = "";
+
+	// Build and execute the command string for fwSetRocketAttributes().
+	//
+	$setAttrsCmd = "fwSetRocketAttributes " + $fireworksGroup + " ";
+
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fwMaxBurstSpeed` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fwSparksColorSpread` + " ";
+
+	evalEcho($setAttrsCmd);
+
+
+	// Build and execute the command string for fwSetTrailAttributes().
+	//
+	$setAttrsCmd = "fwSetTrailAttributes " + $fireworksGroup + " ";
+
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fwTrailRate` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fwTrailSpeed` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fwTrailSpread` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fwMinTrailTailSize` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fwMaxTrailTailSize` + " ";
+
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fwTrailGlowIntensity` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fwTrailIncanIntensity` + " ";
+	
+	evalEcho($setAttrsCmd);
+
+	// Build and execute the command string for fwSetSparksAttributes().
+	//
+	$setAttrsCmd = "fwSetSparksAttributes " + $fireworksGroup + " ";
+
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fwMinSparksCount` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fwMaxSparksCount` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fwMinSparksTailSize` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fwMaxSparksTailSize` + " ";
+
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fwSparksGlowIntensity` + " ";
+	$setAttrsCmd = $setAttrsCmd + `optionVar -query fwSparksIncanIntensity` + " ";
+	
+	evalEcho($setAttrsCmd);
+}
+

@@ -1,0 +1,534 @@
+// Copyright (C) 1997-2013 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+/**
+ * @file xgmUtil.mel
+ * @brief Contains utility mel functions for XGen.
+ *
+ * <b>CONFIDENTIAL INFORMATION: This software is the confidential and
+ * proprietary information of Walt Disney Animation Studios ("WDAS").
+ * This software may not be used, disclosed, reproduced or distributed
+ * for any purpose without prior written authorization and license
+ * from WDAS. Reproduction of any section of this software must include
+ * this legend and all copyright notices.
+ * Copyright Disney Enterprises, Inc. All rights reserved.</b>
+ *
+ * @author Thomas V Thompson II
+ * @author Rajesh Sharma
+ * @author Ying Liu
+ *
+ * @version Created 10/19/04
+ */
+
+
+/**
+ * Add any scene wide expressions.
+ */
+global proc xgmAddExpressions()
+{
+    // Delete any existing first. This allows for seamless upgrades.
+    xgmRemoveExpressions;
+
+    // This expression will cause any active preview to be re-rendered when
+    // the frame changes. It allows for playblast.
+    if( !`about -batch` ) {
+        if ( python("xgg.Playblast") ) {
+            string $cmd = "xgmPreview -r";
+            expression -n "xgmRefreshPreview" -s $cmd -ae 1 -uc "none";
+        }
+        // Install an expression to update the PreviewWarning flag.
+        else
+        {
+            expression -n "xgmPreviewWarning" -s "if( !`about -batch` ){\npython(\"xgui.createDescriptionEditor(False).setPreviewWarning(True)\");\n}" -ae 1 -uc "none";
+        }
+    }
+}
+
+
+/**
+ * Remove any scene wide expressions.
+ */
+global proc xgmRemoveExpressions()
+{
+    string $refresh[] = `ls "*xgmRefreshPreview*"`;
+    if ( size($refresh) > 0 ) {
+        delete $refresh;
+    }
+    string $warn[] = `ls "*xgmPreviewWarning*"`;
+    if ( size($warn) > 0 ) {
+        delete $warn;
+    }
+
+}
+
+
+/** Parse an XGen version string into RAPIDS major.minor.micro.build */
+proc int[] parseVersion( string $version )
+{
+    int $rapidsVer[4] = { 0, 0, 0, 0 };
+    if ( !`gmatch $version "* *"` ) {
+        string $buf[];
+        int $i;
+        int $num = `tokenize $version "." $buf`;
+        for ( $i = 0; $i < $num; $i++ ) {
+			catchQuiet( $rapidsVer[$i] = $buf[$i] );
+		}
+    }
+
+    return $rapidsVer;
+}
+
+
+/**
+ * Record the version currently in use as an attribute on the
+ * palette partition.
+ */
+global proc xgmSetVersion()
+{
+    string $palettes[];
+    clear $palettes;
+    catchQuiet ( $palettes = python("xg.palettes()") );
+    if ( `size $palettes` == 0 )
+        return;
+
+    // Get the current xgen version in the environment
+    string $envRapidsVersionStr = python("xg.version()");
+    int $envRapidsVersion[] = parseVersion( $envRapidsVersionStr );
+
+    for ( $palette in $palettes ) {
+        if( `objExists $palette` )
+        {
+            string $versionAttrName = $palette + ".xgVersion";
+            if ( !`attributeQuery -exists -n $palette xgVersion` ) {
+                // Add the attribute and set to the current version.
+                addAttr -ln "xgVersion" -dt "string" $palette;
+                setAttr -type "string" $versionAttrName $envRapidsVersionStr;
+            } else {
+                string $palVersionStr = `getAttr $versionAttrName`;
+                int $palRapidsVersion[] = parseVersion( $palVersionStr );
+                
+                // Update xgen version number when a newer xgen is in environment
+                if ( ( $palRapidsVersion[1] < $envRapidsVersion[1] ) ||
+                       ( ( $palRapidsVersion[1] == $envRapidsVersion[1] ) &&
+                         ( $palRapidsVersion[2] < $envRapidsVersion[2] ) ) ) {
+                    setAttr -type "string" $versionAttrName $envRapidsVersionStr;
+                }
+            }
+        }
+    }
+}
+
+
+/**
+ * The interaction with XGen when objects arent bound to geometry
+ * is much faster if the shape nodes are all hidden. This function
+ * hides all XGen shape nodes.
+ */
+global proc xgmHideShapes()
+{
+    hide `ls -type xgmSubdPatch -type xgmNurbsPatch -type xgmSplineGuide -type xgmArchiveGuide -type xgmCardGuide -type xgmSphereGuide`;
+}
+
+
+/** Lock the given transformation matrix. */
+global proc xgmLockTransform( string $xform,
+                              int $scale, int $rotate, int $translate )
+{
+    if ( $scale ) {
+        transformLimits -sx 1 1 -sy 1 1 -sz 1 1 $xform;
+        transformLimits -esx true true -esy true true -esz true true $xform;
+    }
+    if ( $rotate ) {
+        transformLimits -rx 0 0 -ry 0 0 -rz 0 0 $xform;
+        transformLimits -erx true true -ery true true -erz true true $xform;
+    }
+    if ( $translate ) {
+        transformLimits -tx 0 0 -ty 0 0 -tz 0 0 $xform;
+        transformLimits -etx true true -ety true true -etz true true $xform;
+    }
+}
+
+
+/**
+ * Transform a world coordinate point into the reference frame of
+ * the description. This places the point in "Local" space relative
+ * to the description and therefore suitable for FX module work.
+ */
+global proc float[] xgmWorldToLocal( float $pt[], string $description )
+{
+    float $res[];
+    
+    if ( !`objExists $description` ) {
+        string $fmt = (uiRes("m_xgmUtil.kDescriptionDoesNotExist"));
+        error(`format -s $description $fmt`);
+        return $res;
+    }
+    float $x[] = `getAttr ($description+".worldInverseMatrix")`;
+    $res = `xgmPointMatrixMult $pt $x`;
+    return $res;
+}
+
+
+
+/**
+ * Parent (and create if necessary) a grooming object under the top-level
+ * level grooming transform.  This should be at the same level as the
+ * current palette.
+ *
+ * @param $obj  The object to parent (must pre-exist)
+ */
+global proc xgmGroomParent( string $obj )
+{
+    global string $xgmGroomGroup;
+
+    if ( !`objExists $obj` ) return;
+
+    string $layer = "xgGroomLayer";
+    if (`objExists $xgmGroomGroup`)
+        parent $obj $xgmGroomGroup;
+    else {
+        if (`objExists $layer` )  delete $layer;
+        group -w -n $xgmGroomGroup $obj;
+        xgmLockTransform( $xgmGroomGroup, 1, 1, 1 );
+
+        // find parent for grooming group
+        string $parent = "";
+        string $palette = python("xgui.currentPalette()");
+        if ( $palette != "" ) {
+            string $par[] = `listRelatives -p $palette`;
+            $parent = $par[0];
+        } else {
+            string $palArray[] = `ls -type xgmPalette`;
+            $palette = $palArray[0];
+            if ( $palette != "" ) {
+                string $par[] = `listRelatives -p $palette`;
+                $parent = $par[0];
+            }
+        }
+
+        if ( $parent != "" )  parent $xgmGroomGroup $parent;
+    }
+
+    string $selOrig[] = `ls -sl`;
+    select -r $xgmGroomGroup;
+    if ( !`objExists $layer` )
+      createDisplayLayer -name $layer -number 1 -nr;
+
+    select -r $selOrig;
+}
+
+
+/**
+ * Delete the temporary curves/surfaces that are under the global
+ * xgGroom created by xgen. Clean the hierarchy if necessary.
+ *
+ * @param $tempObjects   The temporary object list to delete
+ */
+global proc xgmDeleteGroomObjects( string $tempObjects[] )
+{
+    global string $xgmGroomGroup;
+
+    if ( !`size $tempObjects` ) {
+        warning (uiRes("m_xgmUtil.kThereIsNothingToDelete"));
+        return;
+    }
+
+    // Get the parent group node if there is any
+    string $tempObjGroups[];
+    int $i = 0;
+    for ( $obj in $tempObjects ) {
+        string $parent[] = `listRelatives -parent $tempObjects`;
+        $tempObjGroups[$i++] = $parent[0];
+    }
+
+    // Delete the requested objects
+    delete $tempObjects;
+
+    // Delete the group node for the temporary curves or surfaces
+    if ( `size $tempObjGroups` ) {
+        $tempObjGroups = stringArrayRemoveDuplicates( $tempObjGroups );
+
+        for ( $grp in $tempObjGroups ) {
+            string $children[] = `listRelatives -allDescendents $grp`;
+            if ( !`size $children` )
+                delete $grp;
+        }
+    }
+
+    // Remove the groom group if it is empty
+    if ( `objExists $xgmGroomGroup` ) {
+        string $children[] = `listRelatives -allDescendents $xgmGroomGroup`;
+        if ( !`size $children` )
+            delete $xgmGroomGroup;
+    }
+}
+
+
+/**
+ * This function will copy a floating point array element by element and
+ * return the result.
+ *
+ * @param $from  The source array
+ */
+global proc float[] xgmCopyFloatArray( float $from[] )
+{
+    float $result[];
+
+    int $size = `size $from`;
+    for ( $i=0; $i<$size; $i++ )
+        $result[$i] = $from[$i];
+
+    return $result;
+}
+
+
+/**
+ * This function will create a Maya surface shader and attach it to the 
+ * specified object.
+ *
+ * @param $obj  The object to attach the shader to
+ * @param $r    Red channel of surface color
+ * @param $g    Green channel of surface color
+ * @param $b    Blue channel of surface color
+ * @param $a    Alpha channel of surface color
+ */
+global proc xgmMakeShader( string $obj,
+                           float $r, float $g, float $b, float $a )
+{
+    string $shade = ($obj + "Shader");
+    string $shadeSG = ( $obj + "SG" );
+
+    if ( `objExists $shade` )  delete $shade;
+    if ( `objExists $shadeSG` )  delete $shadeSG;
+
+    shadingNode -asShader lambert -n $shade;
+    setAttr ( $shade + ".transparency" ) -type double3 $a $a $a;
+    setAttr ( $shade + ".color" ) -type double3 $r $g $b;
+
+    sets -renderable true -noSurfaceShader true -empty -name $shadeSG;
+    connectAttr -f ( $shade + ".outColor" ) ( $shadeSG + ".surfaceShader" );
+    sets -e -forceElement $shadeSG $obj;
+}
+
+
+/**
+ * This function will compute a smoothstepped falloff for a variable $x 
+ * that approaches the $tuning value.  The parametric falloff position should
+ * be between zero and one.
+ *
+ * @param $x        The variable
+ * @param $falloff  The parametric distance from $x to $tuning to falloff
+ * @param $tuning   The value of $x to falloff toward
+ */
+global proc float xgmFalloff( float $x, float $falloff, float $tuning )
+{
+    if ( $falloff < 0.000000001 ) return 1.0;
+    if ( $x < 0.000000001 ) return 1.0;
+    if ( $falloff > 0.99999999 ) return 0.0;
+
+    float $L = $tuning * ( 1.0 - $falloff ) / $falloff;
+
+    if ( $x >= $L ) return 0.0;
+
+    float $t = $x / $L;
+    return 1.0 - $t*$t*(3.0-$t-$t); // smoothStep( $t );
+}
+
+
+/**
+ * This function returns the given object's transform in local space
+ * as a string suitable to be used in expressions.
+ *
+ * @param $obj      The object
+ */
+
+global proc string xgmLocalPos( string $obj )
+{
+    if ( !`objExists $obj` ) {
+        string $fmt = (uiRes("m_xgmUtil.kObjectDoesNotExist"));
+        error(`format -s $obj $fmt`);
+        return "";
+    }
+    float $position[] = `xform -objectSpace -query -translation $obj`;
+    return ( "["+$position[0]+","+$position[1]+","+$position[2]+"]" ); 
+}
+
+
+/**
+ * This function returns the given object's transform in world space
+ * as a string suitable to be used in expressions.
+ *
+ * @param $obj      The object
+ */
+global proc string xgmWorldPos( string $obj )
+{
+    if ( !`objExists $obj` ) {
+        string $fmt = (uiRes("m_xgmUtil.kObjectDoesNotExistWorldPos"));
+        error( `format -s $obj $fmt`);
+        return "";
+    }
+    float $position[] = `xform -worldSpace -query -translation $obj`;
+    return ("["+$position[0]+","+$position[1]+","+$position[2]+"]"); 
+}
+
+
+/**
+ * This function returns the given object's transform in description space
+ * as a string suitable to be used in expressions.
+ *
+ * @param $obj      The object
+ * @param $desc     The description
+ */
+global proc string xgmXGenPos( string $obj, string $descr )
+{
+    if ( !`objExists $obj` ) {
+        string $fmt = (uiRes("m_xgmUtil.kXgmxgenposObjectDoesNotExist"));
+        error(`format -s $obj $fmt`);
+        return "";
+    }
+    if ( !`objExists $descr` ) {
+        string $fmt = (uiRes("m_xgmUtil.kXgmxgenposDescriptionDoesNotExist"));
+        error(`format -s $descr $fmt`);
+        return "";
+    }
+    float $wPos[] = `xform -worldSpace -query -translation $obj`;
+    float $position[] = xgmWorldToLocal( $wPos, $descr );
+    return ("["+$position[0]+","+$position[1]+","+$position[2]+"]"); 
+}
+
+
+global proc int xgmVecEquivalent( vector $vec1, vector $vec2 )
+{
+    float $tolerance = `tolerance -q -l`;
+
+    if ( abs( $vec1.x - $vec2.x ) < $tolerance &&
+         abs( $vec1.y - $vec2.y ) < $tolerance &&
+         abs( $vec1.z - $vec2.z ) < $tolerance )
+         return 1;
+
+    return 0;
+}
+
+
+global proc int xgmVecArrayEquivalent( vector $vecArray1[], 
+                                       vector $vecArray2[] )
+{
+    int $size1 = `size $vecArray1`;
+    int $size2 = `size $vecArray2`;
+    if ( $size1 != $size2 ) {
+        string $fmt = (uiRes("m_xgmUtil.kTheTwoVectorArraysHaveDifferentSizes"));
+        warning ( `format -s $size1 $size2 $fmt` );
+        return -1;
+    }
+
+    int $shareBase = xgmVecEquivalent( $vecArray1[0], $vecArray2[0] );
+    if ( !$shareBase )
+        return 0;
+
+    for ( $i = 1; $i < $size1; $i++ ) {
+        if ( !xgmVecEquivalent( $vecArray1[$i], $vecArray2[$i] ) ) 
+            return 2;            
+     }
+
+    return 1;
+}
+
+
+/**
+ * This is a re-implementation of stringArrayIntersector courtesy of
+ * John Yoon to work around problem with it in Maya batch
+ */
+global proc string[] xgmStringArrayIntersect(string $items[], string $list[]) {
+    string $item, $listItem, $result[];
+    int    $keep, $resultIndex = 0;
+
+    for ($listItem in $list) {
+        $keep = 0;
+        for ($item in $items) {
+            if ($item == $listItem) {
+                $keep = 1;
+                break;
+            }
+        }
+        if ($keep) {
+            $result[$resultIndex++] = $listItem;
+        }
+    }
+
+    return $result;
+}
+
+
+/**
+ * Return the list of string containing elements from list A but not B
+ */
+global proc string[] xgmStringArrayAminusB(string $A[], string $B[]) {
+    string $result[];
+    int    $skip, $resultIndex = 0;
+
+    for ($aItem in $A) {
+        $skip = 0;
+        for ($bItem in $B) {
+            if ($aItem == $bItem) {
+                $skip = 1;
+                break;
+            }
+        }
+        if ($skip == 0) {
+            $result[$resultIndex++] = $aItem;
+        }
+    }
+    return $result;
+}
+
+
+/**
+ * Convert a string array to a list of strings in python form: 
+ * ["str1", "str2".. ]
+ */
+global proc string xgmStringArrayToStringList( string $strArray[] )
+{
+    int $numElem = size( $strArray );
+    string $result = "[";
+    if ( $numElem == 0 ) { // Empty list
+        $result += "]";
+    } else {
+        int $lastIdx = $numElem - 1;
+        int $i;
+        for ( $i = 0; $i < $lastIdx; $i++ ) {
+            $result += "\"" +  $strArray[$i] + "\",";
+        }
+        $result += "\"" +  $strArray[$lastIdx] + "\"]";
+    }
+
+    return $result;
+}
+
+
+/**
+ * Convert a tokenized string to a list of strings in python form: 
+ * ["str1", "str2".. ]
+ */
+global proc string xgmStringToStringList( string $value, string $token )
+{
+    string $strArray[] = `stringToStringArray $value $token`;
+    return xgmStringArrayToStringList($strArray);
+}

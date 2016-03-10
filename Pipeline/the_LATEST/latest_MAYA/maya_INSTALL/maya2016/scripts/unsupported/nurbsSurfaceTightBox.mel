@@ -1,0 +1,200 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+proc int getNurbsSurfaceKnots( 
+	string $srfName, float $uKnots[], float $vKnots[] )
+//
+//	Description :
+//    Get surface knots in U and V
+{
+
+	// create info Node.
+	string $infoNode ;
+	if( catch( $infoNode = `createNode surfaceInfo` ) ) {
+		return 1; // failed
+	} 
+
+	// connect surface on to the info node.
+	string $outAttr = $srfName + ".local" ; 
+	string $inAttr = $infoNode + ".is" ;
+	connectAttr $outAttr $inAttr ;
+
+	// read the knots.
+	$uKnots = `getAttr ($infoNode + ".knotsU")`;	
+	$vKnots = `getAttr ($infoNode + ".knotsV")`;	
+
+	// delete surface info node.
+	delete $infoNode ;
+
+	// worked
+	return 0;
+}
+
+proc int getNurbsSurfaceTightBox( 
+	string $srf, int $samplesPerSpan, 
+	float $x[], float $y[], float $z[] )
+//
+//	Description :
+//    Compute tight surface bounding box by computing points 
+//  regularly spaced in U and V on the surface.
+// 
+{
+	// initialise limits at first corner of surface
+	float $xyz[] = eval ("pointOnSurface -u 0 -v 0 -top true -p " + $srf);
+	$x[0] = $xyz[0]; $x[1] = $xyz[0];
+	$y[0] = $xyz[1]; $y[1] = $xyz[1];
+	$z[0] = $xyz[2]; $z[1] = $xyz[2];
+// 	print ("Box limits after first point " 
+// 		   + $x[0] + " " + $x[1] + " " 
+// 		   + $y[0] + " " + $y[1] + " " 
+// 		   + $z[0] + " " + $z[1] + "\n");
+
+	// number of spans
+	int $nspansU = eval("getAttr " + $srf + ".spansU");
+	int $nspansV = eval("getAttr " + $srf + ".spansV");
+
+	// degree
+	int $degreeU = eval("getAttr " + $srf + ".degreeU");
+	int $degreeV = eval("getAttr " + $srf + ".degreeV");
+
+	// knots
+	float $uKnots[];
+	float $vKnots[];
+	if(getNurbsSurfaceKnots($srf, $uKnots, $vKnots)) {
+		return 1; // failed
+	}
+
+	// first and last knot values to use 
+	int $firstU = $degreeU - 1;
+	int $lastU = $nspansU + $firstU;
+	int $firstV = $degreeV - 1;
+	int $lastV = $nspansV + $firstV;
+
+	// loop over knot values
+	int $uIndex, $vIndex;
+	int $uSample, $vSample;
+	int $uSampleMax, $vSampleMax;
+	float $u, $v;
+	// loop over U spans
+	for($uIndex = $firstU; $uIndex < $lastU; $uIndex++) {
+
+		// maximum number of samples for this span
+		$uSampleMax = ($uIndex < $lastU-1) ? $samplesPerSpan - 1 : $samplesPerSpan;
+		// parameter interval for this span
+		float $uInterval = $uKnots[$uIndex+1] - $uKnots[$uIndex];
+
+		// loop over U samples
+		for($uSample = 0; $uSample <= $uSampleMax; $uSample++) {
+
+			// get value of U
+			$u = $uKnots[$uIndex] + $uSample*$uInterval/float($samplesPerSpan);
+			// make sure rouding errors dont take it off the end
+			if($uIndex == ($lastU-1) && $uSample == $uSampleMax) {
+				$u = $uKnots[$lastU];
+			}
+
+			// loop over V spans
+			for($vIndex = $firstV; $vIndex < $lastV; $vIndex++) {
+
+				// maximum number of samples for this span
+				$vSampleMax = ($vIndex < $lastV-1) ? $samplesPerSpan - 1 : $samplesPerSpan;
+				// parameter interval for this span
+				float $vInterval = $vKnots[$vIndex+1] - $vKnots[$vIndex];
+
+				// loop over V samples
+				for($vSample = 0; $vSample <= $vSampleMax; $vSample++) {
+
+					$v = $vKnots[$vIndex] + $vSample*$vInterval/float($samplesPerSpan);
+					// make sure rouding errors dont take it off the end
+					if($vIndex == ($lastV-1) && $vSample == $vSampleMax) {
+						$v = $vKnots[$lastV];
+					}
+
+// 					print ("UV " + $u + " " + $v + "\n");
+					// compute the surface point
+					$xyz = eval ("pointOnSurface -u " + $u + " -v " + $v + " -top false -p " + $srf);
+
+					// update bounding box given the new point
+					if($xyz[0] < $x[0]) $x[0] = $xyz[0]; 
+					if($xyz[0] > $x[1]) $x[1] = $xyz[0]; 
+					if($xyz[1] < $y[0]) $y[0] = $xyz[1]; 
+					if($xyz[1] > $y[1]) $y[1] = $xyz[1]; 
+					if($xyz[2] < $z[0]) $z[0] = $xyz[2]; 
+					if($xyz[2] > $z[1]) $z[1] = $xyz[2]; 
+// 					print ("Box limits after this point " 
+// 						   + $x[0] + " " + $x[1] + " " 
+// 						   + $y[0] + " " + $y[1] + " " 
+// 						   + $z[0] + " " + $z[1] + "\n");
+				}
+			}
+		}
+	}
+
+	return 0;
+}
+
+
+global proc nurbsSurfaceTightBox(int $samplesPerSpan)
+{
+	// Get the selection list.
+	string $selList[] = `ls -sl`;
+
+	// Run filter to select only the NURBS surfaces
+	global int $gSelectNurbsSurfacesBit ;
+
+	string $srfList[] = `filterExpand -ex true 
+		-sm $gSelectNurbsSurfacesBit`;
+	int $len = size($srfList) ;
+	if( $len == 0 ) {
+		print "No NURBS surfaces selected\n" ;
+		return;
+	}
+
+	// always need at least one sample per span
+	if($samplesPerSpan < 1) $samplesPerSpan = 1;
+
+	// box values
+	float $x[2], $y[2], $z[2];
+
+	// Work on the last item if more than one NURBS surface in list.
+	for($srfNum = 0; $srfNum < $len; $srfNum++) {
+		string $srf = $srfList[$srfNum] ;
+
+		// print separator if more than one surface
+		if($len>1) print "----------------------------------\n";
+
+		// print out the form,degree,nspans,bbox
+		if(getNurbsSurfaceTightBox($srf, $samplesPerSpan, $x, $y, $z )) {
+			print ("Failed to compute box for surface " + $srf + "\n");
+			break;
+		}
+		print ("Box for surface " + $srf + ":\n");
+		print ("  X: " + $x[0] + " " + $x[1] +"\n");
+		print ("  Y: " + $y[0] + " " + $y[1] +"\n");
+		print ("  Z: " + $z[0] + " " + $z[1] +"\n");
+	}
+
+	// print separator if more than one surface
+	if($len>1) print "----------------------------------\n";
+
+	// reselect surface for which information was returned
+ 	select -r $selList;
+}

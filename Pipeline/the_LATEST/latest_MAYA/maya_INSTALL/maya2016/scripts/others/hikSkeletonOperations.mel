@@ -1,0 +1,289 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// hikSkeletonOperations.mel
+//
+// Description:
+//		Contains methods that perform skeleton generator operations.
+//		These methods could trigger UI updates in any part of the
+//		unified character context.
+//
+
+////////////////////////////////////////////////////////////////////////
+// Local methods...
+////////////////////////////////////////////////////////////////////////
+
+proc string getFilter()
+{
+	string $type = (uiRes("m_hikSkeletonOperations.kHikSkeletonTemplate"));
+	return ( $type + " (*.hik)");
+}
+
+
+////////////////////////////////////////////////////////////////////////
+// Global methods...
+////////////////////////////////////////////////////////////////////////
+
+
+global proc hikUpdateSkeletonFromSkeletonGeneratorNode(string $pCharacter, float $characterScale)
+//
+// Description:
+//		Updates the character's skeleton based on the values in the associated
+//		skeleton generator node.
+//
+{
+
+ string $errorMessageNoCharacterSelected = (uiRes("m_hikSkeletonOperations.kNoCharSel"));
+
+	if( $pCharacter != "" )
+	{
+		string $controlSet = hikGetControlRig( $pCharacter );
+		if($controlSet == "")
+		{
+			//We must not update the skeleton once there is a control rig for the character.
+			
+			string $skeletonGeneratorNode = hikGetSkeletonGeneratorNode( $pCharacter );
+			
+			if($skeletonGeneratorNode != "")
+			{
+				hikUnparentCharNodes( $pCharacter );
+				hikUpdateSkeletonNodes( $pCharacter, $skeletonGeneratorNode);
+
+				hikReadCharPoseFromSkeletonGeneratorNode( $pCharacter, $skeletonGeneratorNode,$characterScale);
+				
+				hikSetSkeletonGlobalTRS( $pCharacter );
+				hikSetSpineOrNeckGlobalTRS( $pCharacter, $skeletonGeneratorNode, "Spine");
+				hikSetSpineOrNeckGlobalTRS( $pCharacter, $skeletonGeneratorNode, "Neck");
+
+				hikRecursiveParentSkeleton( $pCharacter , 0);
+
+				hikReadStancePoseTRSOffsets( hikGetCurrentCharacter() );
+				
+				hikSetSkeletonRadius( $pCharacter );
+			}
+		}
+	}
+	else
+		print ($errorMessageNoCharacterSelected );
+}
+
+
+global proc hikCreateSkeleton()
+// Description:
+//		Creates a new skeleton
+//
+{
+	//save the state from the current character before going to create a new one.
+	hikSyncSkeletonGeneratorFromUI();
+
+	hikCreateCharacter( "Character1" );
+	string $currentName = hikGetCurrentCharacter();
+	if($currentName != "")
+	{
+		
+		string $skeletonGeneratorNode = `createNode HIKSkeletonGeneratorNode`;
+		setAttr ($skeletonGeneratorNode+".isHistoricallyInteresting") 0;
+		string $outPlug = $skeletonGeneratorNode + ".CharacterNode";
+		string $inPlug = $currentName + ".SkeletonGenerator";
+		connectAttr $outPlug $inPlug;
+
+		hikReadDefaultCharPoseFileOntoSkeletonGeneratorNode($skeletonGeneratorNode);
+		hikSetSkeletonGeneratorDefaults($skeletonGeneratorNode);
+
+		select -r $currentName;
+
+		hikSetCurrentSource(hikNoneString());	// set the current source to "None"
+
+		// If we have no characters yet, select the newly
+		// created character. This will refresh both the
+		// character and source lists...
+		hikUpdateCurrentCharacterFromScene();
+
+		// Update the definition information if the plug-in is loaded
+		hikUpdateDefinitionUI();
+
+		// Select and refresh the skeleton generator tab
+		hikSelectSkeletonTab();
+	}
+}
+
+global proc hikResetSkeleton()
+{
+	string $skeletonGeneratorNode = hikGetSkeletonGeneratorNode( hikGetCurrentCharacter() );
+	if($skeletonGeneratorNode == "")
+		return;
+
+	hikReadDefaultCharPoseFileOntoSkeletonGeneratorNode($skeletonGeneratorNode);
+
+	hikSetSkeletonGeneratorDefaults($skeletonGeneratorNode);
+	hikUpdateSkeletonUI();
+	hikUpdateCurrentSkeleton();
+}
+
+global proc hikDeleteSkeleton()
+{
+	string $character = hikGetCurrentCharacter();
+	if (size($character) == 0) {
+		error((uiRes("m_hikSkeletonOperations.kNoCharacterFound")));
+		return;
+	}
+	
+	if( `referenceQuery -isNodeReferenced $character` )
+	{
+		warning (uiRes("m_hikSkeletonOperations.kReferencedCharacterDeleteWarning"));
+		return;
+	}
+
+	string $ok		= (uiRes("m_hikSkeletonOperations.kOK"));
+	string $cancel	= (uiRes("m_hikSkeletonOperations.kCancel"));
+	string $result = `confirmDialog
+		-title (uiRes("m_hikSkeletonOperations.kDeleteHikSkeleton"))
+		-message (uiRes("m_hikSkeletonOperations.kAreYouSureMsg"))
+		-button $ok
+		-button $cancel
+		-defaultButton $ok
+		-cancelButton $cancel
+		-dismissString $cancel`;
+
+	// If the result was not "OK", then cancel
+	//
+	if ( $result != $ok ) {
+		return;
+	}
+	
+	// If a retargeter has been created for the current character ...
+	string $name = RetargeterGetName( $character );
+	if ( RetargeterExists( $name ) )
+		RetargeterDelete( $name );     // ... delete it
+
+
+	string $lSKNodes[] = hikGetSkeletonNodes($character);
+	hikDeleteCharacter($character); // delete character befor to avoid cycle check error
+	if (size($lSKNodes)) {
+		delete $lSKNodes;
+	}
+	
+	// If we deleted a character, the call to hikUpdateCurrentCharacterFromScene 
+	// will select the next character in the scene
+	hikUpdateCharacterControlsUI(false);
+
+	// we are also changing the current tab
+	hikOnSwitchContextualTabs( );
+}
+
+global proc hikSaveSkeleton()
+// Description:
+//		Saves Edits on the current skeleton
+//
+{
+	hikSyncSkeletonGeneratorFromUI();
+}
+
+global proc hikMirrorSkeleton()
+{
+	string $currentName = hikGetCurrentCharacter();
+
+	string $skeletonGeneratorNode = hikGetSkeletonGeneratorNode($currentName);
+	if($skeletonGeneratorNode == "") {
+		return;
+	}
+
+	hikSyncSkeletonGeneratorFromUI();
+
+	string $hipsTPlug = $skeletonGeneratorNode + ".HipsT";	
+	float $hipsT[] = `getAttr $hipsTPlug`;
+	float $lT[];
+
+	for($i = 0; $i < hikGetNodeCount(); $i++)
+	{		
+		string $nodeName = GetHIKNodeName($i);
+		string $tmpCharObjectName = $skeletonGeneratorNode + "." + $nodeName;	
+		$lT = `getAttr ($tmpCharObjectName + "T")`;		
+		string $rightNodeName = "";
+		if(startsWith($nodeName,"Left"))
+		{
+			string $partialName = endString($nodeName,(size($nodeName) - 4));
+			$rightNodeName = "Right" + $partialName;
+		}
+
+		if($rightNodeName != "")
+		{
+			$lT[0] = $hipsT[0] - ($lT[0] - $hipsT[0]);
+			//string $str = "setting " + $rightNodeName + " to " + $lT[0] + "," + $lT[1] + "," + $lT[2] + "\n";
+			//print($str);
+			hikSetSkTOffsetOnSkeletonGeneratorNode($skeletonGeneratorNode,$rightNodeName, $lT[0],$lT[1],$lT[2]);
+		}
+
+	}
+	hikUpdateSkeletonFromSkeletonGeneratorNode( $currentName, 1.0 );
+}
+
+global proc hikExportSkeleton()
+// Description:
+//		Export the Skeleton Template to file
+{
+	string $currentName = hikGetCurrentCharacter();
+	
+	string $skeletonGeneratorNode = hikGetSkeletonGeneratorNode($currentName);
+	if($skeletonGeneratorNode == "")
+	{
+		string $noSkeletonGeneratorNodeError = (uiRes("m_hikSkeletonOperations.kNoSkeletonGeneratorNode"));
+		error($noSkeletonGeneratorNodeError);
+		return;
+	}
+
+	hikSyncSkeletonGeneratorFromUI();
+
+	string $exportTitle  = (uiRes("m_hikSkeletonOperations.kTemplateExportTo"));
+	string $singleFilter = getFilter();
+	string $result[] = `fileDialog2 -fileFilter $singleFilter -dialogStyle 2 -cap $exportTitle -fileMode 0`;
+	if(size($result) > 0)
+	{
+		hikWriteSkeletonPoseFile($skeletonGeneratorNode,$result[0]);
+	}
+}
+
+global proc hikImportSkeleton()
+// Description:
+//		Import a Skeleton Template from file
+//
+{
+	string $currentName = hikGetCurrentCharacter();
+
+	string $skeletonGeneratorNode = hikGetSkeletonGeneratorNode($currentName);
+	if($skeletonGeneratorNode == "")
+	{
+		string $noSkeletonGeneratorNodeError = (uiRes("m_hikSkeletonOperations.kImportNoSkeletonGeneratorNode"));
+		error($noSkeletonGeneratorNodeError);
+		return;
+	}
+
+	string $importTitle = (uiRes("m_hikSkeletonOperations.kTemplateImportTo"));
+	string $singleFilter = getFilter();
+	string $result[] = `fileDialog2 -fileFilter $singleFilter -dialogStyle 2 -cap $importTitle -fileMode 1`;
+	if(size($result) > 0)
+	{
+		hikReadCharPoseFileOntoSkeletonGeneratorNode($skeletonGeneratorNode,$result[0]);
+		hikUpdateSkeletonFromSkeletonGeneratorNode( $currentName, 1.0 );
+	}
+
+}

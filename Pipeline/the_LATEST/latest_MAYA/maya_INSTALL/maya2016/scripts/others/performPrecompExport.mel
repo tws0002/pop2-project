@@ -1,0 +1,1497 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//There are three kinds of view which are under the three tabs
+//The views include: render layer view, camera view and render pass view
+
+//The procs included in thie mel are:
+//proc precompExportUpdatePermanentScriptJob which creates permanent script jobs
+
+//proc updateLayerChangePrecompExportScriptJobs which updates script job
+
+//proc updatePrecompExportTreeViewLayer2Button which updates layer2's button states
+//after layer3's button have been updated
+
+//proc updatePrecompExportTreeViewLayer1Button which updates layer1's button states 
+//after layer2's button states have been updated
+
+//proc precompExportLayerTreeViewButtonClick updates a button's state under the specific view
+//no matter which layer it is in
+
+//proc precompExportTreeViewRenderLayerButtonClickCommand which is callback for RenderLayer view
+//button's clicking. It will also update the clicked button's children and parent's states and the other
+//two view's button states.
+
+//proc precompExportTreeViewCameraButtonClickCommand which is similar with 
+//precompExportTreeViewRenderLayerButtonClickCommand
+
+//proc precompExportTreeViewRenderPassButtonClickCommand which is similar with 
+//precompExportTreeViewRenderLayerButtonClickCommand
+
+//proc updatePrecompExportTreeViewButton which updates button states under the specific view
+
+//proc precompExportTreeViewButtonClickCommand which is responsible for update button states under
+//current view which a button is clicked
+
+//proc updatePrecompExportTreeView which updates treeview except the button states under current view
+
+//proc updatePrecompExportEditorUI which updates UI, including treeView and button states under all
+//views
+
+source "performExportToPrecompFile";
+
+global string $gPrecompExportCheckedIcon = "precompExportChecked.png";
+global string $gPrecompExportPartialIcon = "precompExportPartial.png";
+global string $gPrecompExportUncheckedIcon = "precompExportUnchecked.png";
+
+//To avoid the same name in the treeView, 
+//for example: build identifier for c. a in the parent of b in the tree view
+// a, b,c->a%b%c
+//
+global proc string precompExportBuildIdent(string $a, string $b, string $c)
+{
+    if($a == "")
+    {
+        return "";
+    }
+    if($b == "" && $c != "")
+    {
+        return "";
+    }
+
+    if($c == "")
+    {
+        if($b == "")
+        {
+            return $a;
+        }
+        else
+        {
+            return ($a + "%" + $b);
+        }
+    }
+    return ($a + "%" + $b + "%"+ $c);
+}
+
+//Called on user rename of items in tree view, no matter which layer it is in.
+//Return the new identifier for the item in the tree view, or an empty string
+//in the item should not be renamed
+//
+global proc string precompExportEditorItemOnRename(string $oldName, string $newName)
+{
+    string $newItem = "";
+	string $newItemName = $newName;
+    string $array[] = {};
+    //The index for top layer in the tree view is 0
+    //
+    int $layerIndex;
+    if(!`objExists $oldName`)
+    {
+        //the oldName has been identified
+        //
+        tokenize($oldName, "%", $array);
+		if($array[2] == "MasterBeauty")
+		{
+			error (uiRes("m_performPrecompExport.kRenameMasterBeautyWarning"));
+			return $newItem;
+		}
+        else if(`objExists $array[0]` && `objExists $array[1]` && `objExists $array[2]`)
+        {
+            $layerIndex = 2;
+            $oldName = $array[2];
+        }
+        else if(`objExists $array[0]` && `objExists $array[1]`)
+        {
+            $layerIndex = 1;
+            $oldName = $array[1];
+        }
+    }
+    if(!catch($newItemName = rename($oldName, $newName)))
+    {
+        if(2 == $layerIndex )
+        {
+            $newItem = precompExportBuildIdent($array[0], $array[1], $newItemName);
+        }
+        else if(1 == $layerIndex)
+        {
+            $newItem = precompExportBuildIdent($array[0], $newItemName,"" );
+        }
+        else
+        {
+            $newItem = $newItemName;
+        }
+    }
+    return $newItem;
+}
+
+global proc precompExportUpdatePermanentScriptJob(string $toolName, string $tabLayout)
+{
+    //render layer changed callback
+    //
+    string $updateScriptJobCmd = 
+        ("updateLayerChangePrecompExportScriptJobs " + $toolName + " " + $tabLayout);
+
+    string $updateUI =  
+        ("updatePrecompExportEditorUI " + $tabLayout + " PrecompExportTab " + 1);
+
+    scriptJob -permanent -parent $tabLayout -event renderLayerChange 
+            ($updateScriptJobCmd + ";" +$updateUI);
+
+    scriptJob -permanent -parent $tabLayout -event cameraChange 
+            ($updateScriptJobCmd + ";" +$updateUI);
+
+    scriptJob -permanent -parent $tabLayout -event renderPassChange 
+            ($updateScriptJobCmd + ";" +$updateUI);
+
+    $updateUI =  
+        ("updatePrecompExportEditorUI " + $tabLayout + " PrecompExportTab " + 0);
+
+    scriptJob -permanent -parent $tabLayout -event SceneOpened 
+            ($updateScriptJobCmd + ";" +$updateUI);
+
+    scriptJob -permanent -parent $tabLayout -event SceneImported 
+            ($updateScriptJobCmd + ";" +$updateUI);
+
+    scriptJob -permanent -parent $tabLayout -event readingReferenceFile 
+            ($updateScriptJobCmd + ";" +$updateUI);
+}
+
+global proc updateLayerChangePrecompExportScriptJobs(string $toolName, string $tabLayout)
+{
+    string $treeControlLayer = $toolName + "RenderLayersView";
+
+    string $updateUI =  
+        ("updatePrecompExportEditorUI " + $tabLayout + " PrecompExportTab " + 1);
+
+    int $firstScriptJob = true;
+    string $allLayers[] = `listConnections renderLayerManager.renderLayerId`;
+    for ($layer in $allLayers)
+    {
+        //when the relation between a renderpass and a layer changes,
+        //the callback will be invoked
+        //
+        if($firstScriptJob)
+        {
+            scriptJob -replacePrevious -parent $treeControlLayer 
+                -connectionChange ($layer + ".renderPass") $updateUI;
+            $firstScriptJob = false;
+        }
+        else
+        {
+            scriptJob  -parent $treeControlLayer 
+                -connectionChange ($layer + ".renderPass") $updateUI;
+        }
+
+        //This scriptJob is not necessary.
+        //The reason for deleting this scriptJob is related with the function getCameraUnderLayer
+
+        //when the relation between a layer and the camera changes,
+        //the call back will be invoked
+        //
+        //scriptJob  -parent $treeControlLayer 
+        //            -connectionChange ($layer + ".renderInfo") $updateUI;
+
+        //layer's name change callback
+        //
+        scriptJob  -parent $treeControlLayer 
+            -nodeNameChanged $layer $updateUI;
+
+        //layer's renderable attribute callback
+        //
+        scriptJob -parent $treeControlLayer
+            -attributeChange ($layer + ".renderable") $updateUI;;
+	}
+
+    //camera's renderable attribute callback
+    //
+    string $allCameras[] = `listCameras`;
+    for($camera in $allCameras)
+    {
+        scriptJob -parent $treeControlLayer
+            -attributeChange ($camera + ".renderable") $updateUI;
+    }
+
+    //render passes' renderable attribute callback
+    //
+    string $allPasses[] = `ls -type renderPass`;
+    for($renderPass in $allPasses)
+    {
+        scriptJob -parent $treeControlLayer
+            -attributeChange ($renderPass + ".renderable") $updateUI;
+		scriptJob -parent $treeControlLayer
+			-attributeChange ($renderPass + ".passID") $updateUI;
+    }
+
+    //render passes' renderable attribute callback
+    //
+    string $allPassSets[] = `ls -type renderPassSet`;
+    for($renderPassSet in $allPassSets)
+    {
+        scriptJob -parent $treeControlLayer
+            -attributeChange ($renderPassSet + ".renderable") $updateUI;
+        scriptJob -parent $treeControlLayer
+            -connectionChange ($renderPassSet + ".renderPass") $updateUI;
+    }
+}
+
+global proc updatePrecompExportTreeViewLayer2Button(
+    string $treeControl,  string $item)
+{
+    global string $gPrecompExportCheckedIcon;
+    global string $gPrecompExportPartialIcon;
+    global string $gPrecompExportUncheckedIcon;
+
+    if(`treeView -itemExists $item -q $treeControl` == 0)
+        return;
+    //get all children of $item
+    //
+    string $childrenArray[] = `treeView -children $item -q $treeControl`;
+    int $num = size($childrenArray);
+
+    //no children, keep button's state
+    //
+    if($num == 1)
+    {
+        return;
+    }
+
+    int $numChild = 0;
+    int $selected = 0;
+    int $i;
+
+    //childrenArray includes $item, so we traverse from 1;
+    //
+    for($i = 1; $i < $num; $i++)
+    {
+        $numChild++;
+        string $icon = `treeView -image $childrenArray[$i] 1 "" -q $treeControl`;
+        if($icon == $gPrecompExportCheckedIcon)
+        {
+            $selected++;
+        }
+    }
+    //layer2's children are selected fully.
+    //
+    if($selected == $numChild)
+    {
+        treeView -edit 
+            -image $item 1 $gPrecompExportCheckedIcon
+            -buttonState $item 1 "buttonDown" $treeControl;
+    }
+    //layer2's children are selected nully.
+    //
+    else if($selected == 0)
+    {
+        treeView -edit 
+            -image $item 1 $gPrecompExportUncheckedIcon
+            -buttonState $item 1 "buttonUp" $treeControl;
+    }
+    //layer2's children are selected partially.
+    //
+    else
+    {
+        treeView -edit 
+            -image $item 1 $gPrecompExportPartialIcon
+            -buttonState $item 1 "buttonDown" $treeControl;
+    }
+
+}
+
+global proc updatePrecompExportTreeViewLayer1Button(
+    string $treeControl,  string $item)
+{
+    global string $gPrecompExportCheckedIcon;
+    global string $gPrecompExportPartialIcon;
+    global string $gPrecompExportUncheckedIcon;
+    
+    if(`treeView -itemExists $item -q $treeControl` == 0)
+        return;
+
+    int $i;
+    int $numChild = 0;
+    int $selected = 0;
+    string $childrenArray[] = `treeView -children $item -q $treeControl`;
+    int $num = size($childrenArray);
+
+    //no children, keep button's state
+    //
+    if($num == 1)
+    {
+        return;
+    }
+
+    //$childrenArray includes $item, so we traverse from 1;
+    //
+    for($i = 1; $i < $num; $i++)
+    {
+        string $array[] = {};
+        tokenize($childrenArray[$i], "%", $array);
+        //as the layer2 has been marked, we just tranverse layer2
+        //
+        if(size($array) == 2)
+        {
+            $numChild++;
+            string $icon = `treeView -image $childrenArray[$i] 1 "" -q $treeControl`;
+            if($icon == $gPrecompExportPartialIcon)
+            {
+                treeView -edit 
+                    -image $item 1 $gPrecompExportPartialIcon
+                    -buttonState $item 1 "buttonDown" $treeControl;
+                return;
+            }
+            else if($icon == $gPrecompExportCheckedIcon)
+            {
+                $selected++;
+            }
+        }
+    }
+    //layer1's children are selected fully.
+    //
+    if($selected == $numChild)
+    {
+        treeView -edit 
+            -image $item 1 $gPrecompExportCheckedIcon
+            -buttonState $item 1 "buttonDown" $treeControl;
+    }
+    //layer1's children are selected nully.
+    //
+    else if($selected == 0)
+    {
+        treeView -edit 
+            -image $item 1 $gPrecompExportUncheckedIcon
+            -buttonState $item 1 "buttonUp" $treeControl;
+    }
+    //layer1's children are selected partially.
+    //
+    else
+    {
+        treeView -edit 
+            -image $item 1 $gPrecompExportPartialIcon
+            -buttonState $item 1 "buttonDown" $treeControl;
+    }
+}
+
+//$force is used for forcing button state no matter what the button state was
+//if $forceState == -1, it will not be used.
+//if $forceState == 0, the button state will be unchecked.
+//if $forceState == 1, the button state will be checked.
+//
+global proc precompExportLayerTreeViewButtonClick(string $treeControl, string $item, int $forceState)
+{
+    global string $gPrecompExportCheckedIcon;
+    global string $gPrecompExportPartialIcon;
+    global string $gPrecompExportUncheckedIcon;
+
+    if(`treeView -itemExists $item -q $treeControl` == 0)
+    {
+        return;
+    }
+
+    string $childrenArray[] = `treeView -children $item -q $treeControl`;
+
+    if($forceState == -1)
+    {
+        string $icon = `treeView -image $item 1 "" -q $treeControl`;
+
+        if($icon == $gPrecompExportPartialIcon || 
+           $icon ==$gPrecompExportCheckedIcon)
+        //set all of children unselected.
+        //
+        {
+            for($child in $childrenArray)
+            {
+                treeView -edit 
+                    -image $child 1 $gPrecompExportUncheckedIcon
+                    -buttonState $child 1 "buttonUp" $treeControl;
+            }
+        }
+        else
+        //set all of children selected
+        //
+        {
+            for($child in $childrenArray)
+            {
+                string $array[] = {};
+                tokenize($child, "%", $array);
+                //set hierarchy button state
+                //
+                if(size($array) == 3)
+                {
+                     treeView -edit 
+                        -image $child 1 $gPrecompExportCheckedIcon
+                        -buttonState $child 1 "buttonDown" $treeControl;
+                }
+                //set unhierarchy button state
+                //
+                else
+                {
+                    treeView -edit 
+                        -image $child 1 $gPrecompExportCheckedIcon
+                        -buttonState $child 1 "buttonDown" $treeControl;
+                }
+            }
+        }
+    }
+    else if($forceState == 0)
+    {
+        for($child in $childrenArray)
+        {
+            treeView -edit 
+                -image $child 1 $gPrecompExportUncheckedIcon
+                -buttonState $child 1 "buttonUp" $treeControl;
+        }
+    }
+    else//$forceState == 1
+    {
+        for($child in $childrenArray)
+        {
+            string $array[] = {};
+            tokenize($child, "%", $array);
+            if(size($array) == 3)
+            {
+                treeView -edit 
+                    -image $child 1 $gPrecompExportCheckedIcon
+                    -buttonState $child 1 "buttonDown" $treeControl;
+            }
+            else
+            {
+                treeView -edit 
+                    -image $child 1 $gPrecompExportCheckedIcon
+                    -buttonState $child 1 "buttonDown" $treeControl;
+            }
+        }
+    }
+}
+
+global proc precompExportTreeViewRenderLayerButtonClickCommand(
+    string $toolName, string $item, int $onoff)
+{
+    global string $gPrecompExportUncheckedIcon;
+
+    string $treeControlClick = $toolName + "RenderLayersView";
+
+    if(`treeView -itemExists $item -q $treeControlClick` == 0)
+        return;
+
+    precompExportTreeViewButtonClickCommand($treeControlClick, $item, -1);
+
+    //get $item's direct children
+    //
+    string $childrenArray[] = `treeView -children $item -q $treeControlClick`;
+
+    //update camera view tab
+    //
+    string $treeControl = $toolName + "CamerasView";
+    for($child in $childrenArray)
+    {
+        if(`treeView -isLeaf $child -q $treeControlClick` == 0)
+        {
+            continue;
+        }
+        string $array[] = {};
+        tokenize($child, "%", $array);
+        if( $array[1] == "" || ($array[2] != "" &&  $array[0] == ""))
+        {
+            continue;
+        }
+        $item = precompExportBuildIdent($array[1], $array[0], $array[2]);
+        string $icon = `treeView -image $child 1 "" -q $treeControlClick`;
+        if($icon == $gPrecompExportUncheckedIcon)
+        {
+            precompExportTreeViewButtonClickCommand($treeControl, $item, 0);
+        }
+        else
+        {
+            precompExportTreeViewButtonClickCommand($treeControl, $item,1);
+        }
+    }
+
+    //update pass view tab
+    //
+    $treeControl = $toolName + "RenderPassesView";
+    for($child in $childrenArray)
+    {
+        if(`treeView -isLeaf $child -q $treeControlClick` == 0)
+        {
+            continue;
+        }
+        string $array[] = {};
+        tokenize($child, "%", $array);
+        if( $array[2] == "" || ($array[0] != "" &&  $array[1] == ""))
+        {
+            continue;
+        }
+        $item = precompExportBuildIdent($array[2], $array[1], $array[0]);
+        string $icon = `treeView -image $child 1 "" -q $treeControlClick`;
+        if($icon == $gPrecompExportUncheckedIcon)
+        {
+            precompExportTreeViewButtonClickCommand($treeControl, $item, 0);
+        }
+        else
+        {
+            precompExportTreeViewButtonClickCommand($treeControl, $item,1);
+        }
+    }
+}
+
+global proc precompExportTreeViewCameraButtonClickCommand(
+    string $toolName, string $item, int $onoff)
+{
+    global string $gPrecompExportUncheckedIcon;
+
+    string $treeControlClick = $toolName + "CamerasView";
+
+    if(`treeView -itemExists $item -q $treeControlClick` == 0)
+        return;
+
+    precompExportTreeViewButtonClickCommand($treeControlClick, $item, -1);
+
+    //get $item's direct children
+    //
+    string $childrenArray[] = `treeView -children $item -q $treeControlClick`;
+
+    string $treeControl = $toolName + "RenderLayersView";
+    for($child in $childrenArray)
+    {
+        if(`treeView -isLeaf $child -q $treeControlClick` == 0)
+        {
+            continue;
+        }
+        string $array[] = {};
+        tokenize($child, "%", $array);
+        if( $array[1] == "" || ($array[2] != "" &&  $array[0] == ""))
+        {
+            continue;
+        }
+        string $item = precompExportBuildIdent($array[1], $array[0], $array[2]);
+        string $icon = `treeView -image $child 1 "" -q $treeControlClick`;
+        if($icon == $gPrecompExportUncheckedIcon)
+        {
+            precompExportTreeViewButtonClickCommand($treeControl, $item, 0);
+        }
+        else
+        {
+            precompExportTreeViewButtonClickCommand($treeControl, $item,1);
+        }
+    }
+
+    $treeControl = $toolName + "RenderPassesView";
+    for($child in $childrenArray)
+    {
+        if(`treeView -isLeaf $child -q $treeControlClick` == 0)
+        {
+            continue;
+        }
+        string $array[] = {};
+        tokenize($child, "%", $array);
+        if( $array[2] == "" || ($array[1] != "" &&  $array[0] == ""))
+        {
+            continue;
+        }
+        string $item = precompExportBuildIdent($array[2], $array[0], $array[1]);
+        string $icon = `treeView -image $child 1 "" -q $treeControlClick`;
+        if($icon == $gPrecompExportUncheckedIcon)
+        {
+            precompExportTreeViewButtonClickCommand($treeControl, $item, 0);
+        }
+        else
+        {
+            precompExportTreeViewButtonClickCommand($treeControl, $item, 1);
+        }
+    }
+}
+
+global proc precompExportTreeViewRenderPassButtonClickCommand(
+    string $toolName, string $item, int $onoff)
+{
+    global string $gPrecompExportUncheckedIcon;
+
+    string $treeControlClick = $toolName + "RenderPassesView";
+    if(`treeView -itemExists $item -q $treeControlClick` == 0)
+    {
+        return ;
+    }
+
+    precompExportTreeViewButtonClickCommand($treeControlClick, $item, -1);
+    //get $item's direct children
+    //
+    string $childrenArray[] = `treeView -children $item -q $treeControlClick`;
+
+    string $treeControl = $toolName + "RenderLayersView";
+    for($child in $childrenArray)
+    {
+        if(`treeView -isLeaf $child -q $treeControlClick` == 0)
+        {
+            continue;
+        }
+        string $array[] = {};
+        tokenize($child, "%", $array);
+        if( $array[2] == "" || ($array[0] != "" &&  $array[1] == ""))
+        {
+            continue;
+        }
+        string $item = precompExportBuildIdent($array[2], $array[1], $array[0]);
+        string $icon = `treeView -image $child 1 "" -q $treeControlClick`;
+        if($icon == $gPrecompExportUncheckedIcon)
+        {
+            precompExportTreeViewButtonClickCommand($treeControl, $item, 0);
+        }
+        else
+        {
+            precompExportTreeViewButtonClickCommand($treeControl, $item, 1);
+        }
+    }
+
+    $treeControl = $toolName + "CamerasView";
+    for($child in $childrenArray)
+    {
+        if(`treeView -isLeaf $child -q $treeControlClick` == 0)
+        {
+            continue;
+        }
+        string $array[] = {};
+        tokenize($child, "%", $array);
+        if( $array[1] == "" || ($array[0] != "" &&  $array[2] == ""))
+        {
+            continue;
+        }
+        string $item = precompExportBuildIdent($array[1], $array[2], $array[0]);
+        string $icon = `treeView -image $child 1 "" -q $treeControlClick`;
+        if($icon == $gPrecompExportUncheckedIcon)
+        {
+            precompExportTreeViewButtonClickCommand($treeControl, $item, 0);
+        }
+        else
+        {
+            precompExportTreeViewButtonClickCommand($treeControl, $item, 1);
+        }
+    }
+}
+
+//this proc will update layer1 and layer2's button states,
+//
+global proc updatePrecompExportTreeViewButton(
+    string $treeControl, string $layer1[], string $layer2[])
+{
+    int $i;
+    int $num = size($layer1);
+    string $layer2ItemArray[] = {};
+    for($i = 0; $i < $num; $i++)
+    {
+        if($layer1[$i] != "" && $layer2[$i] != "")
+        {
+            $layer2ItemArray[size($layer2ItemArray)] = precompExportBuildIdent($layer1[$i], $layer2[$i], "");
+        }
+    }
+    $layer2ItemArray = stringArrayRemoveDuplicates($layer2ItemArray);
+    for($item in $layer2ItemArray)
+    {
+        updatePrecompExportTreeViewLayer2Button($treeControl, $item);
+    }
+
+    string $layer1ItemArray[] = stringArrayRemoveDuplicates($layer1);
+    for($item in $layer1ItemArray)
+    {
+        if($item != "")
+        {
+            updatePrecompExportTreeViewLayer1Button($treeControl, $item);
+        }
+    }
+}
+
+global proc precompExportTreeViewButtonClickCommand(
+    string $treeControl, string $item, int $forceState)
+{
+    precompExportLayerTreeViewButtonClick($treeControl, $item, $forceState);
+    string $array[] = {};
+    tokenize($item, "%", $array);
+
+    //layer3's button is clicked
+    //
+    if(size($array) == 3)
+    {
+        string $identForLayer2 = precompExportBuildIdent($array[0], $array[1],"");
+        updatePrecompExportTreeViewLayer2Button($treeControl, $identForLayer2);
+        updatePrecompExportTreeViewLayer1Button($treeControl, $array[0]);
+    }
+    //layer2's button is clicked
+    //
+    else if(size($array) == 2)
+    {
+        updatePrecompExportTreeViewLayer1Button($treeControl, $array[0]);
+    }
+    //layer1's button is clicked
+    //
+    else
+    {
+
+    }
+}
+
+global proc string precompExportDisplayLabel(string $object)
+{
+    if($object == "MasterBeauty")
+        return ($object + ( (uiRes("m_performPrecompExport.kRenderPass"))));
+
+    string $type = `nodeType $object`;
+    if("transform" == $type)
+    {
+        return ($object +( (uiRes("m_performPrecompExport.kCamera"))));
+    }
+    else  if("renderPass" == $type)
+    {
+        return ($object + (uiRes("m_performPrecompExport.kRenderPass")));
+    }
+    else//"renderLayer == $type"
+    {
+        return ($object + ( (uiRes("m_performPrecompExport.kRenderLayer"))));
+    }
+}
+
+global proc updatePrecompExportTreeView(string $treeControl, string $layer1[], string $layer2[],string $layer3[])
+{
+    global string $gPrecompExportCheckedIcon;
+    global string $gPrecompExportPartialIcon;
+    global string $gPrecompExportUncheckedIcon;
+    if((size($layer1) != size($layer2)) || 
+        (size($layer2) != size($layer3)))
+        return;
+
+    int $num = size($layer1);
+    int $i;
+
+    //save expand collapse states and button states
+    //
+    int $expandStatesLayer1[] = {};
+    int $expandStatesLayer2[] = {};
+    int $checkStatesLayer1Button[] = {};
+    int $checkStatesLayer2Button[] = {};
+    int $checkStatesLayer3Button[] = {};
+    for($i = 0; $i < $num; $i++)
+    {
+        if($layer1[$i] == "")
+        {
+            continue;
+        }
+        if($layer2[$i] == "" && $layer3[$i] != "")
+        {
+            continue;
+        }
+
+        string $identLayer2 = precompExportBuildIdent($layer1[$i], $layer2[$i], "");
+        string $identLayer3 = precompExportBuildIdent($layer1[$i], $layer2[$i], $layer3[$i]);
+        if(`treeView -itemExists $layer1[$i] -q $treeControl` == 1)
+        {
+            $expandStatesLayer1[$i] = 
+                `treeView -isItemExpanded $layer1[$i] -q $treeControl`;
+            string $image = `treeView -image $layer1[$i] 1 "" -q $treeControl`;
+            if($image == $gPrecompExportUncheckedIcon)
+            {
+                $checkStatesLayer1Button[$i] = 0;
+            }
+            else
+            {
+                $checkStatesLayer1Button[$i] = 1;
+            }
+        }
+        //set the new button initial state
+        //
+        else
+        {
+            $checkStatesLayer1Button[$i] = 1;
+        }
+
+        if(`treeView -itemExists $identLayer2 -q $treeControl` == 1)
+        {
+            $expandStatesLayer2[$i] = 
+                `treeView -isItemExpanded $identLayer2 -q $treeControl`;
+            string $image = `treeView -image $identLayer2 1 "" -q $treeControl`;
+            if($image == $gPrecompExportUncheckedIcon)
+            {
+                $checkStatesLayer2Button[$i] = 0;
+            }
+            else
+            {
+                $checkStatesLayer2Button[$i] = 1;
+            }
+        }
+        //set the new button initial state
+        //
+        else
+        {
+            $checkStatesLayer2Button[$i] = 1;
+        }
+
+        if(`treeView -itemExists $identLayer3 -q $treeControl` == 1)
+        {
+            string $image = `treeView -image $identLayer3 1 "" -q $treeControl`;
+            if($image == $gPrecompExportUncheckedIcon)
+            {
+                $checkStatesLayer3Button[$i] = 0;
+            }
+            else
+            {
+                $checkStatesLayer3Button[$i] = 1;
+            }
+        }
+        //set the new button initial state
+        //
+        else
+        {
+            $checkStatesLayer3Button[$i] = 1;
+        }
+    }
+
+    //remove all old layer stuff
+    //
+    treeView -edit -removeAll $treeControl;
+
+    //build treeview
+    //
+    for($i = 0; $i < $num; $i++)
+    {
+        if($layer1[$i] == "")
+        {
+            continue;
+        }
+        if($layer2[$i] == "" && $layer3[$i] != "")
+        {
+            continue;
+        }
+        if(`treeView -itemExists $layer1[$i] -q $treeControl` == 0)
+        {
+            treeView -edit -addItem $layer1[$i] "" $treeControl;
+            treeView -edit -displayLabel $layer1[$i] `precompExportDisplayLabel($layer1[$i])`
+                -font $layer1[$i] "boldLabelFont" 
+                -expandItem $layer1[$i] $expandStatesLayer1[$i] 
+                $treeControl;
+                
+            if($checkStatesLayer1Button[$i] == 0)
+            {
+                treeView -edit 
+                    -buttonStyle $layer1[$i] 1 "2StateButton"
+                    -image $layer1[$i] 1 $gPrecompExportUncheckedIcon
+                    -buttonState $layer1[$i] 1 "buttonUp" $treeControl;
+            }
+            else
+            {
+                treeView -edit 
+                    -buttonStyle $layer1[$i] 1 "2StateButton"
+                    -image $layer1[$i] 1 $gPrecompExportCheckedIcon
+                    -buttonState $layer1[$i] 1 "buttonDown" $treeControl;
+            }
+        }
+
+        if($layer2[$i] != "")
+        {
+             string $identLayer2 = precompExportBuildIdent($layer1[$i], $layer2[$i],"");
+            //add layer2 as second level
+            //
+            if(`treeView -itemExists $identLayer2 -q $treeControl` == 0)
+            {
+                treeView -edit -addItem $identLayer2 $layer1[$i] $treeControl;
+                treeView -edit -displayLabel $identLayer2 `precompExportDisplayLabel($layer2[$i])`
+                    -expandItem $identLayer2 $expandStatesLayer2[$i]
+                    $treeControl; 
+                    
+                if($checkStatesLayer2Button[$i] == 0)
+                {
+                    treeView -edit 
+                        -buttonStyle $identLayer2 1 "2StateButton"
+                        -image $identLayer2 1 $gPrecompExportUncheckedIcon
+                        -buttonState $identLayer2 1 "buttonUp" $treeControl;
+                }
+                else
+                {
+                    treeView -edit 
+                        -buttonStyle $identLayer2 1 "2StateButton"
+                        -image $identLayer2 1 $gPrecompExportCheckedIcon
+                        -buttonState $identLayer2 1 "buttonDown" $treeControl;
+                }
+            }
+        }
+        if($layer3[$i] != "")
+        {
+            //add layer3 as the third level
+            //
+            string $identLayer2 = precompExportBuildIdent($layer1[$i], $layer2[$i],"");
+            string $identLayer3 = precompExportBuildIdent($layer1[$i], $layer2[$i], $layer3[$i]);
+            if(`treeView -itemExists $identLayer3 -q $treeControl` == 0)
+            {
+                treeView -edit -addItem $identLayer3 $identLayer2 $treeControl;
+                treeView -edit -displayLabel $identLayer3 `precompExportDisplayLabel($layer3[$i])` 
+                    $treeControl;
+            }
+            if($checkStatesLayer3Button[$i] == 0)
+            {
+                treeView -edit 
+                    -buttonStyle $identLayer3 1 "2StateButton"
+                    -image $identLayer3 1 $gPrecompExportUncheckedIcon
+                    -buttonState $identLayer3 1 "buttonUp" $treeControl;
+            }
+            else
+            {
+                treeView -edit 
+                    -buttonStyle $identLayer3 1 "2StateButton"
+                    -image $identLayer3 1 $gPrecompExportCheckedIcon
+                    -buttonState $identLayer3 1 "buttonDown" $treeControl;
+            }
+        }
+    }
+ }
+
+proc updatePreCompositingAnchor()
+{
+    global string $gPrecompExportManager;
+    if(`objExists $gPrecompExportManager`) 
+    {
+        textField -edit -text `getAttr ($gPrecompExportManager + ".preCompositingAnchor")` preCompositingAnchorCtrl;
+    }
+    else 
+    {
+        textField -edit -text "" preCompositingAnchorCtrl;
+    }
+}
+
+proc updatePreCompositingNotes()
+{
+    global string $gPrecompExportManager;
+    if(`objExists $gPrecompExportManager`) 
+    {
+        scrollField -edit -text `getAttr ($gPrecompExportManager + ".preCompositingNotes")` preCompositingNotesCtrl;
+    }
+    else 
+    {
+        scrollField -edit -text "" preCompositingNotesCtrl;
+    }
+}
+
+//if UI is updated with the data from the node precompExport, $isAuto = 0,
+//else $isAuto = 1;
+global proc updatePrecompExportEditorUI(
+    string $tabLayout, string $toolName, int $isAuto)
+{
+    string $tab[] = `tabLayout -query -childArray $tabLayout`;
+    int $currentTabIndex = `tabLayout -query -selectTabIndex $tabLayout`;
+
+    setParent $tab[$currentTabIndex-1];
+
+    string $label;
+    int $index;
+
+    setUITemplate -pushTemplate OptionBoxTemplate;
+
+    waitCursor -state 1;
+    
+    //get triple data array for displaying the treeview
+    //
+    string $renderLayers[];
+    string $cameras[];
+    string $renderPasses[];
+    string $cameraUIname[];
+    setupPrecompExportTreeViewDataLayerCameraPass($renderLayers, $cameras, $renderPasses);
+
+    for($camera in $cameras){
+        string $cameraTrans[] = `listRelatives -path -parent $camera`;
+        $cameraUIname[size($cameraUIname)] = $cameraTrans[0];
+    }
+
+    //build the camera view under render layer tab
+    //
+    string $layerTreeControl = $toolName + "RenderLayersView";
+    string $cameraTreeControl = $toolName + "CamerasView";
+    string $passTreeControl = $toolName + "RenderPassesView";
+
+    //updte treeview
+    //
+    updatePrecompExportTreeView($layerTreeControl, $renderLayers, $cameraUIname, $renderPasses);
+    updatePrecompExportTreeView($cameraTreeControl, $cameraUIname, $renderLayers, $renderPasses);
+    updatePrecompExportTreeView($passTreeControl, $renderPasses, $cameraUIname, $renderLayers);
+
+    if(0 == $isAuto)
+    {
+        precompExportTreeViewCheckStatesInitialization($toolName);
+        updatePreCompositingAnchor();
+        updatePreCompositingNotes();
+    }
+
+    //update treeview button states
+    //
+    updatePrecompExportTreeViewButton($layerTreeControl, $renderLayers, $cameraUIname);
+    updatePrecompExportTreeViewButton($cameraTreeControl, $cameraUIname, $renderLayers);
+    updatePrecompExportTreeViewButton($passTreeControl, $renderPasses, $cameraUIname);
+
+    waitCursor -state 0;
+    setUITemplate -popTemplate;
+ 
+}
+
+global proc precompExportBrowseCallBack( int $isExportAll, string $fileName, string $fType)
+{   
+    evalEcho("performExportToPrecompFile \"" + $fileName + "\" " + $isExportAll);
+}
+
+global proc int precompAnchorDialog()
+{
+    string $confirm = (uiRes("m_performPrecompExport.kConfirm"));
+    string $accept = (uiRes("m_performPrecompExport.kAccept"));
+    string $cancel = (uiRes("m_performPrecompExport.kCancel"));
+    string $message = (uiRes("m_performPrecompExport.kHintForAnchor"));
+    string $response = `confirmDialog -messageAlign center -message $message
+        -button $confirm -button $accept -button $cancel -defaultButton $confirm -dismissString $cancel
+        -cancelButton $confirm`;
+
+    if($confirm == $response)
+    {
+        return 0;
+    }
+    else if($accept == $response)
+    {
+        return 1;
+    }
+    else
+    {
+        return 2;
+    }
+}
+
+global proc precompExportBrowse(int $isExportAll)
+{
+    global string $gPrecompExportManager;
+
+    string $anchorName = `textField -q -text preCompositingAnchorCtrl`;
+    if("" == $anchorName)
+    {
+
+        int $response = precompAnchorDialog();
+
+        //"OK" button is clicked
+        //
+        if(0 == $response)
+        {
+            return;
+        }
+        //"Use Scene Name as Scene Anchor" button is clicked
+        //
+        else if(1 == $response)
+        {
+            string $sceneBaseName = getSceneBaseName();
+            setAttr -type "string" ($gPrecompExportManager + ".preCompositingAnchor") $sceneBaseName;
+            updatePreCompositingAnchor();
+        }
+        //"Cancel" button is clicked
+        //
+        else
+        {
+            deleteUI -window exportPrecompWindow;
+            return;
+        }
+    }
+    else
+    {
+        setAttr -type "string" ($gPrecompExportManager + ".preCompositingAnchor") $anchorName;
+    }
+
+    string $fileFilter = ((uiRes("m_performPrecompExport.kExportPrecompFileType")) + " (*.precomp)");
+	
+	string $dir = `workspace -q -rd`;
+	$dir = `setWorkingDirectory $dir "scenes" "scenes"`;
+  
+    string $fileNames[] ;
+	$fileNames = `fileDialog2 
+                            -fileMode 0 
+							-fileFilter $fileFilter
+                            -caption (uiRes("m_performPrecompExport.kExportPrecomp"))
+                            -startingDirectory $dir`;
+	string $fileName = $fileNames[0];
+    if("" != $fileName)
+    {
+        if(!endsWith($fileName, ".precomp"))
+        {
+            $fileName += (".precomp");
+        }
+        precompExportBrowseCallBack($isExportAll, $fileName, "");
+    }
+
+}
+
+global proc performPrecompExport(int $options)
+{
+    if(!$options) {
+        string $sceneDir = (`workspace -q -rd` + `workspace -q -fre "scene"`);
+        string $sceneBaseName = getSceneBaseName();
+        string $fullPath = $sceneDir + $sceneBaseName + ".precomp";
+        evalEcho("performExportToPrecompFile \"" + $fullPath + "\" 1;");
+    }
+    else {
+        if(`window -exists exportPrecompWindow`){
+            showWindow exportPrecompWindow;
+            return;
+        }
+		string $title = (uiRes("m_performPrecompExport.kExportPreCompositing"));
+		if (`about -uiLanguageIsLocalized`) {
+			window -title $title -width 540 exportPrecompWindow;
+		} else {
+			window -title $title -width 440 exportPrecompWindow;
+		}
+
+        setUITemplate -pushTemplate OptionBoxTemplate;
+
+        string $toolName = "PrecompExportTab";
+
+        string $teLayout = ($toolName + "TabFormLayout");
+	    formLayout $teLayout;
+
+        string $tabLayout = `tabLayout -scrollable 0`;
+
+        //camera layout
+        //
+        string $camLayout = $toolName + "CamLayout";
+        formLayout $camLayout;
+        $treeControl = $toolName + "CamerasView";
+        treeView 
+            -numberOfButtons 1 
+            -abr false 
+            -reverseTreeOrder false 
+            -editLabelCommand "precompExportEditorItemOnRename"
+            -pressCommand 1 ("precompExportTreeViewCameraButtonClickCommand " + $toolName)
+            $treeControl;
+        setParent ..;//camLayout
+        formLayout -edit 
+            -attachForm $treeControl "top" 0
+		    -attachForm $treeControl "left" 0
+		    -attachForm $treeControl "bottom" 0
+		    -attachForm $treeControl "right" 0
+            $camLayout;
+        setParent ..;//tab layout
+        tabLayout -edit -tabLabel $camLayout (uiRes("m_performPrecompExport.kCameras")) $tabLayout;
+
+        setParent $tabLayout;
+        //render layer layout
+        //
+        string $rlLayout = $toolName + "RLLayout";
+        formLayout $rlLayout;
+
+        string $treeControl = $toolName + "RenderLayersView";
+        treeView -numberOfButtons 1 
+            -abr false 
+            -reverseTreeOrder false 
+            -editLabelCommand "precompExportEditorItemOnRename"
+            -pressCommand 1 
+                ("precompExportTreeViewRenderLayerButtonClickCommand "+ $toolName)
+            $treeControl;
+        setParent ..; //formLayout $teLayout;
+        formLayout -edit 
+            -attachForm $treeControl "top" 0
+            -attachForm $treeControl "left" 0
+            -attachForm $treeControl "bottom" 0
+            -attachForm $treeControl "right" 0
+            $rlLayout;
+        setParent ..;//tab layout
+        tabLayout -edit -tabLabel $rlLayout (uiRes("m_performPrecompExport.kRenderLayers")) $tabLayout;
+        
+        //render pass layout
+        //
+        setParent $tabLayout;
+        string $rpLayout = $toolName + "RPLayout";
+        formLayout $rpLayout;
+        $treeControl = $toolName + "RenderPassesView";
+        treeView
+            -numberOfButtons 1 
+            -abr false 
+            -reverseTreeOrder false 
+            -editLabelCommand "precompExportEditorItemOnRename"
+            -pressCommand 1 ("precompExportTreeViewRenderPassButtonClickCommand "+ $toolName)
+            $treeControl;
+
+        setParent ..;// rpLayout
+        formLayout -edit 
+            -attachForm $treeControl "top" 0
+		    -attachForm $treeControl "left" 0
+		    -attachForm $treeControl "bottom" 0
+		    -attachForm $treeControl "right" 0
+            $rpLayout;
+        setParent ..;//tab layout
+
+        tabLayout -edit -tabLabel $rpLayout (uiRes("m_performPrecompExport.kRenderPasses")) $tabLayout;
+       
+        string $otherLayout = $toolName + "OtherLayout";
+        formLayout $otherLayout;
+        
+        text -label (uiRes("m_performPrecompExport.kPreCompositingSceneAnchor")) -font "boldLabelFont" preCompositingAnchorText;
+        
+        textField -font plainLabelFont preCompositingAnchorCtrl;
+
+        text -label (uiRes("m_performPrecompExport.kScenePreCompositingNotes")) -font "boldLabelFont" preCompositingNotesText;
+        
+        scrollField -font plainLabelFont
+            -wordWrap true -height 80
+            preCompositingNotesCtrl;
+
+        int $spacing = 5;
+        formLayout -e
+            -af preCompositingAnchorText "left" $spacing
+            -af preCompositingAnchorText "top" $spacing
+            -af preCompositingAnchorText "right" $spacing 
+            -ac preCompositingAnchorText "bottom" $spacing preCompositingAnchorCtrl
+
+            -af preCompositingAnchorCtrl "right" $spacing
+            -af preCompositingAnchorCtrl "left" $spacing
+            -ac preCompositingAnchorCtrl "bottom" $spacing preCompositingNotesText
+
+            -af preCompositingNotesText "left" $spacing
+            -af preCompositingNotesText "right" $spacing
+            -ac preCompositingNotesText "bottom" $spacing preCompositingNotesCtrl
+
+            -af preCompositingNotesCtrl "right" $spacing
+            -af preCompositingNotesCtrl "left" $spacing
+            -af preCompositingNotesCtrl "bottom" $spacing
+
+            $otherLayout;
+
+        setParent ..;// other layout
+
+        string $treeControlForSaving = $toolName + "RenderLayersView";
+        string $exportAllBtn = `button -label (uiRes("m_performPrecompExport.kExportAll")) 
+            -command ("precompExportSaveSettingCallBack " + $treeControlForSaving + ";precompExportBrowse 1")`;
+
+        string $exportBtn = `button -label (uiRes("m_performPrecompExport.kExportSelection"))
+            -command ("precompExportSaveSettingCallBack " + $treeControlForSaving + ";precompExportBrowse 0")`;
+
+        string $applyBtn = `button -label (uiRes("m_performPrecompExport.kApply")) 
+            -command ("precompExportSaveSettingCallBack " + $treeControlForSaving)`;
+
+        string $closeBtn = `button -label (uiRes("m_performPrecompExport.kClose")) -command "deleteUI -window exportPrecompWindow"`;
+
+        setParent ..;//teLayout
+        formLayout    -e 
+	        -attachForm     $tabLayout     "top"       5
+	        -attachForm     $tabLayout     "right"     5
+	        -attachControl  $tabLayout     "bottom"    5   $otherLayout
+	        -attachForm     $tabLayout     "left"      5
+
+            -attachNone     $otherLayout   "top" 
+	        -attachForm     $otherLayout   "right"     5
+	        -attachControl  $otherLayout   "bottom"    5   $exportAllBtn 
+	        -attachForm     $otherLayout   "left"      5
+
+            -attachForm     $exportAllBtn   "left"      5 
+            -attachPosition $exportAllBtn   "right"     5   25
+            -attachForm     $exportAllBtn   "bottom"    5
+
+            -attachPosition $exportBtn      "left"      5   25
+            -attachPosition $exportBtn      "right"     5   50
+            -attachForm     $exportBtn      "bottom"    5
+
+            -attachPosition $applyBtn       "left"      5   50
+            -attachPosition $applyBtn       "right"     5   75
+            -attachForm     $applyBtn       "bottom"    5
+
+            -attachPosition $closeBtn       "left"      5   75
+            -attachForm     $closeBtn       "right"     5
+            -attachForm     $closeBtn       "bottom"    5
+
+            $teLayout;
+
+        setUITemplate -popTemplate;
+
+        //Create the UI for the tab that is initially visible.
+        //
+        updatePrecompExportEditorUI($tabLayout, $toolName, 0);
+        updateLayerChangePrecompExportScriptJobs($toolName, $tabLayout);
+        precompExportUpdatePermanentScriptJob($toolName , $tabLayout);
+
+        showWindow exportPrecompWindow;
+    }
+}
+
+global proc precompExportSetAllChecked(string $toolName)
+{
+    string $treeControl = $toolName + "RenderLayersView";
+    
+    string $childArray[] = `treeView  -children "" -q $treeControl`;
+    for($child in $childArray)
+    {
+        precompExportLayerTreeViewButtonClick($treeControl, $child, 1);
+    }
+
+    $treeControl = $toolName + "CamerasView";
+    $childArray = `treeView  -children "" -q $treeControl`;
+    for($child in $childArray)
+    {
+        precompExportLayerTreeViewButtonClick($treeControl, $child, 1);
+    }
+
+    $treeControl = $toolName + "RenderPassesView";
+    $childArray = `treeView  -children "" -q $treeControl`;
+    for($child in $childArray)
+    {
+        precompExportLayerTreeViewButtonClick($treeControl, $child, 1);
+    }
+}
+
+//get data by precompExport node from file
+//
+global proc precompExportTreeViewCheckStatesInitialization(string $toolName)
+{
+    global string $gPrecompExportManager;
+    string $treeControlLayer = $toolName + "RenderLayersView";
+    string $treeControlCamera = $toolName + "CamerasView";
+    string $treeControlPass = $toolName + "RenderPassesView";
+
+
+    //first pass, check all button states.
+    //
+    precompExportSetAllChecked($toolName);
+
+    //second pass, uncheck the items which saved in $gPrecompExportManager node
+    //
+    if(`objExists $gPrecompExportManager`)
+    {
+        string $connectionArray[] = `listConnections  -c true -p true $gPrecompExportManager`;
+        int $i;
+        int $num = size($connectionArray);
+        string $trippleDataArray[] = {};
+        //for the command listConnections, the attribute on the specified object is given first. 
+        //therefore $i += 2
+        //
+        for($i = 0; $i < $num; $i += 2)
+        {
+            string $array[] = {};
+            tokenize($connectionArray[$i], ".", $array);
+            $trippleDataArray[size($trippleDataArray)] = $array[0] + "." + $array[1];
+        }
+        $trippleDataArray = stringArrayRemoveDuplicates($trippleDataArray);
+
+        //get triple data
+        //
+        for($trippleData in $trippleDataArray)
+        {
+            string $precompLayer = $trippleData + ".layer";
+            string $tmpArray[] = `listConnections $precompLayer`;
+            string $layer = $tmpArray[0];
+
+            string $precompCamera = $trippleData + ".camera";
+            $tmpArray = `listConnections $precompCamera`;
+            string $camera = $tmpArray[0];
+
+            string $precompPass = $trippleData + ".pass";
+            $tmpArray = `listConnections $precompPass`;
+			string $pass = ($tmpArray[0] == "" ? "MasterBeauty" : $tmpArray[0]);
+
+            string $item = precompExportBuildIdent($layer, $camera, $pass);
+            if($item != "")
+            {
+                precompExportLayerTreeViewButtonClick($treeControlLayer, $item,0);
+            }
+
+            $item =  precompExportBuildIdent($camera, $layer,  $pass);
+            if($item != "")
+            {
+                precompExportLayerTreeViewButtonClick($treeControlCamera, $item,0);
+            }
+
+            $item =  precompExportBuildIdent($pass, $camera, $layer); 
+            if($item != "")
+            {
+                precompExportLayerTreeViewButtonClick($treeControlPass, $item,0); 
+            }
+        }
+    }
+}
+
+global proc precompExportSaveSettingCallBack(string $treeControl)
+{
+    global string $gPrecompExportManager;
+    global string $gPrecompExportUncheckedIcon;
+    if(`objExists $gPrecompExportManager` == 0)
+    {
+	    string $nodeCreateCmd = "createNode precompExport -ss -name " + $gPrecompExportManager;
+        evalEcho($nodeCreateCmd);
+    }
+
+    string $connectArray[] = `listConnections  -c true -p true $gPrecompExportManager`;
+    int $i;
+    int $num = size($connectArray);
+    for($i = 0; $i < $num; $i = $i + 2)
+    {
+        string $disconnectCmd = "disconnectAttr " + $connectArray[$i + 1] + " " + $connectArray[$i];
+        evalEcho($disconnectCmd);
+    }
+
+    //get all items
+    //
+    string $leafs[] = `treeView  -children "" -q $treeControl`;
+    int $insertIndex = 0;
+    
+    for($leaf in $leafs)
+    {
+        if(`treeView -isLeaf $leaf -q $treeControl` == 0)
+        {
+            continue;
+        }
+        string $array[] = {};
+        tokenize($leaf, "%", $array);
+
+        //get uncheck items
+        //
+        if(`treeView -image $leaf 1 "" -q $treeControl` == $gPrecompExportUncheckedIcon)
+        {
+            string $layer;
+            string $camera;
+            string $pass;
+           
+            string $nodeName = $gPrecompExportManager+".excludedExportItemList[";
+
+            if($array[0] != "")
+            {
+                string $precompLayer = $nodeName+$insertIndex+"].layer";
+                $layer = $array[0]+".message";
+                string $connectCmd = "connectAttr " + $layer + " " + $precompLayer;
+                evalEcho($connectCmd);
+            }
+
+            if($array[1] != "")
+            {
+                string $precompCamera = $nodeName+$insertIndex+"].camera";
+                string $cameraShapes[] = `listRelatives -shapes $array[1]`;
+                $camera = $cameraShapes[0] + ".message";
+                string $connectCmd = "connectAttr " + $camera + " " + $precompCamera;
+                evalEcho($connectCmd);
+            }
+
+            if($array[2] != "" && $array[2] != "MasterBeauty")
+            {
+                string $precompPass = $nodeName+$insertIndex+"].pass";
+                $pass = $array[2] + ".message";
+                string $connectCmd = "connectAttr "+ $pass + " " + $precompPass;
+                evalEcho($connectCmd);
+            }
+            $insertIndex++;
+        }
+    }
+
+    string $sceneAnchor = `textField -q -text preCompositingAnchorCtrl`;
+    setAttr -type "string" ($gPrecompExportManager + ".preCompositingAnchor") $sceneAnchor;
+
+    string $notes = `scrollField -q -text preCompositingNotesCtrl`;
+    setAttr -type "string" ($gPrecompExportManager + ".preCompositingNotes") $notes;
+}

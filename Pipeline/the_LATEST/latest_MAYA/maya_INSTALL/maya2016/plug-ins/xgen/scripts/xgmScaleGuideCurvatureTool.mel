@@ -1,0 +1,299 @@
+// Copyright (C) 1997-2013 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+/**
+ * @file xgmScaleGuideCurvatureTool.mel
+ * @brief Contains MEL for the XGen tool Scale Guide Curvature
+ *
+ * <b>CONFIDENTIAL INFORMATION: This software is the confidential and
+ * proprietary information of Walt Disney Animation Studios ("WDAS").
+ * This software may not be used, disclosed, reproduced or distributed
+ * for any purpose without prior written authorization and license
+ * from WDAS. Reproduction of any section of this software must include
+ * this legend and all copyright notices.
+ * Copyright Disney Enterprises, Inc. All rights reserved.</b>
+ *
+ * @author Patrick Witting
+ * @author Ying Liu
+ *
+ * @version Created 09/21/05
+ */
+ 
+global proc xgmScaleGuideCurvatureTool( string $parent )
+{
+    columnLayout -parent $parent;
+    {
+        columnLayout;
+        {
+            floatSliderGrp -label (uiRes("m_xgmScaleGuideCurvatureTool.kScalefactor")) -cw3 100 80 240 -field 1
+                -min 0 -max 2.0 
+                -fieldMinValue -100000.0 -fieldMaxValue 100000.0
+                -pre 3 -value 1.1
+                -ann ( (uiRes("m_xgmScaleGuideCurvatureTool.kScaleFactorAnn")) )
+                xgmSGCScaleFactor;
+
+            floatSliderGrp -label (uiRes("m_xgmScaleGuideCurvatureTool.kMaxcurvature")) -cw3 100 80 240 -field 1
+                -min 0.0 -max 1.0
+                -fieldMinValue -100000.0 -fieldMaxValue 100000.0
+                -pre 3 -value 0.8 
+                -ann ( (uiRes("m_xgmScaleGuideCurvatureTool.kMaxCurvatureAnn")) )
+                xgmSGCMaxCurvature;
+
+            button -label (uiRes("m_xgmScaleGuideCurvatureTool.kScaleGuidesCurvature")) -width 340
+                -ann (uiRes("m_xgmScaleGuideCurvatureTool.kScaleGuidesCurvatureAnn"))
+                -command "xgmSGCToolScaleCurvature";
+
+            setParent ..;
+        }
+    }
+}
+ 
+proc vector[] getStartDefFrame( vector $along )
+{
+    vector $out[3];
+    $len = mag( $along );
+    $along = $along / $len;
+    float $ang = atan2( $along.x, $along.z );
+
+    vector $twist = << (-cos($ang)), 0, sin($ang) >>;
+    vector $cross = $twist ^ $along;
+    float $len = mag( $cross );
+    $cross /= $len;
+
+    $out[0] = $along;
+    $out[1] = $cross;
+    $out[2] = $twist;
+
+    return $out;
+}
+
+proc vector[] getNewFrame( vector $newDir, vector $frame[] )
+{
+    vector $out[3];
+    $out[0] = $newDir;
+    vector $cvec = $frame[0] ^ $newDir;
+    float $len = mag( $cvec );
+
+    if ( $len > 0.0000001 ) {   
+        $cvec = $cvec / $len;
+        if ( $len > 1.0 ) {
+            // avoid out of range in following asin call
+            $len = 1.0;
+        }
+
+        float $a = asin( $len ) / 2.0;
+        float $c = cos( $a );
+        float $s = sin( $a );
+        vector $w = $cvec ^ $frame[2];
+        $out[2] = $c * $c * $frame[2] + 2 * $s * $c * $w 
+                    + $s * $s * ( $frame[2] * $cvec ) * $cvec
+                    + $s * $s * ( $cvec ^ $w );
+        $out[1] = $newDir ^ $out[2];
+
+    } else {
+        // the newDir is either the same as
+        // the oldDir or the opposite
+        if ( $frame[0] * $newDir < 0 )
+            $out[2] = -1 * $frame[2];
+        else
+            $out[2] = $frame[2];
+
+        $out[1] = $frame[0] ^ $out[2];
+    }
+
+    return $out;
+}
+
+proc deflectionsFromCurve( float $points[], vector $deflections[] )
+{
+    int $totalCVs = size( $points ) / 3; // array is xyz triples
+    if ( $totalCVs < 3 ) {
+        print (uiRes("m_xgmScaleGuideCurvatureTool.kPleaseSelectAtLeast3CvsForEachGuide"));
+        return;
+    }
+
+    vector $p1 = << $points[0], $points[1], $points[2] >>;
+    vector $p2 = << $points[3], $points[4], $points[5] >>;
+    vector $along = $p2 - $p1;
+
+    vector $frame[] = getStartDefFrame( $along );
+    $deflections[0] = $along; 
+    vector $pLast = $p1;
+    int $i;
+    for ( $i = 1; $i < $totalCVs; $i++ ) {
+        int $base = $i * 3;
+        $p1 = << $points[$base], $points[$base+1], $points[$base+2] >>;
+        vector $dif = $p1 - $pLast;       
+        $deflections[$i] = << ( $dif * $frame[0] ),
+                              ( $dif * $frame[1] ),
+                              ( $dif * $frame[2] ) >>;
+
+        float $len = mag( $dif );
+        if ( $len > 0.0000001 ) {
+            $dif /= $len;
+            $frame = getNewFrame( $dif, $frame );
+        }
+
+        $pLast = $p1;
+    }
+}
+
+proc curveFromDeflections( vector $deflections[], float $points[] )
+{
+    int $totalCVs =  size( $points ) / 3; // array is xyz triples
+    if ( $totalCVs > size( $deflections ) ) {
+        print( (uiRes("m_xgmScaleGuideCurvatureTool.kArrayErrorInCurvefromdeflections")) );
+        return;
+    }
+
+    vector $p1 = << $points[0], $points[1], $points[2] >>;
+    vector $frame[] = getStartDefFrame( $deflections[0] );   
+    vector $pLast = $p1;
+
+    for ( $i = 1; $i < $totalCVs; $i++ ) { 
+        vector $deflection = $deflections[$i];
+        vector $worldDef = $deflection.x * $frame[0] +
+                           $deflection.y * $frame[1] + 
+                           $deflection.z * $frame[2];                               
+        $p1 = $pLast + $worldDef;
+
+        int $base = $i * 3;
+        $points[$base]   = $p1.x;
+        $points[$base+1] = $p1.y;
+        $points[$base+2] = $p1.z;
+
+        $pLast = $p1;
+
+        float $len = mag( $worldDef );
+        if( $len > 0.0000001 ){
+            $worldDef /= $len;
+            $frame = getNewFrame( $worldDef, $frame );
+        }
+
+        $pLast = $p1;
+    }
+}
+
+/**
+ * Implementation of Maya6's Edit Curves -> Modify Curves -> ScaleCurvature.
+ */
+proc xgmScaleCurvature( float $points[], int $numCvs, 
+                        float $scaleFactor, float $maxCurvature, 
+                        vector $deflections[] )
+{
+    $maxCurvature *= 2;
+    deflectionsFromCurve( $points, $deflections );
+    if ( size( $deflections ) == 0 )
+        return;    
+
+    int $i;
+    for ( $i = 1; $i < $numCvs; $i++ ) {
+        vector $def = $deflections[$i];
+        float $len = mag( $def );
+        float $ang = (1.0 - $def.x / $len );
+        float $s = sin( $ang * 0.5 * 3.141592653589793  );
+        $ang *= $scaleFactor;
+        if ( $ang > $maxCurvature ) {
+            $ang = $maxCurvature;
+        }
+
+        float $s2 = sin( $ang * 0.5 * 3.141592653589793 );
+        float $sratio = 1.0;
+        if ( $s > 0.000001 ) {
+            $sratio = $s2 / $s;
+        }
+
+        $def = << (1.0-$ang) * $len, $def.y * $sratio, $def.z * $sratio >>;
+        float $newLen = mag( $def );
+        if ( $newLen > 0.000001 ) {
+            $deflections[$i] = $def * ( $len / $newLen );
+        }
+    }
+
+    curveFromDeflections( $deflections, $points );	
+}
+
+global proc xgmSGCToolScaleCurvature()
+{
+    float $ScaleFactor = `floatSliderGrp -q -v xgmSGCScaleFactor`;
+    float $MaxCurvature = `floatSliderGrp -q -v xgmSGCMaxCurvature`;
+
+    vector $deflections[];
+    float $points[];
+
+    int $i;
+    int $itemsFound = 0;
+    string $gList[] = `xgmSelectedGuides "" 0`; // just object mode
+
+    // process the whole guide in object selection mode - including base
+    for ( $guide in $gList ) {
+        $points = `xgmGuidePositions $guide 0 9999`;
+        float $points0[] = `xgmCopyFloatArray $points`;
+        float $data[] = `xgmGuideGeom -guide $guide -numVertices`;
+        int $ncvs = $data[0];
+
+        xgmScaleCurvature( $points, $ncvs, $ScaleFactor, 
+                           $MaxCurvature, $deflections );
+        $itemsFound++;
+
+        // now make a relative move to new position
+        for ( $i = 0; $i < $ncvs; $i++ ) {
+            float $x[3];
+            for ( $k=0; $k<3; $k++ ) {
+                $x[$k] = $points[$i*3 + $k] - $points0[$i*3 + $k];
+            }
+            move -r $x[0] $x[1] $x[2] ( $guide + ".vtx[" + $i + "]" );
+        }
+    }
+
+    // process cv mode selections
+    string $guideArray[];
+    int $startArray[];
+    int $endArray[];
+
+    xgmSelectedSplineGuideComponents( $guideArray, $startArray, $endArray );
+    int $size = `size $guideArray`;
+    $itemsFound += $size;
+
+    for ( $q = 0; $q < $size; $q++ ) {
+        int $startCv = $startArray[$q];
+        int $lastCv  = $endArray[$q];        
+        $guide = $guideArray[$q];
+        $points = `xgmGuidePositions $guide $startCv $lastCv`;
+        float $points0[] = `xgmCopyFloatArray $points`;
+        int $numCvs = $lastCv - $startCv + 1;
+
+        xgmScaleCurvature( $points, $numCvs, $ScaleFactor, 
+                           $MaxCurvature, $deflections );
+
+        // now make a relative move to new position
+        for ( $i = $startCv; $i <= $lastCv; $i++ ) {
+            float $x[3];
+            for ( $k = 0; $k < 3; $k++ ) {
+                $x[$k] = $points[$i*3 + $k] - $points0[$i*3 + $k];
+            }
+            move -r $x[0] $x[1] $x[2] ($guide + ".vtx[" + $i + "]");
+        }
+    }
+
+    if ( $itemsFound == 0 )
+        warning (uiRes("m_xgmScaleGuideCurvatureTool.kNoGuidesOrGuideCvsFoundInSelectionList"));
+}

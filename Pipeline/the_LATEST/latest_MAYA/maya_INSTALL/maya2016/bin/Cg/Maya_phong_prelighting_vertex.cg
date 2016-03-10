@@ -1,0 +1,110 @@
+// phong_preLighting_vertex.cg
+//
+// NOTE: This file cannot be directly compiled through CG... 
+// it first must be parsed to insert channel-specific 
+// instructions.
+//
+
+// OUTPUT data from this vertex program
+//
+struct vert2frag
+{
+    float4 hPosition            : POSITION;
+    float4 wPosition            : TEXCOORD0;
+	float4 ambientTexUv			: TEXCOORD2;
+	float3 wNormal				: TEXCOORD1;
+
+#if defined(COLOR_PER_VERTEX_AMBIENT)
+	// Optional color per vertex
+	float4	colorPerVertex		: COLOR0;
+
+	#if defined(COLOR_PER_VERTEX_MASK)
+		// Optional color per vertex mask, mapped to
+		// user attribute 0
+		float colorPerVertexMask;
+	#endif	
+#endif // COLOR_PER_VERTEX_AMBIENT	
+};
+
+// INPUT data for this vertex program
+//
+struct app2vert
+{
+    float4 position             : POSITION;
+    float4 normal               : NORMAL;
+	float4 ambientTexUv			: TEXCOORD0;
+
+#if defined(COLOR_PER_VERTEX_AMBIENT)
+	float4	colorPerVertex		: COLOR0;
+
+	#if defined(COLOR_PER_VERTEX_MASK)
+		// Optional color per vertex mask, mapped to
+		// user attribute 0
+		float colorPerVertexMask;
+	#endif	
+#endif // COLOR_PER_VERTEX_AMBIENT
+};
+
+vert2frag main(app2vert IN, 
+               uniform float4x4 modelViewProj,				
+               uniform float4x4 objToWorldMatrix,
+			   uniform float4x4 objToWorldMatrix_invtrans)
+{
+    vert2frag OUT;
+
+    modelViewProj = glstate.matrix.mvp;
+
+    // Compute the clip-space vertex position.
+    //
+    OUT.hPosition = mul(modelViewProj, IN.position);
+
+    // Compute the world-space vertex position.
+    //
+    OUT.wPosition = mul(objToWorldMatrix, IN.position);
+
+    // Copy the texture coordinates.
+    //
+    OUT.ambientTexUv = IN.ambientTexUv;
+
+    // Compute the geometric normal, expressed in world space.
+	// Note: we pass in the tangent and binormal vector
+	// rather than the normal. Then in the fragment program,
+	// we recompute the normal using a cross-product. This ensures
+	// that we'll get the correct normal even when the model matrix
+	// has non-proportional scale, and it's cheaper than multiplying
+	// by the inverse-transpose.
+    //
+	float4 oNormal = float4(normalize(IN.normal.xyz), 0);
+	OUT.wNormal = mul(objToWorldMatrix_invtrans, oNormal).xyz;
+
+#ifdef COLOR_PER_VERTEX_AMBIENT
+
+	#if defined(COLOR_PER_VERTEX_MASK)
+	
+		#if defined(COLOR_PER_VERTEX_OPERATOR_modulate) || defined(COLOR_PER_VERTEX_OPERATOR_divide) || defined(COLOR_PER_VERTEX_OPERATOR_modulate2x)
+			// Change mask to 1, and pass over white for modulation.
+			if (IN.colorPerVertexMask < 0.5)
+			{
+				OUT.colorPerVertexMask = 1.0;
+				OUT.colorPerVertex = float4(1.0, 1.0, 1.0, 1.0);
+			}
+			else
+			{
+				// Pass-through color-per-vertex.
+				OUT.colorPerVertexMask = IN.colorPerVertexMask;
+				OUT.colorPerVertex = float4(IN.colorPerVertex.rgba);
+			}
+		#else
+			// Pass-through color-per-vertex.
+			OUT.colorPerVertexMask = IN.colorPerVertexMask;
+			OUT.colorPerVertex = float4(IN.colorPerVertex.rgba);
+		#endif
+	
+	#else
+		// Pass-through color-per-vertex.
+		OUT.colorPerVertex = float4(IN.colorPerVertex.rgba);
+	#endif	
+#endif // COLOR_PER_VERTEX_AMBIENT
+
+    return OUT;
+}

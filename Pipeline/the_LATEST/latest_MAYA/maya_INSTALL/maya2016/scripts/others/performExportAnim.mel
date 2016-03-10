@@ -1,0 +1,423 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Description:
+//      Option box dialog for exporting atom animation
+//
+//
+
+// This string is used as an optionVar value for the
+// directory when we want to indicate that the preference is to
+// use the current project's data directory.
+//
+global string $gAnimExportCurrentProject  = "CurrentProject";
+global int $gAnimExportSetFileWithBrowser = 0;
+
+
+global proc string animExportGetCurrentDir()
+//
+// Return a string corresponding to the current directory preference.
+// Use the current project's data directory by default.
+//
+{
+	global string $gAnimExportCurrentProject;
+
+	// first find the current project directory, if it is defined
+	//
+	string $currentProj = (`workspace -q -rd`+"data\/");
+
+	// check what the user has as their preference
+	//
+	if (`optionVar -exists animExportDirName`)
+	{
+		string $dir = `optionVar -q animExportDirName`;
+		if ($dir != $gAnimExportCurrentProject)
+			$currentProj = $dir;
+	}
+
+	// Ensure the directory name ends with a trailing directory separator
+	$currentProj = fromNativePath($currentProj);
+	string $separator = "\/";
+	if (!endsWith($currentProj, $separator))
+		$currentProj += $separator;
+
+	return $currentProj;
+}
+
+global proc animExportSetDirOptionVar()
+//
+// Set the optionVar based on the user's entry in the option box
+//
+{
+	global string $gAnimExportCurrentProject;
+
+	if (`textFieldGrp -q -en exportFileWidget`)
+	{
+		string $filename = "";
+		string $dirname  = $gAnimExportCurrentProject;
+
+		string $value = `textFieldGrp -q -tx exportFileWidget`;
+		if (size($value))
+		{
+			$filename = basename($value,"");
+			$dirname  = dirname($value);
+
+			string $currentProj = (`workspace -q -rd` + "data\/");
+			if ($currentProj == $dirname)
+				$dirname = $gAnimExportCurrentProject;
+		}
+
+		optionVar -sv animExportFileName $filename;
+		optionVar -sv animExportDirName  $dirname;
+	}
+}
+
+global proc int animExportSetFile( string $file, string $type )
+{
+	textFieldGrp -e -tx $file exportFileWidget;
+	animExportSetDirOptionVar();
+	string $filename = basename($file,"");
+	optionVar -stringValue animExportFileName $filename;
+	return 1;
+}
+
+global proc animExportBrowseForFile()
+{
+	string $cmd = "animExportSetFile ";
+	string $action = (uiRes("m_performExportAnim.kSetDir"));
+	string $startInDir;
+	$startInDir = `textFieldGrp -q -tx exportFileWidget`;
+	if ( size( $startInDir ) == 0 )
+	{
+		$startInDir = `internalVar -uwd`;
+	} else {
+		$startInDir = dirname($startInDir);
+	}
+
+	if ( `file -q -ex $startInDir` ) {
+		workspace -dir $startInDir;
+	}
+
+	global int $gAnimExportSetFileWithBrowser;
+	$gAnimExportSetFileWithBrowser = 1;
+	fileBrowser( $cmd, $action, "atomExport", 1 );
+}
+
+
+proc setOptionVars(int $forceFactorySettings)
+{
+	global string $gAnimExportCurrentProject;
+
+	if( $forceFactorySettings || !`optionVar -exists animExportDirName`) {
+		optionVar -sv animExportDirName "CurrentProject";
+	}
+
+	if( $forceFactorySettings || !`optionVar -exists animExportFileName`) {
+		optionVar -sv animExportFileName "";
+	}
+
+	setExportAnimSharedOptionVars($forceFactorySettings);
+}
+
+global proc atomExportSetup (string $parent, int $forceFactorySettings)
+{
+	setOptionVars($forceFactorySettings);
+	setParent $parent;
+
+	if (! `pluginInfo -q -loaded atomImportExport`) {
+		loadPlugin atomImportExport;
+	}
+
+	string $filename = `optionVar -q animExportFileName`;
+	string $dirname  = animExportGetCurrentDir();
+	string $fullPath = ($dirname + $filename);
+
+	textFieldGrp -e -tx $fullPath exportFileWidget;
+
+	exportAnimUpdateSharedOptions();
+
+	separator;
+
+	if (! `exists updateAnimExportWidgets`) {
+		source "exportAnimSharedOptions";
+	}
+	animExportWidgetsEnable();
+}
+
+global proc atomExportCallback(string $parent, int $doIt)
+{
+	// update the UI for shared options
+	//
+	exportAnimSharedOptionsCallback();
+
+	if ($doIt)
+	{
+		performExportAnim 0;
+	}
+}
+
+proc createAnimExportOptions()
+{
+	// Name of the command for this option box 
+	//
+	string $commandName = "atomExport";
+
+	// Build the option box "methods"
+	//
+	string $callback = ($commandName + "Callback ");
+	string $setup = ($commandName + "Setup");
+	
+	//  STEP 1:  Get the option box.
+	//  ============================
+	//
+	//  The value returned is the name of the layout to be used as
+	//  the parent for the option box UI.
+	//
+	string $layout = getOptionBox();
+	setParent $layout;
+
+	//  STEP 2:  Pass the command name to the option box.
+	//  =================================================
+	//
+	//  Any default option box behaviour based on the command name is set
+	//  up with this call.  For example, updating the 'Help' menu item with
+	//  the name of the command.
+	//
+	setOptionBoxCommandName($commandName);
+
+	//  STEP 3:  Activate the default UI template.
+	//  ==========================================
+	//
+	//  Activate the default UI template so that the layout of this
+	//  option box is consistent with the layout of the rest of the
+	//  application.
+	//
+	setUITemplate -pushTemplate DefaultTemplate;
+
+    //  STEP 4: Create option box contents.
+	//  ===================================
+	//
+	//  This, of course, will vary from option box to option box.
+		   
+	//  Turn on the wait cursor.
+	//
+	waitCursor -state 1;
+
+	tabLayout -scr true -tv false;
+
+	string $parent = `columnLayout -adjustableColumn 1`;
+
+	//  Create the widgets for this option box
+	//
+
+	// Directory name
+	//
+	rowLayout -nc 3
+		-cw3 400 5 50
+		-adjustableColumn 1
+		-cal 1 "both"
+		-cal 2 "both"
+		-cal 3 "left"
+		-ct3 "both" "both" "left";
+
+		string $dirToUse = animExportGetCurrentDir();
+		string $fileToUse = ($dirToUse+"export.atom");
+		textFieldGrp
+			-label (uiRes("m_performExportAnim.kAnimDirectory"))
+			-tx $fileToUse
+			-adjustableColumn 2
+			exportFileWidget;
+		separator -w 5 -style "none";
+		symbolButton -image "navButtonBrowse.png" 
+			-c ( "animExportBrowseForFile" )
+				exportFileWidgetBrowser;
+	setParent ..;
+
+	exportAnimSharedOptions();
+	
+	//  Turn off the wait cursor (if it's on).
+	//  (Note: exportAnimSharedOptions makes calls to the containerTemplate
+	//   command which can error out. They are suppressed via "catchQuiet"
+	//   but they can still result in clearing the waitCursor state.)
+	//
+	if (`waitCursor -q -st`) {
+		waitCursor -state 0;
+	}
+	
+	//  Step 5: Deactivate the default UI template.
+	//  ===========================================
+	//
+	setUITemplate -popTemplate;
+
+	//  Step 6: Customize the buttons.  
+	//  ==============================
+	//
+	//  Provide more descriptive labels for the buttons.  This is not 
+	//  necessary, but in some cases, for example, a button labelled 
+	//  'Create' may be more meaningful to the user than one labelled
+	//  'Apply'.
+	//
+	//  Disable those buttons that are not applicable to the option box.
+	//
+	//  Attach actions to those buttons that are applicable to the option
+	//  box.  Note that the 'Close' button has a default action attached 
+	//  to it that will hide the window.  If a a custom action is
+	//  attached to the 'Close' button then be sure to call the 'hide the
+	//  option box' procedure within the custom action so that the option
+	//  box is hidden properly.
+
+	//  'Apply' button.
+	//
+	string $applyBtn = getOptionBoxApplyBtn();
+	string $buttonName = (uiRes("m_performExportAnim.kApply"));
+	button -edit -label $buttonName
+		-command ($callback + " " + $parent + " " + 1)
+		$applyBtn;
+
+	//  'Save' button.
+	//
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + $parent + " " + 0 + "; hideOptionBox")
+		$saveBtn;
+
+	// 'Reset' button
+	string $resetBtn = getOptionBoxResetBtn();
+	int $resetToDefaults = 1;
+	button -edit 
+		-command ($setup + " " + $parent + " " + $resetToDefaults)
+		$resetBtn;
+
+	//  Step 7: Set the option box title.
+	//  =================================
+	//
+	string $optionTitle = (uiRes("m_performExportAnim.kMayaAnimExporterOptions"));
+	setOptionBoxTitle($optionTitle);
+
+	//  Step 8: Customize the 'Help' menu item text.
+	//  ============================================
+	//
+	setOptionBoxHelpTag( "Atom_Exporter_Options" );
+	
+	//  Step 9: Set the current values of the option box.
+	//  =================================================
+	//
+	eval ($setup + " " + $parent + " " + 0);
+	
+	//  Step 10: Show the option box.
+	//  =============================
+	//
+	showOptionBox();
+}
+
+//
+//  Procedure Name:
+//      assembleCmd
+//
+//  Description:
+//      Construct the command that will apply the option box values.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+proc string assembleCmd()
+{
+	global string $gAnimExportCurrentProject;
+	global int $gAnimExportSetFileWithBrowser;
+
+	if (`textFieldGrp -q -exists exportFileWidget`) {
+		// Since the changed callback is not invoked if the user does not
+		// hit enter, update the value now
+		//
+		animExportSetDirOptionVar();
+
+		// If the user just typed in a path without using the browser,
+		// then check if we need to post a message about overwriting a file.
+		//
+		if (0 == $gAnimExportSetFileWithBrowser) {
+			string $postFile = `optionVar -q animExportFileName`;
+			string $postDir = animExportGetCurrentDir();
+			string $path = ($postDir+"\/"+$postFile);
+			if( `filetest -f $path` )
+			{
+				string $msg = (uiRes("m_performExportAnim.kOverwriteMessage"));
+				string $ok = (uiRes("m_performExportAnim.kYes"));
+				string $cancel = (uiRes("m_performExportAnim.kNo"));
+				$msg = `format -s $postFile $msg`;
+				string $overwrite = 
+					`confirmDialog
+						-title (uiRes("m_performExportAnim.kReplaceFileDialog"))
+						-message $msg
+						-button $ok
+						-button $cancel
+						-defaultButton $cancel
+						-cancelButton $cancel`;
+
+				if( $overwrite == $cancel )
+				{
+					return "";
+				}
+			}
+		}
+	}
+	$gAnimExportSetFileWithBrowser = 0;
+
+	string $filename = `optionVar -query animExportFileName`;
+	if (size($filename) == 0) {
+		error((uiRes("m_performExportAnim.kMustSpecifyFilename")));
+	}
+
+	string $dirname = animExportGetCurrentDir();
+	string $fullPath = ($dirname + $filename);
+
+	//make sure the file isn’t really a directory
+
+	if (`filetest -d $fullPath` == 1)
+		error((uiRes("m_performExportAnim.kMustSpecifyFilename2")));
+
+	string $cmd = ("doExportAtom(1,{ \""+ $fullPath +"\" })");
+	return $cmd;
+}
+
+global proc string performExportAnim( int $action )
+{
+	string $cmd = "";
+	switch( $action ) {
+		case 0:
+			setOptionVars(false);
+			$cmd = assembleCmd();
+			evalEcho($cmd);
+			break;
+		case 1:
+			createAnimExportOptions();
+			break;
+		case 2:
+			setOptionVars(false);
+			$cmd = assembleCmd();
+			break;
+	}
+	return $cmd;
+}
+

@@ -1,0 +1,1584 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+//
+//  Creation Date:  Jan 2000
+//
+//  Description:
+//
+//	This file is used to sync up optionVars with the things
+//	that use them.  It is needed to allow the Preferences
+//	window to have a working cancel button along with a
+//	a reset to factory menu item.  It is also used to
+//	make sure the preferences are saved correctly.
+//
+//	Note: If adding preferences, make sure to read
+//	http://torw3/maya/TechDoc/CodingGuides/addingPreferences.html
+//
+
+global proc syncPreferencesOptVars(string $mode)
+//
+//	Doesn't change the Preference window UI state.
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+	if ( !`about -batch` ) {
+		prefsSyncAppearance($mode);
+		prefsSyncElements($mode);
+		prefsSyncWindows($mode);
+		prefsSyncDisplay($mode);
+		prefsSyncViewCube($mode);
+		if (exists("steeringWheel")) prefsSyncSteeringWheel($mode);
+	}
+	prefsSyncKin($mode);
+	prefsSyncManips($mode);
+	prefsSyncNURBS($mode);
+	prefsSyncPolys($mode);
+	prefsSyncSubdivs($mode);
+	prefsSyncFonts($mode);
+	prefsSyncSettings($mode);
+	prefsSyncAnim($mode);
+	prefsSyncCamera($mode);
+	prefsSyncKeys($mode);
+	prefsSyncAssets($mode);	
+	prefsSyncModeling($mode);
+	prefsSyncModelingToolkit($mode);
+	prefsSyncNodeEditor($mode);
+	prefsSyncSelect($mode);
+	prefsSyncSnap($mode);
+	prefsSyncSound($mode);
+	prefsSyncAdvanced($mode);
+	prefsSyncFileIO($mode);
+    prefsSyncDyn($mode);
+    prefsSyncFileReferences($mode);
+    prefsSyncModules($mode);
+    prefsSyncOpenMaya($mode);
+    prefsSyncCommandPortDefault($mode);
+}
+
+global proc prefsSyncAppearance(string $mode)
+//
+//	Doesn't change the Preference window UI state.
+//
+//	This procedure will not be called in batch mode, and should
+//	only be used to update state which is only applicable in
+//	interactive mode.
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+//	Note:
+// These are saved as optionVars only so always stay in sync:
+//		commandLineHoldFocus
+//		EEexprEdTextEditor
+//
+{
+	global string $gMayaMode;
+	global string $gMainWindow;
+	global int $gUseMenusInPanels;
+
+	if ($mode == "syncOptToCurrent") {
+		optionVar -sv mayaMode $gMayaMode;
+		optionVar -iv saveWindowPos `windowPref -q -enableAll`;
+		optionVar -iv allowMenusInPanels $gUseMenusInPanels;
+		
+		if (`window -exists $gMainWindow`) {
+			optionVar -iv mainWindowMenubarVis `window -q -mbv $gMainWindow`;
+			optionVar -iv mainWindowTitleBarVis `window -q -titleBar $gMainWindow`;
+		}
+		if (`window -exists scriptEditorPanel1Window`) {
+			optionVar -iv cmdWindowTitleBarVis ((`scriptedPanel -q -tearOff scriptEditorPanel1`) ? (`window -q -titleBar scriptEditorPanel1Window`) : "off");
+		}
+
+		// Save dock widget area and float states of Channel Box, Layer
+		// Editor, and Channel Box / Layer Editor dock widgets
+		channelsLayersSaveStatus();
+
+		optionVar -iv displayNewFeatureHighlights `whatsNewHighlight -q -highlightOn`;
+		optionVar -iv showHighlightNewFeaturesWindowOnStartup `whatsNewHighlight -q -showStartupDialog`;
+
+		float $color[] = `whatsNewHighlight -q -highlightColor`;
+		optionVar -fv newFeatureHighlightColor $color[0];
+		optionVar -fva newFeatureHighlightColor $color[1];
+		optionVar -fva newFeatureHighlightColor $color[2];
+
+		optionVar -iv mayaMacButtonMap `mouse -mouseButtonTrackingStatus`;
+		optionVar -iv useScrollWheel `mouse -scrollWheelStatus`;
+
+		// Maya interface scaling depends on these two optionVars: 
+		// "interfaceScalingMode" and "interfaceScalingValue". They control
+		// the UI controls. We also need to sync them to the special Maya 
+		// interface scaling config file "MayaInterfaceScalingConfig" in 
+		// user preference directory which is used during Maya startup.
+		int $scaleMode = `optionVar -q interfaceScalingMode`;
+		if ($scaleMode != 1) {
+			catchQuiet(`mayaDpiSetting -mode $scaleMode`);
+		}
+		else{
+			float $scaleValue = `optionVar -q interfaceScalingValue`;
+			catchQuiet(`mayaDpiSetting -mode 1 -scaleValue $scaleValue`);
+		}
+	} else if ($mode == "syncCurrentToOpt") {
+		$gMayaMode = `optionVar -q mayaMode`;
+		workingMode $gMayaMode;
+		
+		windowPref -enableAll `optionVar -q saveWindowPos`;
+
+		$gUseMenusInPanels = `optionVar -q allowMenusInPanels`;
+		toggleMenuBarsInPanels($gUseMenusInPanels);
+		
+		if (`window -exists $gMainWindow`) {
+			window -edit
+				-titleBar `optionVar -q mainWindowTitleBarVis`
+				-menuBarVisible `optionVar -q mainWindowMenubarVis`
+				$gMainWindow;
+		}
+		if (`window -exists scriptEditorPanel1Window`) {
+			if (`scriptedPanel -q -tearOff scriptEditorPanel1`) {
+				window -edit
+					-titleBar `optionVar -q cmdWindowTitleBarVis`
+					scriptEditorPanel1Window;
+			}
+		}
+
+		// Restore dock widget area and float states of Channel Box,
+		// Layer Editor, and Channel Box / Layer Editor dock widgets
+		channelsLayersRestoreStatus();
+		
+		if (`optionVar -query displayNewFeatureHighlights`) {
+			WhatsNewHighlightingOn;
+		} else {
+			WhatsNewHighlightingOff;
+		}
+
+		if (`optionVar -query showHighlightNewFeaturesWindowOnStartup`) {
+			WhatsNewStartupDialogOn;
+		} else {
+			WhatsNewStartupDialogOff;
+		}
+
+		float $color[] = `optionVar -query newFeatureHighlightColor`;
+		whatsNewHighlight -highlightColor $color[0] $color[1] $color[2];
+
+		mouse -mouseButtonTracking `optionVar -query mayaMacButtonMap`;
+		mouse -enableScrollWheel `optionVar -query useScrollWheel`;
+
+		toggleModelEditorBarsInAllPanels(`optionVar -query collapseIconBarsInPanels`);
+
+		// When "cancel" button in preference window is clicked, the changed 
+		// optionVars automatically restore to previous value. We don't 
+		// really need to sync the same optionVars to the special Maya 
+		// interface scaling config file "MayaInterfaceScalingConfig" in 
+		// user preference directory.
+	}
+}
+
+global proc prefsSyncElements(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	This procedure will not be called in batch mode, and should
+//	only be used to update state which is only applicable in
+//	interactive mode.
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+	if ($mode == "syncOptToCurrent") {
+		optionVar 
+			-intValue statusLineVisible        `isUIComponentVisible("Status Line")`
+			-intValue isShelfVisible           `isUIComponentVisible("Shelf")`
+			-intValue timeSliderVisible        `isUIComponentVisible("Time Slider")`
+			-intValue playbackRangeVisible     `isUIComponentVisible("Range Slider")`
+			-intValue commandLineVisible       `isUIComponentVisible("Command Line")`
+			-intValue helpLineVisible          `isUIComponentVisible("Help Line")`
+			-intValue toolboxVisible           `isUIComponentVisible("Tool Box")`
+			-intValue isAttributeEditorVisible `isUIComponentVisible("Attribute Editor")`
+			-intValue toolSettingsVisible      `isUIComponentVisible("Tool Settings")`
+			-intValue channelsLayersVisible    `isUIComponentVisible("Channel Box / Layer Editor")`
+			-intValue channelsVisible			`isUIComponentVisible("Channel Box")`
+			-intValue layersVisible				`isUIComponentVisible("Layer Editor")`
+			;
+			
+	} else if ($mode == "syncCurrentToOpt") {
+	
+		setStatusLineVisible      `optionVar -query statusLineVisible`;
+		setShelfVisible           `optionVar -query isShelfVisible`;
+		setTimeSliderVisible      `optionVar -query timeSliderVisible`;
+		setPlaybackRangeVisible   `optionVar -query playbackRangeVisible`;
+		setCommandLineVisible     `optionVar -query commandLineVisible`;
+		setHelpLineVisible        `optionVar -query helpLineVisible`;
+		setToolboxVisible         `optionVar -query toolboxVisible`;
+		setAttributeEditorVisible `optionVar -query isAttributeEditorVisible`;
+		setToolSettingsVisible    `optionVar -query toolSettingsVisible`;
+		setChannelsLayersVisible  `optionVar -query channelsLayersVisible`;
+		setChannelsVisible		  `optionVar -query channelsVisible`;
+		setLayersVisible		  `optionVar -query layersVisible`;
+	}
+}
+
+
+global proc prefsSyncWindows(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	This procedure will not be called in batch mode, and should
+//	only be used to update state which is only applicable in
+//	interactive mode.
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+	global int		$gUseHelpBrowserWin;
+	global int		$gRaiseHelpBrowserWin;
+	global string   $gHelpLanguage;
+	global string   $gNewScenePanelConfig;
+	global int		$gUseNewScenePanelConfig;
+	global int		$gUseScenePanelConfig;
+	global int		$gUseSaveScenePanelConfig;
+	global string	$gMayaVersionYear;
+
+	if ($mode == "syncOptToCurrent") {
+
+		optionVar 
+			-iv popUpHelpMode `help -q -popupMode`
+			-iv helpBrowserUseWindow $gUseHelpBrowserWin
+			-iv helpBrowserRaiseWindow $gRaiseHelpBrowserWin;
+
+		optionVar
+			-iv popUpSimpleHelpMode `help -q -popupSimpleMode`;
+
+		optionVar 
+			-iv useNewScenePanelConfig $gUseNewScenePanelConfig
+			-iv useScenePanelConfig $gUseScenePanelConfig
+			-iv useSaveScenePanelConfig $gUseSaveScenePanelConfig
+		;
+
+		// There is a case where $gNewScenePanelConfig is null.
+		// If it is, don't save it out, as that is invalid.
+		//
+		if ($gNewScenePanelConfig != "") {
+			optionVar 
+				-sv newScenePanelConfiguration $gNewScenePanelConfig;
+		}
+		
+		// There is a case where $gHelpLanguage is null.
+		// We initially set it to the UI language.
+		//
+		if($gHelpLanguage == "")
+		{
+			$gHelpLanguage = `about -uiLanguage`;
+		}
+			
+		optionVar -sv helpLanguage $gHelpLanguage;
+		
+		if(`textField -q -ex helpDirectoryField`)
+		{
+			optionVar -sv ("customPathHelpUrl" + $gMayaVersionYear) `textField -q -text helpDirectoryField`;
+		}
+
+	} else if ($mode == "syncCurrentToOpt") {
+
+		help -popupMode `optionVar -q popUpHelpMode`;
+		help -popupSimpleMode `optionVar -q popUpSimpleHelpMode`;
+
+		$gUseHelpBrowserWin = `optionVar -q helpBrowserUseWindow`;
+		$gRaiseHelpBrowserWin = `optionVar -q helpBrowserRaiseWindow`;
+		$gHelpLanguage = `optionVar -q helpLanguage`;
+
+		$gNewScenePanelConfig = `optionVar -q newScenePanelConfiguration`;
+		$gUseNewScenePanelConfig = `optionVar -q useNewScenePanelConfig`;
+		$gUseScenePanelConfig = `optionVar -q useScenePanelConfig`;
+		$gUseSaveScenePanelConfig = `optionVar -q "useSaveScenePanelConfig"`;
+
+	}
+}
+
+global proc prefsSyncDisplay(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	This procedure will not be called in batch mode, and should
+//	only be used to update state which is only applicable in
+//	interactive mode.
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+	global int $gFastInteraction;
+
+	if ($mode == "syncOptToCurrent") {
+		optionVar
+			-iv "fastInteraction" $gFastInteraction
+			-iv "showGrid" `grid -q -tgl`
+			-iv "activeObjectPivots" `displayPref -q -activeObjectPivots`
+			-iv "displayAffected" `displayPref -q -displayAffected`
+			-iv "displayRegionOfEffect" `displayPref -q -regionOfEffect`
+			-iv "shadeTemplates" `displayPref -q -shadeTemplates`
+			-iv "displayViewportGradient" `displayPref -q -displayGradient`;
+
+		optionVar
+			-iv "toggleOriginAxis" `toggleAxis -q -o`;
+
+		float $lineWidth = `displayPref -q -lineWidth`;
+		optionVar -fv "lineWidth" $lineWidth;
+		
+		if (`headsUpDisplay -ex HUDViewAxis`){
+			// Only sync the optionVar if the HUDViewAxis exists
+			//
+			optionVar
+				-iv "viewAxisVisibility" (`headsUpDisplay -q -vis HUDViewAxis`);
+		}
+
+		string $wireframe = `displayPref -q -wireframeOnShadedActive`;
+		if ( $wireframe == "full" )
+			optionVar -iv "wireframeOnShadedActive" 1;
+		else if ( $wireframe == "reduced" )
+			optionVar -iv "wireframeOnShadedActive" 2;
+		else if ( $wireframe == "none" )
+			optionVar -iv "wireframeOnShadedActive" 3;
+
+		string $lodingMode = `displayPref -q -materialLoadingMode`;
+		if ( $lodingMode == "immediate" )
+			optionVar -iv "materialLoadingMode" 1;
+		else if ( $lodingMode == "deferred" )
+			optionVar -iv "materialLoadingMode" 2;
+		else if ( $lodingMode == "parallel" )
+			optionVar -iv "materialLoadingMode" 3;
+
+		int $maxTextureRes = `displayPref -q -maxTextureResolution`;
+		optionVar -iv "maxTextureResolution" $maxTextureRes;
+
+		int $ghostFrames[] = `displayPref -q -ghostFrames`;
+		optionVar -iv "ghostFramesBefore" $ghostFrames[0];
+		optionVar -iv "ghostFramesAfter" $ghostFrames[1];
+		optionVar -iv "ghostFrameStep" $ghostFrames[2];		
+	} else if ($mode == "syncCurrentToOpt") {
+		$gFastInteraction = `optionVar -q fastInteraction`;
+		doFastInteractionItem ($gFastInteraction);
+
+		if (`headsUpDisplay -ex HUDViewAxis`)
+		{
+			headsUpDisplay -e -vis (`optionVar -q viewAxisVisibility`) HUDViewAxis;
+		}
+		
+		toggleAxis -o `optionVar -q toggleOriginAxis`;
+		grid -tgl `optionVar -q showGrid`;
+		displayPref -activeObjectPivots	`optionVar -q "activeObjectPivots"`;
+		displayPref -displayAffected `optionVar -q "displayAffected"`;
+		displayPref -regionOfEffect	`optionVar -q "displayRegionOfEffect"`;
+		displayPref -shadeTemplates	`optionVar -q "shadeTemplates"`;
+		displayPref -displayGradient `optionVar -q "displayViewportGradient"`;
+
+		float $lineWidth = `optionVar -q lineWidth`;
+		displayPref -lineWidth $lineWidth;
+
+		int $selected = `optionVar -q wireframeOnShadedActive`;
+		if ( $selected == 1 )
+			displayPref -wireframeOnShadedActive "full";
+		else if ( $selected == 2 )
+			displayPref -wireframeOnShadedActive "reduced";
+		else if ( $selected == 3 )
+			displayPref -wireframeOnShadedActive "none";
+
+		int $selectedMode = `optionVar -q materialLoadingMode`;
+		if ( $selectedMode == 1 )
+			displayPref -materialLoadingMode "immediate";
+		else if ( $selectedMode == 2 )
+			displayPref -materialLoadingMode "deferred";
+		else if ( $selectedMode == 3 )
+			displayPref -materialLoadingMode "parallel";
+
+		int $maxTextureRes = `optionVar -q maxTextureResolution`;
+		displayPref -maxTextureResolution $maxTextureRes;
+
+		int $ghostFramesBefore = `optionVar -q ghostFramesBefore`;
+		int $ghostFramesAfter = `optionVar -q ghostFramesAfter`;
+		int $ghostFrameStep = `optionVar -q ghostFrameStep`;
+		displayPref -ghostFrames $ghostFramesBefore $ghostFramesAfter $ghostFrameStep;
+	}
+}
+
+global proc prefsSyncKin(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+	if ($mode == "syncOptToCurrent") {
+		optionVar 
+			-fv ikJointDisplayScale `jointDisplayScale -q`
+			-fv ikIkFkJointDisplayScale `jointDisplayScale -q -ikfk`
+			-fv ikHandleDisplayScale `ikHandleDisplayScale -q`
+			-sv ikIkFkDisplayMethod `ikfkDisplayMethod -q -display`;
+	} else if ($mode == "syncCurrentToOpt") {
+		jointDisplayScale `optionVar -q ikJointDisplayScale`;
+		jointDisplayScale -ikfk `optionVar -q ikIkFkJointDisplayScale`;
+		ikHandleDisplayScale `optionVar -q ikHandleDisplayScale`;
+		ikfkDisplayMethod -display `optionVar -q ikIkFkDisplayMethod`;
+	}
+}
+
+global proc prefsSyncManips(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+	if ($mode == "syncOptToCurrent") {
+		float $manipGlobalScaleArray[] = `manipOptions -q -s`;
+		float $manipHandleSizeArray[] = `manipOptions -q -hs`;
+		float $manipLineSizeArray[] = `manipOptions -q -ls`;
+		float $manipLinePickSizeArray[] = `manipOptions -q -lp`;
+		float $manipPreviousStateSizeArray[] = `manipOptions -q -ps`;
+		
+		int $useMiddleMouseRepos[] = `manipOptions -query -middleMouseRepositioning`;
+        int $doRAH[] = `manipOptions -query -rememberActiveHandle`;
+        int $doRAHATS[] = `manipOptions -query -rememberActiveHandleAfterToolSwitch`;
+		int $showPlaneHandles[] = `manipOptions -query -showPlaneHandles`;
+		int $planeHandleOffset[] = `manipOptions -query -planeHandleOffset`;
+		int $showPivotRotateHandle[] = `manipOptions -query -showPivotRotateHandle`;
+		int $pivotRotateHandleOffset[] = `manipOptions -query -pivotRotateHandleOffset`;
+		
+		optionVar -fv manipGlobalScale $manipGlobalScaleArray[0];
+		optionVar -fv manipHandleSize $manipHandleSizeArray[0];
+		optionVar -fv manipLineSize $manipLineSizeArray[0];
+		optionVar -fv manipLinePickSize $manipLinePickSizeArray[0];
+		optionVar -fv manipPreviousStateSize $manipPreviousStateSizeArray[0];
+		optionVar -fv manipMiddleMouseRepos $useMiddleMouseRepos[0];
+        optionVar -iv manipsRememberActiveHandle $doRAH[0];
+        optionVar -iv manipsRememberActiveHandleAfterToolSwitch $doRAHATS[0];
+		optionVar -iv manipPlaneHandleOffset $planeHandleOffset[0];
+		optionVar -iv manipShowPlaneHandles $showPlaneHandles[0];
+		optionVar -iv manipPivotRotateHandleOffset $pivotRotateHandleOffset[0];
+		optionVar -iv manipShowPivotRotateHandle $showPivotRotateHandle[0];
+		optionVar -iv manipHideOnCtrl `manipOptions -q -hideManipOnCtrl`;
+		optionVar -iv manipHideOnShift `manipOptions -q -hideManipOnShift`;
+		optionVar -iv manipHideOnShiftCtrl `manipOptions -q -hideManipOnShiftCtrl`;
+
+	} else if ($mode == "syncCurrentToOpt") {
+		manipOptions -s  `optionVar -q manipGlobalScale`;
+		manipOptions -hs `optionVar -q manipHandleSize`;
+		manipOptions -ls `optionVar -q manipLineSize`;
+		manipOptions -lp `optionVar -q manipLinePickSize`;
+		manipOptions -ps `optionVar -q manipPreviousStateSize`;
+		manipOptions -middleMouseRepositioning `optionVar -q manipMiddleMouseRepos`;
+        manipOptions -rememberActiveHandle `optionVar -q manipsRememberActiveHandle`;
+        manipOptions -rememberActiveHandleAfterToolSwitch `optionVar -q manipsRememberActiveHandleAfterToolSwitch`;
+		manipOptions -planeHandleOffset `optionVar -q manipPlaneHandleOffset`
+					 -showPlaneHandles `optionVar -q manipShowPlaneHandles`;
+		manipOptions -pivotRotateHandleOffset `optionVar -q manipPivotRotateHandleOffset`
+					 -showPivotRotateHandle `optionVar -q manipShowPivotRotateHandle`;
+		manipOptions -hideManipOnCtrl `optionVar -q manipHideOnCtrl`
+					 -hideManipOnShift `optionVar -q manipHideOnShift`
+					 -hideManipOnShiftCtrl `optionVar -q manipHideOnShiftCtrl`;
+	}
+}
+
+global proc prefsSyncNURBS(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+	int $hasSurfaces = `isTrue SurfaceUIExists`;
+
+	if ($mode == "syncOptToCurrent") {
+
+		optionVar -iv newCurveDisplayEP `toggle -q -nc -ep`;
+		optionVar -iv newCurveDisplayHull `toggle -q -nc -hull`;
+		optionVar -iv newCurveDisplayCV `toggle -q -nc -cv`;
+		optionVar -iv highPrecisionNurbs `toggle -q -hpn`;
+
+		if ( $hasSurfaces ) {
+			optionVar -iv newSurfaceDisplayEP `toggle -q -ns -ep`;
+			optionVar -iv newSurfaceDisplayHull `toggle -q -ns -hull`;
+			optionVar -iv newSurfaceDisplayCV `toggle -q -ns -cv`;
+			optionVar -iv newSurfaceDisplayOrigin `toggle -q -ns -origin`;
+		}
+
+		int $iv[];
+		if ( $hasSurfaces ) {
+			$iv = `displaySmoothness -q -dc -du`;
+			optionVar -iv newNurbsIsoparms $iv[0];
+			$iv = `displaySmoothness -q -dc -ps`;
+			optionVar -iv newNurbsPointsShaded $iv[0];
+		}
+		$iv = `displaySmoothness -q -dc -pw`;
+		optionVar -iv newNurbsPointsWire $iv[0];
+
+	} else if ($mode == "syncCurrentToOpt") {
+
+		toggle -nc -ep -state `optionVar -q newCurveDisplayEP`;
+		toggle -nc -hull -state `optionVar -q newCurveDisplayHull`;
+		toggle -nc -cv -state `optionVar -q newCurveDisplayCV`;
+		toggle -hpn -state `optionVar -q hHighPrecisionNurbs`;
+
+		if ( $hasSurfaces ) {
+			toggle -ns -ep -state `optionVar -q newSurfaceDisplayEP`;
+			toggle -ns -hull -state `optionVar -q newSurfaceDisplayHull`;
+			toggle -ns -cv -state `optionVar -q newSurfaceDisplayCV`;
+			toggle -ns -origin -state `optionVar -q newSurfaceDisplayOrigin`;
+
+			displaySmoothness -dc -du `optionVar -q newNurbsIsoparms`;
+			displaySmoothness -dc -dv `optionVar -q newNurbsIsoparms`;
+			displaySmoothness -dc -ps `optionVar -q newNurbsPointsShaded`;
+		}
+		displaySmoothness -dc -pw `optionVar -q newNurbsPointsWire`;	
+	}
+}
+
+global proc prefsSyncPolys(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+	if (!`isTrue "PolygonsExists"`) return;
+
+	if ($mode == "syncOptToCurrent") {
+		
+		int $temp[];
+		float $fTemp[];
+		
+		$temp = `polyOptions -q -np -dv`;
+		optionVar -iv newPolyVtxDisp $temp[0];
+		$temp = `polyOptions -q -np -bcv`;
+		optionVar -iv newPolyVtxBackCull $temp[0];
+		$temp = `polyOptions -q -np -db`;
+		optionVar -iv newPolyBorderEdgeHilite $temp[0];
+		$temp = `polyOptions -q -np -dmb`;
+		optionVar -iv newPolyBorderMapHilite $temp[0];
+		$temp = `polyOptions -q -np -dce`;
+		optionVar -iv newPolyCreaseEdgeHilite $temp[0];
+		$temp = `polyOptions -q -np -dcv`;
+		optionVar -iv newPolyCreaseVertexHilite $temp[0];
+		$temp = `polyOptions -q -np -dc`;
+		optionVar -iv newPolyFacetCentreDisp $temp[0];
+		$temp = `polyOptions -q -np -dt`;
+		optionVar -iv newPolyFacetTrngleDisp $temp[0];
+		$temp = `polyOptions -q -np -dw`;
+		optionVar -iv newPolyFacetWarpDisp $temp[0]; 
+		$temp = `polyOptions -q -np -dif`;
+		optionVar -iv newPolyHoleFacesHilite $temp[0];
+
+		$fTemp = `polyOptions -q -np -sv`;
+		optionVar -fv newPolyVertexSize $fTemp[0];
+		$fTemp = `polyOptions -q -np -suv`;
+		optionVar -fv newPolyUVSize $fTemp[0];
+		$fTemp = `polyOptions -q -np -sb`;
+		optionVar -fv newPolyBorderEdgeSize $fTemp[0];
+		$fTemp = `polyOptions -q -np -sn`;
+		optionVar -fv newPolyNormalSize $fTemp[0];
+
+		int $vertexNormals[];
+		int $faceNormals[];
+		int $vertexFaceNormals[];
+
+		$temp = `polyOptions -q -np -dn`;
+		$vertexNormals = `polyOptions -q -np -pt`;
+		$faceNormals = `polyOptions -q -np -f`;
+		$vertexFaceNormals = `polyOptions -q -np -pf`;
+		if ($temp[0]) {
+			// some sort of normal display is enabled
+			if ($vertexNormals[0]) {
+				optionVar -iv newPolyVertexNormals 1;
+				optionVar -iv newPolyFacetNormalDisp 0;
+			}
+			if ($faceNormals[0]) {
+				optionVar -iv newPolyVertexNormals 0;
+				optionVar -iv newPolyFacetNormalDisp 1;
+			}
+			if ($vertexFaceNormals[0]) {
+				optionVar -iv newPolyVertexNormals 1;
+				optionVar -iv newPolyFacetNormalDisp 1;
+			}
+		} else {
+			// we can't really tell what sort of normals would be displayed
+			optionVar -iv newPolyVertexNormals 0;
+			optionVar -iv newPolyFacetNormalDisp  0;
+		}
+		
+		$temp = `polyOptions -q -np -ae`;
+		if ($temp[0]) {
+			optionVar -iv newPolyEdgeDisp 0;
+		} else {
+			$temp = `polyOptions -q -np -se`;
+			if ($temp[0]) {
+				optionVar -iv newPolyEdgeDisp 1;
+			} else {
+				$temp = `polyOptions -q -np -hec`;
+				if ($temp[0]) {
+					optionVar -iv newPolyEdgeDisp 2;
+				} else {
+					$temp = `polyOptions -q -np -he`;
+					if ($temp[0]) {
+						optionVar -iv newPolyEdgeDisp 3;
+					}
+				}
+			}
+		}
+
+		$temp = `polyOptions -q -np -bc`;
+		if ($temp[0])
+			optionVar -iv newPolyBackFaceCull 0;
+		else {
+			$temp = `polyOptions -q -np -fb`;
+			if ($temp[0])
+				optionVar -iv newPolyBackFaceCull 1;
+			else
+			{
+				$temp = `polyOptions -q -np -wbc`;
+				if ($temp[0])
+					optionVar -iv newPolyBackFaceCull 2;
+				else
+				{
+					$temp = `polyOptions -q -np -hb`;
+					if ($temp[0])
+						optionVar -iv newPolyBackFaceCull 3;
+				}
+			}
+		}
+
+		int $newPoly[4] = `polyOptions -q -np -din`;
+		optionVar 
+			-iv newPolyNumVertexDisp $newPoly[0]
+			-iv newPolyNumEdgeDisp   $newPoly[1]
+			-iv newPolyNumFacetDisp  $newPoly[2]
+			-iv newPolyNumUvDisp     $newPoly[3];
+
+		int $coldisp[] = `polyOptions -q -np -cs`;
+		optionVar -iv newPolyColorShaded $coldisp[0];
+
+		string $colChan[] = `polyOptions -q -np -cm`;
+		if ($colChan[0] == "none")
+			optionVar -iv newPolyColorChannel 1;
+		else if ($colChan[0] == "ambient")
+			optionVar -iv newPolyColorChannel 2;
+		else if ($colChan[0] == "ambientDiffuse")
+			optionVar -iv newPolyColorChannel 3;
+		else if ($colChan[0] == "diffuse")
+			optionVar -iv newPolyColorChannel 4;
+		else if ($colChan[0] == "specular")
+			optionVar -iv newPolyColorChannel 5;
+		else if ($colChan[0] == "emission")
+			optionVar -iv newPolyColorChannel 6;
+			
+		string $matBlend[] = `polyOptions -q -np -mb`;
+		if ($matBlend[0] == "overwrite")
+			optionVar -iv newPolyMaterialBlend 1;
+		else if ($matBlend[0] == "add")
+			optionVar -iv newPolyMaterialBlend 2;
+		else if ($matBlend[0] == "subtract")
+			optionVar -iv newPolyMaterialBlend 3;
+		else if ($matBlend[0] == "multiply")
+			optionVar -iv newPolyMaterialBlend 4;
+		else if ($matBlend[0] == "divide")
+			optionVar -iv newPolyMaterialBlend 5;
+		else if ($matBlend[0] == "average")
+			optionVar -iv newPolyMaterialBlend 6;		
+		else if ($matBlend[0] == "modulate2x")
+			optionVar -iv newPolyMaterialBlend 7;				
+
+	} else if ($mode == "syncCurrentToOpt") {
+
+		polyOptions -np -dv `optionVar -q newPolyVtxDisp`;
+		polyOptions -np -bcv `optionVar -q newPolyVtxBackCull`;
+
+		if ( `optionVar -q newPolyVertexNormals`)
+			if (`optionVar -q newPolyFacetNormalDisp`)
+				polyOptions -np -dn 1 -pf;
+			else
+				polyOptions -np -dn 1 -pt;
+		else
+			if (`optionVar -q newPolyFacetNormalDisp`)
+				polyOptions -np -dn 1 -f;
+			else
+				polyOptions -np -dn 0 -f;
+
+		$state = `optionVar -q newPolyEdgeDisp`;
+		if ( $state == 0 )
+			polyOptions -np -ae;
+		else if ( $state == 1 )
+			polyOptions -np -se;
+		else if ( $state == 2 )
+			polyOptions -np -hec;
+		else if ( $state == 3 )
+			polyOptions -np -he;
+
+		polyOptions -np -sv `optionVar -q newPolyVertexSize`;
+		polyOptions -np -sb `optionVar -q newPolyBorderEdgeSize`;
+		polyOptions -np -db `optionVar -q newPolyBorderEdgeHilite`;
+		polyOptions -np -dmb `optionVar -q newPolyBorderMapHilite`;
+		polyOptions -np -dce `optionVar -q newPolyCreaseEdgeHilite`;
+		polyOptions -np -dcv `optionVar -q newPolyCreaseVertexHilite`;
+		polyOptions -np -sn `optionVar -q newPolyNormalSize`;
+		polyOptions -np -suv `optionVar -q newPolyUVSize`;
+		polyOptions -np -dc `optionVar -q newPolyFacetCentreDisp`;
+		polyOptions -np -dt `optionVar -q newPolyFacetTrngleDisp`;
+		polyOptions -np -dw `optionVar -q newPolyFacetWarpDisp`;
+		polyOptions -np -dif `optionVar -q newPolyHoleFacesHilite`;
+		polyOptions -np -din 
+			`optionVar -q newPolyNumVertexDisp`
+			`optionVar -q newPolyNumEdgeDisp`
+			`optionVar -q newPolyNumFacetDisp`
+			`optionVar -q newPolyNumUvDisp`; 
+		
+		$state = `optionVar -q newPolyBackFaceCull`;
+		if( $state == 0 )
+			polyOptions -np -bc;
+		else if( $state == 1 )
+			polyOptions -np -fb;
+		else if( $state == 2 )
+			polyOptions -np -wbc;
+		else if( $state == 3 )
+			polyOptions -np -hb;
+
+		polyOptions -np -cs `optionVar -q newPolyColorShaded`;
+		
+		// color channel options
+		string $colorChannelStrings[] = {"none", "ambient", "ambientDiffuse",
+										 "diffuse", "specular", "emission"};
+		int $channel = `optionVar -q newPolyColorChannel`;
+		if ($channel > 0 && $channel <= size($colorChannelStrings) )
+			polyOptions -np -cm $colorChannelStrings[$channel-1];
+		else
+			polyOptions -np -cm "diffuse";
+			
+		// material blend options
+		string $materialBlendStrings[] = {"overwrite", "add", "subtract",
+										 "multiply", "divide", "average", "modulate2x" };
+		int $blend = `optionVar -q newPolyMaterialBlend`;
+		if ($blend > 0 && $blend <= size($materialBlendStrings) )
+			polyOptions -np -mb $materialBlendStrings[$blend-1];
+		else
+			polyOptions -np -mb "overwrite";			
+			
+	}
+}
+
+global proc prefsSyncSubdivs(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+	if ($mode == "syncOptToCurrent") {
+		optionVar -iv subdivComponentDisplayStyle `subdDisplayMode -q -showComponentsAsNumerals`;
+	} else if ($mode == "syncCurrentToOpt") {
+		subdDisplayMode -showComponentsAsNumerals `optionVar -query subdivComponentDisplayStyle`;
+	}
+
+}
+
+global proc prefsSyncFonts(string $mode)
+{
+	if ($mode == "syncOptToCurrent") {
+		optionVar -iv fontSetOpt `displayPref -q -fm`;
+		optionVar -iv smallFontSize `displayPref -q -sfs`;
+		optionVar -iv defaultFontSize `displayPref -q -dfs`;
+		
+	} else if ($mode == "syncCurrentToOpt") {
+		displayPref -fm `optionVar -query fontSetOpt`;
+		displayPref -sfs `optionVar -query smallFontSize`; 
+		displayPref -dfs `optionVar -query defaultFontSize`; 
+	}
+}
+
+global proc prefsSyncSettings(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+    global string $gPreviousWorkingUnitLinear;
+
+	if ($mode == "syncOptToCurrent") {
+
+		optionVar
+			-sv upAxisDirection `upAxis -q -axis`
+			-sv workingUnitLinear `currentUnit -q -l`
+			-sv workingUnitAngular `currentUnit -q -a`
+			-sv workingUnitTime `currentUnit -q -t`
+			-fv positionalTolerance `tolerance -q -l`
+			-fv tangentialTolerance `tolerance -q -a`;
+
+	} else if ($mode == "syncCurrentToOpt") {
+
+		if (`optionVar -q upAxisDirection` != `upAxis -q -axis`) {
+			// For some weird reason upAxis gives a warning if
+			// you set it to the current value.
+			upAxis -axis `optionVar -q upAxisDirection` -rv;
+		}
+
+		$gPreviousWorkingUnitLinear = `currentUnit -q -l`;
+		currentUnit 
+			-a `optionVar -q workingUnitAngular`
+			-t `optionVar -q workingUnitTime`;
+
+		//	Use this proc to restore the linear units because it will also
+		//	ensure the grid settings are correct.
+		//
+		changeLinearUnit(`optionVar -query workingUnitLinear`);
+
+		tolerance 
+			-l `optionVar -q positionalTolerance`
+			-a `optionVar -q tangentialTolerance`;
+	}
+}
+
+global proc prefsSyncFileReferences(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+	if ($mode == "syncOptToCurrent") {
+		optionVar			
+			-iv refAnimCurvesEditable `animDisplay -q -refAnimCurvesEditable`;
+	}
+	else if ($mode == "syncCurrentToOpt") {
+		animDisplay -e
+			-refAnimCurvesEditable `optionVar -q refAnimCurvesEditable`;
+	}
+}
+
+global proc prefsSyncAnim(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+	global string $gPlayBackSlider;
+
+	if ($mode == "syncOptToCurrent") {
+		optionVar 
+			-fv playbackMin `playbackOptions -q -min`
+			-fv playbackMax `playbackOptions -q -max`
+			-fv playbackMinRange `playbackOptions -q -animationStartTime`
+			-fv playbackMaxRange `playbackOptions -q -animationEndTime`;
+
+		int $tsHeight = `timeControl -q -h $gPlayBackSlider`;
+		// Maya interface scaling: since the height of time slider is the scaled
+		// result, it's necessary to reverse the scaling factor for this optionVar 
+		// when storing it.
+		float $rsv = `mayaDpiSetting -q -realScaleValue`;
+		if ($rsv != 0.0){
+			$tsHeight = $tsHeight / $rsv ;
+		}
+		// in case tsHeight is 0, we set it back to default.
+		if ($tsHeight <= 0){
+			$tsHeight = 28; 
+		}
+		optionVar
+			-iv timeSliderHeight $tsHeight
+			-sv timeSliderShowKeys `timeControl -q -showKeys $gPlayBackSlider`
+			-iv timeSliderShowKeysCombined `timeControl -q -showKeysCombined $gPlayBackSlider`
+			-sv timeSliderShowFrames `timeControl -q -showGreaseFrames $gPlayBackSlider`
+			-iv timeSliderTickSize `timeControl -q -tickSize $gPlayBackSlider`
+			-iv timeSliderTimeCode `animDisplay -q -tc`
+			-iv timeSliderSnapping `timeControl -q -snap $gPlayBackSlider`
+			-iv timeSliderTickSpan `timeControl -q -tickSpan $gPlayBackSlider`;
+
+		optionVar
+			-sv timeSliderPlayView `playbackOptions -q -v`
+			-sv timeSliderPlayLoop `playbackOptions -q -l`
+			-fv timeSliderPlaySpeed `playbackOptions -query -playbackSpeed`
+			-fv timeSliderMaxPlaySpeed `playbackOptions -query -maxPlaybackSpeed`			
+			-fv timeSliderPlayBy `playbackOptions -q -by`;
+
+		
+
+	} else if ($mode == "syncCurrentToOpt") {
+
+		playbackOptions -e
+			-min `optionVar -q playbackMin`
+			-max `optionVar -q playbackMax`
+			-animationStartTime `optionVar -q playbackMinRange`
+			-animationEndTime `optionVar -q playbackMaxRange`;
+
+		int $combined = `optionVar -q timeSliderShowKeysCombined`;
+		timeControl -e 
+			-height `optionVar -q timeSliderHeight`
+			-showKeys `optionVar -q timeSliderShowKeys`
+			-showKeysCombined $combined
+			-showGreaseFrames `optionVar -q timeSliderShowFrames`
+			-tickSize `optionVar -q timeSliderTickSize`
+			-tickSpan `optionVar -q timeSliderTickSpan`
+			-snap `optionVar -q timeSliderSnapping` $gPlayBackSlider;
+
+		animDisplay -e
+			-timeCode `optionVar -q timeSliderTimeCode`;
+
+		playbackOptions -e
+			-view `optionVar -q timeSliderPlayView`
+			-loop `optionVar -q timeSliderPlayLoop`
+			-playbackSpeed `optionVar -query timeSliderPlaySpeed`
+			-maxPlaybackSpeed `optionVar -query timeSliderMaxPlaySpeed`
+			-by `optionVar -q timeSliderPlayBy`;
+
+		//	Update the playbackSpeed HUD.
+		//
+		if (`exists updatePlaybackSpeedHUD`) {
+			updatePlaybackSpeedHUD();
+		}
+	}
+}
+
+global proc prefsSyncCamera(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+	// At this time all the camera informtion is saved directly in the
+	// optionVars. This function is simply here as a placeholder for 
+	// future use.
+}
+
+global proc prefsSyncViewCube(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+	if ($mode == "syncOptToCurrent") {
+		string $position = "topRight";
+		if (`viewManip -q -topRight`) {
+			$position = ("topRight");
+		} else if (`viewManip -q -bottomRight`) {
+			$position = ("bottomRight");
+		} else if (`viewManip -q -topLeft`) {
+			$position = ("topLeft");
+		} else if (`viewManip -q -bottomLeft`) {
+			$position = ("bottomLeft");
+		}
+		optionVar 
+			-iv viewCubeShowCube `viewManip -q -visible`
+			-sv viewCubeScreenPosition $position
+			-sv viewCubeSize `viewManip -q -size`
+			-fv viewCubeInactiveOpacity `viewManip -q -minOpacity`
+			-iv viewCubeSnapToClosest `viewManip -q -dragSnap`
+			-iv viewCubePreserveSceneUp `viewManip -q -preserveSceneUp`
+			-iv viewCubeFitToView `viewManip -q -zoomToFitScene`
+			-iv viewCubeShowCompass `viewManip -q -drawCompass`
+			-fv viewCubeCompassAngle `viewManip -q -compassAngle`;
+
+	} 
+	else if ($mode == "syncCurrentToOpt") {
+		viewManip 
+			-visible `optionVar -q viewCubeShowCube`	
+			-size `optionVar -q viewCubeSize`
+			-minOpacity `optionVar -q viewCubeInactiveOpacity`
+			-dragSnap `optionVar -q viewCubeSnapToClosest`
+			-preserveSceneUp `optionVar -q viewCubePreserveSceneUp`
+			-zoomToFitScene `optionVar -q viewCubeFitToView`
+			-drawCompass `optionVar -q viewCubeShowCompass`
+			-compassAngle `optionVar -q viewCubeCompassAngle`;
+		string $positionPref = `optionVar -q viewCubeScreenPosition`;
+		if ($positionPref == "topRight") {
+			viewManip -topRight;
+		} else if ($positionPref == "bottomRight") {
+			viewManip -bottomRight;
+		} else if ($positionPref == "topLeft") {
+			viewManip -topLeft;
+		} else if ($positionPref == "bottomLeft") {
+			viewManip -bottomLeft;
+		}
+	}
+}
+
+global proc prefsSyncSteeringWheel(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+	if ($mode == "syncOptToCurrent") {
+		optionVar
+			-iv steeringWheelWelcomeSeen `steeringWheel -q -wds`
+			-fv steeringWheelBigSize `steeringWheel -q -bws`
+			-iv steeringWheelBigOpacity `steeringWheel -q -bwo`
+			-fv steeringWheelMiniSize `steeringWheel -q -mws`
+			-fv steeringWheelMiniOpacity `steeringWheel -q -mwo`
+			-iv steeringWheelShowToolMessages `steeringWheel -q -stm`
+			-iv steeringWheelShowToolTips `steeringWheel -q -stt`
+			-iv steeringWheelShowPinnedOnStartup `steeringWheel -q -pws`
+			-iv steeringWheelInvertLookAxis `steeringWheel -q -ila`
+			-iv steeringWheelConstrainWalkToGround `steeringWheel -q -cw`
+			-fv steeringWheelWalkSpeedFactor `steeringWheel -q -wsf`
+			-iv steeringWheelIncrementalZoom `steeringWheel -q -iz`
+			-iv steeringWheelKeepSceneUpright `steeringWheel -q -ksu`
+			-iv steeringWheelSelectionSensitivity `steeringWheel -q -ss`;
+	} 
+	else if ($mode == "syncCurrentToOpt") {
+		steeringWheel -wds `optionVar -q steeringWheelWelcomeSeen`;
+		steeringWheel -bws `optionVar -q steeringWheelBigSize`;
+		steeringWheel -bwo `optionVar -q steeringWheelBigOpacity`;
+		steeringWheel -mws `optionVar -q steeringWheelMiniSize`;
+		steeringWheel -mwo `optionVar -q steeringWheelMiniOpacity`;
+		steeringWheel -stm `optionVar -q steeringWheelShowToolMessages`;
+		steeringWheel -stt `optionVar -q steeringWheelShowToolTips`;
+		steeringWheel -pws `optionVar -q steeringWheelShowPinnedOnStartup`;
+		steeringWheel -ila `optionVar -q steeringWheelInvertLookAxis`;
+		steeringWheel -cw `optionVar -q steeringWheelConstrainWalkToGround`;
+		steeringWheel -wsf `optionVar -q steeringWheelWalkSpeedFactor`;
+		steeringWheel -iz `optionVar -q steeringWheelIncrementalZoom`;
+		steeringWheel -ksu `optionVar -q steeringWheelKeepSceneUpright`;
+		steeringWheel -ss `optionVar -q steeringWheelSelectionSensitivity`;
+	}
+}
+
+global proc prefsSyncDyn(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+	if (!`isTrue "DynamicsExists"`) return;
+
+	if ($mode == "syncOptToCurrent") {
+		optionVar
+			-iv dynPrefAutoCreate `dynPref -q -ac`
+			-iv dynPrefRunupToCurrentTime `dynPref -q -rt`
+			-iv dynPrefRunupFrom `dynPref -q -rf`
+			-iv dynPrefSaveRuntimeState `dynPref -q -sr`
+			-iv dynPrefEchoCollision `dynPref -q -ec`;
+	} else if ($mode == "syncCurrentToOpt") {
+		dynPref -ac `optionVar -q dynPrefAutoCreate`;
+		dynPref -rt `optionVar -q dynPrefRunupToCurrentTime`;
+		dynPref -rf `optionVar -q dynPrefRunupFrom`;
+		dynPref -sr `optionVar -q dynPrefSaveRuntimeState`;
+		dynPref -ec `optionVar -q dynPrefEchoCollision`;
+	}
+}
+
+global proc prefsSyncKeys(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+	if ($mode == "syncOptToCurrent") {
+		optionVar
+			-iv autoKeyframeState `autoKeyframe -q -state`
+			-iv weightedTangents `keyTangent -g -q -weightedTangents`
+			-sv autoKeyCharacterState `autoKeyframe -q -characterOption`
+			-sv inTangentType `keyTangent -g -q -inTangentType`
+			-sv outTangentType `keyTangent -g -q -outTangentType`;
+
+	} else if ($mode == "syncCurrentToOpt") {
+		autoKeyframe -state `optionVar -q autoKeyframeState`;
+		autoKeyframe -characterOption `optionVar -q autoKeyCharacterState`;
+		keyTangent -g -weightedTangents `optionVar -q weightedTangents`;
+		keyTangent -g -inTangentType `optionVar -q inTangentType`;
+		keyTangent -g -outTangentType `optionVar -q outTangentType`;
+	}
+}
+
+global proc prefsSyncAssets(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+//
+//	The assets states are only saved in optionVars so no syncing 
+//	needs to be done. 
+//
+}
+
+global proc prefsSyncModeling(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+	if ($mode == "syncOptToCurrent") 
+	{
+		int $options[] = `polyOptions -q -newPolymesh -vertexNormalMethod 
+					-smoothDrawType
+					`;
+
+		optionVar -iv newPolyDefaultVertexNormalMethod $options[0];
+
+		optionVar -iv newPolyDefaultSmoothDrawType  $options[1];
+	} 
+	else if ($mode == "syncCurrentToOpt") 
+	{
+		polyOptions -newPolymesh 
+				-vertexNormalMethod (`optionVar -q newPolyDefaultVertexNormalMethod`)
+				-smoothDrawType (`optionVar -q newPolyDefaultSmoothDrawType`)
+				;
+	}
+}
+
+global proc prefsSyncModelingToolkit(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+	if (`pluginInfo -q -loaded "modelingToolkit"`)
+	{
+		if ($mode == "syncOptToCurrent") 
+		{
+			optionVar -iv MT_useCompModeCustCmd (`nexOpt -q useCompModeCustCmd`);
+			optionVar -sv MT_compModeCustCmd (`nexOpt -q compModeCustCmd`);
+
+			optionVar -iv MT_freeRotate (`nexOpt -q freeRotate`);
+			optionVar -iv MT_prohibitNegativeScale (`nexOpt -q prohibitNegativeScale`);
+			optionVar -iv MT_refreshActiveOnly (`nexOpt -q refreshActiveOnly`);
+			optionVar -iv MT_resetManipOnToolSwitch (`nexOpt -q resetManipOnToolSwitch`);
+			optionVar -iv MT_resetManipOnSelChange (`nexOpt -q resetManipOnSelChange`);
+			optionVar -fv MT_manipPickRange (`nexOpt -q manipPickRange`);
+			optionVar -iv MT_planeHandleOffset (`nexOpt -q planeHandleOffset`);
+
+			optionVar -iv MT_hudShowMode (`nexOpt -q hudShowMode`);
+			optionVar -iv MT_hudShowCoordSpace (`nexOpt -q hudShowCoordSpace`);
+			optionVar -iv MT_showDynamicHUD (`nexOpt -q showDynamicHUD`);
+
+			float $color[] = `nexOpt -q dynamicHUDColor`;
+			optionVar -fv MT_dynamicHUDColor $color[0];
+			optionVar -fva MT_dynamicHUDColor $color[0];
+			optionVar -fva MT_dynamicHUDColor $color[0];
+
+			optionVar -iv MT_invertedCursors (`nexOpt -q invertedCursors`);
+
+			float $color[] = `nexOpt -q hiliteColorAdd`;
+			optionVar -fv MT_hiliteColorAdd $color[0];
+			optionVar -fva MT_hiliteColorAdd $color[1];
+			optionVar -fva MT_hiliteColorAdd $color[2];
+
+			$color = `nexOpt -q hiliteColorSubtract`;
+			optionVar -fv MT_hiliteColorSubtract $color[0];
+			optionVar -fva MT_hiliteColorSubtract $color[1];
+			optionVar -fva MT_hiliteColorSubtract $color[2];
+
+			$color = `nexOpt -q paintColorAdd`;
+			optionVar -fv MT_paintColorAdd $color[0];
+			optionVar -fva MT_paintColorAdd $color[1];
+			optionVar -fva MT_paintColorAdd $color[2];
+
+			$color = `nexOpt -q paintColorSubtract`;
+			optionVar -fv MT_paintColorSubtract $color[0];
+			optionVar -fva MT_paintColorSubtract $color[1];
+			optionVar -fva MT_paintColorSubtract $color[2];
+
+			$color = `nexOpt -q activeManipColor`;
+			optionVar -fv MT_activeManipColor $color[0];
+			optionVar -fva MT_activeManipColor $color[1];
+			optionVar -fva MT_activeManipColor $color[2];
+
+			optionVar -fv MT_highlightOpacity (`nexOpt -q highlightOpacity`);
+
+			optionVar -iv MT_quaDrawMmbWeld (`nexOpt -q quaDrawMmbWeld`);
+			optionVar -iv MT_shiftSlide (`nexOpt -q shiftSlide`);
+			optionVar -iv MT_shiftCtrlSlide (`nexOpt -q shiftCtrlSlide`);
+
+			optionVar -iv MT_qdNoModifierKeys (`nexOpt -q qdNoModifierKeys`);
+			optionVar -iv MT_qdShiftModifierKeys (`nexOpt -q qdShiftModifierKeys`);
+			optionVar -iv MT_qdControlModifierKeys (`nexOpt -q qdControlModifierKeys`);
+			optionVar -iv MT_qdControlShiftModifierKeys (`nexOpt -q qdControlShiftModifierKeys`);
+			optionVar -iv MT_qdTabModifierKeys (`nexOpt -q qdTabModifierKeys`);
+			$color = `nexOpt -q hiliteColorCutLine`;
+			optionVar -fv MT_hiliteColorCutLine $color[0];
+			optionVar -fva MT_hiliteColorCutLine $color[1];
+			optionVar -fva MT_hiliteColorCutLine $color[2];
+			optionVar -fva MT_hiliteColorCutLine $color[3];
+
+			$color = `nexOpt -q hiliteColorCutVert`;
+			optionVar -fv MT_hiliteColorCutVert $color[0];
+			optionVar -fva MT_hiliteColorCutVert $color[1];
+			optionVar -fva MT_hiliteColorCutVert $color[2];
+			optionVar -fva MT_hiliteColorCutVert $color[3];
+
+			$color = `nexOpt -q hiliteColorCutEdge`;
+			optionVar -fv MT_hiliteColorCutEdge $color[0];
+			optionVar -fva MT_hiliteColorCutEdge $color[1];
+			optionVar -fva MT_hiliteColorCutEdge $color[2];
+			optionVar -fva MT_hiliteColorCutEdge $color[3];
+
+			$color = `nexOpt -q hiliteColorCutFace`;
+			optionVar -fv MT_hiliteColorCutFace $color[0];
+			optionVar -fva MT_hiliteColorCutFace $color[1];
+			optionVar -fva MT_hiliteColorCutFace $color[2];
+			optionVar -fva MT_hiliteColorCutFace $color[3];
+		} 
+		else if ($mode == "syncCurrentToOpt") 
+		{
+			nexOpt -e useCompModeCustCmd (`optionVar -q MT_useCompModeCustCmd`);
+			nexOpt -e compModeCustCmd (`optionVar -q MT_compModeCustCmd`);
+
+			nexOpt -e freeRotate (`optionVar -q MT_freeRotate`);
+			nexOpt -e prohibitNegativeScale (`optionVar -q MT_prohibitNegativeScale`);
+			nexOpt -e refreshActiveOnly (`optionVar -q MT_refreshActiveOnly`);
+			nexOpt -e resetManipOnToolSwitch (`optionVar -q MT_resetManipOnToolSwitch`);
+			nexOpt -e resetManipOnSelChange (`optionVar -q MT_resetManipOnSelChange`);
+			nexOpt -e manipPickRange (`optionVar -q MT_manipPickRange`);
+			nexOpt -e planeHandleOffset (`optionVar -q MT_planeHandleOffset`);
+
+			nexOpt -e hudShowMode (`optionVar -q MT_hudShowMode`);
+			nexOpt -e hudShowCoordSpace (`optionVar -q MT_hudShowCoordSpace`);
+			nexOpt -e showDynamicHUD (`optionVar -q MT_showDynamicHUD`);
+			float $color[] = `optionVar -q MT_dynamicHUDColor`;
+			nexOpt -e dynamicHUDColor $color[0] $color[1] $color[2] 1;
+
+			nexOpt -e invertedCursors (`optionVar -q MT_invertedCursors`);
+
+			$color = `optionVar -q MT_hiliteColorAdd`;
+			nexOpt -e hiliteColorAdd $color[0] $color[1] $color[2] 1;
+
+			$color = `optionVar -q MT_hiliteColorSubtract`;
+			nexOpt -e hiliteColorSubtract $color[0] $color[1] $color[2] 1;
+
+			$color = `optionVar -q MT_paintColorAdd`;
+			nexOpt -e paintColorAdd $color[0] $color[1] $color[2] 1;
+
+			$color = `optionVar -q MT_paintColorSubtract`;
+			nexOpt -e paintColorSubtract $color[0] $color[1] $color[2] 1;
+
+			$color = `optionVar -q MT_activeManipColor`;
+			nexOpt -e activeManipColor $color[0] $color[1] $color[2] 1;
+
+			nexOpt -e highlightOpacity (`optionVar -q MT_highlightOpacity`);
+
+			nexOpt -e quaDrawMmbWeld (`optionVar -q MT_quaDrawMmbWeld`);
+			nexOpt -e shiftSlide (`optionVar -q MT_shiftSlide`);
+			nexOpt -e shiftCtrlSlide (`optionVar -q MT_shiftCtrlSlide`);
+
+			nexOpt -e qdNoModifierKeys (`nexOpt -q qdNoModifierKeys`);
+			nexOpt -e qdShiftModifierKeys (`nexOpt -q qdShiftModifierKeys`);
+			nexOpt -e qdControlModifierKeys (`nexOpt -q qdControlModifierKeys`);
+			nexOpt -e qdControlShiftModifierKeys (`nexOpt -q qdControlShiftModifierKeys`);
+			nexOpt -e qdTabModifierKeys (`nexOpt -q qdTabModifierKeys`);
+			$color = `optionVar -q MT_hiliteColorCutLine`;
+			nexOpt -e hiliteColorCutLine $color[0] $color[1] $color[2] $color[3];
+			$color = `optionVar -q MT_hiliteColorCutVert`;
+			nexOpt -e hiliteColorCutVert $color[0] $color[1] $color[2] $color[3];
+			$color = `optionVar -q MT_hiliteColorCutEdge`;
+			nexOpt -e hiliteColorCutEdge $color[0] $color[1] $color[2] $color[3];
+			$color = `optionVar -q MT_hiliteColorCutFace`;
+			nexOpt -e hiliteColorCutFace $color[0] $color[1] $color[2] $color[3];
+		}
+	}
+}
+
+global proc prefsSyncNodeEditor(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+//
+//	The Node Editor states are only saved in optionVars so no syncing 
+//	needs to be done. 
+// 
+}
+
+global proc prefsSyncSelect(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+	global string $gSelectPriorityMode;
+	global int $gCustomSelPriority[];
+	global int $gCustomSelPriorityCount;
+
+	if ($mode == "syncOptToCurrent") {
+
+		optionVar 
+			-iv selectSingleMarquee `selectPref -q -singleBoxSelection` 
+			-iv selectClickDrag `selectPref -q -clickDrag`
+			-iv selectAffectsActive `selectPref -q -affectsActive`
+			-iv ignoreSelectionPriority `selectPref -q -ignoreSelectionPriority`
+			-iv popupMenuSelection `selectPref -q -popupMenuSelection`
+			-iv expandPopupList `selectPref -q -expandPopupList`
+			-iv disableComponentPopups `selectPref -q -disableComponentPopups`
+			-iv clickBoxSize `selectPref -q -clickBoxSize`
+			-iv preSelectHilite `selectPref -q -preSelectHilite`
+			-iv selectPrefUseDepth `selectPref -q -useDepth`
+			-iv MT_selectDeadSpaceRange `selectPref -q -preSelectDeadSpace`
+			-iv MT_tweakDeadSpaceRange `selectPref -q -preSelectTweakDeadSpace`
+			-iv selectPrefPreSelectBackfacing `selectPref -q -preSelectBackfacing`
+			-iv selectPrefPreSelectClosest `selectPref -q -preSelectClosest`
+			-iv containerCentricSelection `selectPref -q -containerCentricSelection`
+			-iv containerAutoSelectContainer `selectPref -q -autoSelectContainer`
+			-iv TrackSelectionOrder `selectPref -q -trackSelectionOrder`
+			-iv PreserveComponentSelections `selectPref -q -selectTypeChangeAffectsActive`
+			-iv selectionChildHighlightMode `selectPref -q -selectionChildHighlightMode`;
+
+		optionVar
+			-sv selectPrefPriorityMode $gSelectPriorityMode;
+
+		if (`isTrue "PolygonsExists"`) {
+			optionVar	
+				-iv polyFaceSensitive `polySelectConstraint -q -ws`;
+		}
+
+		int $i;
+		optionVar -ca customSelectPriority;
+		for ($i = 0; $i < $gCustomSelPriorityCount; $i++ ) {
+			optionVar -iva customSelectPriority $gCustomSelPriority[$i];
+		}
+
+	} else if ($mode == "syncCurrentToOpt") {
+
+		selectPref 
+			-singleBoxSelection `optionVar -q selectSingleMarquee`
+			-clickDrag `optionVar -q selectClickDrag`
+			-affectsActive `optionVar -q selectAffectsActive`
+			-ignoreSelectionPriority `optionVar -q ignoreSelectionPriority`
+			-popupMenuSelection `optionVar -q popupMenuSelection`
+		    -expandPopupList `optionVar -q expandPopupList`
+		    -disableComponentPopups `optionVar -q disableComponentPopups`
+		    -clickBoxSize `optionVar -q clickBoxSize`
+			-preSelectHilite `optionVar -q preSelectHilite`
+			-useDepth `optionVar -q selectPrefUseDepth`
+			-preSelectDeadSpace `optionVar -q MT_selectDeadSpaceRange`
+			-preSelectTweakDeadSpace `optionVar -q MT_tweakDeadSpaceRange`
+			-preSelectBackfacing `optionVar -q selectPrefPreSelectBackfacing`
+			-preSelectClosest `optionVar -q selectPrefPreSelectClosest`
+			-containerCentricSelection `optionVar -q containerCentricSelection`
+			-autoSelectContainer `optionVar -q containerAutoSelectContainer`
+			-trackSelectionOrder `optionVar -q TrackSelectionOrder`
+			-selectTypeChangeAffectsActive `optionVar -q PreserveComponentSelections`
+			-selectionChildHighlightMode `optionVar -q selectionChildHighlightMode`
+			;
+
+		if (`isTrue "PolygonsExists"`) {
+			polySelectConstraint -ws `optionVar -q polyFaceSensitive`;
+		}
+
+		$gSelectPriorityMode = `optionVar -q selectPrefPriorityMode`;
+		$gCustomSelPriority = `optionVar -q customSelectPriority`;
+		selPriority $gSelectPriorityMode;
+	}
+}
+
+global proc prefsSyncSnap(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+	if ($mode == "syncOptToCurrent") {
+		optionVar
+			-iv useSnapTolerance `snapMode -q -useTolerance`
+			-iv snapTolerance `snapMode -q -tolerance`
+			-iv snapUVTolerance `snapMode -q -uvTolerance`
+			-iv snapMagnet `snapMode -q -edgeMagnet`
+			-fv snapMagnetTolerance `snapMode -q -edgeMagnetTolerance`;
+	} else if ($mode == "syncCurrentToOpt") {
+		snapMode 
+			-useTolerance `optionVar -q useSnapTolerance`
+			-tolerance `optionVar -q snapTolerance`
+			-uvTolerance `optionVar -q snapUVTolerance`
+			-edgeMagnet `optionVar -q snapMagnet`
+			-edgeMagnetTolerance `optionVar -q snapMagnetTolerance`;
+	}
+}
+
+global proc prefsSyncSound(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+	global string $gPlayBackSlider;
+	
+	if ($mode == "syncOptToCurrent") {
+		optionVar 
+			-sv timeSliderSoundDisplay `timeControl -q -wf $gPlayBackSlider`
+			-iv timeSliderRepeatOnHold `timeControl -q -roh $gPlayBackSlider`
+			-fv timeSliderRepeatChunk `timeControl -q -rcs $gPlayBackSlider`;
+
+	} else if ($mode == "syncCurrentToOpt") {
+		timeControl -edit
+			-waveform `optionVar -q timeSliderSoundDisplay`
+			-repeatOnHold `optionVar -q timeSliderRepeatOnHold`
+			-repeatChunkSize `optionVar -q timeSliderRepeatChunk`
+			$gPlayBackSlider;
+	}
+}
+
+global proc prefsSyncAdvanced(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+	if ($mode == "syncOptToCurrent") {
+		optionVar -iv "undoIsEnabled" `undoInfo -q -state`;
+		optionVar -iv "undoIsInfinite" `undoInfo -q -infinity`;
+		optionVar -iv "undoLength" `undoInfo -q -length`;
+	} else if ($mode == "syncCurrentToOpt") {
+		undoInfo -state `optionVar -q undoIsEnabled`
+				 -infinity `optionVar -q undoIsInfinite`
+				 -length `optionVar -q undoLength`;
+	}
+}
+
+global proc prefsSyncFileIO(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+// 
+{
+//	"displayLayerMerge" is only an optionVar so no syncing needs to be done. 
+
+	if ($mode == "syncOptToCurrent") 
+	{
+		optionVar -sv "fileCompressionMode" `translator -q -cmp`;
+
+		optionVar -iv "autoSaveEnable" `autoSave -q -enable`;
+		optionVar -iv "autoSaveInterval" (`autoSave -q -interval` / 60);
+		optionVar -iv "autoSavePrompt" `autoSave -q -prompt`;
+		optionVar -iv "autoSaveLimitBackups" `autoSave -q -limitBackups`;
+		optionVar -iv "autoSaveMaxBackups" `autoSave -q -maxBackups`;
+		optionVar -iv "autoSaveDestination" `autoSave -q -destination`;
+		optionVar -sv "autoSaveFolder" `autoSave -q -folder`;
+		if (`pluginInfo -q -loaded "modelingToolkit"`)
+		{
+			optionVar -iv "MT_autoloadTextures" `nexOpt -q autoloadTextures`;
+		}
+	} 
+	else if ($mode == "syncCurrentToOpt")
+	{
+		translator -cmp `optionVar -q fileCompressionMode`;
+
+		autoSave -enable `optionVar -q "autoSaveEnable"`
+					-prompt `optionVar -q "autoSavePrompt"`
+					-limitBackups `optionVar -q "autoSaveLimitBackups"`
+					-maxBackups `optionVar -q "autoSaveMaxBackups"`
+					-interval (60 * `optionVar -q "autoSaveInterval"`)
+					-destination `optionVar -q "autoSaveDestination"`
+					-folder `optionVar -q "autoSaveFolder"`;
+		if (`pluginInfo -q -loaded "modelingToolkit"`)
+		{
+			nexOpt -e "autoloadTextures" `optionVar -q MT_autoloadTextures`;
+		}
+	}
+}
+
+global proc prefsSyncModules(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+//
+//	The module states are only saved in optionVars so no syncing 
+//	needs to be done.  The optionVars do not have any affect
+//	until the next time Maya is started.
+//
+}
+
+global proc prefsSyncOpenMaya(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+	// openMaya prefs are not available on NT
+	if (`about -nt`) return;
+
+	int $loaded[] = `dynamicLoad -q "libOpenMaya.so"`; 
+	if (!$loaded[0]) return;
+
+	if ($mode == "syncOptToCurrent") {
+		optionVar -iv apiPrefLazyLoading `openMayaPref -q -lz`;
+		optionVar -iv apiPrefOldPluginWarning `openMayaPref -q -ow`;
+	} else if ($mode == "syncCurrentToOpt") {
+		openMayaPref -e -lz `optionVar -q apiPrefLazyLoading`;
+		openMayaPref -e -ow `optionVar -q apiPrefOldPluginWarning`;
+	}
+}
+
+global proc prefsSyncCommandPortDefault(string $mode)
+//
+//	Doesn't change the Preference window UI state
+//
+//	$mode = "syncOptToCurrent" to set the optionVars from the current state
+//		  = "syncCurrentToOpt" to set the current state from the optionVars
+//
+{
+//
+//	The command port default states are only saved in optionVars 
+//	so no syncing needs to be done.  The optionVars do not have 
+//	any affect until the next time Maya is started.
+//
+}

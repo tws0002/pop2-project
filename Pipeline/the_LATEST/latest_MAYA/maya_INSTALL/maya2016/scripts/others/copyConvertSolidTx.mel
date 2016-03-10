@@ -1,0 +1,1004 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Procedure Name:
+//      copyConvertSolidTx
+//
+//  Description:
+//      Procedure to execute convertSolidTx using the contents of the
+//      multi-lister highlight list and the selection list. The nodes
+//      downstream of the highlighted texture will be duplicated, and
+//      the surface on the selection list will be added the new
+//      shading group.
+//
+//      The multi-lister highlight list will be updated to contain the
+//      new nodes on successful completion of the command.
+//
+//  Input Arguments:
+//      antiAlias - toggle whether anti-aliasing should be done.
+//		edgeQuality - toggle wheter to use uv bounding box test for edge quality.
+//      bakeLighting - true if the baked lighting is desired.
+//      samplePlane - true if the baking using a virtual plane is desired.
+//      bakeShadow - true if the baked shadows is desired.
+//		bakeAlpha - true if bake alpha is desired
+//      doubleSided - true if normals should be flipped to face camera
+//		compRange - true if use selected component range
+//		uvRange - 0 (unit range), 1 (full range), 2 (use specified)
+//		umin,vmin umax, vmax - uv range to use.
+//      resX - X resolution of convert solid texture.
+//      resY - Y resolution of convert solid texture.
+//		fileFormat - saved file format to use.
+//
+//  Return Value:
+//      None.
+//
+
+proc addLast( string $itemArray[], string $item )
+{
+    $itemArray[size($itemArray)] = $item;
+}
+
+proc removeArrayElement( string $element, string $array[] )
+{
+    string $tmp[];
+
+    for ($item in $array) {
+        if ($element != $item)
+            addLast($tmp, $item);
+    }
+
+    clear($array);
+
+    for ($i = 0; $i < size($tmp); $i += 1)
+        $array[$i] = $tmp[$i];
+}
+
+proc downStreamConnections( string $node, string $result[] )
+{
+    string $connections[] = `listConnections -connections true
+        -plugs true -source false -destination true $node`;
+
+    // Foreach destination (output) connection on node.
+
+    for ($i = 0; $i < size($connections); $i += 2) {
+        // All message connections are skipped.
+
+        if (plugAttr($connections[$i]) != "message") {
+            addLast($result, $connections[$i]);
+            addLast($result, $connections[$i+1]);
+        }
+    }
+}
+
+proc downStreamNetwork( string $node, string $result[] )
+{
+    // Check if node is already in result.
+
+    for ($item in $result) {
+        if ($item == $node)
+            return;
+    }
+
+    addLast($result, $node);
+
+    // Do a depth first traversal to find the shading group.
+
+    if (`objectType $node` == "shadingEngine") {
+        if ($node == "initialShadingGroup" || $node == "initialParticleSE")
+            error(`format -stringArg $node (uiRes("m_copyConvertSolidTx.kCannotConvertText"))`);
+    }
+    else {
+        string $connections[];
+
+        downStreamConnections($node, $connections);
+
+        for ($i = 0; $i < size($connections); $i += 2) {
+            string $dstPlug = $connections[$i + 1];
+            string $dstNode = plugNode($dstPlug);
+            downStreamNetwork($dstNode, $result);
+
+        }
+    }
+}
+
+proc addSurfaceToNetwork( string $network[], string $surface )
+{
+    for ($item in $network) {
+        if (`objectType $item` == "shadingEngine") {
+			string $buffer[];
+			tokenize $surface " " $buffer;
+            sets -e -forceElement $item $buffer;
+            break;
+        }
+    }
+}
+
+proc int countGroupsInNetwork( string $network[] )
+{
+    int $count = 0;
+
+    for ($item in $network)
+        if (`objectType $item` == "shadingEngine")
+            $count += 1;
+
+    return $count;
+}
+
+proc substituteFileTexture( string $network[],
+                            string $oldPlug,
+                            string $newFile )
+{
+    string $connections[] = `listConnections -plugs true -source false
+        -destination true $oldPlug`;
+
+    // Foreach output connection on the substituted plug
+
+    for ($dstPlug in $connections) {
+        string $dstNode = plugNode($dstPlug);
+
+        // Find the corresponding node in the network.
+
+        for ($item in $network) {
+            if ($item == $dstNode) {
+                // Break the connection between the network and the
+                // old node, and replace it with a connection to new.
+
+                disconnectAttr $oldPlug $dstPlug;
+
+                // The file attribute used for the connection depends
+                // on the number of children in the destination plug.
+
+                string $attributes[] = `listAttr $oldPlug`;
+
+                int $count = size($attributes);
+
+                if ($count == 4) // parent + 3 children
+                    connectAttr ($newFile+".outColor") $dstPlug;
+                else if ($count == 1)
+                    connectAttr ($newFile+".outAlpha") $dstPlug;
+            }
+        }
+    }
+}
+
+proc substituteNode(string $network[], string $old, string $new )
+{
+    string $connections[] = `listConnections -connections true
+        -plugs true -source false -destination true $old`;
+
+    // Foreach output connection on the substituted node.
+
+    for ($i = 0; $i < size($connections); $i += 2) {
+        string $srcPlug = $connections[$i];
+        string $dstPlug = $connections[$i + 1];
+        string $dstNode = plugNode($dstPlug);
+
+        // Find the corresponding node in the network.
+
+        for ($item in $network) {
+            if ($item == $dstNode) {
+                // Break the connection between the network and the
+                // old node, and replace it with a connection to new.
+
+                disconnectAttr $srcPlug $dstPlug;
+
+                // Make the new connection instead
+
+                connectAttr ($new+"."+plugAttr($srcPlug)) $dstPlug;
+            }
+        }
+    }
+}
+
+proc string[] duplicateNetwork( string $network[] )
+{
+    string $newNetwork[];
+
+    // Are there nodes to duplicate?
+
+    if (size($network) > 0) {
+        string $duplicateCmd = "duplicate -inputConnections";
+
+        // There is currently a bug in duplicate with input connections,
+        // the specified nodes must be sorted by the depth (ie. from texture
+        // to shader to shading group or leaf to root).
+        //
+        // In convert solid, the network was produced by invoking
+        // downstreamNetwork which will produce the a list in the correct
+        // order.
+
+        for ($node in $network)
+            $duplicateCmd += " " + $node;
+
+        $newNetwork = `eval($duplicateCmd)`;
+    }
+
+    return $newNetwork;
+}
+
+proc string getUvRangeArgs(
+    int $uvRange, float $umin, float $vmin, float $umax, float $vmax )
+{
+    string $args = " ";
+
+    if ($uvRange == 0) { // unit
+        $args = " ";
+    }
+    else if ($uvRange == 1) { // full
+        $args = " -fullUvRange ";
+    }
+    else if ($uvRange == 2) { // set
+		$args = (" -uvRange " + $umin + " " + $umax + " " + $vmin + " " + $vmax + " ");
+    }
+
+    return $args;
+}
+
+proc doConvertTexture(string $command,
+       string $surface, string $component, string $texture,
+       string $result[] )
+{
+    // Get all connections downstream from the texture including
+    // itself. If the texture is a bump node we generate the
+    // connections to reflect the texture connected to the bump.
+    //
+
+    string $connections[];
+
+    string $type = `objectType $texture`;
+
+    if ($type == "bump2d" || $type == "bump3d") {
+        string $bumpPlug = $texture+".bumpValue";
+        $connections = `listConnections -plugs true $bumpPlug`;
+        addLast($connections, $bumpPlug);
+    }
+    else {
+        downStreamConnections($texture, $connections);
+    }
+
+    // Determine the minimum number of nodes to duplicate.
+    //
+
+    string $network[];
+
+    for ($i = 0; $i < size($connections); $i += 2) {
+        string $dstPlug = $connections[$i + 1];
+        string $downStreamNode = plugNode($dstPlug);
+        string $dstType = `objectType $downStreamNode`;
+
+        if ($dstType == "bump2d" || $dstType == "bump3d") {
+            downStreamNetwork($downStreamNode, $network);
+
+            // Remove the bump node from network.
+
+            removeArrayElement($downStreamNode, $network);
+        }
+        else {
+            downStreamNetwork($downStreamNode, $network);
+        }
+    }
+
+    if (countGroupsInNetwork($network) > 1) {
+        error(`format -stringArg $texture (uiRes("m_copyConvertSolidTx.kMultiTexture"))`);
+    }
+
+    string $newNetwork[] = duplicateNetwork($network);
+
+    // If we have components all of them will be converted and assigned
+    // to the new shading group; otherwise, act on the surface.
+    string $object;
+	if (size($component))
+        $object = $component;
+    else
+        $object = $surface;
+
+	addSurfaceToNetwork($newNetwork, $object);
+
+    for ($newNode in $newNetwork)
+        addLast($result, $newNode);
+
+    // Now run convert solid texture on each channel.
+    //
+    for ($i = 0; $i < size($connections); $i += 2) {
+        string $srcPlug = $connections[$i];
+        string $dstPlug = $connections[$i + 1];
+        string $downStreamNode = plugNode($dstPlug);
+
+        string $dstType = `objectType $downStreamNode`;
+
+		string $evalStr = $command + $srcPlug + " " + $object ;
+		string $fileTextures[] = evalEcho( $evalStr );
+		string $newFile = $fileTextures[0]; // there is only one
+
+        if ($dstType == "bump2d" || $dstType == "bump3d") {
+            // Connect the file and new bump.
+
+            string $newBump = `shadingNode -asUtility bump2d`;
+            float $depth = `getAttr ($downStreamNode+".bumpDepth")`;
+            setAttr ($newBump+".bumpDepth")  $depth;
+            connectAttr ($newFile+".outAlpha") ($newBump+".bumpValue");
+
+            substituteNode($newNetwork, $downStreamNode, $newBump);
+
+            // Append the new nodes to result.
+
+            addLast($result, $newFile);
+
+            addLast($result, $newBump);
+        }
+        else {
+            substituteFileTexture($newNetwork, $srcPlug, $newFile);
+
+            // Append the new nodes to result.
+
+            addLast($result, $newFile);
+        }
+    }
+}
+
+proc doConvertShader(string $command,
+      string $surface, string $component, string $shader,
+      string $result[] )
+{
+    // Get all nodes downstream and including the shader.
+    //
+
+    string $network[];
+
+    downStreamNetwork($shader, $network);
+
+    if (countGroupsInNetwork($network) > 1) {
+        error(`format -stringArg $shader (uiRes("m_copyConvertSolidTx.kMultiShadingGroup"))`);
+    }
+
+    // Get all incoming connections to the shader. Convert solid
+    // texture will be run on each of these channels.
+    //
+
+    string $connections[];
+
+    $connections = `listConnections -destination false -source true
+        -plugs true $shader`;
+
+    // Get only the unique connections.
+    //
+
+    string $uniqueConnections[];
+
+    for ($item in $connections) {
+        int $found = false;
+
+        for ($uniqueItem in $uniqueConnections) {
+            if ($item == $uniqueItem) {
+                $found = true;
+                break;
+            }
+        }
+
+        if (!$found)
+            addLast($uniqueConnections, $item);
+    }
+
+    string $newNetwork[] = duplicateNetwork($network);
+
+    // If we have components all of them will be converted and assigned
+    // to the new shading group; otherwise, act on the surface.
+    string $object;
+	if (size($component))
+        $object = $component;
+    else
+        $object = $surface;
+
+	addSurfaceToNetwork($newNetwork, $object);
+
+    // Execute convert solid on each input
+
+    for ($texturePlug in $uniqueConnections) {
+        string $textureNode = plugNode($texturePlug);
+
+        string $textureType = `objectType $textureNode`;
+
+        if ($textureType == "bump2d" || $textureType == "bump3d") {
+
+			string $evalStr = $command + ($textureNode+".bumpValue") + " " + $object;
+			string $fileTextures[] = evalEcho( $evalStr );
+
+            string $newFile = $fileTextures[0]; // there is only one
+
+            string $newBump = `shadingNode -asUtility bump2d`;
+            float $depth = `getAttr ($textureNode+".bumpDepth")`;
+            setAttr ($newBump+".bumpDepth")  $depth;
+            connectAttr ($newFile+".outAlpha") ($newBump+".bumpValue");
+
+            substituteNode($newNetwork, $textureNode+".outNormal", $newBump);
+
+            // Append the new nodes to result
+
+            addLast($result, $newFile);
+
+            addLast($result, $newBump);
+        }
+        else {
+			string $evalStr = $command + $texturePlug + " " + $object;
+			string $fileTextures[] = evalEcho( $evalStr );
+
+            string $newFile = $fileTextures[0]; // there is only one
+
+            substituteFileTexture($newNetwork, $texturePlug, $newFile);
+
+            // Append the new nodes to result
+
+            addLast($result, $newFile);
+        }
+    }
+
+    // Append the new nodes to result
+
+    for ($newNode in $newNetwork)
+        addLast($result, $newNode);
+}
+
+proc doConvertBakeLighting(string $command,
+            string $surface, string $component, string $shadingGroup,
+            string $result[], int $bakeAlpha )
+{
+    string $connections[] = `listConnections -plugs true
+        ($shadingGroup+".surfaceShader")`;
+
+    if (size($connections) != 1)
+        error(`format -stringArg $shadingGroup (uiRes("m_copyConvertSolidTx.kNoSurfaceShader"))`);
+
+    string $srcPlug = $connections[0];
+
+    // The network contains only the shading group.
+
+    string $network[];
+
+    addLast($network, $shadingGroup);
+
+    // If we have components all of them will be converted and assigned
+    // to the new shading group; otherwise, act on the surface.
+    string $object;
+	if (size($component))
+        $object = $component;
+    else
+        $object = $surface;
+
+    // Execute convert solid texture on the surface.
+
+	string $evalStr = $command + $shadingGroup + " " + $object;
+    string $fileTextures[] = evalEcho( $evalStr );
+
+    string $newFile = $fileTextures[0]; // there is only one
+
+    string $newNetwork[] = duplicateNetwork($network);
+
+	addSurfaceToNetwork($newNetwork, $object);
+
+    {
+        // Create a surface shader and insert it between the file texture
+        // and the shading group. BUG 144623
+        //
+
+        string $newShader = `shadingNode -asShader surfaceShader`;
+
+        addLast($newNetwork, $newShader);
+
+        connectAttr ($newFile+".outColor") ($newShader+".outColor");
+		if( $bakeAlpha == 1 ){
+
+			// If baking alpha, connect outTransparency of file texture to
+			// that of the surface shader.  Fixes bug #185477.
+			//
+
+			connectAttr ($newFile+".outTransparency")
+						($newShader+".outTransparency");
+		}
+
+        substituteFileTexture($newNetwork, $srcPlug, $newShader);
+    }
+
+    // Append the new nodes to result.
+
+    addLast($result, $newFile);
+
+    for ($newNode in $newNetwork)
+        addLast($result, $newNode);
+}
+
+proc getBaseClasses( string $nodeType, string $result[] )
+{
+    string $classes[];
+    string $codedClassification[] = `getClassification $nodeType`;
+    tokenize($codedClassification[0], ":", $classes);
+
+    for ($class in $classes) {
+        string $buffer[];
+        tokenize($class, "/", $buffer);
+        addLast($result, $buffer[0]);
+    }
+}
+
+// Description:  This procedure returns the index of $str in
+//      $strArray if the given str is in the strArray.  And
+//      it returns -1, if str is not found in strArray.
+//
+proc int stringIsInArray( string $str, string $strArray[] )
+{
+    int $length = size($strArray);
+    if ($length == 0)
+    {
+        return -1;
+    }
+
+    int $index = 0;
+    string $name;
+    for ( $name in $strArray )
+    {
+        if ( $str == $name )
+        {
+            return $index;
+        }
+        $index++;
+    }
+    return -1;
+}
+
+// Description:  This procedure is called to modify the selection
+//      list before the convert solid operation.
+//
+//      This procedure is added to fix bug 128772 and 151249,
+//      where, say for example, a sphere has two components,
+//      one red and one green.  When the user selects the red
+//      shader and the whole sphere to do convert solid texture
+//      operation, they expects the red part of the sphere to stay
+//      red and the green part of the sphere stays green after the
+//      operation.  Which means, if they selected the whole object,
+//      they want the red shader to apply to only the component
+//      of the object which is associated to the red shader.
+//
+//      In this procedure, we address the above problem by doing the
+//      following.
+//      When a whole object is selected by the user, we will
+//      check which of its component is associated to the selected
+//      shader(s).  Let the convert solid texture operation apply
+//      to only those relevant components.
+//
+proc modifySelectionListForConvertSolidTx()
+{
+    // Remember the original selection.
+    //
+    string $originalSelection[] = `ls -sl`;
+    if (size($originalSelection) == 0)
+    {
+        // We don't need to modify the selection.
+        //
+        return;
+    }
+    string $originalMaterialSelection[] = `ls -sl -materials`;
+
+    // Make a list of non-component item in the original selection.
+    //
+    string $originalComponentSelection[];
+    string $originalNonComponentSelection[];
+    string $item;
+    for ($item in $originalSelection)
+    {
+        // If there is no dot "." in the item name, then we assume
+        // it is not a component.
+        //
+        if (`substitute "\\." $item ""` == $item)
+        {
+            $originalNonComponentSelection[size($originalNonComponentSelection)] = $item;
+        }
+        else
+        {
+            //--------------------------------------------------------
+            // CASE:
+            // We assume that when a user delibrately selected a component
+            // then the user wants the apply the selected material to the
+            // component.
+            //--------------------------------------------------------
+            $originalComponentSelection[size($originalComponentSelection)] = $item;
+        }
+    }
+    if (size($originalNonComponentSelection) == 0)
+    {
+        // We don't need to modify the selection.
+        //
+        return;
+    }
+
+    // Find the object items associated to the selected material.
+    //
+    hyperShade -objects "";
+    string $objectItemsWithMaterial[] = `ls -sl`;
+
+    // Use an array to keep track of which originalNonComponentSelection
+    // has association to selected material.
+    //
+    int $originalNonComponentSelectionHasAssociationToSelectedMaterial[];
+    int $length = size($originalNonComponentSelection);
+    int $i;
+    for ($i = 0; $i < $length; $i++)
+    {
+        $originalNonComponentSelectionHasAssociationToSelectedMaterial[$i] = false;
+    }
+
+    //------------------------------------------------------
+    // CASE:
+    // Find the relevant object items which
+    //  . are associated with the selected material,
+    //  . and are part of the original selected object.
+    //
+    // By "part", we mean the item could be
+    //    . a component of an originally selected object
+    //    . or the item could be an originally selected object.
+    //------------------------------------------------------
+    string $relevantObjectItems[];
+    for ($item in $objectItemsWithMaterial)
+    {
+        // Find the object's name.
+        // The $item can be an object name itself or a component.
+        // We assume the component name's first part in front of the
+        // first period "." is the object name.
+        //
+        string $buffer[];
+        int $numOfTokens = `tokenize $item "." $buffer`;
+
+        string $objectName = $buffer[0];
+
+        // If the objectName was in the original selection list,
+        // then the $item is relevant for the convert solid texture
+        // operation.
+        //
+        int $index = stringIsInArray($objectName, $originalNonComponentSelection);
+        if ($index != -1)
+        {
+            $relevantObjectItems[size($relevantObjectItems)] = $item;
+
+            // Mark $originalNonComponentSelection[$index] as having
+            // association to selected material.
+            //
+            $originalNonComponentSelectionHasAssociationToSelectedMaterial[$index] = true;
+        }
+    }
+
+    //------------------------------------------------------------
+    // CASE:
+    // There might be object in the $originalNonComponentSelection
+    // which is not associated to the selected shader.
+    // But since the user selected this object delibrately,
+    // we assume that the user intends to apply the material to
+    // the object.
+    //------------------------------------------------------------
+    $i = 0;
+    for ($item in $originalNonComponentSelection)
+    {
+        if (!$originalNonComponentSelectionHasAssociationToSelectedMaterial[$i])
+        {
+            // The user must have selected this object delebrately.
+            // Include it in the relevantObjectItems list.
+            //
+            $relevantObjectItems[size($relevantObjectItems)] = $item;
+        }
+        $i++;
+    }
+
+    // The modified selection consists of
+    //  . the original material selection,
+    //  . the relevantObjectItem,
+    //  . the originalComponentSelection.
+    //
+    select -clear;
+    select -replace $originalMaterialSelection;
+    select -add $relevantObjectItems;
+    select -add $originalComponentSelection;
+}
+
+global proc copyConvertSolidTx(
+	int $antiAlias,
+	int $backMode,
+	int $backColorR,
+	int $backColorG,
+	int $backColorB,
+	int $fillTextureSeams,
+	int $bakeLighting,
+	int $samplePlane,
+	int $bakeShadow,
+	int $bakeAlpha,
+	int $doubleSided,
+	int $compRange,
+	int $uvRange,
+	float $umin, float $vmin, float $umax, float $vmax,
+	int $resX,
+	int $resY,
+	string $fileName,
+	string $format)
+{
+    string $surfaces[], $node = "";
+	string $components[];
+
+    // To fix bug 128772 and 151249, we need to use a
+    // modified selection list.  We want to apply the
+    // convert solid to texture operation to be done to
+    // only the relevant components of the selected objects will be
+    // used in the operation.
+    //
+    modifySelectionListForConvertSolidTx();
+
+    // Get the surfaces and texture from the selection.
+    //
+
+    string $selection[] = `ls -showType -selection`;
+
+    for ($i = 0; $i < size($selection); $i += 2) {
+        string $selectNode = $selection[$i];
+		string $origString = $selectNode;
+        string $type = $selection[$i + 1];
+
+        if ($type == "nurbsSurface" || $type == "mesh" || $type == "subdiv" ||
+            $type == "transform" || $type == "float3" || $type == "polyFaces")
+        {
+			// See if we have any components. If so strip out the surface
+			// part of it before adding to $surfaces, and store append
+			// the component part of it to the corresponding
+			// $component entry
+			//
+			int $haveComponents = 0;
+			string $selectComponent = "";
+			string $buffer[];
+			int $numTokens = `tokenize $selectNode "." $buffer`;
+
+			// We extract out the surface, if components are selected
+			if ($numTokens > 1)
+			{
+				$haveComponents = 1;
+				$selectNode = $buffer[0];
+				$selectComponent = $buffer[1];
+			}
+
+			if ($haveComponents)
+			{
+				int $existingEntry = -1;
+				for ($s=0; $s<size($surfaces); $s++)
+				{
+					if ($surfaces[$s] == $selectNode)
+					{
+						$existingEntry = $s;
+						break;
+					}
+				}
+				// Add new surface item
+				//
+				if ($existingEntry == -1)
+				{
+					addLast($surfaces, $selectNode);
+					addLast($components, $origString);
+				}
+
+				// Add to existing surface list
+				//
+				else
+				{
+					$components[$s] = ($components[$s] + " " + $origString);
+				}
+			}
+			else
+			{
+				$selectComponent = "";
+				addLast($surfaces, $selectNode);
+				addLast($components, $selectComponent);
+			}
+        }
+        else {
+            string $classes[];
+
+            getBaseClasses($type, $classes);
+
+			int $found = false;
+            for ($class in $classes) {
+                if ($class == "texture" || $class == "utility" ||
+                    $class == "shader" || $class == "shadingEngine")
+                {
+                    if ($node != "") {
+                        error((uiRes("m_copyConvertSolidTx.kManyShaderSelected")));
+                    }
+
+                    $node = $selectNode;
+                    $found = true;
+                    break;
+                }
+            }
+            if (!$found)
+            {
+				error(`format -stringArg $selectNode (uiRes("m_copyConvertSolidTx.kNotShadingNode"))`);
+			}
+        }
+    }
+
+    if (size($surfaces) == 0)
+        error((uiRes("m_copyConvertSolidTx.kNoSurface")));
+
+	if ($node == "") {
+		error((uiRes("m_copyConvertSolidTx.kNoSelected")));
+	}
+
+    // Determine the type of node to be converted.
+    //
+
+    int $isGroup = false;
+    int $isTexture = false;
+    int $isShader = false;
+
+    string $nodeType = `objectType $node`;
+
+    if ($bakeLighting) {
+        if ($nodeType != "shadingEngine") {
+            // Remember the original node for error reporting.
+
+            string $originalNode = $node;
+
+            // Find the shading group, ensure its unique
+
+            string $network[];
+
+            downStreamNetwork($node, $network);
+
+            int $groupCount = 0;
+
+            for ($item in $network) {
+                if (`objectType $item` == "shadingEngine") {
+                    $groupCount = $groupCount + 1;
+
+                    $node = $item;
+
+                    $nodeType = "shadingEngine";
+                }
+            }
+
+            // Make sure there is only one shading group
+
+            if ($groupCount == 0) {
+                string $msg = (uiRes("m_copyConvertSolidTx.kCannotBake"));
+                error(`format -stringArg $originalNode $msg`);
+            }
+            else if ($groupCount > 1) {
+                string $msg = (uiRes("m_copyConvertSolidTx.kCannotBake2"));
+				string $groupCountStr = $groupCount;
+                error(`format -stringArg $originalNode -stringArg $groupCountStr $msg`);
+            }
+        }
+    }
+    else {
+        // Bake lighting is off.
+
+        if ($nodeType == "shadingEngine") {
+            // The user probably mean't to run this on the shader not
+            // the shading group. Use the node connected to the
+            // surface shader attribute instead.
+
+            string $connections[];
+            $connections = `listConnections ($node+".surfaceShader")`;
+
+            if (size($connections) > 0) {
+                $node = $connections[0];
+
+                $nodeType = `objectType $node`;
+            }
+        }
+    }
+
+    if ($nodeType == "layeredShader") {
+        // The layered shader is special because it may contain other
+        // shader nodes upstream. We will be unable to to convert the
+        // lighting component on these.
+
+        int $layeredType = `getAttr ($node+".compositingFlag")`;
+
+        if ($layeredType != 1) {
+            string $msg = (uiRes("m_copyConvertSolidTx.kReogNetwork"));
+            error(`format -stringArg $node $msg`);
+        }
+    }
+
+    string $classes[];
+
+    getBaseClasses($nodeType, $classes);
+
+    for ($class in $classes) {
+        if ($class == "shadingEngine") {
+            $isGroup = true;
+        }
+        else if ($class == "texture" || $class == "utility") {
+            $isTexture = true;
+        }
+        else if ($class == "shader") {
+            $isShader = true;
+        }
+    }
+
+    if ($bakeLighting && !$isGroup) {
+        error(`format -stringArg $node (uiRes("m_copyConvertSolidTx.kNotShading"))`);
+    }
+
+    if (!$isGroup && !$isTexture && !$isShader) {
+        error(`format -stringArg $node (uiRes("m_copyConvertSolidTx.kNotShadingNode2"))`);
+    }
+
+    // Do the appropriate convert solid depending on whether its a
+    // texture, shader, or shading group.
+    //
+
+    string $newNodes[];
+
+    string $uvrangeStr = getUvRangeArgs($uvRange, $umin, $vmin, $umax, $vmax);
+	string $command = "convertSolidTx -antiAlias " + $antiAlias
+		+ " -bm " + $backMode
+		+ " -fts " + $fillTextureSeams
+		+ " -sp " + $samplePlane
+		+ " -sh " + $bakeShadow
+		+ " -alpha " + $bakeAlpha
+		+ " -doubleSided " + $doubleSided
+		+ " -componentRange " + $compRange
+		+ " -resolutionX " + $resX
+		+ " -resolutionY " + $resY
+		+ " -fileFormat \"" + $format + "\" "
+		+ $uvrangeStr + " ";
+
+	if ($backMode == 2)
+		$command = $command +
+			"-bc " + $backColorR + " " + $backColorG + " " + $backColorB + " ";
+
+	if ($fileName != "")
+		$command = $command + "-fin \"" + $fileName + "\" ";
+
+	for ($s = 0; $s< size($surfaces); $s++)
+	{
+		$surface = $surfaces[$s];
+		$component = $components[$s];
+
+        if ($isTexture) {
+            doConvertTexture($command, $surface, $component, $node, $newNodes);
+        }
+        else if ($isShader) {
+            doConvertShader($command, $surface, $component, $node, $newNodes);
+        }
+        else if ($isGroup) {
+            doConvertBakeLighting($command, $surface, $component, $node, $newNodes, $bakeAlpha );
+        }
+    }
+
+    // Select the created nodes.
+    //
+
+    if (size($newNodes) > 0) {
+
+        string $selectArgs = "";
+
+        for ($item in $newNodes) {
+            $selectArgs += " " + $item;
+        }
+
+        eval("select"+$selectArgs);
+    }
+}

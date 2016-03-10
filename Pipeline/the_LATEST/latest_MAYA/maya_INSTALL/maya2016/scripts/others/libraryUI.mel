@@ -1,0 +1,1313 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//
+//
+//
+//
+//  Creation Date:  December 8/2000
+//
+// Description:
+//
+//		This file contains the procedures which implement a portable (can be
+//		used anywhere) user interface for viewing things on disk using a
+//		graphical layout. This file also contains the procedures used to
+//		manipulate that user interface once it has been created.
+//												
+
+// ---------------------------------------------------------------------------
+// Special names and things like that
+//
+// "dirsForm": the name of the form which contains the directories UI
+// "filesForm": the name of the form which contains the files UI
+// 
+
+// ---------------------------------------------------------------------------
+// Local procedures
+// 
+
+//
+// Information about the various library UIs that exist in a given Maya session
+// will be stored in a lookup table which is represented by a carefully managed
+// string array. Stored in this array will be information such as the name of
+// the top level layout (referred to as the libraryUI), the visor objects
+// which are associated with the libraryUI, and the popup menu scripts used by
+// the files and directories displays.
+//
+
+global string $gLibraryUILookupTable[];
+global int $gLibraryUILookupTableCreated = false;
+
+proc createLibraryUILookupTable()
+{
+	//
+	// Description:
+	//	This procedure is called every time the user creates a libraryUI
+	//	component, but only has any effect the first time it is called.
+	//	This procedure initializes the string array $gLibraryUILookupTable[]
+	//	for use as a lookup table. The lookup table will contain information
+	//	about all libraryUI components which exist in the current Maya
+	//	session.
+	//
+
+	global string $gLibraryUILookupTable[];
+	global int $gLibraryUILookupTableCreated;
+
+	if (!$gLibraryUILookupTableCreated)
+	{
+		string $columns[];
+
+		$columns[0] = "libraryUI";
+		$columns[1] = "directoriesVisorName";
+		$columns[2] = "filesVisorName";
+		$columns[3] = "directoriesPopupMenuScript";
+		$columns[4] = "filesPopupMenuScript";
+		$columns[5] = "currentDirectory";
+		$columns[6] = "rootDirectory";
+		$columns[7] = "filePressScript";
+		$columns[8] = "filePurpose";
+
+		lookupTable($gLibraryUILookupTable, $columns);
+		$gLibraryUILookupTableCreated = true;
+	}
+}
+
+proc registerLibraryUI(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This procedure is used to register a libraryUI component by entering
+	//	it as a row in the lookup table which contains information about all
+	//	libraryUI components that currently exist in Maya.
+	//	The row created is initially blank except for the libraryUI name.
+	//	Further information about the libraryUI component must be
+	//	subsequently added to the lookup table.
+	//
+
+	global string $gLibraryUILookupTable[];
+	string $row[];
+
+	$row[0] = $libraryUI;
+	$row[1] = "";
+	$row[2] = "";
+	$row[3] = "";
+	$row[4] = "";
+	$row[5] = "";
+	$row[6] = "";
+	$row[7] = "";
+
+	// Initially, all libraryUI should be created with a filePurpose of 
+	// "default"
+	// 
+	$row[8] = "default"; 
+
+	lookupTableAddRow($gLibraryUILookupTable, $row);
+}
+
+proc registerVisorNames(
+	string $libraryUI,
+	string $directoriesVisorName,
+	string $filesVisorName)
+{
+	//
+	// Description:
+	//	This procedure enters the $libraryUI, $directoriesVisorName and
+	//	$filesVisorName into a global array which is used as a lookup table to 
+	//	find a directories visor name given a library UI name.
+	//
+
+	global string $gLibraryUILookupTable[];
+
+	// ASSUMPTION:
+	// We assume that a row already exists for this libraryUI, as it should
+	// have been created by a call to registerLibraryUI() as the UI was being
+	// created.
+	//
+	lookupTableEdit(
+		$gLibraryUILookupTable,
+		"libraryUI",
+		$libraryUI,
+		"directoriesVisorName",
+		$directoriesVisorName);
+	lookupTableEdit(
+		$gLibraryUILookupTable,
+		"libraryUI",
+		$libraryUI,
+		"filesVisorName",
+		$filesVisorName);
+}
+
+proc string lookupDirectoriesVisorName(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This procedure looks through the global array being used as a lookup
+	//	table to find the directories visor name associated with the specified
+	//	library UI name.
+	//
+	// Returns: 
+	//	The directories visor name, if one is associated with the specified
+	//	library UI name.
+	//	Otherwise: "".
+	//
+
+	global string $gLibraryUILookupTable[];
+
+	return (lookupTableLookup(
+		$gLibraryUILookupTable,
+		"libraryUI",
+		$libraryUI,
+		"directoriesVisorName"));
+}
+
+proc string generateUniqueDirectoriesVisorName()
+{
+	//
+	// Description:
+	//	This procedure is usually called just before creating a new directories
+	//	visor for a libraryUI.
+	//	This procedure generates a unique name for a directories visor by
+	//	creating a string of the form directories#VisorEd and incrementing the #
+	//	part until no visor by that name exists.
+	//
+	// Returns: 
+	//	A unique name by which a visor can be created.
+	//
+
+	int $i = 1;
+	while (`hyperGraph -exists ("directories" + $i + "VisorEd")`)
+	{
+		$i++;
+	}
+	return ("directories" + $i + "VisorEd");
+}
+	
+proc string lookupFilesVisorName(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This procedure looks through the global array being used as a lookup
+	//	table to find the files visor name associated with the specified
+	//	library UI name.
+	//
+	// Returns: 
+	//	The files visor name, if one is associated with the specified
+	//	library UI name.
+	//	Otherwise: "".
+	//
+
+	global string $gLibraryUILookupTable[];
+
+	return (lookupTableLookup(
+		$gLibraryUILookupTable,
+		"libraryUI",
+		$libraryUI,
+		"filesVisorName"));
+}
+
+proc string generateUniqueFilesVisorName()
+{
+	//
+	// Description:
+	//	This procedure is usually called just before creating a new files
+	//	visor for a libraryUI.
+	//	This procedure generates a unique name for a files visor by
+	//	creating a string of the form files#VisorEd and incrementing the #
+	//	part until no visor by that name exists.
+	//
+	// Returns: 
+	//	A unique name by which a visor can be created.
+	//
+
+	int $i = 1;
+	while (`hyperGraph -exists ("files" + $i + "VisorEd")`)
+	{
+		$i++;
+	}
+	return ("files" + $i + "VisorEd");
+}
+	
+proc registerFilePurpose(
+	string $libraryUI,
+	string $filePurpose)
+{
+	//
+	// Description:
+	//	This procedure enters the $filePurpose into a global array which is 
+	//	used as a lookup table to determine the purpose of the files contained
+	//	in a given library UI.
+	//
+	//	The file purpose is used as a sort of hint as to how the files are
+	//	going to be used. Currently, the following file purposes are valid:
+	//
+	//		"default": the directories are expected to contain standard files
+	//		such as images and maya files.
+	//		"brush": the directories are expected to contain paint effects
+	//		brush presets.
+	//
+
+	if (
+			($filePurpose != "default")
+		&&	($filePurpose != "brush"))
+	{
+		error 
+			-showLineNumber true 
+			("Unexpected file purpose string: " + $filePurpose);
+	}
+
+	global string $gLibraryUILookupTable[];
+
+	// ASSUMPTION:
+	// We assume that a row already exists for this libraryUI, as it should
+	// have been created by a call to registerLibraryUI() as the UI was being
+	// created.
+	//
+	lookupTableEdit(
+		$gLibraryUILookupTable,
+		"libraryUI",
+		$libraryUI,
+		"filePurpose",
+		$filePurpose);
+}
+
+proc string lookupFilePurpose(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This procedure looks through the global array being used as a lookup
+	//	table to find the file purpose string associated with the specified
+	//	library UI name.
+	//
+	// Returns: 
+	//	The file purpose string, if one is associated with the specified
+	//	library UI name.
+	//	Otherwise: "".
+	//
+
+	global string $gLibraryUILookupTable[];
+
+	return (lookupTableLookup(
+		$gLibraryUILookupTable,
+		"libraryUI",
+		$libraryUI,
+		"filePurpose"));
+}
+
+// ---------------------------------------------------------------------------
+// Global procedures
+// 
+global proc string libraryUIFilesVisor(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This procedure returns the name of the visor editor associated
+	//	with the specified libraryUI component.
+	//
+
+	return lookupFilesVisorName($libraryUI);
+}
+
+global proc string libraryUIDirectoriesVisor(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This procedure returns the name of the visor editor associated
+	//	with the specified libraryUI component.
+	//
+
+	return lookupDirectoriesVisorName($libraryUI);
+}
+
+global proc libraryUIDirectoryPressed(
+	string $libraryUI,
+	string $oldCurrentDirectoryName,
+	string $editor,
+	string $dummy)
+{
+	//
+	// Description:
+	//	This procedure is called when the user left clicks on a directory in
+	//	the directories visor.
+	//	This procedure changes the currently selected directory in the
+	//	libraryUI, causing the files visor to update to show the contents of
+	//	the directory the user pressed on.
+	//
+
+	// Not sure if this is a good approach to the whole problem of what
+	// directory is the current one. Perhaps it would be better to have the
+	// visor object have a sense of the current directory...
+	//
+	string $directoriesVisorName = lookupDirectoriesVisorName($libraryUI);
+	string $currentSelection[];
+	setParent $libraryUI;
+	$currentSelection = `visor -query -selectedGadgets $directoriesVisorName`;
+
+	// Since it does not make much sense in this context for the user to be
+	// allowed to select multiple directories, we ignore all currently selected
+	// directories except the first one.
+	//
+	string $directory = $currentSelection[0];
+	libraryUISetCurrentDirectory(
+		$libraryUI,
+		$directory);
+}
+
+// ---------------------------------------------------------------------------
+// Procedures to get and set the script to build the popup menu for the
+// directory visor.
+//
+
+global proc string libraryUIDirectoriesPopupMenuScript(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This procedure looks up the name of the popup menu script associated
+	//	with the directories visor of the specified libraryUI component.
+	//
+	// Returns: 
+	//	The name of the popup menu script.
+	//
+
+	// Lookup the name of the directories popup menu script in the lookup table
+	//
+	global string $gLibraryUILookupTable[];
+
+	return lookupTableLookup(
+		$gLibraryUILookupTable,
+		"libraryUI",
+		$libraryUI,
+		"directoriesPopupMenuScript");
+}
+
+global proc libraryUISetDirectoriesPopupMenuScript(
+	string $libraryUI,
+	string $scriptName)
+{
+	//
+	// Description:
+	//	This procedure sets the popup menu script which is invoked when the
+	//	user RMB clicks in the directories visor of the specified libraryUI
+	//	component. The script will be called with two arguments: the name of
+	//	the visor editor from which the menu was invoked, and the name of
+	//	the popupMenu object to which the menu items are to be added.
+	//
+	//	If $scriptName is "", no popup menu will be invoked when the user RMB
+	//	clicks in the directories visor.
+	//
+
+	// Find the name of the control that the menu will be attached to
+	//
+	string $directoriesVisorName = lookupDirectoriesVisorName($libraryUI);
+
+	string $control	= `hyperGraph -query -control $directoriesVisorName`;
+	string $popupMenuName = ($directoriesVisorName + "PopupMenu");
+
+	if ($scriptName == "")
+	{
+		if (`popupMenu -exists $popupMenuName`) 
+		{
+			deleteUI $popupMenuName;
+		}
+	}
+	else
+	{
+		// Create the popup menu
+		//	
+		if (!`popupMenu -exists $popupMenuName`) 
+		{
+			string $fullMenuName = `popupMenu -parent $control $popupMenuName`;
+			popupMenu 
+				-edit
+				-postMenuCommand 
+					($scriptName
+						+ " "
+						+ $directoriesVisorName 
+						+ " " 
+						+ $popupMenuName)
+				$fullMenuName;	
+		}
+	}
+
+	// Store the name of the directories popup menu script in the lookup table
+	// 
+	// ASSUMPTION:
+	// We assume that a row already exists for this libraryUI, as it should
+	// have been created by a call to registerLibraryUI() as the UI was being
+	// created.
+	//
+	global string $gLibraryUILookupTable[];
+
+	lookupTableEdit(
+		$gLibraryUILookupTable,
+		"libraryUI",
+		$libraryUI,
+		"directoriesPopupMenuScript",
+		$scriptName);
+}
+
+// ---------------------------------------------------------------------------
+// Procedures to get and set the script to build the popup menu for the
+// files visor.
+//
+
+global proc string libraryUIFilesPopupMenuScript(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This procedure looks up the name of the popup menu script associated
+	//	with the files visor of the specified libraryUI component.
+	//
+	// Returns: 
+	//	The name of the popup menu script.
+	//
+
+	// Lookup the name of the files popup menu script in the lookup table
+	//
+	global string $gLibraryUILookupTable[];
+
+	return lookupTableLookup(
+		$gLibraryUILookupTable,
+		"libraryUI",
+		$libraryUI,
+		"filesPopupMenuScript");
+}
+
+global proc libraryUISetFilesPopupMenuScript(
+	string $libraryUI,
+	string $scriptName)
+{
+	//
+	// Description:
+	//	This procedure sets the popup menu script which is invoked when the
+	//	user RMB clicks in the files visor of the specified libraryUI
+	//	component. The script will be called with two arguments: the name of
+	//	the visor editor from which the menu was invoked, and the name of
+	//	the popupMenu object to which the menu items are to be added.
+	//
+	//	If $scriptName is "", no popup menu will be invoked when the user RMB
+	//	clicks in the files visor.
+	//
+
+	// Find the name of the control that the menu will be attached to
+	//
+	string $filesVisorName 	= lookupFilesVisorName($libraryUI);
+
+	string $control			= `hyperGraph -query -control $filesVisorName`;
+	string $popupMenuName	= ($filesVisorName + "PopupMenu");
+
+	if ($scriptName == "")
+	{
+		if (`popupMenu -exists $popupMenuName`) 
+		{
+			deleteUI $popupMenuName;
+		}
+	}
+	else
+	{
+		// Create the popup menu
+		//	
+		if (!`popupMenu -exists $popupMenuName`) 
+		{
+			string $fullMenuName = `popupMenu -parent $control $popupMenuName`;
+			popupMenu 
+				-edit
+				-postMenuCommand 
+					($scriptName
+						+ " "
+						+ $filesVisorName 
+						+ " " 
+						+ $popupMenuName)
+				$fullMenuName;	
+		}
+	}
+
+	// Store the name of the files popup menu script in the lookup table
+	// 
+	// ASSUMPTION:
+	// We assume that a row already exists for this libraryUI, as it should
+	// have been created by a call to registerLibraryUI() as the UI was being
+	// created.
+	//
+	global string $gLibraryUILookupTable[];
+
+	lookupTableEdit(
+		$gLibraryUILookupTable,
+		"libraryUI",
+		$libraryUI,
+		"filesPopupMenuScript",
+		$scriptName);
+}
+
+global proc string libraryUIFilePressScript(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This procedure determines the name of the script which is called when
+	//	the user left clicks on a file in the files visor of the libraryUI. The
+	//	name is determined by looking it up in the lookup table.
+	//
+	// Returns: 
+	//	The script which is called when the user left clicks on a file in the
+	//	files visor of this libraryUI.
+	//
+
+	// Lookup the name of the file press menu script in the lookup table
+	//
+	global string $gLibraryUILookupTable[];
+
+	return lookupTableLookup(
+		$gLibraryUILookupTable,
+		"libraryUI",
+		$libraryUI,
+		"filePressScript");
+}
+
+global proc libraryUISetFilePressScript(
+	string $libraryUI,
+	string $script)
+{
+	//
+	// Description:
+	//	This procedure sets the script to be called when the user left clicks 
+	//	on a file in the files visor of the libraryUI. The name is also stored 
+	//	in the lookup table.
+	//
+
+	// Find the name of the editor that the script will be registered with
+	//
+	string $filesVisorName 	= lookupFilesVisorName($libraryUI);
+
+	hyperGraph
+		-edit
+		-nodePressCommand $script
+		$filesVisorName;
+
+	// Store the name of the file node press script in the lookup table
+	// 
+	// ASSUMPTION:
+	// We assume that a row already exists for this libraryUI, as it should
+	// have been created by a call to registerLibraryUI() as the UI was being
+	// created.
+	//
+	global string $gLibraryUILookupTable[];
+
+	lookupTableEdit(
+		$gLibraryUILookupTable,
+		"libraryUI",
+		$libraryUI,
+		"filePressScript",
+		$script);
+}
+
+global proc int libraryUIIsManaged(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This procedure is used to query whether the overall layout of the
+	//	specified libraryUI component is managed or not. 
+	//
+	// Returns: 
+	//	This procedure returns true if the overall layout is managed, false if
+	//	not.
+	//
+
+	return `paneLayout -query -manage $libraryUI`;
+}
+
+global proc libraryUIManage(
+	string $libraryUI,
+	int $manage)
+{
+	//
+	// Description:
+	//	This procedure lets the caller manage or unmanage the overall layout of
+	//	the specified libraryUI component.
+	//
+
+	paneLayout -edit -manage $manage $libraryUI;
+}
+
+global proc string[] libraryUICurrentlySelectedFiles(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This procedure determines the currently selected files within the files
+	//	visor of the specified libraryUI.
+	//
+	// Returns: 
+	//	A list of the currently selected files with in the files visor of the
+	//	specified libraryUI.
+	//
+
+	string $filesVisorName = lookupFilesVisorName($libraryUI);
+	string $currentSelection[];
+	setParent $libraryUI;
+	$currentSelection = `visor -query -selectedGadgets $filesVisorName`;
+	return $currentSelection;
+}
+
+global proc int libraryUIDirectoriesShown(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This procedure determines whether the directories visor of the
+	//	libraryUI is being displayed.
+	//
+	// Returns: 
+	//	True if the directories visor is being displayed, false otherwise (ie
+	//	the libraryUI is showing only files).
+	//
+
+	int $rShown = false;
+
+	string $configuration;
+	string $firstPane;
+	string $dirsForm;
+
+	setParent $libraryUI;
+
+	// ASSUMPTION: This code assumes that $libraryUI is the name of the 
+	// paneLayout, which is currently true. 
+	//
+	string $dirsAndFilesPane = $libraryUI;
+	$configuration = `paneLayout -query -configuration $dirsAndFilesPane`;
+	$firstPane = `paneLayout -query -pane1 $dirsAndFilesPane`;
+	$firstPane = `setParent $firstPane`;
+
+	setParent $libraryUI;
+	$dirsForm = `setParent dirsForm`;
+
+	if ($configuration == "vertical2")
+	{
+		// Both panes are being shown, therefore files are being shown.
+		//
+		$rShown = true;
+	}
+	else if (($configuration == "single") && ($firstPane == $dirsForm))
+	{
+		// Only one pane is being shown, and it is the directories.
+		//
+		$rShown = true;
+	}
+	return $rShown;
+}
+
+global proc int libraryUIFilesShown(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This procedure determines whether the files visor of the
+	//	libraryUI is being displayed.
+	//
+	// Returns: 
+	//	True if the files visor is being displayed, false otherwise (ie
+	//	the libraryUI is showing only directories).
+	//
+
+	int $rShown = false;
+
+	string $configuration;
+	string $firstPane;
+	string $filesForm;
+
+	setParent $libraryUI;
+
+	// ASSUMPTION: This code assumes that $libraryUI is the name of the 
+	// paneLayout, which is currently true. 
+	//
+	string $dirsAndFilesPane = $libraryUI;
+	$configuration = `paneLayout -query -configuration $dirsAndFilesPane`;
+	$firstPane = `paneLayout -query -pane1 $dirsAndFilesPane`;
+	$firstPane = `setParent $firstPane`;
+
+	setParent $libraryUI;
+	$filesForm = `setParent filesForm`;
+
+	if ($configuration == "vertical2")
+	{
+		// Both panes are being shown, therefore files are being shown.
+		//
+		$rShown = true;
+	}
+	else if (($configuration == "single") && ($firstPane == $filesForm))
+	{
+		// Only one pane is being shown, and it is the files.
+		//
+		$rShown = true;
+	}
+	return $rShown;
+}
+
+global proc libraryUIShowDirectoriesOnly(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This procedure causes the specified libraryUI to modify its layout such
+	//	that the pane containing the files visor is hidden and the pane
+	//	containing the directories takes up the full area of the layout.
+	//
+
+	// ASSUMPTION: This code assumes that $libraryUI is the name of the 
+	// paneLayout, which is currently true. 
+	//
+	string $dirsAndFilesPane = $libraryUI;
+	paneLayout
+		-edit
+		-configuration "single"
+		-setPane dirsForm 1
+		$dirsAndFilesPane;
+}
+
+global proc libraryUIShowFilesOnly(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This procedure causes the specified libraryUI to modify its layout such
+	//	that the pane containing the directories visor is hidden and the pane
+	//	containing the files takes up the full area of the layout.
+	//
+
+	// ASSUMPTION: This code assumes that $libraryUI is the name of the 
+	// paneLayout, which is currently true. 
+	//
+	string $dirsAndFilesPane = $libraryUI;
+	paneLayout
+		-edit
+		-configuration "single"
+		-setPane filesForm 1
+		$dirsAndFilesPane;
+}
+
+global proc libraryUIShowDirectoriesAndFiles(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This procedure causes the specified libraryUI to modify its layout such
+	//	that the both the pane containing the directories visor and the pane
+	//	containing the files visor are visible.
+	//
+
+	// ASSUMPTION: This code assumes that $libraryUI is the name of the 
+	// paneLayout, which is currently true. 
+	//
+	string $dirsAndFilesPane = $libraryUI;
+	paneLayout
+		-edit
+		-configuration "vertical2"
+		-setPane dirsForm 1
+		-setPane filesForm 2
+		$dirsAndFilesPane;
+}
+
+global proc string libraryUICurrentDirectory(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This method determines the current directory of the specified
+	//	libraryUI.
+	//
+	// Returns: 
+	//	The name of the current directory.
+	//
+
+	global string $gLibraryUILookupTable[];
+
+	return lookupTableLookup(
+		$gLibraryUILookupTable,
+		"libraryUI",
+		$libraryUI,
+		"currentDirectory");
+}
+
+global proc libraryUIUseForPaintEffects(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This procedure is called when the libraryUI has been created for the
+	//	purpose of providing access to paint effects brushes.
+	//	This procedure sets the filePurpose of the specified libraryUI
+	//	component to "brush", which indicates that the files contained in
+	//	directories to be shown in the libraryUI are expected to be paint
+	//	effects brush presets.
+	//
+
+	registerFilePurpose($libraryUI, "brush");
+}
+
+proc int libraryUIIsUsedForPaintEffects(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This procedure returns true if the filePurpose of the specified
+	//	libraryUI is "brush", an indication that files contained in the
+	//	directories shown in the libraryUI are expected to be paint effects
+	//	brush presets.
+	//
+
+	return (lookupFilePurpose($libraryUI) == "brush");
+}
+
+global proc libraryUISetCurrentDirectory(
+	string $libraryUI,
+	string $directoryName)
+{
+	//
+	// Description:
+	//	This method sets the current directory of the specified
+	//	libraryUI.
+	//
+
+	string $filesVisorName = lookupFilesVisorName($libraryUI);
+
+	setParent $libraryUI;
+	setParent filesForm;
+
+	visor 
+		-reset 
+		$filesVisorName;
+
+	// We set the characteristics of the visor here because the -reset flag
+	// causes many of them to be returned to their default values.
+	//
+	visor 
+		-showDividers false
+		-showFolders false
+		-showFiles true
+		-showNodes false
+		-allowPanningInX true
+		-allowPanningInY true
+		-allowZooming true
+		-restrictPanAndZoom false
+		$filesVisorName;
+
+	if (libraryUIIsUsedForPaintEffects($libraryUI))
+	{
+		// Create the folder so that the controls it contains are specifically
+		// tailored to Paint Effects. In particular, users should be able to
+		// drag and drop the brush to a shelf. If we were to create visor
+		// folders the same way that we create folders for normal directories,
+		// you would be unable to drag and drop the brush to the shelf.
+		//
+		visor 
+			-addFolder 
+			-openDirectories false
+			-openFolder true
+			-type shelfItems 
+			-cmd $directoryName
+			-name "Brushes"
+			$filesVisorName;
+	}
+	else
+	{
+		// Create the folder as a folder to contain ordinary files. 
+		//
+		visor 
+			-addFolder 
+			-openDirectories false
+			-openFolder true
+			-type directory 
+			-path $directoryName
+			-name $directoryName
+			$filesVisorName;
+	}
+	
+	visor
+		-rebuild
+		$filesVisorName;
+
+	hyperGraph
+		-edit
+		-frameGraph
+		$filesVisorName;
+
+	global string $gLibraryUILookupTable[];
+
+	lookupTableEdit(
+		$gLibraryUILookupTable,
+		"libraryUI",
+		$libraryUI,
+		"currentDirectory",
+		$directoryName);
+}
+
+global proc string libraryUIRootDirectory(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This method determines the root directory of the specified
+	//	libraryUI.
+	//
+	// Returns: 
+	//	The name of the root directory.
+	//
+
+	global string $gLibraryUILookupTable[];
+
+	return lookupTableLookup(
+		$gLibraryUILookupTable,
+		"libraryUI",
+		$libraryUI,
+		"rootDirectory");
+}
+
+global proc libraryUISetRootDirectory(
+	string $libraryUI,
+	string $directoryName)
+{
+	//
+	// Description:
+	//	This method sets the root directory of the specified
+	//	libraryUI.
+	//	In doing so, this procedure also sets the current directory to the same
+	//	directory.
+	//
+
+	string $directoriesVisorName = lookupDirectoriesVisorName($libraryUI);
+	setParent $libraryUI;
+	setParent dirsForm;
+	visor 
+		-reset 
+		$directoriesVisorName;
+
+	// We set the characteristics of the visor here because the -reset flag
+	// causes many of them to be returned to their default values.
+	//
+	visor 
+		-showDividers false
+		-showFiles false
+		-showNodes false
+		-allowPanningInX false
+		-allowZooming false
+		-restrictPanAndZoom true
+		-popupMenuScript ""
+		$directoriesVisorName;
+
+	visor 
+		-addFolder 
+		-openDirectories true
+		-type directory 
+		-path $directoryName
+		-name $directoryName
+		$directoriesVisorName;
+
+	hyperGraph
+		-edit
+		-zoom 0.2
+		$directoriesVisorName;
+
+	libraryUISetCurrentDirectory($libraryUI, $directoryName);
+
+	global string $gLibraryUILookupTable[];
+
+	lookupTableEdit(
+		$gLibraryUILookupTable,
+		"libraryUI",
+		$libraryUI,
+		"rootDirectory",
+		$directoryName);
+}
+
+global proc libraryUISaveSwatchesToDisk(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This procedure saves the currently displayed swatches as .swatch files 
+	//	on disk. This allows the swatches to be loaded much more quickly when 
+	//	the same directory is viewed in the future.
+	//
+
+	string $filesVisor;
+	$filesVisor = lookupFilesVisorName($libraryUI);
+	
+	visor -saveSwatches $filesVisor;
+}
+
+global proc libraryUIRefreshFileListing(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This procedure causes the set of files displayed in the visor to be
+	//	updated, so that files that have been added to the directory will
+	//	appear and files which have been removed from the directory will
+	//	disappear.
+	//
+
+	string $filesVisor;
+	$filesVisor = lookupFilesVisorName($libraryUI);
+
+	visor -rebuild $filesVisor;
+
+	string $directoriesVisor;
+	$directoriesVisor = lookupDirectoriesVisorName($libraryUI);
+
+	visor -rebuild $directoriesVisor;
+}
+
+global proc libraryUIRefreshSelectedSwatches(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This procedure causes all of the swatches of selected files to be
+	//	refreshed to reflect changes made to those files.
+	//
+
+	string $filesVisor;
+	$filesVisor = lookupFilesVisorName($libraryUI);
+
+	waitCursor -state on;
+
+	visor -refreshSelectedSwatches $filesVisor;
+
+	waitCursor -state off;
+}
+
+global proc libraryUIRefreshAllSwatches(
+	string $libraryUI)
+{
+	//
+	// Description:
+	//	This procedure causes the swatches of all of the currently displayed 
+	//	files to be refreshed to reflect any changes made to those files.
+	//
+
+	string $filesVisor;
+	$filesVisor = lookupFilesVisorName($libraryUI);
+
+	waitCursor -state on;
+
+	visor -refreshAllSwatches $filesVisor;
+
+	waitCursor -state off;
+}
+
+// ---------------------------------------------------------------------------
+// Procedures for creating and deleting a library UI
+// 
+
+global proc libraryUIDelete(
+	string $libraryUI,
+	int $alsoDeleteVisors)
+{
+	//
+	// Description:
+	//	This procedure deletes all UI associated with the specified
+	//	libraryUI component. 
+	//	If $alsoDeleteVisors is true, the visor editors associated
+	//	with the libraryUI component are also deleted. If
+	//	$alsoDeleteVisors is false, the visor editors are simply
+	//	unparented from the layout and will persist after the layout has been
+	//	deleted. Typically you would want to do this if you were deleting
+	//	the libraryUI component but planned to create an identical new one.
+	//	By not deleting the visor editors, you will be able to reparent
+	//	them to the new libraryUI component, hence preserving the state of
+	//	things being displayed by that editor. See the description in
+	//	libraryUI() for more details.
+	//
+
+	if (!$alsoDeleteVisors)
+	{
+		// The caller has asked us not to delete the visor objects along with
+		// the UI, so we unparent them from the UI before we delete the UI.
+		//
+		string $directoriesVisorName = lookupDirectoriesVisorName($libraryUI);
+		string $filesVisorName = lookupFilesVisorName($libraryUI);
+		hyperGraph -edit -unParent $directoriesVisorName;
+		hyperGraph -edit -unParent $filesVisorName;
+	}
+
+	deleteUI $libraryUI;
+}
+
+global proc string libraryUI(
+	string $parentFormLayout,
+	string $directoriesVisorName,
+	string $filesVisorName)
+{
+	//
+	// Description:
+	//	This method is called from any piece of UI which wants to create a
+	//	libraryUI within itself. 
+	//	This method creates the library UI.
+	//	If the directoriesVisorName and filesVisorName are specified, the UI 
+	//	will use visor objects by those names for the directories display and 
+	//	the	files display. In particular, this is designed to allow the library
+	//	UI to be moved from layout to layout without dramatically changing its
+	//	appearance. Otherwise (if directoriesVisorName and filesVisorName are
+	//	""), new visor objects will be created.
+	//
+	// Returns: 
+	//	This method returns the name of the UI which should be stored by the
+	//	caller for later use in performing operations on the library UI.
+	//
+
+	// Create the library UI lookup table if it doesn't already exist.
+	//
+	createLibraryUILookupTable();
+
+	string $libraryUI;
+
+	//
+	// Create the directories and files UI
+	//
+
+	$libraryUI = `paneLayout 
+		-configuration "vertical2"
+		-paneSize 1 30 100
+		dirsAndFilesPane`;
+
+		if ($directoriesVisorName == "")
+		{
+			$directoriesVisorName = generateUniqueDirectoriesVisorName();
+			hyperGraph -unParent $directoriesVisorName;
+		}
+
+		if ($filesVisorName == "")
+		{
+			$filesVisorName = generateUniqueFilesVisorName();
+			hyperGraph -unParent $filesVisorName;
+		}
+
+		registerLibraryUI($libraryUI);
+		registerVisorNames($libraryUI, $directoriesVisorName, $filesVisorName);
+
+		// Create a form layout to contain the directories UI. This form 
+		// layout must be called "dirsForm" because other UI will need to 
+		// be able to find it by name later on.
+		//
+		formLayout dirsForm;
+			hyperGraph 
+				-edit
+				-unParent $directoriesVisorName;
+			hyperGraph 
+				-edit 
+				-parent dirsForm 
+				$directoriesVisorName;
+			string $scrollBar = 
+				`floatScrollBar
+					-parent dirsForm
+					-horizontal false
+					-width 20`;
+			floatScrollBar
+				-edit
+				-dragCommand 
+					("visor -scrollPercent "
+						+ "`floatScrollBar -query -value "
+						+ $scrollBar
+						+ "` "
+						+ $directoriesVisorName)
+				$scrollBar;
+			floatScrollBar
+				-edit
+				-changeCommand 
+					("visor -scrollPercent "
+						+ "`floatScrollBar -query -value "
+						+ $scrollBar
+						+ "` "
+						+ $directoriesVisorName)
+				$scrollBar;
+			visor
+				-scrollBar $scrollBar
+				$directoriesVisorName;
+					
+			formLayout 
+				-edit
+				-af $directoriesVisorName top	0
+				-af $directoriesVisorName bottom 0
+				-af $directoriesVisorName left	0
+				-ac $directoriesVisorName right	0 $scrollBar
+
+				-af $scrollBar top 0
+				-af $scrollBar bottom 0
+				-an $scrollBar left
+				-af $scrollBar right 0
+				dirsForm;
+		setParent ..; // from dirsForm
+
+		// Create a form layout to contain the files UI. This form 
+		// layout must be called "filesForm" because other UI will 
+		// need to be able to find it by name later on.
+		//
+		formLayout filesForm;
+			hyperGraph 
+				-edit
+				-unParent 
+				$filesVisorName;
+			hyperGraph 
+				-edit 
+				-parent filesForm 
+				$filesVisorName;
+			formLayout 
+				-edit
+				-af $filesVisorName top 0
+				-af $filesVisorName bottom 0
+				-af $filesVisorName left 0
+				-af $filesVisorName right 0
+				filesForm;
+		setParent ..; // from filesForm
+	setParent ..; // from dirsAndFilesPane 
+
+	if ($directoriesVisorName == "")
+	{
+		$directoriesVisorName = lookupDirectoriesVisorName($libraryUI);
+	}
+
+	hyperGraph 
+		-edit 
+		-directoryPressCommand 
+			("libraryUIDirectoryPressed " + $libraryUI + "\"\"")
+		$directoriesVisorName;
+
+	formLayout 
+		-edit
+		-af $libraryUI top 		0
+		-af $libraryUI bottom   0
+		-af $libraryUI left 	0
+		-af $libraryUI right 	0
+		$parentFormLayout;
+
+	return $libraryUI;
+}
+

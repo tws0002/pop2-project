@@ -1,0 +1,93 @@
+// Copyright 2012 Autodesk, Inc.  All rights reserved.
+//
+// Use of this software is subject to the terms of the Autodesk license agreement
+// provided at the time of installation or download, or which otherwise
+// accompanies this software in either electronic or hard copy form.
+//
+// Simple shader to output some vertex attributes to different output targets
+// For now will write out 2 outputs: position and normals in world space.
+//
+
+#include "Common.cgh"
+
+// Vertex input structure
+struct VS_INPUT 
+{ 
+    float3 Pm : POSITION; 
+    float3 Nm : NORMAL; 
+}; 
+
+// Vertex output structure
+struct VS_TO_PS 
+{ 
+    float4 HPos : POSITION; 
+    float3 Pw : TEXCOORD0; 
+    float3 Nw : TEXCOORD1; 
+}; 
+
+// Globals
+extern float4x4 WorldIT : worldinversetranspose; 
+extern float4x4 World : world; 
+extern float DepthPriority : depthpriority; 
+extern float4x4 WorldViewProj : worldviewprojection; 
+
+//  Vertex shader fragments 
+//
+float3 iNw( float3 nm, float4x4 worldITC )
+{ 
+     return mul( worldITC, float4(nm,0) ).xyz; 
+} 
+
+
+float3 iPw( float3 pm, float4x4 world ) 
+{ 
+    return mul( world, float4(pm, 1.0f) ).xyz; 
+} 
+
+float3 iVw( float3 Pm, float3 Ew, float4x4 world  )
+{ 
+    float4 Pw = mul( world, float4(Pm,1) ); 
+    return Ew - Pw.xyz; 
+} 
+
+float4 iPcPriority( float3 pm, float depthPriority, float4x4 worldViewProjectionC )
+{ 
+    float4 P = mul( worldViewProjectionC, float4(pm,1) ); 
+    P.z -= P.w * 2.0f * depthPriority; 
+    return P; 
+} 
+
+VS_TO_PS VS_GeometryAttributes(VS_INPUT inputs ) 
+{ 
+    VS_TO_PS vertexOutput; 
+    vertexOutput.Nw = iNw( inputs.Nm, WorldIT ); 
+    vertexOutput.Pw = iPw( inputs.Pm, World ); 
+    vertexOutput.HPos= iPcPriority ( inputs.Pm, DepthPriority, WorldViewProj ); 
+    return vertexOutput; 
+} 
+
+// Pixel shader output structure.
+struct PS_OUT
+{
+    float4 Position : COLOR0;
+    float4 Normal : COLOR1;
+};
+
+// Pixel shader.
+PS_OUT PS_GeometryAttributes(VS_TO_PS inputs)
+{
+    PS_OUT Out;
+	Out.Position = float4( inputs.Pw, 1.0f);
+    Out.Normal = float4((normalize(inputs.Nw) + 1.0f) * 0.5f, 1.0f);
+    return Out;
+}
+
+// Technique.
+technique Main
+{
+    pass p0
+    {
+        VertexShader = compile glslv VS_GeometryAttributes();
+        PixelShader = compile glslf PS_GeometryAttributes();
+    }
+}

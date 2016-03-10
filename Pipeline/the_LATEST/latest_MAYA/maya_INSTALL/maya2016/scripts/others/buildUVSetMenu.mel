@@ -1,0 +1,201 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+global proc buildUVSetMenuNames( string $menuNames[] )
+{
+	// Builds the menuNames string array from the UV sets of
+	// all selected objects
+	// The menuNames are in the format:
+	//  <path to object> | <uvset name>
+
+	clear $menuNames;
+
+	string $selectObj[] = `ls -o -sl`;
+	int $numObjects = size($selectObj);
+	int $curr = 0;
+
+	// For each object, query its uvsets and add an entry
+	// for each uv set
+	//
+	for ($i=0; $i<$numObjects; $i++)	
+	{
+		string $uvSets[] = `polyUVSet -pi 1 -q -auv $selectObj[$i]`;
+		int $numUVSets = size($uvSets);
+		for( $j = 0; $j < $numUVSets; $j ++ ) {
+			string $perInstUVSet[] = `polyUVSet -uvSet $uvSets[$j] -q -pi $selectObj[$i]`;
+			if (size($perInstUVSet[0]) > 0) {
+				$uvSets[$j] = $perInstUVSet[0];
+			} else {
+				continue;
+			}
+			$menuNames[$curr] = ($selectObj[$i] + " | " + $uvSets[$j]);
+			$curr ++;
+		}
+	}
+}
+
+global proc buildUVSetMenu( string $parentMenu, 
+			string $menuNames[],
+			string $prefix,
+			int	$hasStaticItems )
+{
+ 	if(!$hasStaticItems) {
+		// Menu does not have static items, so remove all the items
+		menu -e -deleteAllItems $parentMenu;
+	} else {	
+		// Remove all the menu items except the last one.
+		// NOTE: The last item could have the option box. In this case we have to preserve 2 items.
+		
+		string $items[] = `menu -q -itemArray $parentMenu`;
+		int $itemCount = size($items);
+		int $i;
+
+		if($itemCount > 0) {
+			int $isOptionBox = `menuItem -q -isOptionBox $items[$itemCount-1]`;
+			int $itemsToPreserve = $isOptionBox ? 2 : 1;
+
+			for ($i=0; $i<$itemCount-$itemsToPreserve; $i++) {
+				deleteUI -menuItem $items[$i];
+			}
+		}
+	}
+		
+	setParent -m $parentMenu;
+	int $numUVSets = size($menuNames);
+
+	// If there are no UV sets to display, then put an empty menu item
+	if( $numUVSets == 0 ) {
+		menuItem -ecr false -enable false -label (uiRes("m_buildUVSetMenu.kNoObjectSelected")) -insertAfter "";		
+		return;
+	}
+
+	string $selectObj[] = `ls -o -sl`;
+	int $numObjects = size($selectObj);
+
+	for ($i=$numUVSets-1; $i>=0; $i--)	
+	{
+		// $menuNames[$i] comes in the format
+		// "|polySurface3|polySurfaceShape3 | map3"
+		// So tokenize it on the space to get the map set name
+		// Then $buf[0] is the path to the uvset
+		// And $buf[size($buf)=1] is the uvset name
+		//
+		string $buf[];
+		tokenize $menuNames[$i] " " $buf;
+
+		string $fullMenuItemName;
+
+		// Create a menu item for each uv set 
+		string $currUVSet[] = `polyUVSet -q -currentPerInstanceUVSet $buf[0]`;
+		string $copySelectedAnnot = (uiRes("m_buildUVSetMenu.kCopySelectedFaceAnnot"));
+		if ($currUVSet[0] == $buf[size($buf) - 1]) {
+
+			// Put a check mark on the menu item with the current uvset
+			$fullMenuItemName = 
+				`menuItem -ecr false -l $menuNames[$i]
+				-checkBox true
+				-insertAfter ""
+				-annotation $copySelectedAnnot
+				($prefix+$parentMenu+$i)`;		
+
+		} else {
+			$fullMenuItemName = 
+				`menuItem -ecr false -l $menuNames[$i]
+				-insertAfter ""
+				-annotation $copySelectedAnnot
+				($prefix+$parentMenu+$i)`;		
+		}
+	
+		// Display a shorter name in the menu item if there's
+		// only one object selected
+		if( `menuItem -exists $fullMenuItemName` && ($numObjects == 1) ) {
+			menuItem -e -l $buf[size($buf)-1] $fullMenuItemName;
+		}
+	
+	}
+}
+
+global proc buildUVSetMenuWithSetUVSetCmdByIndex( 
+		string $parentMenu, string $whichPanel )
+{
+	// For each menu item in the given menu, attach a command
+	// to switch the current UV set by index, eg. 0 is the 1st map, 1 is the 2nd
+	//
+	string $menuItems[];
+	$menuItems = `menu -q -itemArray $parentMenu`;
+	int $num = size($menuItems);
+	int $i;
+	for( $i=0; $i<$num; $i++ ) {
+		if( `menuItem -q -enable $menuItems[$i]` ) {
+			string $cmd = ("textureWindow -e -suv " + $i + " " + 
+							$whichPanel + ";");
+			// Attach a command to this menu item
+			menuItem -e -command $cmd $menuItems[$i];
+		}
+	}
+}
+
+global proc buildUVSetMenuWithCopyUVsCmd( 
+		string $parentMenu, 
+		string $menuNames[] )
+{
+	setParent -m $parentMenu;
+	string $menuItems[] = `menu -q -itemArray $parentMenu`;
+	int $numUVSets = size($menuNames);
+
+	// If there aren't any uv sets to display, then just return now.
+	if( $numUVSets == 0 ) {
+		return;
+	}
+
+	int $i;
+	for( $i=0; $i<$numUVSets; $i++ ) 
+	{
+		string $buf[];
+		tokenize $menuNames[$i] " " $buf;
+		
+		if( size($buf) == 0 ) continue;
+
+		// for each menu item, disable it if it's the active one
+		// or add a command to run the polyCopyUVs cmd
+		string $currUVSet[] = `polyUVSet -q -currentPerInstanceUVSet $buf[0]`;
+		string $destinationUVSet = $buf[size($buf) - 1];
+
+		if ($currUVSet[0] == $destinationUVSet)
+		{
+			menuItem -e -enable false $menuItems[$i];
+		} else {
+
+			//  Overwrite the existing command with a polyCopyUVs cmd
+			string $setCurrentUVSetCmd = 
+				("polyUVSet -currentUVSet -uvSet \"" + $destinationUVSet + "\" ;");
+			string $copyCmd = ( 
+				    "if( `performPolyCopyUVsToUVsetArgList \"1\" {\"" 
+					+ $currUVSet[0] + "\", \"" 
+					+ $destinationUVSet 
+					+ "\", \"0\"}` > 0 ) { " 
+					+ $setCurrentUVSetCmd 
+					+ "}"
+					);
+			menuItem -e -command $copyCmd $menuItems[$i];
+		}
+	}
+}

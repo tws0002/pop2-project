@@ -1,0 +1,961 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Creation Date:  4 April 1997
+//
+//  Description:
+//
+//
+//  Procedure Name:
+//      performPolyChipOff $option $operation
+//
+//  Description:
+//      Perform a chip off of the selected faces with the default arguments
+// 		brings a dialog box to set chip off parameters if $option==1
+//        returns a command string otherwise.
+//		The option box defined here is (mostly) shared among 4 operations:
+//		$operation == 0 => Extract
+//		$operation == 1 => Duplicate Face
+//		$operation == 2 => Extrude Face
+//		$operation == 3 => Move Face
+//		$operation == 4 => Extrude Edge
+//         
+//  Input Arguments:
+//        $option : Whether to set the options to default values.
+//        $operation : whether the faces should be extracted (0),
+//					   duplicated (1), extruded (2) or moved (3)
+// 		uses the option variable `optionVar -q polyKeepFacesGrouped`
+// 		to determine whether the extraction should be kept grouped together
+//      or not.
+//  Return Value:
+//        command string iff $option==2
+//
+
+
+proc setOptionVars (int $operation, int $forceFactorySettings)
+{
+	string $ovar;
+	switch ($operation) {
+		case 0:
+			$ovar="polyChipOffE";
+			break;
+
+		default:
+		case 1:
+			$ovar="polyChipOffD";
+			break;
+
+		case 2:
+			$ovar="polyExtrude";
+			break;
+
+		case 3:
+			$ovar="polyMoveFacet";
+			break;
+
+		case 4:
+			$ovar="polyExtrudeEdge";
+			break;
+	}
+
+	// Manipulator on Global Values.
+    if ($forceFactorySettings || !`optionVar -exists ($ovar+"World")`)
+        optionVar -intValue ($ovar+"World") 0;
+
+//	-tx/-translateX  -ty/-translateY  -tz/-translateZ 
+     if ($forceFactorySettings || !`optionVar -exists ($ovar+"Translate")`) {
+		optionVar -floatValue ($ovar+"Translate") 0
+			-floatValueAppend ($ovar+"Translate") 0
+			-floatValueAppend ($ovar+"Translate") 0;
+	}
+//   -rx/-rotateX  -ry/-rotateY  -rz/-rotateZ 
+	if ($forceFactorySettings || !`optionVar -exists ($ovar+"Rotate")`) {
+		optionVar -floatValue ($ovar+"Rotate") 0
+			-floatValueAppend ($ovar+"Rotate") 0
+			-floatValueAppend ($ovar+"Rotate") 0;
+	}
+//   -sx/-scaleX  -sy/-scaleY  -sz/-scaleZ 
+	if ($forceFactorySettings || !`optionVar -exists ($ovar+"Scale")`) {
+		optionVar -floatValue ($ovar+"Scale") 1.
+			-floatValueAppend ($ovar+"Scale") 1.
+			-floatValueAppend ($ovar+"Scale") 1.;
+	}
+
+//   -div/-divisions
+	if (($operation == 2) || ($operation == 4)) {
+		if ($forceFactorySettings || !`optionVar -exists ($ovar+"Divisions")`)
+			optionVar -intValue ($ovar+"Divisions") 1;
+
+//	use Curve for extrusion
+		if ($forceFactorySettings || !`optionVar -exists ($ovar+"UseCurve")`)
+			optionVar -intValue ($ovar+"UseCurve") 1;
+
+// -taper/-tp
+		if ($forceFactorySettings || !`optionVar -exists ($ovar+"TaperValue")`)
+			optionVar -floatValue ($ovar+"TaperValue") 1;
+
+// -twist/-twt
+		if ($forceFactorySettings || !`optionVar -exists ($ovar+"Twist")`)
+			optionVar -floatValue ($ovar+"Twist") 0.;
+	}
+
+// -smoothingAngle/-sma
+	if (($operation == 2) || ($operation == 4)) {
+		if ($forceFactorySettings || !`optionVar -exists ($ovar+"SmoothingAngle")`)
+			optionVar -floatValue ($ovar+"SmoothingAngle") 30.0;
+	}
+
+//   -ran/-random 
+	if ($forceFactorySettings || !`optionVar -exists ($ovar+"Random")`)
+		optionVar -floatValue ($ovar+"Random") 0.;
+	
+//   -ltz/-localTranslateZ 
+	if ($forceFactorySettings || !`optionVar -exists ($ovar+"LocalTranslate")`)
+		optionVar -floatValue ($ovar+"LocalTranslate") 0.0
+			-floatValueAppend ($ovar+"LocalTranslate") 0.0
+			-floatValueAppend ($ovar+"LocalTranslate") 0.0;
+
+//   -lrx/-localRotateX  -lry/-localRotateY  -lrz/-localRotateZ 
+	if ($forceFactorySettings || !`optionVar -exists ($ovar+"LocalRotate")`) {
+		optionVar -floatValue ($ovar+"LocalRotate") 0.0
+			-floatValueAppend ($ovar+"LocalRotate") 0.0
+			-floatValueAppend ($ovar+"LocalRotate") 0.0;
+	}
+//    -lsx/-localScaleX   -lsy/-localScaleY -lsz/-localScaleZ 
+	if ($forceFactorySettings || !`optionVar -exists ($ovar+"LocalScale")`) {
+		optionVar -floatValue ($ovar+"LocalScale") 1.
+			-floatValueAppend ($ovar+"LocalScale") 1.
+			-floatValueAppend ($ovar+"LocalScale") 1.;
+	}
+//     -ldx/-localDirectionX  -ldy/-localDirectionY  -ldz/-localDirectionZ 
+	if ($forceFactorySettings || !`optionVar -exists ($ovar+"LocalDirection")`) {
+		optionVar -floatValue ($ovar+"LocalDirection") 1
+			-floatValueAppend ($ovar+"LocalDirection") 0
+			-floatValueAppend ($ovar+"LocalDirection") 0;
+	}
+//     -ws/-worldspace 
+	if ($forceFactorySettings || !`optionVar -exists ($ovar+"WorldSpace")`)
+		optionVar -floatValue ($ovar+"WorldSpace") 0;
+
+//   -off/-offset 
+	if ($operation != 4) {
+		if ($forceFactorySettings || !`optionVar -exists ($ovar+"Offset")`)
+			optionVar -floatValue ($ovar+"Offset") 0.;
+	}
+
+//   -g/-gravity 
+//   -gx/-gravityX  -gy/-gravityY  -gz/-gravityZ 
+	if ($operation != 4) {
+		if ($forceFactorySettings || !`optionVar -exists ($ovar+"Gravity")`) {
+			optionVar -floatValue ($ovar+"Gravity") 0.
+				-floatValueAppend ($ovar+"Gravity") -1.
+				-floatValueAppend ($ovar+"Gravity") 0.;
+		}
+	}
+
+//	-w/-weight 
+	if ($operation != 4) {
+		if ($forceFactorySettings || !`optionVar -exists ($ovar+"Weight")`)
+			optionVar -floatValue ($ovar+"Weight") 0.;
+	//     -m/-magnet 
+	//     -mx/-magnX  -my/-magnY  -m/-magnZ 
+		if ($forceFactorySettings || !`optionVar -exists ($ovar+"Magnet")`) {
+			optionVar -floatValue ($ovar+"Magnet") 0.
+				-floatValueAppend ($ovar+"Magnet") 0.
+				-floatValueAppend ($ovar+"Magnet") 0.;
+		}
+	 //  -att/-attraction 
+		if ($forceFactorySettings || !`optionVar -exists ($ovar+"Attr")`)
+			optionVar -floatValue ($ovar+"Attr") 0.; // range  -2..2
+	}
+
+	if ($operation == 0
+			|| $operation == 1) {
+		// For Extract and Duplicate only, we have options
+		// controlling whether or not
+		// a separate should be done on completion
+		if ($forceFactorySettings
+				|| !`optionVar -exists ($ovar+"DoSeparate")`) {
+			optionVar -intValue ($ovar+"DoSeparate") 1;
+		}
+	}
+}
+
+global proc disableCurveExtrusion()
+{
+	disable polyChipOffTaper;
+	disable polyChipOffTwist;
+	disable -value false polyChipOffRandom;
+}
+
+global proc enableCurveExtrusion()
+{
+	disable -value false polyChipOffTaper;
+	disable -value false polyChipOffTwist;
+	disable polyChipOffRandom;
+}
+
+global proc performPolyChipOffSetup (int $operation, string $parent, int $forceFactorySettings)
+{
+	//      Retrieve the option settings
+	//
+	setOptionVars($operation, $forceFactorySettings);
+	setParent $parent;
+	
+	string $ovar;
+	switch ($operation) {
+		case 0:
+			$ovar="polyChipOffE";
+			break;
+
+		default:
+		case 1:
+			$ovar="polyChipOffD";
+			break;
+
+		case 2:
+			$ovar="polyExtrude";
+			break;
+
+		case 3:
+			$ovar="polyMoveFacet";
+			break;
+
+		case 4:
+			$ovar="polyExtrudeEdge";
+			break;
+	}
+
+	// Manipulator on Global Values.
+//    int $ival = `optionVar -query ($ovar+"World")`;
+//    checkBoxGrp -edit -value1 $ival polyChipOffWorld;
+
+	//      Query the optionVar's and set the values into the controls.
+	
+	if($operation != 0 && $operation != 1)
+	{
+		float $vals[] = `optionVar -query ($ovar+"Translate")`;
+		floatFieldGrp -edit -value1 $vals[0] -value2 $vals[1] -value3 $vals[2] polyChipOffTranslate;
+
+		$vals=`optionVar -query ($ovar+"Rotate")`;
+		floatFieldGrp -edit -value1 $vals[0] -value2 $vals[1] -value3 $vals[2] polyChipOffRotate;
+	     
+	     
+		$vals=`optionVar -query ($ovar+"Scale")`;
+		floatFieldGrp -edit -value1 $vals[0] -value2 $vals[1] -value3 $vals[2] polyChipOffScale;
+     }
+
+	if (($operation == 2) || ($operation == 4)) {
+		$ival=`optionVar -query ($ovar+"Divisions")`;
+		intSliderGrp -edit -value $ival polyChipOffDivisions;
+
+		$ival=`optionVar -query ($ovar+"UseCurve")`;
+		checkBoxGrp -edit -value1 $ival polyChipOffUseCurve;
+
+		float $val=`optionVar -query ($ovar+"TaperValue")`;
+		floatSliderGrp -edit -value $val polyChipOffTaper;
+
+		$val=`optionVar -query ($ovar+"Twist")`;
+		floatSliderGrp -edit -value $val polyChipOffTwist;
+
+		if (`checkBoxGrp -query -value1 polyChipOffUseCurve`) {
+			enableCurveExtrusion();
+		} else {
+			disableCurveExtrusion();
+		}
+
+		$val=`optionVar -query ($ovar+"SmoothingAngle")`;
+		floatSliderGrp -edit -value $val polyChipOffSmoothingAngle;
+	}
+
+	if($operation != 0 && $operation != 1)
+	{
+		float $val=`optionVar -query ($ovar+"Random")`;
+		floatSliderGrp -edit -value $val polyChipOffRandom;
+		
+		$ival=`optionVar -query ($ovar+"WorldSpace")`;
+		checkBoxGrp -edit -value1 $ival polyChipOffWorldSpace;
+			
+		$vals=`optionVar -query ($ovar+"LocalTranslate")`;
+		floatFieldGrp -edit -value1 $vals[0] -value2 $vals[1] -value3 $vals[2] polyChipOffLocalTranslate;
+			
+		$vals=`optionVar -query ($ovar+"LocalRotate")`;
+		floatFieldGrp -edit -value1 $vals[0] -value2 $vals[1] -value3 $vals[2] polyChipOffLocalRotate;  
+
+		$vals=`optionVar -query ($ovar+"LocalScale")`;
+		floatFieldGrp -edit -value1 $vals[0] -value2 $vals[1] -value3 $vals[2] polyChipOffLocalScale;  
+
+		$vals=`optionVar -query ($ovar+"LocalDirection")`;
+		floatFieldGrp -edit -value1 $vals[0] -value2 $vals[1] -value3 $vals[2] polyChipOffLocalDirection;  
+
+		if ($operation != 4) {
+			float $val=`optionVar -query ($ovar+"Offset")`;
+			floatSliderGrp -edit -value $val polyChipOffOffset;
+		
+			//$vals=`optionVar -query ($ovar+"Gravity")`;
+			//floatFieldGrp -edit -value1 $vals[0] -value2 $vals[1] -value3 $vals[2] polyChipOffGravity;  
+		
+			//$val=`optionVar -query ($ovar+"Weight")`;
+			//floatSliderGrp -edit -value $val polyChipOffWeight;
+				
+			//$vals=`optionVar -query ($ovar+"Magnet")`;
+			//floatFieldGrp -edit -value1 $vals[0] -value2 $vals[1] -value3 $vals[2] polyChipOffMagnet;  
+				
+			//$val=`optionVar -query ($ovar+"Attr")`;
+			//floatSliderGrp -edit -value $val polyChipOffAttr;
+		}
+	}
+
+	if ($operation == 0
+			|| $operation == 1) {
+		// For Extract and Duplicate only, we have options
+		// controlling whether or not
+		// a separate should be done on completion
+		$ival=`optionVar -query ($ovar+"DoSeparate")`;
+		checkBoxGrp -edit -value1 $ival polyChipOffDoSeparate;
+	}
+}
+
+global proc performPolyChipOffCallback (int $operation, string $parent, int $doIt)
+{
+	string $ovar;
+	switch ($operation) {
+		case 0:
+			$ovar="polyChipOffE";
+			break;
+
+		default:
+		case 1:
+			$ovar="polyChipOffD";
+			break;
+
+		case 2:
+			$ovar="polyExtrude";
+			break;
+
+		case 3:
+			$ovar="polyMoveFacet";
+			break;
+
+		case 4:
+			$ovar="polyExtrudeEdge";
+			break;
+	}
+
+	setParent $parent;
+
+	// Manipulator on Global Values.
+//	optionVar -intValue ($ovar+"World")
+//            `checkBoxGrp -query -value1 polyChipOffWorld`;
+
+	if ($operation != 0 && $operation != 1)
+	{
+		optionVar -floatValue ($ovar+"Translate")
+			`floatFieldGrp -query -value1 polyChipOffTranslate`
+			-floatValueAppend ($ovar+"Translate")
+			`floatFieldGrp -query -value2 polyChipOffTranslate`
+			-floatValueAppend ($ovar+"Translate")
+			`floatFieldGrp -query -value3 polyChipOffTranslate`;
+
+		optionVar -floatValue ($ovar+"Rotate")
+			`floatFieldGrp -query -value1 polyChipOffRotate`
+			-floatValueAppend ($ovar+"Rotate")
+			`floatFieldGrp -query -value2 polyChipOffRotate`
+			-floatValueAppend ($ovar+"Rotate")
+			`floatFieldGrp -query -value3 polyChipOffRotate`;
+
+		optionVar -floatValue ($ovar+"Scale")
+			`floatFieldGrp -query -value1 polyChipOffScale`
+			-floatValueAppend ($ovar+"Scale")
+			`floatFieldGrp -query -value2 polyChipOffScale`
+			-floatValueAppend ($ovar+"Scale")
+			`floatFieldGrp -query -value3 polyChipOffScale`;
+
+		optionVar -floatValue ($ovar+"Random")
+			`floatSliderGrp -query -value polyChipOffRandom`;
+	}
+
+	if (($operation == 2) || ($operation == 4)) {
+		optionVar -intValue ($ovar+"Divisions")
+			`intSliderGrp -query -value polyChipOffDivisions`;
+
+		optionVar -intValue ($ovar+"UseCurve")
+			`checkBoxGrp -query -value1 polyChipOffUseCurve`;
+
+		optionVar -floatValue ($ovar+"TaperValue")
+			`floatSliderGrp -query -value polyChipOffTaper`;
+
+		optionVar -floatValue ($ovar+"Twist")
+		`floatSliderGrp -query -value polyChipOffTwist`;
+
+		if (`checkBoxGrp -query -value1 polyChipOffUseCurve`) {
+			enableCurveExtrusion();
+		} else {
+			disableCurveExtrusion();
+		}
+
+		optionVar -floatValue ($ovar+"SmoothingAngle")
+		`floatSliderGrp -query -value polyChipOffSmoothingAngle`;
+	}
+	
+	if ($operation != 0 && $operation != 1)
+	{
+		optionVar -intValue ($ovar+"WorldSpace") 
+			`checkBoxGrp -query -value1 polyChipOffWorldSpace`;
+
+		optionVar -floatValue ($ovar+"LocalTranslate")
+			`floatFieldGrp -query -value1 polyChipOffLocalTranslate`
+			-floatValueAppend ($ovar+"LocalTranslate")
+			`floatFieldGrp -query -value2 polyChipOffLocalTranslate`
+			-floatValueAppend ($ovar+"LocalTranslate")
+			`floatFieldGrp -query -value3 polyChipOffLocalTranslate`;
+			
+		optionVar -floatValue ($ovar+"LocalRotate")
+			`floatFieldGrp -query -value1 polyChipOffLocalRotate`
+			-floatValueAppend ($ovar+"LocalRotate")
+			`floatFieldGrp -query -value2 polyChipOffLocalRotate`
+			-floatValueAppend ($ovar+"LocalRotate")
+			`floatFieldGrp -query -value3 polyChipOffLocalRotate`;
+		
+		optionVar -floatValue ($ovar+"LocalScale")
+			`floatFieldGrp -query -value1 polyChipOffLocalScale`
+			-floatValueAppend ($ovar+"LocalScale")
+			`floatFieldGrp -query -value2 polyChipOffLocalScale`
+			-floatValueAppend ($ovar+"LocalScale")
+			`floatFieldGrp -query -value3 polyChipOffLocalScale`;
+
+		optionVar -floatValue ($ovar+"LocalDirection")
+			`floatFieldGrp -query -value1 polyChipOffLocalDirection`
+			-floatValueAppend ($ovar+"LocalDirection")
+			`floatFieldGrp -query -value2 polyChipOffLocalDirection`
+			-floatValueAppend ($ovar+"LocalDirection")
+			`floatFieldGrp -query -value3 polyChipOffLocalDirection`;
+
+		
+	} else if ($operation != 4) {
+		optionVar -floatValue ($ovar+"Offset")
+			`floatSliderGrp -query -value polyChipOffOffset`;
+	}
+	
+	//optionVar -floatValue ($ovar+"Gravity")
+		//`floatFieldGrp -query -value1 polyChipOffGravity`
+		//-floatValueAppend ($ovar+"Gravity")
+		//`floatFieldGrp -query -value2 polyChipOffGravity`
+		//-floatValueAppend ($ovar+"Gravity")
+		//`floatFieldGrp -query -value3 polyChipOffGravity`;
+	//optionVar -floatValue ($ovar+"Weight")
+		//`floatSliderGrp -query -value polyChipOffWeight`;	
+	//	
+	//optionVar -floatValue ($ovar+"Magnet")
+		//`floatFieldGrp -query -value1 polyChipOffMagnet`
+		//-floatValueAppend ($ovar+"Magnet")
+		//`floatFieldGrp -query -value2 polyChipOffMagnet`
+		//-floatValueAppend ($ovar+"Magnet")
+		//`floatFieldGrp -query -value3 polyChipOffMagnet`;
+	//optionVar -floatValue ($ovar+"Attr")
+		//`floatSliderGrp -query -value polyChipOffAttr`;
+
+	if ($operation == 0
+			|| $operation == 1) {
+		// For Extract and Duplicate only, we have options
+		// controlling whether or not
+		// a separate should be done on completion
+		optionVar -intValue ($ovar+"DoSeparate") 
+			`checkBoxGrp -query -value1 polyChipOffDoSeparate`;
+	}
+
+	if ($doIt) {
+		performPolyChipOff 0 $operation;
+		string $tmpCmd = "performPolyChipOff 0 " + $operation;
+		string $tmpLabel = "PolyChipOff";
+		switch($operation) {
+			case 0: $tmpLabel = "poly Extract";		break;
+			default:
+			case 1: $tmpLabel = "poly Duplicate";	break;
+			case 2: $tmpLabel = "poly Extrude";  	break;
+			case 3: $tmpLabel = "poly Move Face";  	break;
+			case 4: $tmpLabel = "poly Move Edge";  	break;
+		}
+		addToRecentCommandQueue $tmpCmd $tmpLabel;
+	}
+}
+
+proc polyChipOffOptions (int $operation)
+{
+	// Global template variables for form spacing
+	global int $gOptionBoxTemplateFrameSpacing;
+	
+	string $commandName = "performPolyChipOff";
+
+	string $callback = ($commandName + "Callback " + $operation);
+	string $setup = ($commandName + "Setup " + $operation);
+	   
+	string $layout = getOptionBox();
+	setParent $layout;
+	setUITemplate -pushTemplate OptionBoxTemplate;
+	waitCursor -state 1;
+
+	string $parent, $settingsFrame;
+	if ($operation == 0 || $operation == 1)	{
+		
+		// Form layout
+		$parent = `formLayout`;
+
+			// Settings frame
+			$settingsFrame = 
+			`frameLayout -label (uiRes("m_performPolyChipOff.kSettingsFrame"))`;
+			
+				columnLayout;
+		
+	} else {
+		scrollLayout;  
+		$parent = `columnLayout -adj true -columnAttach "both" 5 -columnOffset "both" 5`;
+	}
+	
+//	checkBoxGrp -label1 _L10N( kManipulaterOnGlobal, "Manipulator on Global values") polyChipOffWorld;
+	if ($operation == 0) {
+		checkBoxGrp -label1 (uiRes("m_performPolyChipOff.kSeparateExtracted")) polyChipOffDoSeparate;
+	} else if ($operation == 1) {
+		checkBoxGrp -label1 (uiRes("m_performPolyChipOff.kSeparateDuplicated")) polyChipOffDoSeparate;
+	}
+
+	if ($operation != 0 && $operation != 1)
+	{
+		frameLayout -label (uiRes("m_performPolyChipOff.kLocalValues"));
+			columnLayout;
+			if ($operation != 4) {
+				floatSliderGrp -label (uiRes("m_performPolyChipOff.kLocalOffset")) -min -2.0 -max 2.0 -fmn -100 -fmx 100 polyChipOffOffset;
+			}
+			floatFieldGrp -label (uiRes("m_performPolyChipOff.kLocalTranslate")) -numberOfFields 3 polyChipOffLocalTranslate;
+			floatFieldGrp -label (uiRes("m_performPolyChipOff.kLocalRotate")) -numberOfFields 3 polyChipOffLocalRotate;
+			floatFieldGrp -label (uiRes("m_performPolyChipOff.kLocalScale")) -numberOfFields 3 polyChipOffLocalScale;
+			floatFieldGrp -label (uiRes("m_performPolyChipOff.kLocalDirection")) -numberOfFields 3 polyChipOffLocalDirection;
+			setParent ..;
+			setParent ..;
+			
+		frameLayout -label (uiRes("m_performPolyChipOff.kGlobalValues"));
+			columnLayout;
+			floatFieldGrp -label (uiRes("m_performPolyChipOff.kGlobalTranslate")) -numberOfFields 3 polyChipOffTranslate;
+			floatFieldGrp -label (uiRes("m_performPolyChipOff.kGlobalRotate")) -numberOfFields 3 polyChipOffRotate;
+			floatFieldGrp -label (uiRes("m_performPolyChipOff.kGlobalScale")) -numberOfFields 3 polyChipOffScale;
+			setParent ..;
+			setParent ..;
+		frameLayout -label (uiRes("m_performPolyChipOff.kOtherValues"));
+			columnLayout;
+			if (($operation == 2) || ($operation == 4)) {
+				checkBoxGrp -label1 (uiRes("m_performPolyChipOff.kOhterUseSelectedCurve")) 
+						-onc enableCurveExtrusion
+						-ofc disableCurveExtrusion
+						polyChipOffUseCurve;
+				floatSliderGrp -label (uiRes("m_performPolyChipOff.kOtherTaper")) 
+						-minValue  0.0 
+						-maxValue 15.0 
+						polyChipOffTaper;
+				floatSliderGrp -label (uiRes("m_performPolyChipOff.kOtherTwist"))
+						-minValue -180.0 
+						-maxValue 180.0 
+						polyChipOffTwist;
+				intSliderGrp -label (uiRes("m_performPolyChipOff.kOtherDivisions")) -minValue 1 polyChipOffDivisions;
+				floatSliderGrp -label (uiRes("m_performPolyChipOff.kOtherSmoothingAngle")) 
+						-minValue 0.0 
+						-maxValue 180.0 
+						polyChipOffSmoothingAngle;
+			}
+			floatSliderGrp -label (uiRes("m_performPolyChipOff.kOtherRandom")) polyChipOffRandom;
+			checkBoxGrp -label1 (uiRes("m_performPolyChipOff.kOtherWorldSpaceCoord")) polyChipOffWorldSpace;
+			setParent ..;
+			setParent ..;
+	}
+	else if ($operation != 4)
+	{
+		floatSliderGrp -label (uiRes("m_performPolyChipOff.kOffset")) -min -2.0 -max 2.0 -fmn -100 -fmx 100 polyChipOffOffset;
+	}
+
+//	frameLayout -label "Dynamic Values" -cl false -cll true -bv true;
+//		columnLayout;
+//		floatFieldGrp -label "Gravity" -numberOfFields 3 polyChipOffGravity;
+//		floatSliderGrp -label "Weight" -min 0. -max 100.0 polyChipOffWeight;
+//		floatFieldGrp -label "Magnet" -numberOfFields 3 polyChipOffMagnet;
+//		floatSliderGrp -label "Attraction" -min -2.0 -max 2.0 polyChipOffAttr;
+//		setParent ..;
+//		setParent ..;
+	
+	if( $operation == 0 || $operation == 1 ){
+		
+			setParent $parent;	
+
+		setParent ..;
+
+		// Attach Description/Settings frames to form layout
+		formLayout -e
+			-af $settingsFrame "top" $gOptionBoxTemplateFrameSpacing
+			-af $settingsFrame "left" $gOptionBoxTemplateFrameSpacing
+			-af $settingsFrame "right" $gOptionBoxTemplateFrameSpacing
+			-an $settingsFrame "bottom"
+		$parent;
+		
+	}
+	
+	waitCursor -state 0;
+	setUITemplate -popTemplate;
+	   
+	string $lbl="";
+	string $title="";
+	switch ($operation) {
+		case 0:
+			$lbl= (uiRes("m_performPolyChipOff.kExtractButton"));
+			$title= (uiRes("m_performPolyChipOff.kExtractOptions"));
+			break;
+
+		default:
+		case 1:
+			$lbl= (uiRes("m_performPolyChipOff.kDuplicateButton"));
+			$title= (uiRes("m_performPolyChipOff.kDuplicateOptions"));
+			break;
+
+		case 2:
+			$lbl= (uiRes("m_performPolyChipOff.kExtrudeFaceButton"));
+			$title=$lbl;
+			break;
+
+		case 4:
+			$lbl= (uiRes("m_performPolyChipOff.kExtrudeEdgeButton"));
+			$title=$lbl;
+			break;
+	}
+	
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit -label $lbl
+	       -command ($callback + " " + $parent + " " + 1)
+		$applyBtn;
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + $parent + " " + 0 + "; hideOptionBox")
+		$saveBtn;
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + " " + $parent + " " + 1)
+		$resetBtn;
+
+	setOptionBoxTitle($title);
+
+	//	Customize the 'Help' menu item text.
+	//
+	switch ($operation) {
+		case 0:
+			setOptionBoxHelpTag( "Extract" );
+			break;
+		case 1:
+			setOptionBoxHelpTag( "DuplicateFace" );
+			break;
+		case 2:
+			setOptionBoxHelpTag( "EditPolygonsExtrudeFace" );
+			break;
+		case 4:
+			setOptionBoxHelpTag( "ExtrudeEdge" );
+			break;
+	}
+
+	eval (($setup + " " + $parent + " " + 0));      
+	showOptionBox();
+}
+
+proc string performPolyChipOffHelp ()
+{
+     return "Extracts or Duplicates or Extrudes or Move the selected faces\n"; 
+}
+
+proc string assembleCmd (int $operation, float $centerX, float $centerY, float $centerZ)
+{
+	string $ovar;
+	string $res="";
+	switch ($operation) {
+		case 0:
+			$ovar="polyChipOffE";
+			break;
+		case 1:
+			$ovar="polyChipOffD";
+			break;
+		case 2:
+			$ovar="polyExtrude";
+			break;
+		case 4:
+			$ovar="polyExtrudeEdge";
+			break;
+		default:
+			return $res;
+			break;
+	}
+	
+	float $translate[];
+	float $rotate[];
+	float $scale[];
+	float $crand;
+	int $divisions;
+
+	if($operation != 0 && $operation != 1)
+	{
+		$translate = `optionVar -query ($ovar+"Translate")`;
+		$rotate = `optionVar -query ($ovar+"Rotate")`;
+		$scale = `optionVar -query ($ovar+"Scale")`;
+		$crand = `optionVar -query ($ovar+"Random")`;
+		$divisions = (($operation == 2) || ($operation == 4) ? `optionVar -query ($ovar+"Divisions")` : 1);
+	}
+
+	float $twist = 0, $taper = 1;
+	if (($operation == 2) || ($operation == 4)) {
+		$twist = `optionVar -query ($ovar+"Twist")`;
+		$taper = `optionVar -query ($ovar+"TaperValue")`;
+	}
+	float $smoothingAngle = ((($operation == 2) || ($operation == 4)) ? `optionVar -query ($ovar+"SmoothingAngle")` : 0.0);
+
+	float $lt[];
+	float $lr[];
+	float $los[];
+	float $ld[];
+	int $ws;
+
+	if($operation != 0 && $operation != 1)
+	{
+		$lt = `optionVar -query ($ovar+"LocalTranslate")`;
+		$lr =`optionVar -query ($ovar+"LocalRotate")`;
+		$los =`optionVar -query ($ovar+"LocalScale")`;
+		$ld =`optionVar -query ($ovar+"LocalDirection")`;
+		$ws = `optionVar -query ($ovar+"WorldSpace")`;
+	}
+
+	float $offset=($operation == 4 ? 0.0 : `optionVar -query ($ovar+"Offset")`);
+
+	float $grav[];
+	float $magn[];
+	float $attr;
+	float $weight;
+
+	if($operation != 0 && $operation != 1)
+	{
+		$grav = ($operation == 4 ? {0.0} : `optionVar -query ($ovar+"Gravity")`);
+		$magn = ($operation == 4 ? {0.0} : `optionVar -query ($ovar+"Magnet")`);
+		$attr = ($operation == 4 ? 0.0 : `optionVar -query ($ovar+"Attr")`);
+		$weight = ($operation == 4 ? 0.0 : `optionVar -query ($ovar+"Weight")`);
+	}
+	
+	int $opt2; // a strange bug prevents me from using $operation directly
+	if ($operation==0) $opt2=false; else $opt2=true;
+
+	// history flag
+	int $doHistory = `constructionHistory -q -toggle`;
+	switch ($operation) {
+		case 0:
+		case 1:
+			$res=("polyChipOff -ch " + $doHistory +
+				  " -kft " + `optionVar -q polyKeepFacetsGrouped` + " -dup " + $opt2);
+			break;
+		case 2:
+			$res=("polyExtrudeFacet -ch " + $doHistory +
+				  " -kft " + `optionVar -q polyKeepFacetsGrouped` ); 
+			break;
+		case 4:
+			$res=("polyExtrudeEdge -ch " + $doHistory +
+				  " -kft " + `optionVar -q polyKeepFacetsGrouped` ); 
+			break;
+	}
+	
+	float $pivot[3];
+	$pivot[0] = $centerX; $pivot[1] = $centerY; $pivot[2] = $centerZ;
+
+	if($operation != 0 && $operation != 1)
+	{
+		$res=($res
+				+ " -pvx " + $pivot[0] + " -pvy " + $pivot[1] + " -pvz " + $pivot[2]
+				+ " -tx " + $translate[0] + " -ty " + $translate[1] + " -tz " + $translate[2]
+				+ " -rx " +  $rotate[0]  + " -ry " +  $rotate[1] + " -rz " + $rotate[2]
+				+ " -sx " +  $scale[0]   + " -sy " +  $scale[1]  + " -sz " + $scale[2]
+				+ " -ran " + $crand 
+				+ (($operation == 2) || ($operation == 4) ? (" -divisions " +  $divisions) : "")
+				+ (($operation == 2) || ($operation == 4) ? (" -twist " +  $twist) : "")
+				+ (($operation == 2) || ($operation == 4) ? (" -taper " +  $taper) : "")
+				+ ($operation != 4 ? (" -off " +  $offset) : "")
+				+ " -ltz " + $lt[2] + " -ws " +  $ws
+				+ " -ltx " + $lt[0] + " -lty " +  $lt[1]
+				+ " -lrx " + $lr[0] + " -lry " +  $lr[1]   + " -lrz " + $lr[2]
+				+ " -lsx " + $los[0]+ " -lsy " +  $los[1]  + " -lsz " +  $los[2]
+				+ " -ldx " + $ld[0] + " -ldy " +  $ld[1]   + " -ldz " +  $ld[2]
+				+ ($operation != 4 ? (" -w "  +  $weight) : "")
+				+ ($operation != 4 ? (" -gx " +  $grav[0] + " -gy " +  $grav[1]  + " -gz " +  $grav[2]) : "")
+				+ ($operation != 4 ? (" -att " + $attr) : "")
+				+ ($operation != 4 ? (" -mx " +  $magn[0] + " -my " +  $magn[1]  + " -mz " +  $magn[2]) : "")
+				+ ((($operation == 2) || ($operation == 4)) ? (" -sma "  +  $smoothingAngle) : "")
+			);
+	}
+	else
+	{
+		$res=($res
+				+ ($operation != 4 ? (" -off " +  $offset) : "")
+			);
+	}
+
+	return $res;
+}
+
+global proc string performPolyChipOff (int $option, int $operation)
+{	
+	string $cmd;
+	string $lbl;
+	string $sel[], $preFilteredSel[];
+	string $ft;
+	string $ovar = "";
+
+	switch ($operation) {
+		case 0: 
+			$ovar="polyChipOffE";
+			$lbl="polyChipOff";
+			$ft="f";
+			break;
+
+		case 1:
+			$ovar="polyChipOffD";
+			$lbl="polyChipOff";
+			$ft="f";
+			break;
+
+		case 2:
+			$ovar="polyExtrude";
+			$lbl="polyExtrudeFacet";
+			$ft="f";
+			break;
+
+		case 4:
+			$ovar="polyExtrudeEdge";
+			$lbl="polyExtrudeEdge";
+			$ft="e";
+			break;
+	}
+	// history flag
+	int $doHistory = `constructionHistory -q -toggle`;
+
+	switch ($option) {
+	case 0:
+		string $origSel[] = `ls -sl -o`;
+		waitCursor -state on;
+		$sel=`polyCheckSelection $lbl $ft 0`;
+		if (size($sel) == 0) {
+			waitCursor -state off;
+			break;
+		}
+		select -r $sel;
+		string $oldnodes[]=`ls -sl -dep`; 
+		if (size($oldnodes) > 0)
+			select -d $oldnodes;		
+		string $tmp[] = `ls -sl`;
+
+		string $curveNode = "";
+		for ($node in $origSel) {
+			if (size(`ls ($node+".editPoints")`) > 0) {
+				$curveNode = $node;
+				break;	// Use the first curve
+			}
+		}
+		
+		$sel = $tmp;
+		if (size($sel) != 0) {
+			float $bbox[6] = `polyEvaluate -bc`;
+			float $pivot[3];
+			$pivot[0] = ($bbox[1] + $bbox[0]) / 2.0;
+			$pivot[1] = ($bbox[3] + $bbox[2]) / 2.0;
+			$pivot[2] = ($bbox[5] + $bbox[4]) / 2.0;
+			setOptionVars($operation, false);
+			int $index=0;
+			while (size($sel) > $index) {
+				string $cursel[];
+				string $res[];
+				$index=`polyNextSelectionBatch $sel $cursel $index`;		
+				string $cmd=`assembleCmd $operation $pivot[0] $pivot[1] $pivot[2]`;
+				if (($operation == 2) || ($operation == 4)) {
+					int $useCurve = 0;
+					if(`optionVar -exists ($ovar+"UseCurve")`) {
+						$useCurve = `optionVar -query ($ovar+"UseCurve")`;
+					}
+					if ("" != $curveNode && $useCurve) {
+						$cmd=($cmd + " -inputCurve " +  $curveNode + " ");
+					}
+				}
+				
+				for ($i=0; $i<size($cursel); $i++)
+					$cmd=($cmd + " " + $cursel[$i]);
+				if ($doHistory && (size($cursel) > 0)) {
+					select -deselect $cursel;
+				}
+				$res=`evalEcho $cmd`;
+				if (size($res) > 0) {
+					select -add $res;
+				}
+				if ($operation == 0
+						|| $operation == 1) {
+					// For Extract and Duplicate only,
+					// perform a separate afterwards,
+					// if the option dictates so.
+					//
+					int $ival=`optionVar -query ($ovar+"DoSeparate")`;
+					if ($ival == 1) {
+						$cmd = "polyPerformAction (\"polySeparate -rs 1\", \"o\", 0)";
+						evalEcho $cmd;
+					}
+				}
+				//
+				// The first command returned the polyChipOff node;
+				// by selecting that now we connect the manipulator.
+				//
+				if (size($res) > 0) {
+					select -add $res;
+				}
+			}
+			if ($operation == 0 || $operation == 1)
+			{
+				// Initialize the just created mesh node with global settings
+				setupNewMesh();
+			}
+			clear $sel; 
+			// *** should perhaps remove the following line
+			// and restore the current ctx instead.
+			setToolTo ShowManips;	
+		} else {
+		
+			string $warning;
+			if ($operation == 4){
+				$warning = (uiRes("m_performPolyChipOff.kOnlyWorksOnPolyEdges"));
+			} else {
+				$warning = (uiRes("m_performPolyChipOff.kOnlyWorksOnPolyFaces"));
+			}
+		
+			warning(`format -s $lbl $warning`);
+		}
+		waitCursor -state off;
+		break;
+	case 1:
+		polyChipOffOptions $operation;
+		break;
+	default: 
+		setOptionVars($operation, false);
+		$cmd = ("performPolyChipOff 0 " + $operation);
+	}
+	return $cmd;
+}

@@ -1,0 +1,293 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  December 9, 1996
+//
+//  Description:
+//      File Browser.
+//
+//  Input Arguments:
+//      String      Callback on OK action
+//      String      action name for button and window title
+//      String      The type of file requested.
+//      Int         The browser mode. 
+//                      0 for single file read.
+//                      1 for write. (export)
+//                      2 for write without paths. (file save)
+//                      4 directories have meaning when used with the action button.
+//                      5 for multiple file read
+//
+//
+//	Globals that may be used:
+//		$gDefaultFileBrowserDir	- If not "" then the file options
+//								for default Dir will take you to the
+//								directory specified.
+// 
+//  Return Value:
+//      Done through the callback provided. The callback has the following
+//		parameters:
+//			String		The file specified by the user.
+//			String		The type of file specified by the user.
+//
+//		If the user wishes to provide more parameters to the callback they
+//		may do so providing that the last two parameters are the ones given
+//		above.
+//
+//		The callback returns true if the window should be removed when
+//		done.
+//
+//		Eg.
+//			myCallBack myParam1 myParam2 filePath fileType
+//
+
+
+global string $gDefaultFileBrowserDir = "";
+
+// Save the workspace current directory. Since this value
+// is changed when we navigate with the file browser, it
+// needs to be reset when we cancel.
+//
+global string $gOldCurrentDirectory = "";
+
+
+global proc int pv_goDirectory (string $dirPath)
+//
+//	Description:
+//		Change the workspace directory to the given path
+//
+{
+    if ($dirPath == "") {
+        error (uiRes("m_fileBrowser.kInvalidDirectoryPath"));
+        return 0;
+    } else {
+        workspace -dir $dirPath;
+        return 1;
+    }
+}
+
+proc int checkOldShortNames( int $mode )
+{
+    // Check for short names
+    // These are being phased out of the UI, but we'll
+    // strip out the 100 in case there are scripts around
+    // which use it still.
+    int $catch_oldShortNames = int($mode/100);
+
+    $mode = $mode - 100 * $catch_oldShortNames;
+
+    return $mode;
+}
+
+global proc int fileBrowserWithFilter ( string $callBack, string $action, string $title,
+                                        string $type, int $mode, string $filters[], string $dir )
+{
+    global string $gv_operationMode;
+    global string $gv_fileDialogShortCutTip;
+    global int $gv_browserMode;
+        
+    $gv_browserMode = checkOldShortNames( $mode );
+    $mode = $gv_browserMode;
+
+    if (`about -nt` || `about -mac`) {
+        string $filterList = "fileBrowserDialog -fileCommand ";
+        $filterList += "\"";
+        $filterList += $callBack;
+        $filterList += "\"";
+
+        $filterList += " -mode ";
+        $filterList += $mode;
+
+        $filterList += " -windowTitle ";
+        $filterList += "\"";    
+        $filterList += $title;
+        $filterList += "\"";
+
+//        if ( size($gv_fileDialogShortCutTip) > 0 )
+//        {
+//            $filterList += " -dialogStyle ";
+//            $filterList += 2;
+//
+//            $filterList += " -tipMessage ";
+//            $filterList += "\"";
+//            $filterList += $gv_fileDialogShortCutTip;
+//            $filterList += "\"";
+//        }
+//        else 
+        {
+            $filterList += " -dialogStyle ";
+            $filterList += 1;
+        }
+
+        $filterList += " -fileType ";
+        $filterList += "\"";
+        $filterList += $type;
+        $filterList += "\"";
+        $filterList += " -actionName ";
+        $filterList += "\"";
+        $filterList += $action;
+        $filterList += "\"";
+        $filterList += " -operationMode ";
+        $filterList += "\"";
+        $filterList += $gv_operationMode;
+        $filterList += "\"";
+        $filterList += " -includeName ";
+        $filterList += "\"";
+        $filterList += $dir;
+        $filterList += "\"";
+
+        int $i = 0;            
+        for ( $i=0; $i<size($filters); $i++) 
+        {
+            $filterList += " -filterList ";
+            $filterList += "\"";
+            $filterList += $filters[$i];
+            $filterList += "\"";
+        }
+
+        eval($filterList);
+
+        // previous call blocks
+        $gv_operationMode="";
+
+        return 1;
+    }
+
+    return 0;
+}
+
+global proc int fileBrowser ( string $callBack, string $action, string $type, int $mode)
+    //
+    //	Description:
+    //		This is the main for the projectViewer.
+    //
+    //	Parameters:
+    //		$callBack      - the global callback to be invoked when the action
+    //		                 button is pressed.
+    //		$action        - the title for the action button.
+    //		$type          - the file type to be highlited in the type
+    //		                 selection menu.
+    //
+    //		$mode          - 0 read single file
+    //		               - 1 for write.
+    //		               - 2 for write-segmented (no paths)
+    //		               - 4 give directories meaning on action.
+    //		               - 5 read multiple files
+{
+    global string $gDefaultFileBrowserDir;
+        
+    string $wsNames[];
+
+    $gv_browserMode = checkOldShortNames( $mode );
+    $mode = $gv_browserMode;
+    
+    if (`about -evalVersion` && $mode != 0) 
+    {
+        if ($type == "mayaBinary" || $type == "mayaAscii") {
+            // switch the file type to ple since ascii and binary are not
+            // supported in the personal learning edition
+            //
+            $type = "mayaPLE";
+        }
+    }
+
+    // Override the default directory if global variable is set
+    if(size($gDefaultFileBrowserDir) > 0) {
+        workspace -dir $gDefaultFileBrowserDir;
+    }
+
+    string $workspace = `workspace -q -dir`;
+
+    // Defaults are single existing file for read.
+    int $fileMode = 1;
+    if ($mode == 4)
+    {
+        $fileMode = 3;
+    }
+    else if ( $mode == 5 )
+    {
+        $fileMode = 4; 
+    }
+    else if ($mode != 0)
+    {
+        $fileMode = 0;
+    }
+
+    string $options[] = fileBrowserActionSetup($type, $fileMode);
+
+    string $fileCmd = ("fileDialog2 ");
+    $fileCmd += (" -caption \"" + $action + "\"");
+    $fileCmd += (" -okCaption \"" + $options[0] + "\"");
+    $fileCmd += (" -fileMode " + $fileMode);
+    $fileCmd += (" -startingDirectory \"" + $workspace + "\"");
+    $fileCmd += (" -returnFilter 1");
+    $fileCmd += (" -fileFilter \"" + $options[2] + "\"");
+    $fileCmd += (" -selectFileFilter \"" + $options[1] + "\"");
+
+    // Obtain n+1 entries corresponding to the n files selected and
+    // the fileType determined by the filter. Since returnFilter=1
+    // (see fileDialog2 command above) $n will never be 1. 
+    // $n = 0 if no files are selected and $n > 1 if at least one file is selected.
+    //
+    string $file[] = `eval $fileCmd`;
+    int $n = size($file);
+
+    // Now that we have all $n+1 entries ...
+
+    // ... determine the filter type for the first $n entries.
+    string $filterType = "";
+    if ( $n > 1 )
+    {
+        string $last = $file[$n-1] ;
+        if ( size( $last ) )
+            $filterType = filterDescriptionToFileType( $last );
+    }
+
+    // ... and iterate over the first $n entries, performing $cmd for each.
+    for ( $i=0; $i<$n-1; $i++ )
+    {
+        // If the $i^th entry is empty, skip it
+        if ( size($file[$i]) == 0 )
+            continue;
+
+        // Otherwise ...
+        string $path = $file[$i];
+
+        // ... strip the QT's .* postfix
+        //     OS native dialog does not have the .* postfix if the filter is * or *.*
+        if ( $fileMode == 0 && endsWith($path, ".*") )
+        {
+            $path = substring($path, 1, size($path)-2);
+        }
+
+        // ... get the full path to the file
+        $path = fromNativePath( $path );
+
+        // ... compose the $cmd
+        string $cmd = `format -s $callBack -s $path -s $filterType "^1s \"^2s\" \"^3s\""`;
+
+        // ... and evaluate it
+        eval $cmd;
+    }
+
+    return 1;
+}

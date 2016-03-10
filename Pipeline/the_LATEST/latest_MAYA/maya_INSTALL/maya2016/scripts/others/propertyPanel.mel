@@ -1,0 +1,1368 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Creation Date:  June 19/2014
+//
+// Description:
+//
+//		This file contains the procedures to create a property panel UI.
+//		A Property Panel is a light weight version of the Attributes Editor.
+//		It has less features, but supports multiple instances.
+//		
+//		Parts of this code is derrived from the original attribute editor (showEditor.mel). 
+//
+
+// Name of node currently displayed in property panel
+global string $gPropertyPanelActiveNode = "";
+global string $gPropertyPanelPopOutWindows[];
+global string $gPropertyPanelPopOutNodes[];
+
+proc string getTabLayout(string $rootLayout) {
+	return ($rootLayout+"|ppDoSelection|ppSelected|ppTabs");
+}
+
+proc string getControlLayout(string $rootLayout) {
+	return ($rootLayout+"|ppDoSelection|ppSelected|ppControls");
+}
+
+proc string noSlash(string $a) {
+	string  $buf[];
+	int $size = `tokenize $a "|/-" $buf`;
+	string $retval = "";
+	$retval = $buf[$size - 1];
+	return $retval;
+}
+
+proc int isLayoutVisible(string $rootLayout) {
+	string $ppDoSelection = $rootLayout + "|ppDoSelection";
+	if (`tabLayout -exists $ppDoSelection`) {
+		return (`tabLayout -q -selectTabIndex $ppDoSelection` > 1);
+	}
+	return 0;
+}
+
+proc setLayoutVisibility(string $rootLayout, int $visible) {
+	string $ppDoSelection = $rootLayout + "|ppDoSelection";
+	if (`tabLayout -exists $ppDoSelection`) {
+		int $index = $visible > 0 ? 2 : 1;
+		tabLayout -e -selectTabIndex $index $ppDoSelection;
+	}
+}
+
+proc doCustomViewLayout(string $templateName, string $viewName, string $node)
+//
+//	Description:
+//		Create the controls for a custom view.
+//		The view contains both attributes and group controls.
+//
+//	Inputs:
+//		$templateName	- template for this layout
+//		$viewName		- view for this layout
+//		$node			- layout is for this node
+//
+//	This is a modified version of the doViewLayout script found in
+//	showEditor.mel
+//
+{
+	// First source any template mel files in case the template has a callback
+	string $templateMelScript = $templateName + "Template.mel";
+	if(`exists $templateMelScript` == 1) {
+		eval("source \"" + $templateMelScript + "\"");
+	}
+
+	// Get view info for template and do the layout
+	string $viewLabel;
+	string $viewAnnotation;
+	string $itemName[];
+	int	$itemIsGroup[];
+	string $itemLabel[];
+	int	$itemLevel[];
+	int	$itemNumChildren[];
+	string $itemDesc[];
+	string $itemCallback[];
+	string $frameLayouts[];
+	string $colLayouts[];
+	string $preExpandCmds[];
+	int	   $expandNow[];
+
+	// Request all required view info in one shot, then sort it out
+	// $numKeys needs to be kept in sync with this list
+	int	$numKeys = 7;
+	string $keywords = "itemName:itemLabel:itemIsGroup:itemLevel:itemNumChildren:itemDescription:itemCallback";
+	string $viewItems[] = `baseView -viewName $viewName -itemList -itemInfo $keywords -query $templateName`;
+
+	// Set view label
+	$viewLabel = `baseView -viewName $viewName -query -viewLabel $templateName`;
+
+	// Set view annotation to be the view description.
+	// Note: annotation is for AE only, left empty for asset editor
+	$viewAnnotation = `baseView -viewName $viewName -query -viewDescription $templateName`;
+
+	int $numItems = size($viewItems)/$numKeys;
+
+	int $i=0;
+	for ($itemIndex=0; $itemIndex<$numItems; $itemIndex++)
+	{
+		int $index = $itemIndex*$numKeys;
+		$itemName[$i] = $viewItems[$index];
+		$itemLabel[$i] = $viewItems[$index+1];
+		$itemIsGroup[$i] = $viewItems[$index+2];
+		$itemLevel[$i] = $viewItems[$index+3];
+		$itemNumChildren[$i] = $viewItems[$index+4];
+		$itemDesc[$i] = $viewItems[$index+5];
+		$itemCallback[$i] = $viewItems[$index+6];
+		$i++;
+	}
+
+	// Add a template info section; it can be toggled on/off from the Show menu
+	//
+	int $showViewLabels = true;
+//	if( `optionVar -exists AEShowViewLabels` ) {
+//		$showViewLabels = `optionVar -query AEShowViewLabels`;
+//	}
+	string $templateDisplayName;
+	string $templateRoot = AEvalidatedTemplateName( $node, $templateName );
+	if( size($templateRoot) > 2 ){
+		if( substring($templateRoot,1,2) == "AE" ){
+			$templateDisplayName = substring( $templateRoot, 3, size($templateRoot) );
+		}
+	}
+	string $viewTemplateInfo = `formLayout -manage $showViewLabels -annotation $viewAnnotation`;
+		string $viewForm = `formLayout -p $viewTemplateInfo -annotation $viewAnnotation`;
+			$viewLabel = `text -align "right" -p $viewForm -font "boldLabelFont" -annotation $viewAnnotation -label (uiRes("m_propertyPanel.kView"))`;
+			string $viewText = `text -align "left" -p $viewForm -font "plainLabelFont" -annotation $viewAnnotation -label $viewName`;
+		setParent ..;
+		formLayout -e
+			-af $viewLabel "top" 0
+			-an $viewLabel "bottom"
+			-af $viewLabel "left" 0
+			-ac $viewLabel "right" 1 $viewText
+
+			-af $viewText "top" 0
+			-an $viewText "bottom"
+			-an $viewText "left"
+			-af $viewText "right" 0
+
+			$viewForm;
+		string $templateForm = `formLayout -p $viewTemplateInfo -annotation $viewAnnotation`;
+			string $templateLabel = `text -align "right" -p $templateForm -font "boldLabelFont" -annotation $viewAnnotation -label (uiRes("m_propertyPanel.kTemplate"))`;
+			string $templateText = `text -align "left" -p $templateForm -font "plainLabelFont" -annotation $viewAnnotation -label $templateDisplayName`;
+		setParent ..;
+		formLayout -e
+			-af $templateLabel "top" 0
+			-an $templateLabel "bottom"
+			-af $templateLabel "left" 0
+			-ac $templateLabel "right" 1 $templateText
+
+			-af $templateText "top" 0
+			-an $templateText "bottom"
+			-an $templateText "left"
+			-af $templateText "right" 0
+
+			$templateForm;
+	setParent ..;
+	formLayout -e
+		-af $viewForm "top" 0
+		-an $viewForm "bottom"
+		-af $viewForm "left" 10
+		-an $viewForm "right"
+
+		-af $templateForm "top" 0
+		-an $templateForm "bottom"
+		-an $templateForm "left"
+		-af $templateForm "right" 10
+
+		$viewTemplateInfo;
+
+	scrollLayout -childResizable true;
+
+	string $plugs[];
+
+	// Loop through each attribute in the list; group items are skipped.
+	//
+	for ( $i = 0; $i < size($itemName); $i++ ) {
+
+		// Save info for this attribute into next table position
+		int $index = size($plugs);
+		$plugs[$index] = "";
+
+		// Check if this attribute is a group or not.
+		// If not, set the full plug name.
+		if ((!$itemIsGroup[$i]) )
+		{
+		   $plugs[$index] = $node + "." + ($itemName[$i]);
+		}
+	}
+
+	// Now build the controls for the groups and attributes
+	//
+
+	string $mainFrame;
+	$count = size($plugs);
+
+	// After the last item (which is $count-1), we need to make sure we pop
+	// all the levels back to the main level (level=0). Set the level of the
+	// item $count to 0, and the last pass through the for-loop below will
+	// processing the popping to the main level correctly.
+	//
+	$itemLevel[$count] = 0;
+	if ($count > 0) {
+
+		// Create the frame in a collapsed state to avoid slow downs while
+		// we build subframes, and expand it once we're done.
+		//
+		$mainFrame = `frameLayout -label $viewLabel
+					  -annotation $viewAnnotation
+					  -borderVisible false
+					  -collapsable true
+					  -labelVisible false
+					  -collapse 1`;
+		string $mainColLayout = `columnLayout -adj true `;
+
+		int $prevLevel = 0;
+		int $grpCnt = 0;
+
+		int $currFrameLevel=-1;
+		for ( $i = 0; $i <= $count; $i++ ) {
+
+			// Handle decrease in grouping depth
+			//
+			int $currLevel = $itemLevel[$i];
+			while ($currLevel < $prevLevel)
+			{
+				// Pop column layout
+				// Pop frame layout
+				setParent ..;
+				setParent ..;
+				$currFrameLevel--;
+
+				// Decrement level
+				//
+				$prevLevel--;
+				// Assign pre-expand command, if any
+				//
+				if( $preExpandCmds[$prevLevel] != "" ){
+					if( $expandNow[$prevLevel] ){
+						frameLayout -e -collapse 0 $frameLayouts[$prevLevel];
+						eval($preExpandCmds[$prevLevel]);
+					} else {
+
+						frameLayout -e -preExpandCommand
+							$preExpandCmds[$prevLevel] $frameLayouts[$prevLevel];
+					}
+					$preExpandCmds[$prevLevel] = "";
+				}
+			}
+			// This was an extra pass to pop up to the main level, so we're
+			// done now; break out.
+			//
+			if( $i == $count ){
+				break;
+			}
+
+			$prevLevel = $currLevel;
+
+			// Handle new group item
+			if ($itemIsGroup[$i])
+			{
+				// This is the most recent frame to which we want to
+				// add rows
+				//
+				$currFrameLevel = $currLevel;
+
+				// Determine collapsed state
+				// Collapse only if this is a child group layout and it has more than 8 controls
+				//
+				// (TODO: this logic may need to be tweaked)
+				//
+				int $collapsed = ($currFrameLevel > 0 && $itemNumChildren[$i] > 8);
+
+				// Ensure we use AE Template
+				setUITemplate -pst attributeEditorTemplate;
+
+				// New framelayout
+				string $frame = `frameLayout
+									-label $itemLabel[$i]
+									-annotation $itemDesc[$i]
+									-borderVisible false
+									-collapsable true
+									-labelVisible true
+									-collapse $collapsed`;
+
+				// New columnlayout
+				string $colLayout = `columnLayout -adj true`;
+				// Save current frame & column layouts; if this frame is
+				// not to be expanded, start building a pre-expand command
+				//
+				$frameLayouts[$currFrameLevel] = $frame;
+				$colLayouts[$currFrameLevel] = $colLayout;
+				$expandNow[$currFrameLevel] = false;
+				if( $collapsed ){
+					$preExpandCmds[$currFrameLevel] = ";";
+				} else {
+					$preExpandCmds[$currFrameLevel] = "";
+				}
+				$grpCnt++;
+
+				// Restore UI template
+				setUITemplate -ppt;
+			} 
+			else
+			{
+				// Display for attributes
+
+				if( ($currFrameLevel<0) ||
+					($preExpandCmds[$currFrameLevel] == "") ){
+					// Not collapsed, add immediately
+					//
+					addAECustomRowLayout(	"",
+						($currFrameLevel<0)?$mainColLayout:
+											$colLayouts[$currFrameLevel],
+						$plugs[$i],
+						$itemLabel[$i],
+						$itemDesc[$i],
+						$itemCallback[$i]);
+				} else {
+					// Collapsed, add on demand
+					//
+					$preExpandCmds[$currFrameLevel] =
+						$preExpandCmds[$currFrameLevel] + ("addAECustomRowLayout( \""
+						+ $frameLayouts[$currFrameLevel] + "\", \""
+						+ $colLayouts[$currFrameLevel] + "\", \""
+						+ $plugs[$i] + "\", \""
+						+ $itemLabel[$i] + "\", \""
+						+ $itemDesc[$i] + "\", \""
+						+ $itemCallback[$i] + "\" );");
+				}
+			}
+		}
+
+		// Make sure the parent is reset when we're done
+		//
+		frameLayout -e -collapse 0 $mainFrame;
+		setParent $mainFrame;
+		setParent ..;
+	}
+	setParent ..;
+}
+
+// Iterates over all the children in the formLayout and
+// attaches them all accordingly
+//
+proc attachAllChildren(string $formLayout)
+{
+	string $oldParent = `setParent -q`;
+	setParent $formLayout;
+	// Attach all the children
+	string $formChildren[] = `formLayout -q -ca $formLayout`;
+	if (size($formChildren) > 0) {
+		string $attachCmd = "formLayout -e ";
+		$attachCmd += (" -af " + $formChildren[0] + " top 5 ");
+		for ($i = 0; $i < size($formChildren); $i++) {
+			if ($i != 0) {
+				$attachCmd += (" -ac " + $formChildren[$i] + " top 5 " + $formChildren[$i-1]);
+			}
+			$attachCmd += (" -af " + $formChildren[$i] + " left 0 ");
+			$attachCmd += (" -af " + $formChildren[$i] + " right 0 ");
+		}
+		if (`scrollLayout -exists $formChildren[$i-1]`) {
+			$attachCmd += (" -af " + $formChildren[$i-1] + " bottom 0 ");
+		}
+		$attachCmd += $formLayout;
+		eval $attachCmd;
+	}
+	setParent $oldParent;
+}
+
+
+// This function finds the columnLayout that is parent to the 
+// formLayouts holding the attribute widgets in custom view mode
+//
+// See doCustomViewLayout for how these layouts are created
+//
+proc string findCustomViewMainColumnLayout(string $nodeTypeLayout) {
+	
+	string $children[] = `formLayout -query -childArray $nodeTypeLayout`;
+	if (size($children) < 2 || !`scrollLayout -exists $children[1]`) {
+		return "";
+	}
+
+	$children = `scrollLayout -query -childArray $children[1]`;
+	if (size($children) < 1 || !`frameLayout -exists $children[0]`) {
+		return "";
+	}
+
+	$children = `frameLayout -query -childArray $children[0]`;
+	if (size($children) < 1 || !`columnLayout -exists $children[0]`) {
+		return "";
+	}
+
+	string $mainColLayout = $children[0];
+
+	return $mainColLayout;
+}
+
+proc getCustomViewCollapseState(string $nodeTypeLayout, string $childLabels[], int $collapseState[]) {
+
+	string $mainColLayout = findCustomViewMainColumnLayout($nodeTypeLayout);
+	if (size($mainColLayout) == 0) {
+		return;
+	}
+
+	string $oldParent = `setParent -q`;
+	setParent $mainColLayout;
+
+	string $children[] = `columnLayout -query -childArray $mainColLayout`;
+
+	for ($l in $children) {
+		if (`frameLayout -exists $l`) {
+			$childLabels[size($childLabels)] = `frameLayout -query -label $l`;
+			$collapseState[size($collapseState)] = `frameLayout -query -collapse $l`;
+		}
+	}
+
+	setParent $oldParent;
+}
+
+proc setCustomViewCollapseState(string $nodeTypeLayout, string $childLabels[], int $collapseState[]) {
+
+	string $mainColLayout = findCustomViewMainColumnLayout($nodeTypeLayout);
+	if (size($mainColLayout) == 0) {
+		return;
+	}
+
+	int $numOldLayouts = size($childLabels);
+
+	string $children[] = `columnLayout -query -childArray $mainColLayout`;
+	
+	// Old and new layout must match in number of children, 
+	// otherwise this is not the same layout
+	//
+	if (size($children) != $numOldLayouts) {
+		return;
+	}
+
+	string $oldParent = `setParent -q`;
+	setParent $mainColLayout;
+
+	// Child order and child lables must match, otherwise this is not the same layout
+	// So just set each colapse state in order, but make sure the lables match
+	//
+	for ($i=0; $i<$numOldLayouts; ++$i) {
+		if (`frameLayout -exists $children[$i]`) {
+
+			string $label = `frameLayout -query -label $children[$i]`; 
+			string $oldLabel = $childLabels[$i];
+
+			if ($label == $oldLabel) {
+				frameLayout -edit -collapse $collapseState[$i] $children[$i];
+			}
+		}
+	}
+
+	setParent $oldParent;
+}
+
+global proc buildControlsForSelectedTab(string $rootLayout, string $activeNodeCallback, int $newPanel)
+{
+	if(!isLayoutVisible($rootLayout)) {
+		return;
+	}
+
+	global string $gPropertyPanelActiveNode;
+
+	string $tabLayout = getTabLayout($rootLayout);
+	string $ctrlLayout = getControlLayout($rootLayout);
+
+	// Get the tab info
+	//
+	string $nodes[] = `tabLayout -q -tabLabel $tabLayout`;
+	int $tabIndex = `tabLayout -q -selectTabIndex $tabLayout`;
+
+	string $node = $nodes[$tabIndex-1];
+
+	if (!`objExists $node`) {
+		return;
+	}
+	
+	// Update preset button
+	//
+	PPpresetButton($node, $rootLayout);
+
+	// Call the callback function to let the world outside know about this change
+	//
+	$gPropertyPanelActiveNode = $node;
+	eval($activeNodeCallback + " " + $node);
+
+	string $nodeType = `nodeType $node`;
+	string $nodeTypeForm = ($nodeType+"FormLayout");
+	string $nodeTypeFormFullPath = $ctrlLayout + "|" + $nodeTypeForm;
+
+	string $viewName = "Lookdev";
+	string $templateName = ("AE" + $nodeType);
+	$templateName = AEvalidatedTemplateName($node, $templateName);
+
+	// Check if we have a valid template and if the custom view is enabled
+	// 
+	int $useCustomView = ($templateName != "");
+	if ($useCustomView && `optionVar -exists propertyPanelUseCustomView`) {
+		$useCustomView = `optionVar -q propertyPanelUseCustomView`;
+	}
+
+	// Create a layout identifier unique to this node type and view
+	string $viewLayoutIdentifier = ($nodeType + ($useCustomView ? ($viewName+$templateName) : ""));
+
+	string $oldLayoutLabels[];
+	int $oldCollapseStates[];
+
+	// If the layout for this node type exists already
+	// we might need to delete it first
+	//
+	if (`formLayout -exists $nodeTypeFormFullPath`) {
+
+		// Check if the existing layout matches our new view
+		//
+		int $isMatchingView = (`formLayout -q -annotation $nodeTypeFormFullPath` == $viewLayoutIdentifier);
+
+		// The custom view always needs to be recreated from scratch,
+		// but we also need to delete if this is a non-matching view
+		//
+		if ($useCustomView || !$isMatchingView) {
+
+			// If this is a matching custom view, save the collapse state
+			// so we can reuse that when rebuilding the view
+			//
+			if ($isMatchingView && $useCustomView) {
+				getCustomViewCollapseState($nodeTypeFormFullPath, $oldLayoutLabels, $oldCollapseStates);
+			}
+
+			deleteUI -layout $nodeTypeFormFullPath;
+		}
+	}
+
+	// Create the formLayout if it doesn't exists already
+	//
+	setParent $ctrlLayout;
+	if (!`formLayout -exists $nodeTypeFormFullPath`) {
+		formLayout -vis false $nodeTypeForm;
+		setParent ..;
+	}
+
+	// Use annotation to store layout identifier
+	//
+	formLayout -e -annotation $viewLayoutIdentifier $nodeTypeForm;
+
+	
+	// Enter property panel UI mode
+	setUITemplate -pushTemplate propertyPanelUITemplate;
+
+	if($useCustomView) {
+
+		// Create a custom view
+		//
+		setParent $nodeTypeForm;
+			doCustomViewLayout($templateName, $viewName, $node);
+		setParent ..;
+
+		// Reset collapse state
+		//
+		setCustomViewCollapseState($nodeTypeForm, $oldLayoutLabels, $oldCollapseStates);
+
+	} else {
+
+		// Create a default attribute editor
+		//
+		createEditor -qfd -nc $nodeTypeForm $node;
+	}
+
+	// Leave property panel UI mode
+	setUITemplate -popTemplate;
+
+
+	// We can now make the layout visible
+	//
+	formLayout -e -vis true $nodeTypeForm;
+
+	// Attach everything
+	//
+	attachAllChildren $nodeTypeForm;
+
+	// Display the built layout tab
+	//
+	tabLayout -e -st $nodeTypeForm $ctrlLayout;
+}
+
+
+global proc propertyPanelOnNodeDeleted(string $node)
+{
+    global string $gPropertyPanelPopOutWindows[];
+	global string $gPropertyPanelPopOutNodes[];
+	
+	string $updatedNodeList[];
+	string $updatedWindowList[];
+	
+    // Loop over all popped out windows
+	//
+	int $n = size($gPropertyPanelPopOutNodes);
+	int $i; 
+	for($i = 0; $i<$n; ++$i)
+    {
+        string $new = "";
+		
+		// Get nodes in that window
+		// and iterate through all of them
+		//
+        string $buf[];
+        int $m = tokenize($gPropertyPanelPopOutNodes[$i], ".", $buf);
+        int $ctr = 0;
+        int $j;
+        for($j = 0; $j<$m; ++$j)
+        {
+			// Add all but the deleted node to the list
+			// and store the number of nodes.
+			//
+            if(strcmp($node, $buf[$j]) != 0)
+            {
+                $new += ($j > 0 && $ctr > 0) ? "." + $buf[$j] : $buf[$j];
+                ++$ctr;
+            }
+        }
+		// If we added at least one node, append these nodes to the 
+		// array of node lists (nodes per window).
+		// If there was no nodes to add the corresponding window should close
+		// and we remove that window from the window array.
+		//
+        if($ctr > 0){
+            $updatedNodeList[size($updatedNodeList)] = $new;
+			$updatedWindowList[size($updatedWindowList)] = $gPropertyPanelPopOutWindows[$i];
+        } else {
+			string $buf[];
+			tokenize($gPropertyPanelPopOutWindows[$i], "|", $buf);
+			deleteUI $buf[0];
+        }
+    }
+	$gPropertyPanelPopOutNodes = $updatedNodeList;
+	$gPropertyPanelPopOutWindows = $updatedWindowList;
+}
+
+global proc propertyPanelOnNodeDeleteCB(	string $node,
+																	string $rootLayout,
+																	string $selectionCallback,
+																	string $activeNodeCallback,
+																	string $onDeleteCallback,
+																	string $onNameChangeCallback,
+																	int $newPanel)
+{
+	eval ($onDeleteCallback + " " +$node);
+
+	
+	// If the root is a popped out window we make sure to 
+	// update the callback if windows are to be deleted.
+	//	
+	string $selectionCallbackOverride = $selectionCallback;
+
+	global string $gPropertyPanelPopOutWindows[];
+
+	int $idx = stringArrayFind($rootLayout, 0, $gPropertyPanelPopOutWindows);
+	if( $idx != -1)
+	{
+		$selectionCallbackOverride = "propertyPanelGetNodesInWindow("+ $idx +")";
+	}
+
+	
+	// evalDeferred since this might be called from a scriptJob 
+	// and we thus need to finish the scriptJob before killing it
+	// to make a new one (-rp)
+	//	
+	evalDeferred ("updatePropertyPanel" + " \"" + 
+						$rootLayout + "\" \"" + 
+						$selectionCallbackOverride + "\" \"" + 
+						$activeNodeCallback + "\" \"" + 
+						$onDeleteCallback + "\" \"" + 
+						$onNameChangeCallback + "\" " + 
+						$newPanel);
+}
+
+
+global proc propertyPanelOnNodeNameChange(string $newName, string $oldName)
+{
+	// Change names for popped out panels and node scriptJob array
+	//
+    global string $gPropertyPanelPopOutWindows[];
+	global string $gPropertyPanelPopOutNodes[];
+	
+    // Loop over all popped out windows
+	//
+	int $n = size($gPropertyPanelPopOutNodes);
+	int $i; 
+	for($i = 0; $i<$n; ++$i)
+    {
+        string $new = "";
+		
+		// Get nodes in that window
+		// and iterate through all of them
+		//
+        string $buf[];
+        int $m = tokenize($gPropertyPanelPopOutNodes[$i], ".", $buf);
+        int $ctr = 0;
+        int $j;
+        for($j = 0; $j<$m; ++$j)
+        {
+			//Replace new name if found
+			//
+            if(strcmp($oldName, $buf[$j]) == 0)
+            {
+                $new += ($j > 0 && $ctr > 0) ? "." + $newName : $newName;
+                ++$ctr;
+            } else {
+				$new += ($j > 0 && $ctr > 0) ? "." + $buf[$j] : $buf[$j];
+				++$ctr;
+			}
+        }
+		$gPropertyPanelPopOutNodes[$i] = $new;
+    }
+}
+
+global proc  propertyPanelNodeNameChangeCB(string $nameFieldName,
+																		string $oldName,
+																		string $rootLayout,
+																		string $selectionCallback,
+																		string $activeNodeCallback,
+																		string $onDeleteCallback,
+																		string $onNameChangeCallback,
+																		int $newPanel)
+{
+	string $oldParent = `setParent -q`;
+	setParent $rootLayout;
+	
+	string $newName = `nameField -q -o $nameFieldName`;
+	eval ($onNameChangeCallback + " " +$newName + " " +$oldName);
+	
+	updatePropertyPanel($rootLayout, $selectionCallback, $activeNodeCallback, $onDeleteCallback, $onNameChangeCallback, $newPanel);
+	
+	setParent $oldParent;
+}
+
+global proc propertyPanelOnWindowClose(	string $wnd, 
+											string $activeNodeCallback, 
+											string $onDeleteCallback, 
+											string $onNameChangeCallback,
+											int $newPanel)
+{
+	global string $gPropertyPanelPopOutWindows[];
+	global string $gPropertyPanelPopOutNodes[];
+		
+	// Remove window and corresponding nodes from list
+	//
+	int $idx = stringArrayFind($wnd, 0, $gPropertyPanelPopOutWindows);
+	if( $idx != -1)
+	{
+		stringArrayRemoveAtIndex($idx, $gPropertyPanelPopOutWindows);
+		stringArrayRemoveAtIndex($idx, $gPropertyPanelPopOutNodes);
+	}
+	// Update selection callbacks for other windows
+	//
+	int $i;
+	for($i = 0; $i<size($gPropertyPanelPopOutWindows); ++$i)
+	{
+		string $selectionCallback = "propertyPanelGetNodesInWindow("+ $i +")";
+		updatePropertyPanel($gPropertyPanelPopOutWindows[$i], $selectionCallback, $activeNodeCallback, $onDeleteCallback, $onNameChangeCallback, $newPanel);
+	}
+}
+
+global proc buildTabsForPropertyPanel(	string $rootLayout, 
+															string $selectionCallback, 
+															string $activeNodeCallback,
+															string $onDeleteCallback,
+															string $onNameChangeCallback,
+															string $nodes[])
+//
+//	Description:
+//		Build the tabs and their contents for the node specified and
+//		all the nodes related to the argument node.
+//
+{
+	string $tabLayout = getTabLayout($rootLayout);
+	setParent $tabLayout;
+
+
+	string $currentTabs[] = `tabLayout -q -ca $tabLayout`;
+	int    $numCurrentTabs = size($currentTabs);
+	int    $numNodes = size($nodes);
+	
+	// Get the currently selected tab from current tab layout.
+	// Set to empty string if no tabs.
+	//
+	int $selectedTabIndex = `tabLayout -q -selectTabIndex $tabLayout`;
+	string $selectedNode = $numCurrentTabs>0 ? $currentTabs[$selectedTabIndex-1] : "";
+
+	int    $i;
+	string $label;
+
+	// Turn off tabLayout's visibility, to avoid UI update slowdown
+	//
+	tabLayout -e -visible false $tabLayout;
+
+	if ($numNodes >= $numCurrentTabs) {
+		for ( $i = 0; $i < $numCurrentTabs; $i++ ) {
+			string $nameFieldName = "ppTabNameField"+$i;
+			string $nodeName = $nodes[$i];
+			$label = `noSlash($nodeName)`;
+			// swap these tabs
+			tabLayout -e -tabLabel ("ppFormTab"+$i) $label $tabLayout;
+			string $tabName = $tabLayout+"|ppFormTab"+$i;
+			scriptJob -p $tabName -rp -nd $nodeName ("propertyPanelOnNodeDeleteCB \"" + 
+																	$nodeName + "\" \"" +
+																	$rootLayout + "\" \"" + 
+																	$selectionCallback + "\" \"" +
+																	$activeNodeCallback + "\" \"" +
+																	$onDeleteCallback + "\" \"" +
+																	$onNameChangeCallback +
+																	"\" false");
+																	  
+			nameField -e -o $nodeName -ncc ("propertyPanelNodeNameChangeCB \"" + 
+																$nameFieldName + "\" \"" +
+																$nodeName + "\" \"" +
+																$rootLayout + "\" \"" + 
+																$selectionCallback + "\" \"" +
+																$activeNodeCallback + "\" \"" +
+																$onDeleteCallback + "\" \"" +
+																$onNameChangeCallback +
+																"\" false") 
+																$nameFieldName;
+		}
+		for ( $i = $numCurrentTabs; $i < $numNodes; $i++ ) {
+			// create new tabs
+			$label = `noSlash($nodes[$i])`;
+			string $nameFieldName = "ppTabNameField"+$i;
+			string $nodeName = $nodes[$i];
+			formLayout ("ppFormTab"+$i);
+				nameField -vis false -h 5 -o $nodeName -ncc ("propertyPanelNodeNameChangeCB \"" + 
+																$nameFieldName + "\" \"" +
+																$nodeName + "\" \"" +
+																$rootLayout + "\" \"" + 
+																$selectionCallback + "\" \"" +
+																$activeNodeCallback + "\" \"" +
+																$onDeleteCallback + "\" \"" +
+																$onNameChangeCallback +
+																"\" false") 
+																$nameFieldName;
+			setParent ..;
+			tabLayout -e -tabLabel ("ppFormTab"+$i) $label $tabLayout;
+			string $tabName = $tabLayout+"|ppFormTab"+$i;
+			scriptJob -p $tabName -rp -nd $nodeName ("propertyPanelOnNodeDeleteCB \"" + 
+																	$nodeName + "\" \"" +
+																	$rootLayout + "\" \"" + 
+																	$selectionCallback + "\" \"" +
+																	$activeNodeCallback + "\" \"" +
+																	$onDeleteCallback + "\" \"" +
+																	$onNameChangeCallback +
+																	"\" false");
+		}
+	} else {
+		for ( $i = 0; $i < $numNodes; $i++ ) {
+			// swap these tabs
+			string $nameFieldName = "ppTabNameField"+$i;
+			string $nodeName = $nodes[$i];
+			$label = `noSlash($nodeName)`;
+			tabLayout -e -tabLabel ("ppFormTab"+$i) $label $tabLayout;
+			string $tabName = $tabLayout+"|ppFormTab"+$i;
+			scriptJob -p $tabName -rp -nd $nodeName ("propertyPanelOnNodeDeleteCB \"" + 
+																	$nodeName + "\" \"" +
+																	$rootLayout + "\" \"" + 
+																	$selectionCallback + "\" \"" +
+																	$activeNodeCallback + "\" \"" +
+																	$onDeleteCallback + "\" \"" +
+																	$onNameChangeCallback +
+																	"\" false");
+			nameField -e -o $nodeName -ncc ("propertyPanelNodeNameChangeCB \"" + 
+																$nameFieldName + "\" \"" +
+																$nodeName + "\" \"" +
+																$rootLayout + "\" \"" + 
+																$selectionCallback + "\" \"" +
+																$activeNodeCallback + "\" \"" +
+																$onDeleteCallback + "\" \"" +
+																$onNameChangeCallback +
+																"\" false") 
+																$nameFieldName;
+		}
+		for ( $i = $numNodes; $i < $numCurrentTabs; $i++ ) {
+			// delete these tabs
+			deleteUI -layout $currentTabs[$i];
+		}
+	}
+
+	// Loop over the new tabs to see if the selected tab is still in the new tabs
+	// and set selected index accordingly. If not in list, select first tab.
+	//
+	int $setIndex = 1;
+	string $newTabs[] = `tabLayout -q -ca $tabLayout`;
+	int    $numNewTabs = size($newTabs);
+	for ( $i = 1; $i <= $numNewTabs; $i++ ) {
+		if($selectedNode == $newTabs[$i-1])
+		{
+			$setIndex = $i;
+			break;
+		}
+	}
+
+	// Turn visibility back on
+	//
+	tabLayout -e -visible true $tabLayout;
+
+	// Select the first tab
+	tabLayout -e -selectTabIndex $setIndex $tabLayout;
+}
+
+global proc string[] propertyPanelGetNodesInWindow(int $i)
+{
+	global string $gPropertyPanelPopOutNodes[];
+	string $buf[];
+	
+	if($i >= size($gPropertyPanelPopOutNodes)){
+		return {};
+	}
+	
+    int $numTokens = tokenize($gPropertyPanelPopOutNodes[$i], ".", $buf);
+	if($numTokens == 1 && strcmp("",$buf[0]) == 0){
+		return {};
+	}
+
+	return $buf;
+}
+
+// This procedure is called every time the selected list changes.
+//
+global proc updatePropertyPanel(	string $rootLayout, 
+													string $selectionCallback, 
+													string $activeNodeCallback, 
+													string $onDeleteCallback, 
+													string $onNameChangeCallback, 
+													int $newPanel)
+{
+    if (!`formLayout -exists $rootLayout`)
+        return;
+			
+	// Use the given callback to get the "filtered" selection list
+	//
+	string $nodes[] = `eval $selectionCallback`;
+	int $count = size($nodes);
+
+	if ($count > 0){
+		setLayoutVisibility($rootLayout, 1);
+		buildTabsForPropertyPanel $rootLayout $selectionCallback $activeNodeCallback $onDeleteCallback $onNameChangeCallback $nodes;
+		buildControlsForSelectedTab $rootLayout $activeNodeCallback $newPanel;
+	}
+	else
+	{
+		setLayoutVisibility($rootLayout, 0);
+	}
+}
+
+global proc propertyPanelToggleView(	string $rootLayout, 	
+															string $selectionCallback, 
+															string $activeNodeCallback, 
+															string $onDeleteCallback, 
+															string $onNameChangeCallback)
+{
+	int $useCustom = 1;
+	if (`optionVar -exists propertyPanelUseCustomView`) {
+		$useCustom = `optionVar -q propertyPanelUseCustomView`;
+	}
+	optionVar -iv propertyPanelUseCustomView (!$useCustom);
+
+	updatePropertyPanel $rootLayout $selectionCallback $activeNodeCallback $onDeleteCallback $onNameChangeCallback false;
+}
+
+global proc propertyPanelToggleTearOff(	string $parentWindow, 	
+																string $selectionCallback, 
+																string $activeNodeCallback,
+																string $onDeleteCallback,
+																string $onNameChangeCallback) {
+	createPropertyPanelWindow($parentWindow, $selectionCallback, $activeNodeCallback, $onDeleteCallback, $onNameChangeCallback);
+}
+
+global proc createPropertyPanelToolbarFormContent(	string $parent, 
+																				string $propertyPanelRoot, 	
+																				string $selectionCallback, 
+																				string $activeNodeCallback, 
+																				string $onDeleteCallback, 
+																				string $onNameChangeCallback)
+{
+	string $oldParent = `setParent -query`;
+	setParent $parent;
+	
+	string $tokens[];
+	tokenize $oldParent "|" $tokens;
+	
+	int $iconSize = 26;
+	
+    if (`iconTextButton -exists ppTearOff`)
+        deleteUI ppTearOff;
+    if (`iconTextButton -exists ppToggleView`)
+        deleteUI ppToggleView;
+
+		iconTextButton 
+				-image1 "hsTearOff.png"
+				-width $iconSize
+				-height $iconSize
+				-annotation (uiRes("m_propertyPanel.kPropertyPanelTearOffAnnotation"))
+				-command ("propertyPanelToggleTearOff "+$tokens[0]+	" "+$selectionCallback+
+																									" "+$activeNodeCallback+
+																									" "+$onDeleteCallback+
+																									" "+$onNameChangeCallback)
+				-version 2016
+				ppTearOff;
+				
+		iconTextButton 
+				-image1 "nodeGrapherToggleView.png"
+				-width $iconSize
+				-height $iconSize
+				-annotation (uiRes("m_propertyPanel.kPropertyPanelToggleViewAnnotation"))
+				-command ("propertyPanelToggleView "+$propertyPanelRoot+	" "+$selectionCallback+
+																											" "+$activeNodeCallback+
+																											" "+$onDeleteCallback+
+																											" "+$onNameChangeCallback)
+				-version 2016
+				ppToggleView;
+	
+		formLayout -edit
+			
+			-af ppTearOff	top		0
+			-af ppTearOff	bottom	0
+			-an ppTearOff	left
+			-af ppTearOff	right	0
+			
+			-af ppToggleView top		0
+			-af ppToggleView bottom	0
+			-an ppToggleView left
+			-ac ppToggleView right	0 ppTearOff
+			$parent;
+			
+	setParent $oldParent;
+}
+
+global proc string resetPropertyPanel(	string $parent, 	
+															string $selectionCallback, 
+															string $activeNodeCallback, 
+															string $onDeleteCallback, 
+															string $onNameChangeCallback) {
+
+	string $rootLayout = $parent + "|ppRoot";
+
+	// Check if this panel already exists
+	if (`formLayout -exists $rootLayout`) {
+		deleteUI $rootLayout;
+	}
+	
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	setParent $parent;
+
+	formLayout ppRoot;
+	
+		// Make a tab layout, with invisible tabs, that will flip
+		// between "Nothing selected" and the tab layout that holds
+		// selected node information.
+		//
+		tabLayout -tabsVisible false ppDoSelection;
+
+			formLayout ppNothingSelected;
+				text -label (uiRes("m_propertyPanel.kMakeSelection"))	ppNothingSelectedText;
+				formLayout -e
+					-af ppNothingSelectedText left 20
+					-af ppNothingSelectedText top 20
+					-an ppNothingSelectedText right
+					-an ppNothingSelectedText bottom
+					ppNothingSelected;
+			setParent ..;
+
+			formLayout ppSelected;
+			
+				formLayout ppSelectedToolbar;
+					
+					text ppNodeTypeLabel;
+					
+					nameField ppNodeNameField;
+				
+					button
+						-annotation (uiRes("m_propertyPanel.kPropertyPanelAttributePresetsAnnot"))
+						-w 70
+						-h 20
+						-label (uiRes("m_propertyPanel.kPropertyPanelPresetsButton"))
+						ppPresetButton;
+						popupMenu -button 1 menu;
+						setParent -m ..;
+
+					global int $gTextColumnWidthIndex;
+					global int $gAENameTextFieldIndex;
+					string $propertyPanelToolbarForm = "propertyPanelToolbarForm";
+					
+					// If the property panel toolbar buttons don't exist, create them (this is when the HyperShade is opened)
+					if(!`formLayout -exists $propertyPanelToolbarForm`) {
+						formLayout $propertyPanelToolbarForm;
+						setParent ..;
+
+						string $selectionCallback = "hyperShadePropertyPanelSelectionCallback";
+						string $activeNodeCallback = "hyperShadePropertyPanelActiveNodeCallback";
+						createPropertyPanelToolbarFormContent($propertyPanelToolbarForm, $rootLayout, $selectionCallback, $activeNodeCallback, $onDeleteCallback, $onNameChangeCallback);
+							
+						formLayout -e
+							-an ppNodeTypeLabel left
+							-af ppNodeTypeLabel top 0
+							-aof ppNodeTypeLabel right (-$gTextColumnWidthIndex)
+							-af ppNodeTypeLabel bottom 0
+							
+							-ac ppNodeNameField left 5 ppNodeTypeLabel
+							-af ppNodeNameField top 0
+							-aoc ppNodeNameField right (-$gAENameTextFieldIndex) ppNodeTypeLabel
+							-af ppNodeNameField bottom 0
+							
+							-ac ppPresetButton left 5 ppNodeNameField
+							-af ppPresetButton top 0
+							-aof ppPresetButton right 0
+							-af ppPresetButton bottom 0
+
+							-ac $propertyPanelToolbarForm left 5 ppPresetButton
+							-af $propertyPanelToolbarForm top 0
+							-an $propertyPanelToolbarForm right
+							-af $propertyPanelToolbarForm bottom 0
+												
+							ppSelectedToolbar;
+					// Otherwise, if the property panel toolbar buttons already exist, do not create them (this is when the property panel is torn off)
+					} else {
+						formLayout -e
+							-an ppNodeTypeLabel left
+							-af ppNodeTypeLabel top 0
+							-aof ppNodeTypeLabel right (-$gTextColumnWidthIndex)
+							-af ppNodeTypeLabel bottom 0
+							
+							-ac ppNodeNameField left 5 ppNodeTypeLabel
+							-af ppNodeNameField top 0
+							-aoc ppNodeNameField right (-$gAENameTextFieldIndex) ppNodeTypeLabel
+							-af ppNodeNameField bottom 0
+							
+							-ac ppPresetButton left 5 ppNodeNameField
+							-af ppPresetButton top 0
+							-an ppPresetButton right
+							-af ppPresetButton bottom 0
+
+							ppSelectedToolbar;
+					}
+				setParent ..; //for ppSelectedToolbar
+			
+				string $selectTabCmd = "buildControlsForSelectedTab " + $rootLayout + " " + $activeNodeCallback + " false";
+				tabLayout -preSelectCommand $selectTabCmd ppTabs;
+				setParent ..;
+
+				// Use a tab layout with invisible tabs for the control layout (one tab for each node type),
+				// so we can switch between many nodes without rebuilding the layouts
+				tabLayout -tabsVisible false ppControls;
+				setParent ..;
+
+				formLayout -e
+					-af ppTabs left 0
+					-af ppTabs top 0
+					-af ppTabs right 0
+					-an ppTabs bottom
+					
+					-ac ppSelectedToolbar top 0 ppTabs
+					-af ppSelectedToolbar left 0
+					-an ppSelectedToolbar right
+					-an ppSelectedToolbar bottom
+
+					-ac ppControls top 0 ppSelectedToolbar
+					-af ppControls left 0
+					-af ppControls right 0
+					-af ppControls bottom 0
+					ppSelected;
+
+			setParent ..; // for ppSelected
+
+		setParent ..; // for ppDoSelection
+
+		formLayout -e
+			-af ppDoSelection left 0
+			-af ppDoSelection right 0
+			-af ppDoSelection top 0
+			-af ppDoSelection bottom 0
+			ppRoot;
+
+	setParent ..; // for ppRoot
+
+	// now attach the root
+	//
+	formLayout -e
+		-af ppRoot left 0
+		-af ppRoot top 0
+		-af ppRoot right 0
+		-af ppRoot bottom 0
+		$parent;
+
+	setUITemplate -popTemplate;
+
+	return $rootLayout;
+}
+
+global proc string createPropertyPanel(	string $parent,	
+																string $selectionCallback, 
+																string $activeNodeCallback, 
+																string $onDeleteCallback, 
+																string $onNameChangeCallback) {
+
+	string $oldParent = `setParent -query`;
+
+	string $rootLayout = resetPropertyPanel($parent, $selectionCallback, $activeNodeCallback, $onDeleteCallback, $onNameChangeCallback);
+
+	setParent $oldParent;
+
+	return $rootLayout;
+}
+
+global proc createPropertyPanelWindow(	string $parentWindow,	
+																string $selectionCallback, 
+																string $activeNodeCallback, 
+																string $onDeleteCallback, 
+																string $onNameChangeCallback)
+{
+	global int $gStandardWindowWidthIndex;
+	global string $gPropertyPanelPopOutWindows[];
+	global string $gPropertyPanelPopOutNodes[];
+	
+	//Get the selected nodes and add them to the global list-array.
+	//
+	string $nodes[] = `eval $selectionCallback`;
+	string $nodeList = "";
+	
+	int $i;
+	for($i = 0; $i<size($nodes); ++$i)
+	{
+		$nodeList += (($i+1)<size($nodes)) ? $nodes[$i]+"." : $nodes[$i];
+	}
+	
+	$gPropertyPanelPopOutNodes[size($gPropertyPanelPopOutNodes)] = $nodeList;
+	
+	//Create a new selection callback for the window since it should be static appart from deletion
+	//
+	string $selectionCallbackOverride = "propertyPanelGetNodesInWindow("+ size($gPropertyPanelPopOutWindows)+")";
+	string $onDeleteCallbackOverride = "propertyPanelOnNodeDeleted";
+	string $onNameChangeCallbackOverride = "propertyPanelOnNodeNameChange";
+	
+	
+	string $wnd = `window -menuBar false
+					-width $gStandardWindowWidthIndex
+					-height 650
+					-parent $parentWindow
+					-title (localizedUIComponentLabel("Property Editor"))`;
+
+	string $layout = `formLayout`;
+
+	string $rootLayout = createPropertyPanel($layout, $selectionCallbackOverride, $activeNodeCallback, $onDeleteCallbackOverride, $onNameChangeCallbackOverride);
+	updatePropertyPanel($rootLayout, $selectionCallbackOverride, $activeNodeCallback, $onDeleteCallbackOverride, $onNameChangeCallbackOverride,  true);
+
+	//Add the root 
+	$gPropertyPanelPopOutWindows[size($gPropertyPanelPopOutWindows)] = $rootLayout;
+
+	showWindow $wnd;
+	
+	scriptJob -uiDeleted $wnd ("propertyPanelOnWindowClose \"" + 
+											$rootLayout + "\" \"" +
+											$activeNodeCallback + "\" \"" +
+											$onDeleteCallbackOverride + "\" \"" +
+											$onNameChangeCallbackOverride + "\" " +
+											false);
+}
+
+// Callback for creating custom widget for bump mapping properties
+//
+global proc PPattrNavigationControlGrp(string $plug, string $label, string $annot)
+{
+	string $ctrlName = $plug;
+
+	string $buffer[];
+	tokenize $plug "." $buffer;
+	if (size($buffer) >= 2) {
+		$ctrlName = $buffer[0] + "_" + $buffer[1];
+	}
+
+	attrNavigationControlGrp -label $label -ann $annot -at $plug $ctrlName;
+}
+
+global proc PPpresetButton(string $node, string $parent)
+{
+	string $rootLayout = $parent + "|ppDoSelection|ppSelected";
+	string $ppSelectedToolbar = $rootLayout+"|ppSelectedToolbar";
+	string $ppPresetButton    = $ppSelectedToolbar+"|ppPresetButton";
+	string $ppNodeTypeLabel   = $ppSelectedToolbar+"|ppNodeTypeLabel";
+	string $ppNodeNameField   = $ppSelectedToolbar+"|ppNodeNameField";
+   	string $ntype = `nodeType $node`;
+
+	text -e -label ($ntype + ":") $ppNodeTypeLabel;
+	
+	nameField -e -object $node $ppNodeNameField;
+	
+	if( 0 == isValidAttrPresetNodeType( $ntype )){
+		button -e -en 0 $ppPresetButton;
+	} else {
+		int $hasPresets = false;
+
+		// first check the local and release presets
+		string $ppath = `internalVar -userPrefDir`;
+		$ppath = substitute( "prefs", $ppath, "presets/attrPresets");
+		$ppath  = $ppath + $ntype;
+		string $fpath = `getenv "MAYA_LOCATION"`;
+		$fpath = $fpath + "/presets/attrPresets/" + $ntype;
+		if( `file -q -ex $ppath` || `file -q -ex $fpath` )
+			$hasPresets = true;
+
+		// if we didnt find any, see if the preset path has some
+		if(!$hasPresets) {
+			// MAYA_PRESET_PATH points at equivalents to the presets directory
+			string $mayaPresetPath = `getenv MAYA_PRESET_PATH`;
+			string $presetPaths[];
+			if (`about -nt`)
+				tokenize $mayaPresetPath ";" $presetPaths;
+			else
+				tokenize $mayaPresetPath ":" $presetPaths;
+			for($presetPath in $presetPaths) {
+				$fpath = $presetPath;
+				$fpath = $fpath + "/attrPresets/" + $ntype;
+				if( `file -q -ex $fpath` ) {
+					$hasPresets = true;
+					break;
+				}
+			}
+		}
+
+		// if any presets exist for node type, indicate with a "*"
+		if( $hasPresets ){
+			button -e  -label (uiRes("m_propertyPanel.kPropertyPanelPresetsStar")) -w 70 -h 20 ppPresetButton;
+		} else {
+			button -e -label (uiRes("m_propertyPanel.kPropertyPanelPresets"))  -w 70 -h 20 ppPresetButton;
+		}
+	}
+
+	string $presetMenu = $ppPresetButton+"|menu";
+	popupMenu -e
+		-pmc ("AEshowPresetMenu \""+$presetMenu+"\" \""+$node+"\"")
+		$presetMenu;
+}

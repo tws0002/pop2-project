@@ -1,0 +1,39 @@
+Maya - Absolute To Relative Paths User Guide
+*******************************************************************************
+Our school has a problem with our installation of RenderMan, which causes paths
+to be saved as absolute paths, despite how it may appear relative in Maya's
+GUI. The working solution for people so far (especially during Finals) has been
+to open Maya files in a text editor and search/replace files to clean them up.
+
+My solution is simply to make the save button work as it's supposed to.
+
+.. toctree::
+  :maxdepth: 1
+
+  abs2rel - Maya User Guide <abs2relpathsmayauser>
+  abs2rel - Maya Documentation <abs2relpathsmayadocumentation>
+
+Summary
+===============================================================================
+I've identified one of the reasons this problem occurs - If a project is set to
+path, that set directory gets added to a file's path on save. The obvious
+solution would have been to simply never set your project at all - but then
+the Maya scene files wouldn't work. It's a very brutal Catch-22.
+
+Luckily though, there is one thing to remember - The paths ARE relative in Maya
+and if we query them with getAttr, they come back as relative strings. This is
+the basis of my solution.
+
+Goals
+===============================================================================
+  - Force Maya to save properly with the paths that the user specifies
+  - Because this solution will be distributed to multiple groups who may or may
+    not know me as a programmer, I want to give them piece of mind by being
+    able to backup files before executing the string overwrite
+  - The string overwrite and the scene file backup, should be toggleable
+  - This function set should be integrated into Maya's save, to keep my script
+    unintrusive
+
+Code Outline
+===============================================================================
+

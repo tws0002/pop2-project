@@ -1,0 +1,214 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  December 2004
+//
+//  Description:
+//      Option tool callbacks for Artisan Blend Shape Paint tool.//
+//
+//  Procedure Name:
+//     	artSelectCallback 
+//
+//  Description:
+//      Initialize the option values.
+//
+//  Input Arguments:
+//
+//  Return Value:
+//      None.
+//
+// 
+
+global proc artBlendShapeSelectTarget(
+	string 	$artCommand,
+	string	$target
+)
+// 
+//	Description:
+//		Find all the selected BlendShape Targets (not just the active one)
+//
+{
+	global string $artBlendShapeCurrentTarget;
+	if (`textScrollList -q -ex blendShapeTargetList`) {
+		if ($target == "") {
+			string $sel[] = `textScrollList -q -si blendShapeTargetList`;
+			$target =  $sel[0];
+		} else {
+			textScrollList -e -si $target blendShapeTargetList;
+			int $index[] = `textScrollList -q -sii blendShapeTargetList`;
+			textScrollList -e -shi $index[0] blendShapeTargetList;
+		}
+	}
+
+	$artBlendShapeCurrentTarget = $target;
+
+	// Notify the context about the change.
+	string $cmd1 = ($artCommand + " -q -asl `currentCtx`");
+	string $blendShapeAttr = eval( $cmd1 );
+
+	// If necessary switch the attribute.
+	string $tokens[];
+	if ( tokenize( $blendShapeAttr, ".",  $tokens ) == 3 )
+	{
+		if ( $tokens[1] == $target )
+			$blendShapeAttr = ( $tokens[0] + "." + $tokens[1] + ".baseWeights" );
+		else
+			$blendShapeAttr = ( $tokens[0] + "." + $tokens[1] + ".paintTargetWeights" );
+	}
+
+	string $cmd2 = ($artCommand + " -e -pas \"" + $blendShapeAttr + "\" `currentCtx`");
+	eval( $cmd2 );
+}
+
+global proc artKeyFrameTargetWtsAttr(string $artCommand)
+//
+// Description:
+//		This method keys the weight for the selected target only.
+//	If the blendShape contains more than one target group then 
+//	set the key for each of the group
+//
+{
+	// get the target index
+	int $tIndex[] = artBlendShapeTargetIndex();
+
+	// get the blendshape node
+	string $sArr[] = `ls -sl`;
+	if(!size($sArr)){
+		warning( (uiRes("m_artAttrBlendShapeCallback.kNoObjectsSelected")));
+		return ;
+	}
+
+	// get the blend shape name
+	// the attrSelected value is in the form "nodeType.nodeName.attributeName"
+	string $bsn;
+	string $cmd = "artAttrCtx -q -attrSelected " + `currentCtx` ;
+	string $attrSelected = eval($cmd);
+	string $tokens[] ;
+	if( tokenize( $attrSelected, ".",  $tokens) == 3)
+	{
+		$bsn = $tokens[1];
+	}
+	
+	// check if there are more than one target group & get the count 
+	string $tokens[];
+	int $groupIndex = 0;
+	$tokens = `listConnections -s false -d true -c true  $bsn`;
+	if (! size($tokens)) {
+		return ;
+	}
+	//
+	// Search for the index for attribute "outputGeometry" for the 
+	// selected base object
+	int $tokenCount ;
+	for($tokenCount =0 ; $tokenCount< size($tokens); $tokenCount++)
+	{
+		string $connParts[];
+		tokenize($tokens[$tokenCount],".[]", $connParts);		
+		if(size($connParts))
+		{
+			string $searchStr = "outputGeometry";			
+			int $count;	
+			for($count = 0; $count < size($connParts); $count++)
+			{
+				string $tempStr = $connParts[$count];
+				if(0 == `strcmp $tempStr $searchStr`)
+				{
+					string $outputGeom[] = `listConnections $tokens[$tokenCount]`;
+					if(0 == `strcmp $sArr[0] $outputGeom[0]`)
+					$groupIndex = $connParts[$count+1];					
+				}
+			}			
+		}
+	}//
+
+	// execute the command
+	string $cmd = "setKeyframe -at inputTarget[" + $groupIndex + "]";
+	if ( $tIndex[0] == 1 )
+	{
+		$cmd +=	".baseWeights";
+	}
+	else
+	{
+		if ( $tIndex[1] >= 0 )
+		{
+			$cmd +=	".inputTargetGroup[" + $tIndex[1] + "].targetWeights";
+		}
+		else
+		{
+			$cmd +=	".normalizationGroup[" + -$tIndex[1] + "].normalizationWeights";
+		}
+	}
+	$cmd +=	" " + $bsn;
+	eval($cmd);	
+}
+
+global proc artisanKeyFrameCallback(
+	string 	$artCommand,
+	string	$target)
+{
+	// Define the button callback.
+	button -e
+		-c ( "artKeyFrameTargetWtsAttr " + $artCommand )
+		artKeyFrameTargetWtsButton;	
+}
+
+// =======================================================
+// Main Procedure.
+// =======================================================
+
+global proc artAttrBlendShapeCallback(
+	string	$artCommand
+)
+{
+	source "artisanCallback.mel";
+	source "artAttrCallback.mel";
+
+	string $currContext = `currentCtx`;
+	string $currTool	= `contextInfo -c $currContext`;
+
+	// Basic Brush frameLayout.
+	artisanBrushCallback( $artCommand, $currTool );
+
+	// //////////////////////////////////////////// 
+	
+	// Define the common callbacks.
+	artAttrCommonCallback( $artCommand, $currTool );
+	
+	// Keyframe target weights
+	artisanKeyFrameCallback( $artCommand, $currTool );
+
+	// Keyframe target weights
+	artisanKeyFrameCallback( $artCommand, $currTool );
+
+	// Stroke frameLayout.
+	artisanStrokeCallback( $artCommand, $currTool );
+
+	// Pressure frameLayout.
+	artisanPressureCallback( $artCommand, $currTool );
+
+	// Attribute Maps frameLayout.
+	artisanAttrMapCallback( $artCommand, $currTool );
+
+	// Display frameLayout.
+	artisanDisplayCallback( $artCommand, $currTool );	
+}

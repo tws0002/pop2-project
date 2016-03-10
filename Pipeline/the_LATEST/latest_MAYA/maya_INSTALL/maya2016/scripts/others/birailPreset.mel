@@ -1,0 +1,184 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  July 24, 1998
+//
+//  Description:
+//      The birailPreset() procedure executes one birail operation on 
+//      the selected objects.  Last two are rails.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+
+
+proc string onePossiblyRebuilt( string $command, string $curve, int $rebuild,
+								string $nodes[] )
+{
+	string $result = $curve;
+	if( $rebuild ) {
+		string $doit = $command + " -scr on ";
+		string $tmp[] = `duplicateCurve -rn false -o false $curve`;
+		if( size($tmp) > 0 ) {
+			if( "nurbsCurve" == `nodeType $tmp[0]`) {
+				$doit = $command + $curve;
+			}
+			else {
+				$doit = $doit + ($tmp[0] + ".oc");
+				$nodes[size($nodes)] = $tmp[0];
+			}
+
+			$tmp = eval( $doit );
+			if( size($tmp) > 0 ) {
+				$nodes[size($nodes)] = $tmp[0];
+				$result = $tmp[0] + ".oc";
+			}
+		}
+	}
+
+	return $result;
+}
+
+proc string pieceTogetherBirailCmd( int $nCurves, string $curveList[],
+									int $which, string $nodes[],
+									string $version, string $args[])
+//
+//	Description :
+//		Put together an birail Cmd.  Note that there is enough curves by now.
+//
+{
+	if( size($args) < 10 ) {
+		error (uiRes("m_birailPreset.kWrongVersion"));
+	}
+
+	// Some options don't exist for some commands:
+
+	int $profiles = $nCurves - 2;
+
+	string $cmd;
+	switch( $which ) {
+	  case 1:
+		$cmd = "singleProfileBirailSurface";
+		break;
+
+	  case 2:
+		$cmd  = "doubleProfileBirailSurface";
+		$cmd += (" -bl " + $args[4]);
+		$cmd += (" -tp2 " + $args[3]);
+		break;
+
+	  case 3:
+	  default:
+		$cmd = "multiProfileBirailSurface";
+		$cmd += (" -tp2 " + $args[3]);
+		break;
+	}
+
+	$cmd += (" -ch " + $args[0]);
+	$cmd += (" -po " + $args[9]);
+	$cmd += (" -tm " + $args[1]);
+	$cmd += (" -tp1 " + $args[2]);
+	$cmd += " ";
+	
+	int $rfp = $args[5];
+	int $rlp = $args[6];
+	int $rfr = $args[7];
+	int $rlr = $args[8];
+
+	// Add profiles:
+	string $rebcmd = `getRebuildCurveCommand 1`;
+	switch( $which ) {
+	  case 1:
+		$cmd += (onePossiblyRebuilt( $rebcmd,$curveList[0],$rfp,$nodes ) + " ");
+		break;
+
+	  case 2:
+		$cmd += (onePossiblyRebuilt( $rebcmd,$curveList[0],$rfp,$nodes ) + " ");
+		$cmd += (onePossiblyRebuilt( $rebcmd,$curveList[1],$rlp,$nodes ) + " ");
+		break;
+
+	  case 3:
+	  default:
+		$cmd += (onePossiblyRebuilt( $rebcmd,$curveList[0],$rfp,$nodes ) + " ");
+		for( $i=1; $i<($profiles-1); $i++ ) {
+			$cmd += ($curveList[$i] + " ");
+		}
+		$cmd += (onePossiblyRebuilt( $rebcmd,$curveList[$profiles-1],
+									 $rlp,$nodes) + " ");
+		break;
+	}
+
+	// Add rails:
+	$cmd += (onePossiblyRebuilt( $rebcmd, $curveList[$profiles],
+								 $rfr, $nodes ) + " ");
+	$cmd += (onePossiblyRebuilt( $rebcmd, $curveList[$profiles+1],
+								 $rlr, $nodes ) + " ");
+
+	return $cmd ;
+}
+
+global proc birailPreset( string $version, string $args[] )
+
+//
+//	Description :
+//		Proc to do one birail depending on number
+//		of valid selection items.
+//
+{
+	//---------------------------------------------
+	// Get the list of nurbs curves in select list. 
+	//---------------------------------------------
+	//
+	global int $gSelectNurbsCurvesBit;
+	global int $gSelectIsoparmsBit;
+	global int $gSelectCurvesOnSurfacesBit;
+	global int $gSelectSurfaceEdgeBit;
+	global int $gSelectMeshEdge;
+
+	string $curveList[] = `filterExpand -ex true -sm $gSelectMeshEdge -sm $gSelectNurbsCurvesBit -sm $gSelectIsoparmsBit -sm $gSelectCurvesOnSurfacesBit -sm $gSelectSurfaceEdgeBit`;
+
+	int $whichOne = 0;
+	int $curveCount = size($curveList);
+	if( $curveCount < 3 ) {
+		error (uiRes("m_birailPreset.kMustSelect"));
+	}
+	else {
+		string $nodes[];
+		int $history = $args[0];
+
+		$whichOne = $curveCount - 2;
+		string $cmd = pieceTogetherBirailCmd( $curveCount, $curveList,
+											  $whichOne, $nodes,
+											  $version, $args );
+		string $results[];
+		if( ! catch( $results = evalEcho( $cmd ))) {
+			if( ! $history ) {
+				delete $nodes;
+			}
+		}
+		select -r $results;
+	}
+}

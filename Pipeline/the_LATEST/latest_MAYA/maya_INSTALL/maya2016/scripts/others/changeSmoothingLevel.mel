@@ -1,0 +1,255 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+// changeSmoothingLevel.mel
+//
+// this script controls the display and smoothing
+// of smoothProxy and subdiv objects. These commands
+// should be bound to hotkeys for maximum efficiency.
+
+
+//	Procedure Name:
+//		changeSmoothingLevelSubdiv
+//
+//	Description:
+//		this proc changes the smoothing level on subdivs
+//		this is a bit different than with the smooth proxy as it only 
+//		works when in standard subd mode - it does not make sense to
+//		change the levels in proxy mode as the user may control
+//		smoothness with the 1,2 and 3 hotkeys
+//
+//	Input Arguments
+//		string $object = the subdiv node to operate on
+//		int $increase = 1 increase smoothing, 0 decrease smoothing
+proc changeSmoothingLevelSubdiv (string $object, int $increase)
+{
+	// setSubdivDisplayLevelAndFilter expects an array not a string
+	// so we need to get the selection for it
+	string $selection[] = `ls -sl -dag -typ "subdiv"`;
+	if (!size($selection)) {
+		$selection = `ls -hl -objectsOnly`;
+	}
+
+	int $currentLevel = `getAttr ($object+".displayLevel")`;
+
+	if ($increase){
+		// go to finer level
+		// if not at the finest go finer
+		int $deepestLevel = `subdiv -q -deepestLevel $object`;
+		int $maxPossibleLevel = `subdiv -q -maxPossibleLevel $object`;
+		if ($currentLevel < $deepestLevel){
+			setSubdivDisplayLevelAndFilter $selection "+1" 0;
+		}
+	} else {
+		// if not at base level
+		// go to coarser level
+		if ($currentLevel > 0)
+			setSubdivDisplayLevelAndFilter $selection "-1" 0;
+	}
+}
+
+//	Procedure Name:
+//		changeSmoothProxyLevelPoly
+//
+//	Description:
+//		this proc changes the smoothing level on smoothProxy
+//
+//	Input Arguments:
+//		string $object = the mesh node to operate on
+//		int $increase = 1 increase smoothing, 0 decrease smoothing
+//
+//	Returns:
+//		0=failure
+//		1=success
+proc int changeSmoothProxyLevelPoly ( string $object,
+						  int $increase){
+	
+	// find smoothNode to change smoothing on
+	string $smoothNode[] = `listConnections -type "polySmoothProxy" $object`;
+
+	// error if no smooth node connected
+	if (`size $smoothNode` == 0){
+		warning (uiRes("m_changeSmoothingLevel.kWarningNoSmoothNode")); 
+		return 0;
+	}
+
+	// get smoothing values - both linear and exponential
+	int $exponential = `getAttr ($smoothNode[0] + ".exponentialLevel")`;
+	int $linear = `getAttr ($smoothNode[0] + ".divisionsPerEdge")`;
+
+	if ($increase){
+		//exponential only lets the user go to 8 divisions
+		// For safety, we will restrict to 4 here.
+		if (($exponential + 1) < 5)
+			setAttr ($smoothNode[0] + ".exponentialLevel") ($exponential + 1);
+		//linear lets the user go to 10 levels
+		if (($linear + 1) < 11)
+		setAttr ($smoothNode[0] + ".divisionsPerEdge") ($linear + 1);
+
+	} else {
+		// decrease
+		// but do not decrease if already at 1 divisions
+		if ($exponential > 1)
+			setAttr ($smoothNode[0] + ".exponentialLevel") ($exponential - 1);
+		if ($linear > 1)
+			setAttr ($smoothNode[0] + ".divisionsPerEdge") ($linear - 1);
+	}
+
+	return 1;
+
+}
+
+//	Procedure Name:
+//		changeSmoothProxyLevelPoly
+//
+//	Description:
+//		this proc changes the smoothing level on the mesh shape
+//
+//	Input Arguments:
+//		string $object = the mesh node to operate on
+//		int $increase = 1 increase smoothing, 0 decrease smoothing
+//
+proc changeSmoothingLevelPoly(string $object, int $increase)
+{
+	int $currentLevel = `getAttr ($object + ".smoothLevel")`;
+
+	if (true == $increase && $currentLevel < 4)
+	{
+		setAttr ($object + ".smoothLevel") ($currentLevel + 1);
+	}
+	else if (false == $increase && $currentLevel > 0)
+	{
+		setAttr ($object + ".smoothLevel") ($currentLevel - 1);
+	}
+}
+
+//	Procedure Name:
+//		changeSmoothingLevel 
+//
+//	Description:
+//		this is the main proc which checks the 
+//		selection and calls the appropriate sub proc
+//
+//	Input Arguments
+//		int $increase = 1 increase smoothing, 0 decrease smoothing
+//		string $operation
+//			increase: increase the smoothing
+//			decrease: decrease the smoothing
+//			sdisplay: toggle the display between the hi and lo res shape	
+global proc changeSmoothingLevel (int $increase){
+
+	// find selected objects
+	// most likely user will have transform node(s) selected
+	string $objects[] = `listRelatives -children -type "mesh" -type "subdiv"`;
+
+	// if this is not the case, check if they have components selected
+	if (`size $objects` == 0){
+		$objects = `listRelatives -parent -type "mesh" -type "subdiv"`;
+
+		// and lastly, is $objects is still 0, they may have selected the shape
+		if (`size $objects` == 0){
+			$objects = `ls -sl -type "mesh" -type "subdiv"`;
+			
+			if (`size $objects` == 0){
+				// if still nothing, look for any hilited objects 
+				string $hiliteObjects[] = `ls -hl`;
+				$objects = `listRelatives -children -type "mesh" -type "subdiv" $hiliteObjects`;
+				
+				// Atlast, give a chance to create a smoothed object
+				//
+				if (`size $objects` == 0){
+					smoothingDisplayToggle 1;
+				}
+			}
+		}
+	}
+	// Now filter through only the nonIntermediate 
+	// from the list of objects
+	//
+	string $noInterObjects[] = `ls -noIntermediate $objects`;
+
+	// loop through all selected objects and change smoothing on those with subdiv proxy visible
+	for ($object in $noInterObjects){
+		
+		// get connections to the smooth node
+		string $connection[] = `listConnections -type "polySmoothProxy" $object`;
+		if (`size $connection` == 0){
+			$connection = `listConnections -type "polyToSubdiv" $object`;
+	
+			if (`size $connection` == 0){
+				$connection = `listConnections -type "nurbsToSubdiv" $object`;
+			}
+		}
+		
+		if (`size $connection` > 1){
+			warning ( (uiRes("m_changeSmoothingLevel.kErrorMoreThanOneProxy1")) +
+									$object + (uiRes("m_changeSmoothingLevel.kErrorMoreThanOneProxy2")) );      
+		} else {
+
+			//get nodeType to determine what node controls the smoothing
+			string $nodeType = `nodeType $object`;
+			
+			if ($nodeType == "subdiv"){
+		
+				//need to accurately find the opposite node as it could be any construction history
+				string $toSubdivConnections[] = `listConnections -shapes true $connection[0]`;
+				string $opposite[] = `stringArrayRemove ({$object}) $toSubdivConnections`;
+			
+				// check if subdiv proxy is visible before chanign smoothing level
+				if( `getAttr ($opposite[0] + ".visibility")` ){
+					changeSmoothingLevelSubdiv $object $increase;
+				}
+			
+			} else { // object is a poly
+			
+				if (`size $connection` == 1)
+				{
+					string $smoothConnections[] = `listConnections -shapes true -type "mesh" $connection[0]`;
+					
+					//listConnections does not return the fullpath name so manufacture it
+					//this is required for smoothProxy when not sharing the transform
+					int $i = 0;
+					for ($connect in $smoothConnections){
+						string $longName[] = `ls -long $connect`;
+						$smoothConnections[$i] = $longName[0];
+						$i++;
+					}
+
+					//remove the selected object from the list of connections
+					//to get the opposite mesh node. the selected object already
+					//had its visibility changed.
+					string $longObjectName[] = `ls -long $object`;
+					string $remove[] = {$longObjectName[0]};
+					string $opposite[] = `stringArrayRemove $remove $smoothConnections`;		
+					
+					// check if subdiv proxy is visible before chanign smoothing level
+					if (size($smoothConnections) && size($opposite) && `getAttr ($opposite[0] + ".visibility")`) {
+						changeSmoothProxyLevelPoly $object $increase;			
+					}
+				}
+				else
+				{
+					changeSmoothingLevelPoly $object $increase;
+				}
+			}
+		}
+	}
+}

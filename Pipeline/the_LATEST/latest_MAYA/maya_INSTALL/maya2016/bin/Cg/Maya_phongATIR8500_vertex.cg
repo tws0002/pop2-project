@@ -1,0 +1,100 @@
+#include "Maya_lightView_vertex.cg"
+
+struct vert2frag
+{
+    float4 position           : POSITION;
+	// texunit 0 is assigned to projective light texture; texcoords are generated automatically.
+    float3 color              : COLOR0;
+    float2 uvCoord1           : TEXCOORD1;
+
+#ifdef IS_SPECULAR
+    float3 tEyeDir            : TEXCOORD2;
+	// texunit 3 is assigned to N.H^k texture.
+#else
+	// Transparency/opacity uvs
+	float2 uvCoord3			  : TEXCOORD3;
+#endif // IS_SPECULAR
+
+    float3 tLightDir          : TEXCOORD4;
+    float2 uvCoord2           : TEXCOORD5;
+};
+
+// define inputs from application
+struct app2vert
+{
+    float4 position           : POSITION;
+    float3 normal             : NORMAL;
+    float3 tangent            : TEXCOORD0;
+    float4 texcoord1          : TEXCOORD1;
+    float4 texcoord2          : TEXCOORD5;
+
+#ifndef IS_SPECULAR
+	// Transparency/opacity uvs
+    float4 texcoord3          : TEXCOORD3;
+#endif // IS_SPECULAR
+
+};
+
+vert2frag main(app2vert IN, 
+               uniform float4x4 modelViewProj : _GL_MVP,
+               uniform float4 lightColor,
+#ifdef IS_DIRECTIONAL_LIGHT
+               uniform float3 lightDirObj,
+#else
+               uniform float4 lightPosObj,
+#endif
+               uniform float4x4 tex1ProjMatrix,
+               uniform float4x4 tex2ProjMatrix,
+#ifndef IS_SPECULAR
+			   // transparency/opacity 
+               uniform float4x4 tex3ProjMatrix,
+#endif // IS_SPECULAR
+
+               uniform float4 cameraPosObj )
+{
+    vert2frag OUT;
+
+
+    float3 lightDirTang;
+#ifdef IS_SPECULAR
+    float3 eyeVectorTang;
+    computeLightViewVectors(
+        IN.position,
+        IN.normal,
+        IN.tangent,
+        cameraPosObj,
+#ifdef IS_DIRECTIONAL_LIGHT
+        lightDirObj,
+#else
+        lightPosObj,
+#endif
+        lightDirTang,
+        eyeVectorTang);
+#else
+    computeLightVector(
+        IN.position,
+        IN.normal,
+        IN.tangent,
+#ifdef IS_DIRECTIONAL_LIGHT
+        lightDirObj,
+#else
+        lightPosObj,
+#endif
+        lightDirTang);
+#endif
+
+    OUT.position = mul(modelViewProj, IN.position);
+    OUT.color = lightColor;
+    OUT.uvCoord1 = mul(tex1ProjMatrix, IN.texcoord1);
+#ifdef IS_SPECULAR
+    OUT.tEyeDir = eyeVectorTang;
+#else
+	// Transform the transparency/opacity uvs.
+	OUT.uvCoord3 = mul(tex3ProjMatrix, IN.texcoord3);
+#endif
+    OUT.tLightDir = lightDirTang;
+    OUT.uvCoord2 = mul(tex2ProjMatrix, IN.texcoord2);
+
+
+    return OUT;
+}

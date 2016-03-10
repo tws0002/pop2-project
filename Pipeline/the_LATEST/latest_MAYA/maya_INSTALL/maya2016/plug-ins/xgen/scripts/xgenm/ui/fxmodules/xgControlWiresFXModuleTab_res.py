@@ -1,0 +1,23 @@
+import maya
+
+maya.stringTable['y_xgControlWiresFXModuleTab.kMagnitudeAnn'] = u'Amount of animation to apply to primitive. ($t expression: [0, 1])'
+maya.stringTable['y_xgControlWiresFXModuleTab.kAttachHairSystem'] = u'Attach Hair System'
+maya.stringTable['y_xgControlWiresFXModuleTab.kControlWiresCurvesAttached'] = u'The following curves were attached: '
+maya.stringTable['y_xgControlWiresFXModuleTab.kWiresFile'] = u'Wires File'
+maya.stringTable['y_xgControlWiresFXModuleTab.kMagnitudeScaleAnn'] = u'The amount to scale the magnitude by at each point along the curve.'
+maya.stringTable['y_xgControlWiresFXModuleTab.kMagnitude'] = u'Magnitude'
+maya.stringTable['y_xgControlWiresFXModuleTab.kLiveMode'] = u'Live Mode'
+maya.stringTable['y_xgControlWiresFXModuleTab.kBreakage'] = u'Breakage'
+maya.stringTable['y_xgControlWiresFXModuleTab.kNoCurvesSelectedNothingToAttach'] = u'No curves selected. Nothing to attach.'
+maya.stringTable['y_xgControlWiresFXModuleTab.kMagnitudeScale'] = u'Magnitude Scale'
+maya.stringTable['y_xgControlWiresFXModuleTab.kHairSystemAnn'] = u'The output curves of an hair system are attached to drive the animation of the wires.'
+maya.stringTable['y_xgControlWiresFXModuleTab.kLiveModeAnn'] = u'Read the wire animation from the connected hair system'
+maya.stringTable['y_xgControlWiresFXModuleTab.kSmoothnessAnn'] = u'How smooth the interpolation should be.'
+maya.stringTable['y_xgControlWiresFXModuleTab.kMode'] = u'Mode'
+maya.stringTable['y_xgControlWiresFXModuleTab.kWiresFileAnn'] = u'Name of the file that contains both reference and animation wires.'
+maya.stringTable['y_xgControlWiresFXModuleTab.kRefWiresFrameAnn'] = u'The frame that contains reference wires.'
+maya.stringTable['y_xgControlWiresFXModuleTab.kRefWiresFrame'] = u'Ref Wires Frame'
+maya.stringTable['y_xgControlWiresFXModuleTab.kControlWiresModifier'] = u'Control Wires Modifier'
+maya.stringTable['y_xgControlWiresFXModuleTab.kSmoothness'] = u'Smoothness'
+maya.stringTable['y_xgControlWiresFXModuleTab.kBreakageAnn'] = u'Control over the tip radius.'
+

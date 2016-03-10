@@ -1,0 +1,589 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+/////////////////////////////////////////////////////////////////////////
+//
+//
+//
+//
+//
+//  Creation Date:  January 2006
+//
+//	Description:
+//		This example illustrates how a user-definable Artisan tool for
+//	painting attribute values can be defined. This feature is supported
+//	via the artAttrCtx and artAttrTool commands. It should firstly be
+//	noted that there are two mechanisms for users to extend Artisan:
+//
+//		o  Adding a Custom Tool (what the example in this file describes)
+//		o  User Context (covered in conePaint.mel and spherePaint.mel)
+//	
+//		It would be wise to describe each approach and outline the pros
+//	and cons of each before going any further.
+//
+//		Adding a Custom Tool allows the user to define a new tool via the
+//	artAttrTool command and then activate it via the artAttrCtx command
+//	using the -whichTool flag. Making the tool active causes user-defined
+//	Properties and Values sheets to load, allow the user to define a
+//	custom user interface for their paint tool. The user is also provided
+//	with custom callbacks into Artisan which are triggered when the tool
+//	is invoked, is dismissed or the active selection list is changed.
+//	Any custom tool defined by the user will utilise the internal context
+//	named artAttrContext which controls the actual painting of the attri-
+//	butes ancilliary operations such as undo.
+//
+//		The User Context allows Artisan changes via MEL callbacks but has
+//	the drawbacks that it is based upon a grid iterator, thus you only get
+//	your callback triggered when your paint stroke crosses an intersection
+//	on the grid. Although the User Context is fine for painting regular
+//	types of properties it is probably insufficient for painting on ob-
+//	jects because you need to map the grid intersection to the closest
+//	vertex in your callback method. For an example of the User Context,
+//	please check out the conePaint.mel and spherePaint.mel examples pro-
+//	vided in the Maya scripts directory.
+//
+//		The basic components of the Custom Tool interface are:
+//			o A main procedure which invokes the tool. In our example it
+//			  is called "customtoolPaintDisplay". This procedure
+//			  defines the tool and makes it active via the artAttrCtx
+//			  command's -whichTool flag. This procedure should be invoked
+//			  each time the user wants to work with your tool.
+//			o A Properties and Values callback which are invoked
+//			  implicitely when your tool is invoked to define and set
+//			  the GUI values. You can customise the UI here.
+//			o A ToolOn and ToolOff callback which are optional callbacks
+//			  you can register in your main procedure to be invoked when
+//			  the tool is invoked and dismissed. You can place special
+//			  code in these methods specific to your painting needs.
+//
+//	    Note that there is a naming requirement on some of the symbols you
+//	define for your tool. Most notably, the tool name you use should form
+//	the root name of the Properties and Values callbacks, i.e. if your
+//	tool is called customtoolPaint, the two callbacks should be called
+//	customtoolPaintProperties and customtoolPaintValues.
+//
+//		This example details the Custom Tool approach and is self con-
+//	tained within this file.
+//
+//		To invoke this example use the following steps:
+//			o  Place customtoolPaint.mel into your scripts directory or
+//			   scripts path. Alterantely, you can maually source the file
+//			   from the script editor by typing the MEL command
+//			   "source customtoolPaint.mel;" after starting Maya.
+//			o  Start Maya.
+//			o  Create a poly mesh: a cube with 10x10x10 subdivisions
+//			   works well...
+//					polyCube -w 1 -h 1 -d 1 -sx 9 -sy 10 -sz 10 -ax 0 1 0 -tx 1 -ch 1;
+//			o  Bring up the customtoolPaint tool by typing the MEL command:
+//					customtoolPaintDisplay;
+//			   You will see a custom UI defined via the definitions in
+//			   this file which can be customised by the user.
+//			o  Set the display mode for the viewport to Smooth Shaded.
+//			o  The pointer should change to a brush shape. Move it onto
+//			   the poly mesh and begin painting. (If you don't see a
+//			   paint streak, ensure that the paint mode radio buttons
+//			   are set to Replace and the value slider is non-zero).
+//
+/////////////////////////////////////////////////////////////////////////
+
+
+// Global variables to maintain state information.
+//
+global string	$customtoolPaintColorMenuGrp = "";	// Which attr to paint.
+
+
+/////////////////////////////////////////////////////////////////////////
+//
+// Synopsis:
+//		customtoolPaintDisplay()
+//
+// Description:
+//		Invokes the customtoolPaint tool which is a custom Artisan attri-
+// bute editing tool. This procedure creates the context if necessary,
+// adding the tool dynamically to the system. It then applies the context
+// settings, making it current and displaying it onscreen.
+//
+//		This procedure should be invoked whenever you wish to activate the
+// customtoolPaint tool. It can be called from a menu button on your user
+// interface, from an icon, or via a MEL such as through the command port.
+//
+//		Note that invoking another tool will typically unpost the previous
+// tool. However, should any special cleanup be required, you can define
+// special MEL callbacks. See the procedures customtoolPaintToolOn and
+// customtoolPaintToolOff.
+//
+// Parameters:
+//		None.
+//
+// Values returned:
+//		string		$context	: Name of the context.
+//
+/////////////////////////////////////////////////////////////////////////
+
+
+global proc	string customtoolPaintDisplay()
+{
+	print( (uiRes("m_customtoolPaint.kInvokingCustomerToolPaint")) );
+
+	// Set the name of your context here.
+	//
+	string $context = "customtoolPaintContext";
+
+	// Check if the context has already been created.
+	//
+	if( ! `artAttrCtx -exists $context` ) {
+		// Set the name of your tool.
+		//
+		string $tool = "customtoolPaint";
+
+		// Check if the tool exists and if not, add it to the system.
+		// Note that the mapping between tools and contexts is NOT
+		// one to one: Maya allows several contexts to exist which
+		// share the same tool.
+		//
+		if ( ! `artAttrTool -exists $tool` ) {
+			print( (uiRes("m_customtoolPaint.kCustomerToolPaintDefiningTool")) );
+			artAttrTool -add $tool;
+		}
+
+		// Create the context by invoking artAttrCtx in create mode with
+		// the specified tool.
+		//
+		string $cmd = "artAttrCtx -whichTool \""+$tool+"\" "+$context;
+		rememberCtxSettings `eval( $cmd )`;
+
+		// Define any tool-specific qualities and callbacks.
+		// There are additional settings one could choose: check the
+		// artAttrCtx command documentation for details.
+		//
+		artAttrCtx -edit -colorfeedback true $context;
+		artAttrCtx -edit -activeListChangedProc "customtoolPaintToolOn" $context;
+		artAttrCtx -edit -toolOnProc "customtoolPaintToolOn" $context;
+		artAttrCtx -edit -toolOffProc "customtoolPaintToolOff" $context;
+	}
+
+	// Set the current tool based on our context.
+	// This will implicitely look for two MEL procedures, which are also
+	// defined in this file.
+	//		customtoolPaintProperties()
+	//		customtoolPaintValues()
+	//
+	setToolTo $context;
+
+	// Define the property display.
+	//
+	toolPropertyWindow;
+
+	// Return the name of the context. The first invocation of this
+	// procedure creates the context. Subsequent invocations return
+	// that same name.
+	//
+	return( $context );
+}
+
+/////////////////////////////////////////////////////////////////////////
+//
+// Synopsis:
+//		customtoolPaintProperties()
+//
+// Description:
+//		This procedure is the Properties callback for the tool and its
+// purpose is to creates the tool layout. It is invoked implicitely
+// (Maya uses the context name to determine the name of the procedure to
+// invoke, thus the name must be based off the context name).
+//
+// Parameters:
+//		None.
+//
+// Values returned:
+//		None.
+//
+/////////////////////////////////////////////////////////////////////////
+
+
+global proc	customtoolPaintProperties()
+{
+	print( (uiRes("m_customtoolPaint.kCustomToolPaintProperties")) );
+
+	// Global variables...
+	//
+	global string	$customtoolPaintColorMenuGrp;
+
+	// Query the current tool.
+	//
+	string  $currContext = `currentCtx`;
+	string  $currTool    = `contextInfo -c $currContext`;
+
+	//////////////////////////////////////////////////
+	//
+	// Define UI elements for the tool. What follows
+	// is best understood if you bring up the tool UI
+	// in Maya and 
+	//
+	setUITemplate -pushTemplate DefaultTemplate;
+	string $parent =`toolPropertyWindow -q -location`;
+	setParent $parent;
+
+	columnLayout -adj true customtoolPaint;
+		columnLayout -adj true artAttrcustomtool;
+
+		// Brush frameLayout.
+		//
+		frameLayout -label (uiRes("m_customtoolPaint.kExamplePaintBrush"))
+			-collapsable true -collapse false
+			artAttrcustomtoolBrushFrame;
+
+			// Create brush option menu.
+			//
+			artisanCreateBrushFrame( "artAttrcustomtoolBrushFrame", $currTool );
+		setParent ..;
+
+		// Operations framelayout.
+		//
+		string $artCommonOpFrame = `frameLayout -l " Example Paint Settings "
+										-collapsable true -collapse false
+										artCommonOperationFrame`;
+
+			setUITemplate -pushTemplate OptionsTemplate;
+			setParent $artCommonOpFrame;
+			columnLayout;
+
+			// User interface definitions specific to the attribute(s) this
+			// tool is capable of painting.
+			//
+			columnLayout paintAttrColLayout;
+
+				// If your tool is capable of painting a variety of
+				// attributes, you could provide pulldown menus here to
+				// allow the user to choose the attribute. For our tool
+				// we permit painting to a choice of two weight arrays.
+				//
+				// Note: we are using the attribute names as the menu
+				// entries. If you want your button and attribute names
+				// to differ you will need to implement logic in
+				// customtoolPaintToolOn() to map the names.
+				//
+				$customtoolPaintColorMenuGrp = `optionMenuGrp -label (uiRes("m_customtoolPaint.kAttributeToPaint"))`;
+				menuItem -label "customtoolWeights1";
+				menuItem -label "customtoolWeights2";
+
+			setParent ..;
+
+			separator -h 10 -width 1 -style "none";
+
+			artAttrCreateCommonProperties();
+
+			setParent ..;
+			setUITemplate -popTemplate;
+		setParent ..;
+
+		// Stroke options.
+		//
+		frameLayout -l (uiRes("m_customtoolPaint.kExamplePaintStroke"))
+			-collapsable true -collapse true
+			artAttrcustomtoolStrokeFrame;
+
+			// Create stroke options.
+			//
+			artisanCreateStrokeFrame( "artAttrcustomtoolStrokeFrame", $currTool );
+		setParent ..;
+
+		// Stylus Pressure options.
+		//
+		frameLayout -l (uiRes("m_customtoolPaint.kExamplePaintStylusPressure"))
+			-collapsable true -collapse true
+			artAttrcustomtoolPressureFrame;
+
+			// Create stroke options.
+			//
+			artisanCreatePressureFrame( "artAttrcustomtoolPressureFrame", $currTool );
+		setParent ..;
+
+		// Attribute Maps options.
+		//
+		frameLayout -l (uiRes("m_customtoolPaint.kExamplePaintAttributeMaps"))
+			-collapsable true -collapse true
+			artAttrAttrMapFrame;
+
+			// Create Attribute Map option menu.
+			//
+			artisanCreateAttrMapFrame( "artAttrAttrMapFrame", $currTool );
+		setParent ..;
+
+		// Display options.
+		//
+		frameLayout -l (uiRes("m_customtoolPaint.kExamplePaintDisplay"))
+			-collapsable true -collapse true
+			artAttrcustomtoolDisplayFrame;
+
+			// Create Display options.
+			//
+			artisanCreateDisplayFrame( "artAttrcustomtoolDisplayFrame", $currTool );
+		setParent ..;
+	setParent ..;
+
+	setUITemplate -popTemplate;
+
+	//////////////////////////////////////////////////
+	//
+	// Set the callbacks and various global functions.
+	//
+	string $artCommand = "artAttrCtx";
+
+    // Basic Brush frameLayout.
+	//
+    artisanBrushCallback( $artCommand, $currTool );
+
+    // Operations layout.
+	//
+    artAttrCommonCallback( $artCommand, $currTool );
+
+    // Stroke frameLayout.
+	//
+    artisanStrokeCallback( $artCommand, $currTool );
+
+    // Pressure frameLayout.
+	//
+    artisanPressureCallback( $artCommand, $currTool );
+
+    // Attribute Maps frameLayout.
+	//
+    artisanAttrMapCallback( $artCommand, $currTool );
+
+    // Display frameLayout.
+	//
+    artisanDisplayCallback( $artCommand, $currTool );
+}
+
+/////////////////////////////////////////////////////////////////////////
+//
+// Synopsis:
+//		customtoolPaintValues( string $toolName )
+//
+// Description:
+//		This procedure is the Values callback for the tool. It is invoked
+// implicitely (Maya uses the context name to determine the name of the
+// procedure to invoke, thus the name must be based off the context name).
+//
+// Parameters:
+//		string		$toolName	: (in)	The name of the tool.
+//
+// Values returned:
+//		None.
+//
+/////////////////////////////////////////////////////////////////////////
+
+
+global proc	customtoolPaintValues( string $toolName )
+{
+	print( (uiRes("m_customtoolPaint.kCustomToolPaintValues")) );
+
+	// Include global Artisan declarations.
+	//
+	source "artisanCallback.mel";
+	source "artisanValues.mel";
+	source "artAttrValues.mel";
+
+	// Get the context info.
+	// Note that the customtoolPaint tool uses the "artAttrCtx" by
+	// definition.
+	//
+    string  $artCommand  = "artAttrCtx";
+    string  $currContext = `currentCtx`;
+    string  $currTool    = `contextInfo -c $currContext`;
+
+    string $parent = (`toolPropertyWindow -q -location` + "|customtoolPaint");
+    setParent $parent;
+
+	// Assign common tool property values.
+	//
+	string $icon = "attrPaint.png";		// You can use a custom icon here.
+	string $helpTag = "customtoolPaintTool";
+    toolPropertySetCommon $toolName $icon $helpTag;
+
+    // Brush frameLayout values.
+	//
+    artisanBrushValues( $artCommand, $currTool );
+ 
+    // Common Attribute Paint UI.
+	//
+    artAttrCommonValues( $artCommand, $currTool );
+
+    // Stroke frameLayout values.
+	//
+    artisanStrokeValues( $artCommand, $currTool );
+                                                                                
+    // Stylus Pressure frameLayout values.
+	//
+    artisanPressureValues( $artCommand, $currTool );
+
+    // Attribute Maps frameLayout values.
+	//
+    artisanAttrMapValues( $artCommand, $currTool );
+
+    // Display frameLayout values.
+	//
+    artisanDisplayValues( $artCommand, $currTool );
+
+    toolPropertySelect customtoolPaint;
+}
+
+/////////////////////////////////////////////////////////////////////////
+//
+// Synopsis:
+//		customtoolPaintToolOn()
+//
+// Description:
+//		This procedure is invoked when the paint tool is activated.
+// This callback is registered via the artAttrCtx command, e.g.
+//
+//			artAttrCtx -edit -toolOnProc "customtoolPaibtToolOn" $context;
+//
+//		Not all Arstian tools require a toolOn callback: it is only neces-
+// sary if your tool needs to do special setup when it is activated. For
+// an example of a toolOn procedure in Maya, take a look at the MayaCloth
+// file clothPaintToolOn.mel provided in the $MAYA_LOCATION/scripts/cloth
+// directory. Typically when a toolOn callback is defined, a corresponding
+// toolOff callback will be defined as well. A final note: the string
+// provided to the -toolOnProc flag of the artAttrCtx command can be any
+// MEL command. This can include arguments to be passed into the procedure
+// if desired.
+//
+// Parameters:
+//		None.
+//
+// Values returned:
+//		None.
+//
+/////////////////////////////////////////////////////////////////////////
+
+
+global proc	customtoolPaintToolOn()
+{
+	print( (uiRes("m_customtoolPaint.kCustomToolPaintOn")) );
+
+	// Global variables...
+	//
+	global string	$customtoolPaintColorMenuGrp;
+
+	// Get the name of the mesh node we are painting on and ensure there
+	// is exactly one (this simplifies our logic for demo purposes). The
+	// user is free to allow multiple selections in their implementation.
+	//
+	string $selected[] = `ls -sl -dag -objectsOnly -type mesh`;
+	int $numSelected = size( $selected );
+	string $mesh = "";
+	string $node = "";
+	int $i;
+	int $meshes = 0;
+
+	for ( $i = 0; $i < $numSelected; $i++ ) {
+		$node = $selected[$i];
+		if ( `nodeType $node` == "mesh" ) {
+			$mesh = $node;
+			$meshes += 1;
+		}
+	}
+
+	if ( 1 != $meshes ) {
+		print( (uiRes("m_customtoolPaint.kNeedOneMesh")) );
+		return;
+	}
+
+	// Query the attribute that the user last chose to paint.
+	// If none, we assume "customtoolWeights1".
+	//
+	string $attrName = "customtoolWeights1";
+	if( `optionVar -exists customtoolPaintWhichAttr` ) {
+		$attrValue = `optionVar -query customtoolPaintWhichAttr`;
+	}
+
+	// Set the GUI to reflect the attribute that we want to paint.
+	//
+	// Need to do via callback as UI may not be posted yet...
+	// optionMenuGrp -e -value $attrName $customtoolPaintColorMenuGrp;
+
+	// Check that the node has our paintable attribute. If not, add
+	// it dynamically.
+	//
+	if ( !`attributeQuery -node $mesh -exists $attrName` ) {
+		print( (uiRes("m_customtoolPaint.kCustomToolPaintAddingDynamicAttr")) );
+
+		addAttr -ln $attrName -dt doubleArray $mesh;
+	}
+
+	// Make the attribute be paintable.
+	//
+	makePaintable "mesh" $attrName;
+	artAttrPaintInstSelectAllDN( "mesh", $node + "."+ $attrName );
+}
+
+/////////////////////////////////////////////////////////////////////////
+//
+// Synopsis:
+//		customtoolPaintToolOff()
+//
+// Description:
+//		This procedure is invoked when the paint tool is deactivated.
+// This callback is registered via the artAttrCtx command, e.g.
+//
+//		   artAttrCtx -edit -toolOffProc "customtoolPaibtToolOn" $context;
+//
+//		Not all Arstian tools require a toolOff callback: it is only neces-
+// sary if your tool needs to do special cleanup when it is activated. For
+// an example of a toolOff procedure in Maya, take a look at the MayaCloth
+// file clothPaintToolOn.mel provided in the $MAYA_LOCATION/scripts/cloth
+// directory. Typically when a toolOff callback is defined, a corresponding
+// toolOn callback will be defined as well. A final note: the string
+// provided to the -toolOnProc flag of the artAttrCtx command can be any
+// MEL command. This can include arguments to be passed into the procedure
+// if desired.
+//
+// Parameters:
+//		None.
+//
+// Values returned:
+//		None.
+//
+/////////////////////////////////////////////////////////////////////////
+
+
+global proc	customtoolPaintToolOff()
+{
+	print( (uiRes("m_customtoolPaint.kCustomToolPaintOff")) );
+
+	// Global variables...
+	//
+	global string	$customtoolPaintColorMenuGrp;
+
+	// In our tool we have a choice of attributes to paint, so we save
+	// the current selection here by querying the GUI and saving in an
+	// optionVar.
+	//
+	string $attrNameUI = `optionMenuGrp -query -value $customtoolPaintColorMenuGrp`;
+	optionVar -stringValue customtoolPaintWhichAttr $attrNameUI;
+
+	// Make our attributes non-paintable so they don't show up in the
+	// general Attribute paint tool menus.
+	//
+	makePaintable -remove "mesh" "customtoolWeights1";
+	makePaintable -remove "mesh" "customtoolWeights2";
+}

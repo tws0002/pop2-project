@@ -1,0 +1,234 @@
+// Copyright (C) 1997-2013 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+/**
+ * @file muCreateShelf.mel
+ * @brief Register and unregister a shelf. Registration will cause a
+ *        shelf to be created if it doesn't already exist. - And once
+ *        all tools for that shelf have been unregistered, the shelf
+ *        will be saved. That way the icons in the shelf won't show up
+ *        in future sessions where the tools aren't loaded. 
+ *
+ * CONFIDENTIAL INFORMATION: This software is the confidential and proprietary
+ * information of Walt Disney Animation Studios ("WDAS"). This software may not
+ * be used, disclosed, reproduced or distributed for any purpose without prior
+ * written authorization and license from WDAS. Reproduction of any section of
+ * this software must include this legend and all copyright notices.
+ *
+ * Copyright 2006-2011 Disney Enterprises, Inc. All rights reserved.
+ *
+ * @author Rasmus Tamstorf
+ * @author Andy Lin
+ *
+ * @version tamstorf  2002.06.07 Initial Version
+ * @version clin      2006.05.23 move from mayaCharSetup to mayaUtils and modify for general uses
+ * @version clin      2006.05.25 remove the $tool argument from both functions and let muAddTool and muRemoveTool
+ *                    handle the addition and removal of individual tool button from the registry.
+ */
+
+global string $gMdToolRegistry[];
+global int $gMdRemoveToolsQuitAppSJ = -1;
+
+
+global proc muCreateShelf( string $toolShelf )
+{
+    global string $gMdToolRegistry[];
+    global int $gMdRemoveToolsQuitAppSJ;
+
+    // Check if it is a valid shelf  name (no space)
+    //
+    if ( size( `match " " $toolShelf` ) > 0 ) {
+        error (uiRes("m_muCreateShelf.kShelfNameNoSpaces"));
+        return;
+    }
+
+    // Check if the shelf has been registered
+    //
+    int $numShelfs = size( $gMdToolRegistry );
+    int $i, $j, $found = 0;
+
+    for ( $i = 0; $i < $numShelfs; $i++ ) {
+        string $tools[] = stringToStringArray( $gMdToolRegistry[$i], " " );
+        int $numItems = size( $tools );
+
+        if ( $numItems == 0 ) {
+            warning (uiRes("m_muCreateShelf.kAnEmptyRegistryIsFound"));
+            continue; // this shouldn't happen
+        }
+
+        if ( $tools[0] == $toolShelf )
+            $found++;
+    }
+
+    if ( $found > 1 ) {
+		string $fmt =  (uiRes("m_muCreateShelf.kMultipleShelfEntries"));
+        warning `format -s $toolShelf $fmt`;
+        return;
+    }
+
+    // Create tool shelf
+    //
+    if ( ! `shelfLayout -ex $toolShelf` )
+	{
+		global string $gShelfTopLevel;
+		$tabIndexPrev = `shelfTabLayout -query -selectTabIndex $gShelfTopLevel`;
+        addNewShelfTab( $toolShelf );
+		if( $tabIndexPrev )
+		{
+			shelfTabLayout -e -selectTabIndex $tabIndexPrev $gShelfTopLevel;
+			shelfTabChange();
+		}
+	}
+    setParent $toolShelf;
+
+    // Register the shelf
+    //
+    if ( !$found )
+        $gMdToolRegistry[$numShelfs] = $toolShelf;
+
+
+    // Set up script job to ensure that we delete shelf buttons on
+    // exit. This is necessary since plugins are not explicitly
+    // unloaded on exit. 
+    //
+    if ( $gMdRemoveToolsQuitAppSJ < 0 )
+        $gMdRemoveToolsQuitAppSJ = `scriptJob -e "quitApplication" muRemoveToolsOnQuit`;
+}
+
+global proc muRemoveShelf( string $toolShelf )
+{
+    global string $gMdToolRegistry[];
+
+    string $newRegistry[];
+    int $numShelfs = size( $gMdToolRegistry );
+    int $i, $j, $found = 0, $remainedNumItems = 0;
+
+    for ( $i = 0; $i < $numShelfs; $i++ ) {
+        string $tools[] = stringToStringArray( $gMdToolRegistry[$i], " " );
+        int $numItems = size( $tools );
+
+        if ( $numItems == 0 ) {
+            warning (uiRes("m_muCreateShelf.kAnEmptyRegistryIsFound2"));
+            continue; // this shouldn't happen
+        }
+        
+        if ( $tools[0] == $toolShelf ) {
+            $found++;
+            if ( $numItems == 1 ) continue; // no tool left in this shelf
+            $remainedNumItems += ( $numItems - 1 );
+        }
+
+        $newRegistry[size($newRegistry)] = $gMdToolRegistry[$i];
+    }
+
+    if ( $found > 1 ) {
+		string $fmt =  (uiRes("m_muCreateShelf.kMultipleShelfEntries2"));
+        warning `format -s $toolShelf $fmt`;
+	}
+
+    // Remove the shelf UI and shelf file if necessary
+    if ( $remainedNumItems == 0 ) { // All tools in this shelf are removed
+	
+        string $shelfDir = `internalVar -userShelfDir`;
+        string $shelfFile = $shelfDir + "shelf_" + $toolShelf;
+
+	/**** STOP
+        // All tools have been removed ...
+        if ( `shelfLayout -q -nch $toolShelf` == 0 ) {
+
+            // ... and there's nothing left, so we nuke the shelf.
+            deleteShelfTab $toolShelf;
+
+        }  else {
+
+            // ... but the user must have placed some other icons
+            // in the shelf, so we save the state of the shelf. 
+            saveShelf $toolShelf $shelfFile;
+        }
+	****/
+	// Deleting a shelf, though well intentioned, messes up Maya's
+	// nice mechanism of remembering what shelf the user had up when
+	// he/she had last run Maya.  Deleting the buttons off it is still
+	// fine and a good idea.  But leave the shelf around, empty or not.
+	// (elenad, 9/20/07)
+	//
+	saveShelf $toolShelf $shelfFile;
+	/****/
+    }
+
+    // Update the registry
+    //
+    if ( size($newRegistry) != $numShelfs )
+        $gMdToolRegistry = $newRegistry;
+}
+    
+global proc muRemoveToolsOnQuit()
+{
+    global string $gMdToolRegistry[];
+
+    int $numShelfs = size( $gMdToolRegistry );
+    int $i, $j;
+
+    for ( $i = 0; $i < $numShelfs; $i++ ) {
+        string $tools[] = stringToStringArray( $gMdToolRegistry[$i], " " );
+        int $numItems = size( $tools );
+
+        if ( $numItems == 0 ) continue; // this shouldn't happen
+        
+        for ( $j = 1; $j < $numItems; $j++ ) {
+            string $buttonName = $tools[$j];
+            if ( `shelfButton -ex $buttonName` )
+                deleteUI $buttonName;
+        }
+
+        string $shelfName = $tools[0];
+        string $shelfDir = `internalVar -userShelfDir`;
+        string $shelfFile = $shelfDir + "shelf_" + $shelfName;
+
+	/**** STOP
+        if ( `shelfLayout -q -nch $shelfName` == 0 ) {
+
+            // ... and there's nothing left, so we nuke the shelf.
+            deleteShelfTab $shelfName;
+
+        }  else {
+
+            // ... but the user must have placed some other icons
+            // in the shelf, so we save the state of the shelf. 
+            saveShelf $shelfName $shelfFile;
+        }
+	****/
+	// Deleting a shelf, though well intentioned, messes up Maya's
+	// nice mechanism of remembering what shelf the user had up when
+	// he/she had last run Maya.  Deleting the buttons off it is still
+	// fine and a good idea.  But leave the shelf around, empty or not.
+	// (elenad, 9/20/07)
+	//
+	saveShelf $shelfName $shelfFile;
+	/****/
+    }
+
+    // CAL-05/26/06: Let's just save those shelves that have been registered above.
+    // Save shelves to make cleanup permanent
+    //
+    //global string $gShelfTopLevel;
+    //saveAllShelves $gShelfTopLevel;
+}

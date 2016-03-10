@@ -1,0 +1,519 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date: May 28 1999
+//
+//  Description:
+//		Related procs to create and manipulate the Auxilliary Nodes window, 
+//		specifies node types to be suppressed in the Maya UI.
+//
+
+
+proc int[] selectedTypes()
+//
+// Description:
+//		Return a list of unique type tags of objects in the selection list.
+//
+{
+
+	string $selected[] = `ls -selection`;
+	int    $selTags[];
+	int	   $finalList[];
+
+	int $i;
+	int $nArr = size($selected);
+	for ( $i=0; $i < $nArr; $i++ ){
+		$selTags[$i] = `objectType -typeTag $selected[$i]`;
+	}
+
+	$selTags = `sort($selTags)`;
+
+	int $count = 0;
+	string $compare = "";
+	$nArr = size($selTags);
+	for ( $i=0; $i < $nArr; $i++ ){
+		if ( $compare != $selTags[$i] ){
+			$finalList[$count] = $selTags[$i];
+			$compare = $selTags[$i];
+			$count++;
+		}
+	}
+
+	return $finalList;
+}
+
+global proc minorNodesWindowEnable(int $val)
+//
+//  Description:
+//		Set enable state for minor nodes.
+//
+{
+	int $notVal = !$val;
+
+	setParent AuxiliaryNodeWindow;
+	formLayout -e -en $notVal addForm;
+	formLayout -e -en $notVal removeForm;
+	button -e -en ($notVal && `minorNodeWinNeedRevert`) revertButton;
+
+	showMinorNodes $val;
+}
+
+global proc minorNodesWinPopulate() 
+//
+//  Description:
+//		Populate scroll lists.
+//
+{
+	setParent AuxiliaryNodeWindow;
+	waitCursor -state on;
+
+	//
+	//  Start with the 'add' scroll list.
+	//
+	int    $selTags[];
+	string $selTypes[];
+	string $nodeType;
+
+	//
+	//  All types.
+	//
+	$selTypes = `ls -nodeTypes`;
+
+	textScrollList -e -removeAll nodeTypeList;
+	for ($nodeType in $selTypes) {
+		if ("" != $nodeType) {
+			textScrollList -e -append $nodeType nodeTypeList;
+		}
+	}
+	if (`textScrollList -q -numberOfItems nodeTypeList` > 0) {
+		textScrollList -e -selectIndexedItem 1 nodeTypeList;
+	}
+
+	//
+	//  Do the existing minor nodes list.
+	//
+	int $minorNodeTypes[] = `optionVar -q "minorNodeTypes"`;
+	string $nodeTypes [];
+	string $sortedTypes [];
+	
+	int $i = 0;
+	textScrollList -e -removeAll auxNodesList;
+	for ($nodeTag in $minorNodeTypes) {
+		$nodeTypes[$i++] = `objectType -tpt $nodeTag`;
+	}
+
+	$sortedTypes = sort ($nodeTypes);
+
+	for ($nodeType in $sortedTypes) {
+		if ("" != $nodeType) {
+			textScrollList -e -append $nodeType auxNodesList;
+		}
+	}
+	if (`textScrollList -q -numberOfItems auxNodesList` > 0) {
+		textScrollList -e -selectIndexedItem 1 auxNodesList;
+		button -e -enable true removeFromListButton;
+	} else {
+		button -e -enable false removeFromListButton;
+	}
+
+	waitCursor -state off;
+}
+
+global proc minorNodesWindowRemove() 
+//
+//  Description:
+//		Remove items selected in the scroll list from the
+//		list of minor nodes.
+//
+{
+	setParent AuxiliaryNodeWindow;
+
+	string $list[] = `textScrollList -q -selectItem auxNodesList`;
+	int    $indx[] = `textScrollList -q -selectIndexedItem auxNodesList`;
+	int    $ovars[];
+	int    $tag;
+
+	int $nArr, $limit = size($list);
+	int $i, $j;
+	for ($i=0; $i < $limit; $i++ ){
+		//
+		//  Turn off display of the node type
+		//
+		textScrollList -e -removeItem $list[$i] auxNodesList;
+		$tag = `objectType -tagFromType $list[$i]`;
+		setNodeTypeFlag -display on $tag;
+
+		//
+		//  Update the optionVar array.
+		//
+		if ("" != $tag) {
+			$ovars = `optionVar -q "minorNodeTypes"`;
+			$nArr = size ($ovars);
+			for ($j = 0; $j < $nArr; $j++) {
+				if ($tag == $ovars[$j]) {
+					optionVar -removeFromArray "minorNodeTypes" $j;
+					break;
+				}
+			}
+		}
+	}
+
+	//
+	//  Select a new item if any remain
+	//
+	$nArr = size($indx);
+	int $lowIndex = `textScrollList -q -numberOfItems auxNodesList`;
+	for ($i = 0; $i < $nArr; $i++) {
+		if ($indx[$i] < $lowIndex) {
+			$lowIndex = $indx[$i];
+		}
+	}
+	if ($lowIndex > 0) {
+		textScrollList -e -selectIndexedItem $lowIndex auxNodesList;
+	} else {
+		if (`textScrollList -q -numberOfItems auxNodesList` > 0) {
+			textScrollList -e -selectIndexedItem 1 auxNodesList;
+		} else {
+			//
+			// no items left.
+			//
+			button -e -enable false removeFromListButton;
+		}
+	}
+
+	button -e -enable `minorNodeWinNeedRevert` revertButton;
+
+}
+
+
+global proc minorNodesWindowAdd()
+//
+//  Description:
+//		Add selected node types to the minor nodes list, so that they will
+//		no longer appear in the Maya UI.
+//
+{
+
+	setParent AuxiliaryNodeWindow;
+
+	string $selected[] = `textScrollList -q -selectItem nodeTypeList`;
+	int    $auxNodes[] = `optionVar -q "minorNodeTypes"`;
+	int    $newTag;
+
+
+	int $nArr = size($selected);
+	int $nAuxNodes = size ($auxNodes);
+	int $alreadyAuxNode = false;
+	int $i, $j;
+
+	for ( $i=0; $i < $nArr; $i++ ){
+		$newTag = `objectType -tagFromType $selected[$i]`;
+
+		//
+		//  check that it is not already in the list
+		//
+		for ($j = 0; $j < $nAuxNodes; $j++) {
+			if ($newTag == $auxNodes[$j]) {
+				$alreadyAuxNode = true;
+				break;
+			}
+		}
+		if (!$alreadyAuxNode) {
+			optionVar -iva "minorNodeTypes" $newTag;
+			setNodeTypeFlag -display off  $newTag;
+		} else {
+			string $msg = (uiRes("m_minorNodesWindow.kAlreadyOnList"));
+			string $displayMsg = `format -s $selected[$i] $msg`;
+			string $ok = (uiRes("m_minorNodesWindow.kOk"));
+			confirmDialog -title (uiRes("m_minorNodesWindow.kConfirm"))
+				-message $displayMsg
+            	-button $ok -defaultButton $ok;
+			$alreadyAuxNode = false;
+		}
+	}
+
+	minorNodesWinPopulate;
+
+	button -e -enable `minorNodeWinNeedRevert` revertButton;
+}
+
+global proc int minorNodeWinNeedRevert()
+//
+//  Return true if the current minor node list doesn't match the initial
+//  minor node list.
+//
+{
+	global int $gMinorNodes[];
+	int $optionNodes[] = `optionVar -q "minorNodeTypes"`;
+
+	int $i, $j, $nArr;
+	
+	$nArr = size( $gMinorNodes );
+	if ($nArr != size( $optionNodes )) {
+		return true;
+	}
+
+	for ($i = 0; $i < $nArr; $i++) {
+		int $found = false;
+		for ($j = 0; $j < $nArr; $j++) {
+			if ($gMinorNodes[$i] == $optionNodes[$j]) {
+				$found = true;
+				break;
+			}
+		}
+		if (!$found) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+global proc minorNodeWindowRevert()
+//
+//  Description:
+//		Revert the minor nodes list to the state that it was in when
+//		the window was opened.
+//
+{
+	global int $gMinorNodes[];
+
+	int $i, $nArr;
+
+	//
+	//  Show all minor nodes and reset the array.
+	//
+	showMinorNodes true;
+	optionVar -clearArray "minorNodeTypes";
+
+	//
+	// Build the new array.
+	//
+	$nArr = size( $gMinorNodes );
+	for ($i = 0; $i < $nArr; $i++) {
+		optionVar -iva "minorNodeTypes" $gMinorNodes[$i];
+		setNodeTypeFlag -display off $gMinorNodes[$i];
+	}
+
+	minorNodesWinPopulate;
+
+	button -e -enable false revertButton;
+}
+
+
+global proc minorNodesWindow()
+//
+//  Description:
+//		Add selected node types to the minor nodes list, so that they will
+//		no longer appear in the Maya UI.
+//
+{
+	if ( !`window -exists AuxiliaryNodeWindow` ){
+		//
+		//  Construct the window.
+		//
+		string $windowTitle = (uiRes("m_minorNodesWindow.kAuxiliaryNodesm"));
+		string $iconName    = (uiRes("m_minorNodesWindow.kAuxiliary"));
+		if(`about -mac`){
+			window -width 250 -height 625 -title $windowTitle 
+				-iconName $iconName
+				-menuBar true
+				AuxiliaryNodeWindow;
+		}else{
+			window -title $windowTitle 
+				-iconName $iconName
+				-menuBar true
+				AuxiliaryNodeWindow;
+		}
+
+		menu -label (uiRes("m_minorNodesWindow.kOptions"));
+			radioMenuItemCollection;
+			menuItem -label (uiRes("m_minorNodesWindow.kAuxiliaryNodesHiddenInEditors"))
+				-radioButton (!`optionVar -q minorNodeTypesDisplay`)
+				-c "minorNodesWindowEnable(false)"
+				hideNodesItem;
+			menuItem -label (uiRes("m_minorNodesWindow.kAllNodesShownInEditors"))
+				-radioButton `optionVar -q minorNodeTypesDisplay`
+				-c "minorNodesWindowEnable(true)"
+				showNodesItem;
+		
+		menu -label (uiRes("m_minorNodesWindow.kHelp")) -helpMenu true;
+			menuItem -label (uiRes("m_minorNodesWindow.kHelpOnAuxiliaryNodes"))
+				-enableCommandRepeat false
+				-command "showHelp OutlinerShowAuxiliaryNodeswindow";
+					
+		formLayout minorForm;
+
+			formLayout removeForm;
+				text -label (uiRes("m_minorNodesWindow.kNodeTypesHiddenInEditors")) txt1;
+
+				if(`about -mac`){
+					textScrollList -height 200
+						-numberOfRows 10
+						-allowMultiSelection true
+						auxNodesList;
+				}else{
+					textScrollList
+						-numberOfRows 10
+						-allowMultiSelection true
+						auxNodesList;
+				}
+
+				button -label (uiRes("m_minorNodesWindow.kRemoveFromList"))
+					-c "minorNodesWindowRemove"
+					-annotation (uiRes("m_minorNodesWindow.kRemoveFromListAnnot"))
+					removeFromListButton;
+
+			setParent ..;
+
+			separator sectionSeparator1;
+
+			formLayout -e
+				-af txt1 left 0
+				-af txt1 top 0
+				-an txt1 right
+				-an txt1 bottom
+
+				-af auxNodesList left 0
+				-ac auxNodesList top 1 txt1
+				-af auxNodesList right 0
+				-ac auxNodesList bottom 5 removeFromListButton
+
+				-af removeFromListButton left 5
+				-af removeFromListButton right 5
+				-an removeFromListButton top
+				-af removeFromListButton bottom 0			
+
+				removeForm;
+
+			formLayout addForm;
+
+				text -label (uiRes("m_minorNodesWindow.kAvailableNodeTypes")) txt2;
+
+				if(`about -mac`){
+					textScrollList
+						-height 200
+						-nr 10
+						-ams 1
+						nodeTypeList;
+				}else{
+					textScrollList
+						-nr 10
+						-ams 1
+						nodeTypeList;
+				}
+
+				button -label (uiRes("m_minorNodesWindow.kAddToHideList")) 
+					-c "minorNodesWindowAdd"
+					-annotation (uiRes("m_minorNodesWindow.kAddToHideListAnnot"))
+					addToHideButton;
+
+			setParent ..;
+
+			formLayout -e
+
+				-af txt2 left 0
+				-af txt2 top 0
+				-an txt2 right
+				-an txt2 bottom
+
+				-af nodeTypeList left 0
+				-ac nodeTypeList top 1 txt2
+				-af nodeTypeList right 0
+				-ac nodeTypeList bottom 5 addToHideButton
+
+				-af addToHideButton left 5
+				-af addToHideButton right 5
+				-an addToHideButton top
+				-af addToHideButton bottom 0			
+
+				addForm;
+
+			separator sectionSeparator2;
+
+			button -label (uiRes("m_minorNodesWindow.kRevert"))
+				-c "minorNodeWindowRevert"
+				-annotation (uiRes("m_minorNodesWindow.kRevertAnnot"))
+				-enable false
+				revertButton;
+
+			button -label (uiRes("m_minorNodesWindow.kClose"))
+				-c "deleteUI AuxiliaryNodeWindow" 
+				-annotation (uiRes("m_minorNodesWindow.kCloseAnnot"))
+				closeButton;
+
+			formLayout -e 
+
+				-af removeForm left 5
+				-af removeForm right 5
+				-af removeForm top 5
+				-an removeForm bottom 
+
+				-af sectionSeparator1 left 0
+				-af sectionSeparator1 right 0
+				-ac sectionSeparator1 top 10 removeForm
+				-ac sectionSeparator1 bottom 10 addForm
+
+				-af addForm left 5
+				-af addForm right 5
+				-an addForm top 
+				-ac addForm bottom 10 sectionSeparator2
+
+				-af sectionSeparator2 left 0
+				-af sectionSeparator2 right 0
+				-an sectionSeparator2 top 
+				-ac sectionSeparator2 bottom 5 revertButton
+
+				-af revertButton left 5
+				-ap revertButton right 3 50
+				-an revertButton top
+				-af revertButton bottom 5 
+
+				-ap closeButton left 2 50
+				-af closeButton right 5
+				-af closeButton bottom 5
+				-an closeButton top
+
+				minorForm;
+					
+		//
+		//  Initialize the window.
+		//
+        minorNodesWinPopulate;
+
+		//
+		//  Save the current aux nodes list so that it can be reverted.
+		//
+		global int $gMinorNodes[];
+		$gMinorNodes = `optionVar -q "minorNodeTypes"`;
+	}
+
+	if(`optionVar -q minorNodeTypesDisplay`){
+		minorNodesWindowEnable(true);
+	}
+	showWindow AuxiliaryNodeWindow;
+}
+
+
+
+

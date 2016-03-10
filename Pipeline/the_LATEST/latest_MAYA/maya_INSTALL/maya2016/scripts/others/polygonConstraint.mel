@@ -1,0 +1,1869 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// Description:
+//		Creates a window to allow polygonal selection constraint setup.
+//
+
+global proc
+resetPolySelectConstraint ()
+{
+	if (`optionVar -exists polySelectConstraintState`) {
+		optionVar -stringValue polySelectConstraintState "";
+	}
+	polySelectConstraint -disable;
+}
+
+global proc
+rememberPolySelectConstraint ()
+{
+	optionVar -stringValue polySelectConstraintState `polySelectConstraint -query -stateString`;
+}
+
+global proc
+restorePolySelectConstraint ()
+{
+	if (`optionVar -exists polySelectConstraintState`) {
+		string $cmd = `optionVar -query polySelectConstraintState`;
+		if ($cmd != "") {
+			catch (`eval ($cmd)`);
+		}
+	}
+}
+
+global proc updateAngleSelectConstraint(string $flag, string $parent, string $minSlider, string $maxSlider)
+{
+	string $current = `setParent -q`;
+	setParent $parent;
+
+	float $minValue = `floatSliderGrp -q -value $minSlider`;
+	float $maxValue = `floatSliderGrp -q -value $maxSlider`;
+
+	if ("radian" == `currentUnit -query -fullName -angle`)
+	{
+		$minValue *= 3.14159265;
+		$maxValue *= 3.14159265;
+	}
+
+	string $setCmd = ("polySelectConstraint -" + $flag + " " + $minValue + " " + $maxValue + ";");
+	eval($setCmd);
+
+	setParent $current;
+}
+
+proc string getAngleLabelAndBounds( float $angleBounds[] )
+{
+	string $unitsLabel;
+
+	if ("radian" == `currentUnit -query -fullName -angle`)
+	{
+		$angleBounds[0] = 0.0;
+		$angleBounds[1] = 2.0;
+		$unitsLabel = (uiRes("m_polygonConstraint.kPiRadiansLabel"));
+	}
+	else
+	{
+		$angleBounds[0] = 0.0;
+		$angleBounds[1] = 360.0;
+		$unitsLabel = (uiRes("m_polygonConstraint.kDegreesLabel"));
+	}
+
+	return $unitsLabel;
+}
+
+// Update window
+///////////////////////////////////////////////////////////////////////
+global proc polygonConstraintUpdate(string $whichPanel)
+//	string $scrollFormName,
+//	string $vtxLayoutName, 
+//	string $edgLayoutName, 
+//	string $facLayoutName, 
+//	string $mapLayoutName) 
+{
+	waitCursor -state on ;
+	// TOCLEAN
+	string $scrollFormName	= "polyConstraintScrollForm";
+	string $vtxLayoutName	= "polyConstraintVtx";
+	string $edgLayoutName	= "polyConstraintEdg";
+	string $facLayoutName	= "polyConstraintFac";
+	string $mapLayoutName	= "polyConstraintOff";
+	//END TOCLEAN
+		
+	float 	$fv[], $fv2[], $fv3[];
+	int 	$iv[], $iv2[];
+
+	int $vtxExist = `frameLayout -ex $vtxLayoutName`;
+	int $edgExist = `frameLayout -ex $edgLayoutName`;
+	int $facExist = `frameLayout -ex $facLayoutName`;
+	int $mapExist = `frameLayout -ex $mapLayoutName`;
+	
+	// hide any existing layout
+	if ($vtxExist)
+		frameLayout -e -vis false $vtxLayoutName;
+	if ($edgExist)
+		frameLayout -e -vis false $edgLayoutName;
+	if ($facExist)
+		frameLayout -e -vis false $facLayoutName;
+	if ($mapExist)
+		frameLayout -e -vis false $mapLayoutName;
+	
+	int $itemType[] = `polySelectConstraint -q -t`;
+
+	if ((`selectMode -q -co` && `selectType -q -eg`) || $itemType[0] == 0x8000) {
+		menuItem -e -en true PolyPropEdgeLoop;
+		menuItem -e -en true PolyPropEdgeRing;
+	} else {
+		menuItem -e -en false PolyPropEdgeLoop;
+		menuItem -e -en false PolyPropEdgeRing;
+		if (`polySelectConstraint -q -lp` || `polySelectConstraint -q -rp`)
+			polySelectConstraint -bo false -bp false -sh false -cr false -ap false -lp false -rp false;
+	}
+
+	// create layout if not already done
+	if (($itemType[0] == 0x0001) && !$vtxExist) {
+		polygonConstraintVtx($vtxLayoutName, $scrollFormName);
+		$vtxExist = true;
+	}
+	if (($itemType[0] == 0x8000) && !$edgExist) {
+		polygonConstraintEdg($edgLayoutName, $scrollFormName);
+		$edgExist = true;
+	}
+	if (($itemType[0] == 0x0008) && !$facExist) {
+		polygonConstraintFac($facLayoutName, $scrollFormName);
+		$facExist = true;
+	}
+	if (($itemType[0] == 0x0010) && !$mapExist) {
+		polygonConstraintMap($mapLayoutName, $scrollFormName);
+		$mapExist = true;
+	}
+		
+	// mode
+	$iv = `polySelectConstraint -q -m`;
+	$iv[0] = $iv[0]+1;
+	if ($iv[0] < 3) {
+		radioButtonGrp -e -sl $iv[0] PolyModRadio;
+	} else {
+		radioButtonGrp -e -sl ($iv[0] - 2) PolyModRadio2;
+	}
+
+	// propagation
+	floatSliderGrp -e -en false PolyPropAngle;
+	if (`polySelectConstraint -q -bp`)
+		optionMenuGrp -e -sl 3 PolyPropSelect;
+	else if (`polySelectConstraint -q -sh`)
+		optionMenuGrp -e -sl 2 PolyPropSelect;
+	else if (`polySelectConstraint -q -cr`)
+		optionMenuGrp -e -sl 4 PolyPropSelect;
+	else if (`polySelectConstraint -q -lp`)
+		optionMenuGrp -e -sl 6 PolyPropSelect;
+	else if (`polySelectConstraint -q -rp`)
+		optionMenuGrp -e -sl 7 PolyPropSelect;
+	else if (`polySelectConstraint -q -ap`) {
+		optionMenuGrp -e -sl 5 PolyPropSelect;
+		floatSliderGrp -e -en true PolyPropAngle;
+	} else 
+		optionMenuGrp -e -sl 1 PolyPropSelect;
+	
+	floatSliderGrp -e -v `polySelectConstraint -q -at` PolyPropAngle;
+
+	// location
+	if ($itemType[0] == 0x0001 ||
+		$itemType[0] == 0x8000 ||
+		$itemType[0] == 0x0008 ||
+		$itemType[0] == 0x0010) {
+		
+		$iv = `polySelectConstraint -q -w`;
+		$iv[0] = $iv[0]+1;
+		
+		if ($vtxExist) radioButtonGrp -e -sl $iv[0] PolyVLocRadio;
+		if ($edgExist) radioButtonGrp -e -sl $iv[0] PolyELocRadio;
+		if ($facExist) radioButtonGrp -e -sl $iv[0] PolyFLocRadio;
+		if ($mapExist) radioButtonGrp -e -sl $iv[0] PolyMLocRadio;
+	}
+	
+	// edge smoothness
+	if ($itemType[0] == 0x8000) {
+		
+		$iv = `polySelectConstraint -q -sm`;
+		$iv[0] = $iv[0]+1;
+		
+		radioButtonGrp -e -sl $iv[0] PolyESmtRadio;
+	}
+
+	// facet properties
+	if ($itemType[0] == 0x0008) {
+		
+		// size
+		$iv = `polySelectConstraint -q -sz`;
+		$iv[0] = $iv[0]+1;
+		radioButtonGrp -e -sl $iv[0] PolyFSizRadio;
+	
+		// planar
+		$iv = `polySelectConstraint -q -p`;
+		$iv[0] = $iv[0]+1;
+		radioButtonGrp -e -sl $iv[0] PolyFPlnRadio;
+	
+		// convex
+		$iv = `polySelectConstraint -q -c`;
+		$iv[0] = $iv[0]+1;
+		radioButtonGrp -e -sl $iv[0] PolyFCvxRadio;
+	
+		// holes
+		$iv = `polySelectConstraint -q -h`;
+		$iv[0] = $iv[0]+1;
+		radioButtonGrp -e -sl $iv[0] PolyFHolRadio;
+	
+		// mapped
+		$iv = `polySelectConstraint -q -tx`;
+		$iv[0] = $iv[0]+1;
+		radioButtonGrp -e -sl $iv[0] PolyFMapRadio;
+	
+		// topo
+		$iv = `polySelectConstraint -q -tp`;
+		int $iv1 = false;
+		int $iv2 = false;
+		switch ($iv[0]) {
+			case 1: $iv1 = true; break;
+			case 2: $iv2 = true; break;
+			case 3: $iv1 = $iv2 = true; break;
+		}
+		checkBoxGrp -e -v1 $iv1 -v2 $iv2 PolyFTopCheck;
+	}
+	
+	// edge Length
+	if ($itemType[0] == 0x8000) {
+		
+		$iv = `polySelectConstraint -q -l`;
+		$fv = `polySelectConstraint -q -lb`;
+		
+		checkBox -e -v $iv[0] polyELenCheck;
+		floatSliderGrp -e -v $fv[0] minELenSld;
+		floatSliderGrp -e -v $fv[1] maxELenSld;
+	}
+	
+	// Angle
+	if ($itemType[0] == 0x0001 ||
+		$itemType[0] == 0x8000 ||
+		$itemType[0] == 0x0010) {
+		
+		$iv = `polySelectConstraint -q -angle`;
+		$fv = `polySelectConstraint -q -anglebound`;
+		
+		if ("radian" == `currentUnit -query -fullName -angle`)
+		{
+			$fv[0] /= 3.14159265;
+			$fv[1] /= 3.14159265;
+		}
+
+		if ($vtxExist) {
+			checkBox -e -v $iv[0] polyVAngCheck;
+			floatSliderGrp -e -v $fv[0] minVAngSld;
+			floatSliderGrp -e -v $fv[1] maxVAngSld;
+		}
+		if ($edgExist) {
+			checkBox -e -v $iv[0] polyEAngCheck;
+			floatSliderGrp -e -v $fv[0] minEAngSld;
+			floatSliderGrp -e -v $fv[1] maxEAngSld;
+		}
+		if ($mapExist) {
+			checkBox -e -v $iv[0] polyMAngCheck;
+			floatSliderGrp -e -v $fv[0] minMAngSld;
+			floatSliderGrp -e -v $fv[1] maxMAngSld;
+		}
+	}
+	
+	// Facet Area
+	if ($itemType[0] == 0x0008) {
+		
+		$iv = `polySelectConstraint -q -ga`;
+		$fv = `polySelectConstraint -q -gab`;
+		
+		checkBox -e -v $iv[0] polyFAreaCheck;
+		floatSliderGrp -e -v $fv[0] minFAreaSld;
+		floatSliderGrp -e -v $fv[1] maxFAreaSld;
+	}
+	
+	//Mapped area
+	if ($itemType[0] == 0x0001 ||
+		$itemType[0] == 0x8000 ||
+		$itemType[0] == 0x0008 ||
+		$itemType[0] == 0x0010) {
+		
+		$iv = `polySelectConstraint -q -ta`;
+		$iv[0] = $iv[0]+1;
+		$fv = `polySelectConstraint -q -tab`;
+		
+		if ($vtxExist) {
+			radioButtonGrp -e -sl $iv[0] polyVArea2Radio;
+			floatSliderGrp -e -v $fv[0] minVArea2Sld;
+			floatSliderGrp -e -v $fv[1] maxVArea2Sld;
+		}
+		if ($edgExist) {
+			radioButtonGrp -e -sl $iv[0] polyEArea2Radio;
+			floatSliderGrp -e -v $fv[0] minEArea2Sld;
+			floatSliderGrp -e -v $fv[1] maxEArea2Sld;
+		}
+		if ($facExist) {
+			radioButtonGrp -e -sl $iv[0] polyFArea2Radio;
+			floatSliderGrp -e -v $fv[0] minFArea2Sld;
+			floatSliderGrp -e -v $fv[1] maxFArea2Sld;
+		}
+		if ($mapExist) {
+			radioButtonGrp -e -sl $iv[0] polyMArea2Radio;
+			floatSliderGrp -e -v $fv[0] minMArea2Sld;
+			floatSliderGrp -e -v $fv[1] maxMArea2Sld;
+		}
+	}
+	
+	//Distance
+	if ($itemType[0] == 0x0001 ||
+		$itemType[0] == 0x8000 ||
+		$itemType[0] == 0x0008 ||
+		$itemType[0] == 0x0010) {
+		
+		$iv = `polySelectConstraint -q -d`;
+		$iv[0] = $iv[0]+1;
+		$fv = `polySelectConstraint -q -db`;
+		$fv2 = `polySelectConstraint -q -dp`;
+		$fv3 = `polySelectConstraint -q -da`;
+
+		if ($vtxExist) {
+			radioButtonGrp -e -sl $iv[0] PolyVDistRadio;
+			floatSliderGrp -e -v $fv[0] minVDistSld;
+			floatSliderGrp -e -v $fv[1] maxVDistSld;
+			floatSliderGrp -e -v $fv2[0] pntVDistPxSld;
+			floatSliderGrp -e -v $fv2[1] pntVDistPySld;
+			floatSliderGrp -e -v $fv2[2] pntVDistPzSld;
+			floatSliderGrp -e -v $fv3[0] pntVDistVxSld;
+			floatSliderGrp -e -v $fv3[1] pntVDistVySld;
+			floatSliderGrp -e -v $fv3[2] pntVDistVzSld;
+		}
+		if ($edgExist) {
+			radioButtonGrp -e -sl $iv[0] PolyEDistRadio;
+			floatSliderGrp -e -v $fv[0] minEDistSld;
+			floatSliderGrp -e -v $fv[1] maxEDistSld;
+			floatSliderGrp -e -v $fv2[0] pntEDistPxSld;
+			floatSliderGrp -e -v $fv2[1] pntEDistPySld;
+			floatSliderGrp -e -v $fv2[2] pntEDistPzSld;
+			floatSliderGrp -e -v $fv3[0] pntEDistVxSld;
+			floatSliderGrp -e -v $fv3[1] pntEDistVySld;
+			floatSliderGrp -e -v $fv3[2] pntEDistVzSld;
+		}
+		if ($facExist) {
+			radioButtonGrp -e -sl $iv[0] PolyFDistRadio;
+			floatSliderGrp -e -v $fv[0] minFDistSld;
+			floatSliderGrp -e -v $fv[1] maxFDistSld;
+			floatSliderGrp -e -v $fv2[0] pntFDistPxSld;
+			floatSliderGrp -e -v $fv2[1] pntFDistPySld;
+			floatSliderGrp -e -v $fv2[2] pntFDistPzSld;
+			floatSliderGrp -e -v $fv3[0] pntFDistVxSld;
+			floatSliderGrp -e -v $fv3[1] pntFDistVySld;
+			floatSliderGrp -e -v $fv3[2] pntFDistVzSld;
+		}
+		if ($mapExist) {
+			radioButtonGrp -e -sl $iv[0] PolyMDistRadio;
+			floatSliderGrp -e -v $fv[0] minMDistSld;
+			floatSliderGrp -e -v $fv[1] maxMDistSld;
+			floatSliderGrp -e -v $fv2[0] pntMDistPxSld;
+			floatSliderGrp -e -v $fv2[1] pntMDistPySld;
+			floatSliderGrp -e -v $fv2[2] pntMDistPzSld;
+			floatSliderGrp -e -v $fv3[0] pntMDistVxSld;
+			floatSliderGrp -e -v $fv3[1] pntMDistVySld;
+			floatSliderGrp -e -v $fv3[2] pntMDistVzSld;
+		}
+	
+	}
+	//Orientation
+	if ($itemType[0] == 0x0001 ||
+		$itemType[0] == 0x8000 ||
+		$itemType[0] == 0x0008) {
+		
+		$iv = `polySelectConstraint -q -o`;
+		$iv[0] = $iv[0]+1;
+		$fv = `polySelectConstraint -q -ob`;
+		$fv2 = `polySelectConstraint -q -oa`;
+
+		if ($vtxExist) {
+			radioButtonGrp -e -sl $iv[0] PolyVOriRadio;
+			floatSliderGrp -e -v $fv[0] minVOriSld;
+			floatSliderGrp -e -v $fv[1] maxVOriSld;
+			floatSliderGrp -e -v $fv2[0] pntVOriVxSld;
+			floatSliderGrp -e -v $fv2[1] pntVOriVySld;
+			floatSliderGrp -e -v $fv2[2] pntVOriVzSld;
+		}
+		if ($edgExist) {
+			radioButtonGrp -e -sl $iv[0] PolyEOriRadio;
+			floatSliderGrp -e -v $fv[0] minEOriSld;
+			floatSliderGrp -e -v $fv[1] maxEOriSld;
+			floatSliderGrp -e -v $fv2[0] pntEOriVxSld;
+			floatSliderGrp -e -v $fv2[1] pntEOriVySld;
+			floatSliderGrp -e -v $fv2[2] pntEOriVzSld;
+		}
+		if ($facExist) {
+			radioButtonGrp -e -sl $iv[0] PolyFOriRadio;
+			floatSliderGrp -e -v $fv[0] minFOriSld;
+			floatSliderGrp -e -v $fv[1] maxFOriSld;
+			floatSliderGrp -e -v $fv2[0] pntFOriVxSld;
+			floatSliderGrp -e -v $fv2[1] pntFOriVySld;
+			floatSliderGrp -e -v $fv2[2] pntFOriVzSld;
+		}
+	}
+	
+	//Order
+	if ($itemType[0] == 0x0001 ||
+		$itemType[0] == 0x0010) {
+		
+		$iv = `polySelectConstraint -q -or`;
+		$iv2 = `polySelectConstraint -q -orb`;
+
+		if ($vtxExist) {
+			checkBox -e -v $iv[0] polyVOrderCheck;
+			intSliderGrp -e -v $iv2[0] minVOrderSld;
+			intSliderGrp -e -v $iv2[1] maxVOrderSld;
+		}
+		if ($mapExist) {
+			checkBox -e -v $iv[0] polyMOrderCheck;
+			intSliderGrp -e -v $iv2[0] minMOrderSld;
+			intSliderGrp -e -v $iv2[1] maxMOrderSld;
+		}
+	}
+	
+	//Visibility
+	if ($itemType[0] == 0x0001 ||
+		$itemType[0] == 0x8000 ||
+		$itemType[0] == 0x0008) {
+		
+		$iv = `polySelectConstraint -q -v`;
+		$fv = `polySelectConstraint -q -va`;
+		$fv2 = `polySelectConstraint -q -vp`;
+
+		if ($vtxExist) {
+			checkBox -e -v $iv[0] polyVVisiCheck;
+			floatSliderGrp -e -v $fv[0] visiVAngSld;
+			floatSliderGrp -e -v $fv2[0] pntVVisiPxSld;
+			floatSliderGrp -e -v $fv2[1] pntVVisiPySld;
+			floatSliderGrp -e -v $fv2[2] pntVVisiPzSld;
+		}
+		if ($edgExist) {
+			checkBox -e -v $iv[0] polyEVisiCheck;
+			floatSliderGrp -e -v $fv[0] visiEAngSld;
+			floatSliderGrp -e -v $fv2[0] pntEVisiPxSld;
+			floatSliderGrp -e -v $fv2[1] pntEVisiPySld;
+			floatSliderGrp -e -v $fv2[2] pntEVisiPzSld;
+		}
+		if ($facExist) {
+			checkBox -e -v $iv[0] polyFVisiCheck;
+			floatSliderGrp -e -v $fv[0] visiFAngSld;
+			floatSliderGrp -e -v $fv2[0] pntFVisiPxSld;
+			floatSliderGrp -e -v $fv2[1] pntFVisiPySld;
+			floatSliderGrp -e -v $fv2[2] pntFVisiPzSld;
+		}
+	}
+	
+	//random
+	if ($itemType[0] == 0x0001 ||
+		$itemType[0] == 0x8000 ||
+		$itemType[0] == 0x0008 ||
+		$itemType[0] == 0x0010) {
+		
+		$iv = `polySelectConstraint -q -r`;
+		$fv = `polySelectConstraint -q -rr`;
+		
+		if ($vtxExist) {
+			checkBox -e -v $iv[0] polyVRdmCheck;
+			floatSliderGrp -e -v $fv[0] rdmVRatSld;
+		}
+		if ($edgExist) {
+			checkBox -e -v $iv[0] polyERdmCheck;
+			floatSliderGrp -e -v $fv[0] rdmERatSld;
+		}
+		if ($facExist) {
+			checkBox -e -v $iv[0] polyFRdmCheck;
+			floatSliderGrp -e -v $fv[0] rdmFRatSld;
+		}
+		if ($mapExist) {
+			checkBox -e -v $iv[0] polyMRdmCheck;
+			floatSliderGrp -e -v $fv[0] rdmMRatSld;
+		}
+	}
+	
+	// Rename window if tear-off
+	$isTearOff = `scriptedPanel -q -to $whichPanel`;
+	if ($isTearOff) {
+		string $fullName = `scriptedPanel -q -ctl $whichPanel`;
+		string $buffer[];
+		$numTokens = `tokenize $fullName "|" $buffer`;
+		if ($itemType[0] == 0x0001)
+			window -e -title (uiRes("m_polygonConstraint.kPolygonSelectionConstraintVertices"))  $buffer[0];
+		else if ($itemType[0] == 0x8000)
+			window -e -title (uiRes("m_polygonConstraint.kPolygonSelectionConstraintEdges"))  $buffer[0];
+		else if ($itemType[0] == 0x0008)
+			window -e -title (uiRes("m_polygonConstraint.kPolygonSelectionConstraintFaces"))  $buffer[0];
+		else if ($itemType[0] == 0x0010)
+			window -e -title (uiRes("m_polygonConstraint.kPolygonSelectionConstraintTexture"))  $buffer[0];
+		else
+			window -e -title (uiRes("m_polygonConstraint.kPolygonSelectionConstraint"))  $buffer[0];
+	}
+	
+	// Show current component frame
+	if ($itemType[0] == 0x0001)
+		frameLayout -e -vis true $vtxLayoutName;
+	else if ($itemType[0] == 0x8000)
+		frameLayout -e -vis true $edgLayoutName;
+	else if ($itemType[0] == 0x0008)
+		frameLayout -e -vis true $facLayoutName;
+	else if ($itemType[0] == 0x0010)
+		frameLayout -e -vis true $mapLayoutName;
+	waitCursor -state off ;
+}
+
+// Create vertex layout
+///////////////////////////////////////////////////////////////////////
+global proc polygonConstraintVtx(
+string $vtxLayoutName,
+string $scrollFormName)
+{
+	setParent $scrollFormName;
+	setUITemplate -pushTemplate DefaultTemplate;
+	formLayout -e -vis false $scrollFormName;
+	$widgetList =
+		`frameLayout -vis false -cl false -cll false -lv false $vtxLayoutName`;
+	columnLayout -adj true -cal left colF;
+
+	formLayout -e
+		-af $vtxLayoutName bottom 0 
+		-af $vtxLayoutName right  0 
+		-af $vtxLayoutName left  0 
+		-af $vtxLayoutName top 0 
+		$scrollFormName;
+
+// Vertex Properties
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse false 
+		-label (uiRes("m_polygonConstraint.kProperties"))  polyVPropGrp;
+	columnLayout -adj true -cal left colF;
+	
+	radioButtonGrp -label (uiRes("m_polygonConstraint.kLocation"))  -numberOfRadioButtons 3
+		-cw 1 80 -cw 2 70 //-cw 3 130 -cw 4 130
+		-label1 (uiRes("m_polygonConstraint.kOff")) 
+		-on1 "polySelectConstraint -w 0"
+		-label2 (uiRes("m_polygonConstraint.kOnBorder")) 
+		-on2 "polySelectConstraint -w 1"
+		-label3 (uiRes("m_polygonConstraint.kInside")) 
+		-on3 "polySelectConstraint -w 2"
+		PolyVLocRadio;
+	
+	setParent ..;
+	setParent ..;
+// Vertex Geometry
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse true
+		-label (uiRes("m_polygonConstraint.kGeometry"))  polyVGeomGrp;
+	columnLayout -adj true -cal left colF;
+// Vertex Order
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse false 
+		-label (uiRes("m_polygonConstraint.kNeighbors"))  polyVOrdGrp;
+	columnLayout -adj true -cal left colF;
+			
+	checkBox -label (uiRes("m_polygonConstraint.kActivate")) 
+		-onc "polySelectConstraint -or true"
+		-ofc "polySelectConstraint -or false"
+		polyVOrderCheck;
+			
+	intSliderGrp -field true -label (uiRes("m_polygonConstraint.kMin")) 
+		-cw 1 90 -min 0 -max 10 -fmx 255
+		-cc "int $iv[] = `polySelectConstraint -q -orb`;polySelectConstraint -orb #1 $iv[1]"
+		minVOrderSld;
+	intSliderGrp -field true -label (uiRes("m_polygonConstraint.kMax")) 
+		-cw 1 90 -min 0 -max 10 -fmx 255
+		-cc "int $iv[] = `polySelectConstraint -q -orb`;polySelectConstraint -orb $iv[0] #1"
+		maxVOrderSld;
+			
+	setParent ..;
+	setParent ..;
+// Vertex Angle
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse true
+		-label (uiRes("m_polygonConstraint.kAngle"))  polyVAngGrp;
+	columnLayout -adj true -cal left colF;
+
+	checkBox -label (uiRes("m_polygonConstraint.kActivate"))
+		-onc "polySelectConstraint -a true"
+		-ofc "polySelectConstraint -a false"
+		polyVAngCheck;
+
+	string $unitsLabel;
+	float $angleBounds[];
+	$unitsLabel = getAngleLabelAndBounds($angleBounds);
+
+	string $angleSliderAnnotation = (uiRes("m_polygonConstraint.kAngleSliderAnnotation"));
+
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMin"))
+		-annotation $angleSliderAnnotation
+		-extraLabel $unitsLabel
+		-cw 1 90 -min $angleBounds[0] -max $angleBounds[1]
+		-cc ("updateAngleSelectConstraint \"anglebound\" \"" + $scrollFormName + "\" \"minVAngSld\" \"maxVAngSld\"")
+		minVAngSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMax"))
+		-annotation $angleSliderAnnotation
+		-extraLabel $unitsLabel
+		-cw 1 90 -min $angleBounds[0] -max $angleBounds[1]
+		-cc ("updateAngleSelectConstraint \"anglebound\" \"" + $scrollFormName + "\" \"minVAngSld\" \"maxVAngSld\"")
+		maxVAngSld;
+	
+	setParent ..;
+	setParent ..;
+// Vertex Mapped Area
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse true
+		-label (uiRes("m_polygonConstraint.kMappedArea"))  polyV2dAreaGrp;
+	columnLayout -adj true -cal left colF;
+			
+	radioButtonGrp -label "" -numberOfRadioButtons 3
+		-cw 1 1 -cw 2 89 -cw 3 100// -cw 4 100
+		-label1 (uiRes("m_polygonConstraint.kOff"))
+		-on1 "polySelectConstraint -ta 0"
+		-label2 (uiRes("m_polygonConstraint.kUnsigned")) 
+		-on2 "polySelectConstraint -ta 1"
+		-label3 (uiRes("m_polygonConstraint.kSigned")) 
+		-on3 "polySelectConstraint -ta 2"
+		polyVArea2Radio;
+
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMin"))
+		-cw 1 90 -fmn -999 -fmx 999 -min 0 -max 10
+		-cc "float $fv[] = `polySelectConstraint -q -tab`;polySelectConstraint -tab #1 $fv[1]"
+		minVArea2Sld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMax"))
+		-cw 1 90 -fmn -999 -fmx 999 -min 0 -max 10
+		-cc "float $fv[] = `polySelectConstraint -q -tab`;polySelectConstraint -tab $fv[0] #1"
+		maxVArea2Sld;
+			
+	setParent ..;
+	setParent ..;
+// Vertex Distance		
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse true
+		-label (uiRes("m_polygonConstraint.kDistance"))  polyVDistGrp;
+	columnLayout -adj true -cal left colF;
+			
+	radioButtonGrp -label "" -numberOfRadioButtons 4
+		-cw 1 1 -cw 2 89 -cw 3 100// -cw 4 100 -cw 5 100
+		-label1 (uiRes("m_polygonConstraint.kOff"))
+		-on1 "polySelectConstraint -d 0"
+		-label2 (uiRes("m_polygonConstraint.kPoint")) 
+		-on2 "polySelectConstraint -d 1"
+		-label3 (uiRes("m_polygonConstraint.kAxis")) 
+		-on3 "polySelectConstraint -d 2"
+		-label4 (uiRes("m_polygonConstraint.kPlane")) 
+		-on4 "polySelectConstraint -d 3"
+		PolyVDistRadio;
+
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMin"))
+		-cw 1 90 -min 0 -max 100
+		-cc "float $fv[] = `polySelectConstraint -q -db`;polySelectConstraint -db #1 $fv[1]"
+		minVDistSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMax"))
+		-cw 1 90 -min 0 -max 100
+		-cc "float $fv[] = `polySelectConstraint -q -db`;polySelectConstraint -db $fv[0] #1"
+		maxVDistSld;
+			
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kPx")) 
+		-cw 1 90 -min -1000 -max 1000 -fieldMinValue -100000 -fieldMaxValue 100000 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -dp`;polySelectConstraint -dp #1 $fv[1] $fv[2]"
+		pntVDistPxSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kPy")) 
+		-cw 1 90 -min -1000 -max 1000 -fieldMinValue -100000 -fieldMaxValue 100000 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -dp`;polySelectConstraint -dp $fv[0] #1 $fv[2]"
+		pntVDistPySld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kPz")) 
+		-cw 1 90 -min -1000 -max 1000 -fieldMinValue -100000 -fieldMaxValue 100000 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -dp`;polySelectConstraint -dp $fv[0] $fv[1] #1"
+		pntVDistPzSld;
+			
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kVx")) 
+		-cw 1 90 -min -100 -max 100 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -da`;polySelectConstraint -da #1 $fv[1] $fv[2]"
+		pntVDistVxSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kVy")) 
+		-cw 1 90 -min -100 -max 100 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -da`;polySelectConstraint -da $fv[0] #1 $fv[2]"
+		pntVDistVySld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kVz")) 
+		-cw 1 90 -min -100 -max 100 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -da`;polySelectConstraint -da $fv[0] $fv[1] #1"
+		pntVDistVzSld;
+			
+	setParent ..;
+	setParent ..;
+// Vertex Orientation
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse true
+		-label (uiRes("m_polygonConstraint.kOrientation"))  polyVOriGrp;
+	columnLayout -adj true -cal left colF;
+			
+	radioButtonGrp -label "" -numberOfRadioButtons 3
+		-cw 1 1 -cw 2 89 -cw 3 100 //-cw 4 100
+		-label1 (uiRes("m_polygonConstraint.kOff"))
+		-on1 "polySelectConstraint -o 0"
+		-label2 (uiRes("m_polygonConstraint.kOrientation"))
+		-on2 "polySelectConstraint -o 1"
+		-label3 (uiRes("m_polygonConstraint.kDirection")) 
+		-on3 "polySelectConstraint -o 2"
+		PolyVOriRadio;
+
+	$unitsLabel = getAngleLabelAndBounds($angleBounds);
+
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMin"))
+		-annotation $angleSliderAnnotation
+		-extraLabel $unitsLabel
+		-cw 1 90 -min $angleBounds[0] -max $angleBounds[1]
+		-cc ("updateAngleSelectConstraint \"orientbound\" \"" + $scrollFormName + "\" \"minVOriSld\" \"maxVOriSld\"")
+		minVOriSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMax"))
+		-annotation $angleSliderAnnotation
+		-extraLabel $unitsLabel
+		-cw 1 90 -min $angleBounds[0] -max $angleBounds[1]
+		-cc ("updateAngleSelectConstraint \"orientbound\" \"" + $scrollFormName + "\" \"minVOriSld\" \"maxVOriSld\"")
+		maxVOriSld;
+			
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kVx"))
+		-cw 1 90 -min -100 -max 100 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -oa`;polySelectConstraint -oa #1 $fv[1] $fv[2]"
+		pntVOriVxSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kVy"))
+		-cw 1 90 -min -100 -max 100 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -oa`;polySelectConstraint -oa $fv[0] #1 $fv[2]"
+		pntVOriVySld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kVz"))
+		-cw 1 90 -min -100 -max 100 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -oa`;polySelectConstraint -oa $fv[0] $fv[1] #1"
+		pntVOriVzSld;
+			
+	setParent ..;
+	setParent ..;
+// Vertex Visibility
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse true
+		-label (uiRes("m_polygonConstraint.kVisibility"))  polyVVisiGrp;
+	columnLayout -adj true -cal left colF;
+			
+	checkBox -label (uiRes("m_polygonConstraint.kActivate"))
+		-onc "polySelectConstraint -v true"
+		-ofc "polySelectConstraint -v false"
+		polyVVisiCheck;
+			
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kAngle"))
+		-cw 1 90 -min 0 -max 360
+		-cc "polySelectConstraint -va #1"
+		visiVAngSld;
+
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kPx"))
+		-cw 1 90 -min -1000 -max 1000 -fieldMinValue 100000 -fieldMaxValue 100000 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -vp`;polySelectConstraint -vp #1 $fv[1] $fv[2]"
+		pntVVisiPxSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kPy"))
+		-cw 1 90 -min -1000 -max 1000 -fieldMinValue 100000 -fieldMaxValue 100000 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -vp`;polySelectConstraint -vp $fv[0] #1 $fv[2]"
+		pntVVisiPySld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kPz"))
+		-cw 1 90 -min -1000 -max 1000 -fieldMinValue 100000 -fieldMaxValue 100000 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -vp`;polySelectConstraint -vp $fv[0] $fv[1] #1"
+		pntVVisiPzSld;
+			
+	setParent ..;
+	setParent ..;
+	
+	setParent ..;	// end vtx geom column
+	setParent ..;	// end vtx geom frame
+// Vertex Random
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse false 
+		-label (uiRes("m_polygonConstraint.kRandom"))  polyVRdmGrp;
+	columnLayout -adj true -cal left colF;
+			
+	checkBox -label (uiRes("m_polygonConstraint.kActivate"))
+		-onc "polySelectConstraint -r true"
+		-ofc "polySelectConstraint -r false"
+		polyVRdmCheck;
+			
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kRatio")) 
+		-cw 1 90 -min 0 -max 1
+		-cc "polySelectConstraint -rr #1"
+		rdmVRatSld;
+
+	setParent ..;
+	setParent ..;
+	
+	setParent ..; // end vtx column
+	setParent ..; // end vtx frame
+	setUITemplate -popTemplate;
+	formLayout -e -vis true $scrollFormName;
+}
+
+// Create edge layout
+///////////////////////////////////////////////////////////////////////
+global proc polygonConstraintEdg(
+string $edgLayoutName,
+string $scrollFormName)
+{
+	setParent $scrollFormName;
+	setUITemplate -pushTemplate DefaultTemplate;
+	formLayout -e -vis false $scrollFormName;
+	$widgetList =
+		`frameLayout -vis false -cl false -cll false -lv false $edgLayoutName`;
+	columnLayout -adj true -cal left colF;
+	
+	formLayout -e
+		-af $edgLayoutName bottom 0 
+		-af $edgLayoutName right  0 
+		-af $edgLayoutName left  0 
+		-af $edgLayoutName top 0 
+		$scrollFormName;
+	
+// Edge Properties
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse false 
+		-label (uiRes("m_polygonConstraint.kProperties")) polyEPropGrp;
+	columnLayout -adj true -cal left colF;
+	
+	radioButtonGrp -label (uiRes("m_polygonConstraint.kLocation")) -numberOfRadioButtons 3
+		-cw 1 80 -cw 2 70 //-cw 3 130 -cw 4 130
+		-label1 (uiRes("m_polygonConstraint.kOff"))
+		-on1 "polySelectConstraint -w 0"
+		-label2 (uiRes("m_polygonConstraint.kOnBorder"))
+		-on2 "polySelectConstraint -w 1"
+		-label3 (uiRes("m_polygonConstraint.kInside"))
+		-on3 "polySelectConstraint -w 2"
+		PolyELocRadio;
+
+	radioButtonGrp -label (uiRes("m_polygonConstraint.kSmoothing"))  -numberOfRadioButtons 3
+		-cw 1 80 -cw 2 70 //-cw 3 130 -cw 4 130
+		-label1 (uiRes("m_polygonConstraint.kOff"))
+		-on1 "polySelectConstraint -sm 0"
+		-label2 (uiRes("m_polygonConstraint.kHard")) 
+		-on2 "polySelectConstraint -sm 1"
+		-label3 (uiRes("m_polygonConstraint.kSmooth")) 
+		-on3 "polySelectConstraint -sm 2"
+		PolyESmtRadio;
+	
+	setParent ..;
+	setParent ..;
+// Edge Geometry
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse true
+		-label (uiRes("m_polygonConstraint.kGeometry"))  polyEGeomGrp;
+	columnLayout -adj true -cal left colF;	
+// Edge Length
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse false
+		-label (uiRes("m_polygonConstraint.kLength"))  polyELenGrp;
+	columnLayout -adj true -cal left colF;
+			
+	checkBox -label (uiRes("m_polygonConstraint.kActivate"))
+		-onc "polySelectConstraint -l true"
+		-ofc "polySelectConstraint -l false"
+		polyELenCheck;
+			
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMin"))
+		-cw 1 90 -min 0 -max 100
+		-cc "float $fv[] = `polySelectConstraint -q -lb`;polySelectConstraint -lb #1 $fv[1]"
+		minELenSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMax"))
+		-cw 1 90 -min 0 -max 100
+		-cc "float $fv[] = `polySelectConstraint -q -lb`;polySelectConstraint -lb $fv[0] #1"
+		maxELenSld;
+			
+	setParent ..;
+	setParent ..;
+// Edge Angle
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse true
+		-label (uiRes("m_polygonConstraint.kAngle"))  polyEAngGrp;
+	columnLayout -adj true -cal left colF;
+
+	checkBox -label (uiRes("m_polygonConstraint.kActivate"))
+		-onc "polySelectConstraint -a true"
+		-ofc "polySelectConstraint -a false"
+		polyEAngCheck;
+
+	string $unitsLabel;
+	float $angleBounds[];
+	$unitsLabel = getAngleLabelAndBounds($angleBounds);
+
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMin"))
+		-annotation (uiRes("m_polygonConstraint.kAngleSliderAnnotation"))
+		-extraLabel $unitsLabel
+		-cw 1 90 -min $angleBounds[0] -max $angleBounds[1]
+		-cc ("updateAngleSelectConstraint \"anglebound\" \"" + $scrollFormName + "\" \"minEAngSld\" \"maxEAngSld\"")
+		minEAngSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMax"))
+		-annotation (uiRes("m_polygonConstraint.kAngleSliderAnnotation"))
+		-extraLabel $unitsLabel
+		-cw 1 90 -min $angleBounds[0] -max $angleBounds[1]
+		-cc ("updateAngleSelectConstraint \"anglebound\" \"" + $scrollFormName + "\" \"minEAngSld\" \"maxEAngSld\"")
+		maxEAngSld;
+			
+	setParent ..;
+	setParent ..;
+// Edge Mapped Area
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse true
+		-label (uiRes("m_polygonConstraint.kMappedArea"))  polyE2dAreaGrp;
+	columnLayout -adj true -cal left colF;
+			
+	radioButtonGrp -label "" -numberOfRadioButtons 3
+		-cw 1 1 -cw 2 89 -cw 3 100// -cw 4 100
+		-label1 (uiRes("m_polygonConstraint.kOff"))
+		-on1 "polySelectConstraint -ta 0"
+		-label2 (uiRes("m_polygonConstraint.kUnsigned"))
+		-on2 "polySelectConstraint -ta 1"
+		-label3 (uiRes("m_polygonConstraint.kSigned"))
+		-on3 "polySelectConstraint -ta 2"
+		polyEArea2Radio;
+
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMin"))
+		-cw 1 90 -fmn -999 -fmx 999 -min 0 -max 10
+		-cc "float $fv[] = `polySelectConstraint -q -tab`;polySelectConstraint -tab #1 $fv[1]"
+		minEArea2Sld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMax"))
+		-cw 1 90 -fmn -999 -fmx 999 -min 0 -max 10
+		-cc "float $fv[] = `polySelectConstraint -q -tab`;polySelectConstraint -tab $fv[0] #1"
+		maxEArea2Sld;
+			
+	setParent ..;
+	setParent ..;
+// Edge Distance
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse true
+		-label (uiRes("m_polygonConstraint.kDistance"))  polyEDistGrp;
+	columnLayout -adj true -cal left colF;
+			
+	radioButtonGrp -label "" -numberOfRadioButtons 4
+		-cw 1 1 -cw 2 89 -cw 3 100// -cw 4 100 -cw 5 100
+		-label1 (uiRes("m_polygonConstraint.kOff"))
+		-on1 "polySelectConstraint -d 0"
+		-label2 (uiRes("m_polygonConstraint.kPoint"))
+		-on2 "polySelectConstraint -d 1"
+		-label3 (uiRes("m_polygonConstraint.kAxis"))
+		-on3 "polySelectConstraint -d 2"
+		-label4 (uiRes("m_polygonConstraint.kPlane"))
+		-on4 "polySelectConstraint -d 3"
+		PolyEDistRadio;
+
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMin"))
+		-cw 1 90 -min 0 -max 100
+		-cc "float $fv[] = `polySelectConstraint -q -db`;polySelectConstraint -db #1 $fv[1]"
+		minEDistSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMax"))
+		-cw 1 90 -min 0 -max 100
+		-cc "float $fv[] = `polySelectConstraint -q -db`;polySelectConstraint -db $fv[0] #1"
+		maxEDistSld;
+			
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kPx"))
+		-cw 1 90 -min -1000 -max 1000 -fieldMinValue -100000 -fieldMaxValue 100000 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -dp`;polySelectConstraint -dp #1 $fv[1] $fv[2]"
+		pntEDistPxSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kPy"))
+		-cw 1 90 -min -1000 -max 1000 -fieldMinValue -100000 -fieldMaxValue 100000 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -dp`;polySelectConstraint -dp $fv[0] #1 $fv[2]"
+		pntEDistPySld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kPz"))
+		-cw 1 90 -min -1000 -max 1000 -fieldMinValue -100000 -fieldMaxValue 100000 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -dp`;polySelectConstraint -dp $fv[0] $fv[1] #1"
+		pntEDistPzSld;
+			
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kVx"))
+		-cw 1 90 -min -100 -max 100 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -da`;polySelectConstraint -da #1 $fv[1] $fv[2]"
+		pntEDistVxSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kVy"))
+		-cw 1 90 -min -100 -max 100 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -da`;polySelectConstraint -da $fv[0] #1 $fv[2]"
+		pntEDistVySld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kVz"))
+		-cw 1 90 -min -100 -max 100 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -da`;polySelectConstraint -da $fv[0] $fv[1] #1"
+		pntEDistVzSld;
+			
+	setParent ..;
+	setParent ..;
+// Edge Orientation
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse true
+		-label (uiRes("m_polygonConstraint.kOrientation"))  polyEOriGrp;
+	columnLayout -adj true -cal left colF;
+			
+	radioButtonGrp -label "" -numberOfRadioButtons 3
+		-cw 1 1 -cw 2 89 -cw 3 100// -cw 4 100
+		-label1 (uiRes("m_polygonConstraint.kOff"))
+		-on1 "polySelectConstraint -o 0"
+		-label2 (uiRes("m_polygonConstraint.kOrientation"))
+		-on2 "polySelectConstraint -o 1"
+		-label3 (uiRes("m_polygonConstraint.kDirection"))
+		-on3 "polySelectConstraint -o 2"
+		PolyEOriRadio;
+
+	$unitsLabel = getAngleLabelAndBounds($angleBounds);
+
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMin"))
+		-annotation (uiRes("m_polygonConstraint.kAngleSliderAnnotation"))
+		-extraLabel $unitsLabel
+		-cw 1 90 -min $angleBounds[0] -max $angleBounds[1]
+		-cc ("updateAngleSelectConstraint \"orientbound\" \"" + $scrollFormName + "\" \"minEOriSld\" \"maxEOriSld\"")
+		minEOriSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMax"))
+		-annotation (uiRes("m_polygonConstraint.kAngleSliderAnnotation"))
+		-extraLabel $unitsLabel
+		-cw 1 90 -min $angleBounds[0] -max $angleBounds[1]
+		-cc ("updateAngleSelectConstraint \"orientbound\" \"" + $scrollFormName + "\" \"minEOriSld\" \"maxEOriSld\"")
+		maxEOriSld;
+			
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kVx"))
+		-cw 1 90 -min -100 -max 100 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -oa`;polySelectConstraint -oa #1 $fv[1] $fv[2]"
+		pntEOriVxSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kVy"))
+		-cw 1 90 -min -100 -max 100 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -oa`;polySelectConstraint -oa $fv[0] #1 $fv[2]"
+		pntEOriVySld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kVz"))
+		-cw 1 90 -min -100 -max 100 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -oa`;polySelectConstraint -oa $fv[0] $fv[1] #1"
+		pntEOriVzSld;
+			
+	setParent ..;
+	setParent ..;
+// Edge Visibility
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse true
+		-label (uiRes("m_polygonConstraint.kVisibility"))  polyEVisiGrp;
+	columnLayout -adj true -cal left colF;
+			
+	checkBox -label (uiRes("m_polygonConstraint.kActivate"))
+		-onc "polySelectConstraint -v true"
+		-ofc "polySelectConstraint -v false"
+		polyEVisiCheck;
+			
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kAngle"))
+		-cw 1 90 -min 0 -max 360
+		-cc "polySelectConstraint -va #1"
+		visiEAngSld;
+
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kPx"))
+		-cw 1 90 -min -1000 -max 1000  -fieldMinValue -100000 -fieldMaxValue 100000 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -vp`;polySelectConstraint -vp #1 $fv[1] $fv[2]"
+		pntEVisiPxSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kPy"))
+		-cw 1 90 -min -1000 -max 1000  -fieldMinValue -100000 -fieldMaxValue 100000 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -vp`;polySelectConstraint -vp $fv[0] #1 $fv[2]"
+		pntEVisiPySld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kPz"))
+		-cw 1 90 -min -1000 -max 1000  -fieldMinValue -100000 -fieldMaxValue 100000 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -vp`;polySelectConstraint -vp $fv[0] $fv[1] #1"
+		pntEVisiPzSld;
+			
+	setParent ..;
+	setParent ..;
+	
+	setParent ..;	// end edg geom column
+	setParent ..;	// end edg geom frame
+// Edge Random
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse false 
+		-label (uiRes("m_polygonConstraint.kRandom")) polyERdmGrp;
+	columnLayout -adj true -cal left colF;
+			
+	checkBox -label (uiRes("m_polygonConstraint.kActivate"))
+		-onc "polySelectConstraint -r true"
+		-ofc "polySelectConstraint -r false"
+		polyERdmCheck;
+			
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kRatio"))
+		-cw 1 90 -min 0 -max 1
+		-cc "polySelectConstraint -rr #1"
+		rdmERatSld;
+
+	setParent ..;
+	setParent ..;
+	setUITemplate -popTemplate;
+	setParent ..;	// end edge column
+	setParent ..;	// end edge frame
+	formLayout -e -vis true $scrollFormName;
+}
+
+// Create facet layout
+///////////////////////////////////////////////////////////////////////
+global proc getPolyFacetTopoValue()
+{
+	int $dst = 0;
+	
+	int $src1 = `checkBoxGrp -q -v1 PolyFTopCheck`;
+	int $src2 = `checkBoxGrp -q -v2 PolyFTopCheck`;
+	if ($src2) // window shows cstr in reverse order
+		$dst += 1;
+	if ($src1)
+		$dst += 2;
+	polySelectConstraint -tp $dst;
+}
+
+global proc polygonConstraintFac(
+string $facLayoutName,
+string $scrollFormName)
+{
+	setParent $scrollFormName;
+	formLayout -e -vis false $scrollFormName;
+	setUITemplate -pushTemplate DefaultTemplate;
+	$widgetList =
+		`frameLayout -vis false -cl false -cll false -lv false $facLayoutName`;
+	columnLayout -adj true -cal left colF;
+	
+	formLayout -e
+		-af $facLayoutName bottom 0 
+		-af $facLayoutName right  0 
+		-af $facLayoutName left  0 
+		-af $facLayoutName top 0 
+		$scrollFormName;
+
+// Facet Properties
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse false 
+		-label (uiRes("m_polygonConstraint.kProperties")) polyFPropGrp;
+	columnLayout -adj true -cal left colF;
+	
+	radioButtonGrp -label (uiRes("m_polygonConstraint.kLocation"))  -numberOfRadioButtons 3
+		-cw 1 80 -cw 2 70 //-cw 3 140 -cw 4 130
+		-label1 (uiRes("m_polygonConstraint.kOff"))
+		-on1 "polySelectConstraint -w 0"
+		-label2 (uiRes("m_polygonConstraint.kOnBorder"))
+		-on2 "polySelectConstraint -w 1"
+		-label3 (uiRes("m_polygonConstraint.kInside"))
+		-on3 "polySelectConstraint -w 2"
+		PolyFLocRadio;
+
+	radioButtonGrp -label (uiRes("m_polygonConstraint.kOrder"))  -numberOfRadioButtons 4
+		-cw 1 80 -cw 2 70 //-cw 3 80 -cw 4 110
+		-label1 (uiRes("m_polygonConstraint.kOff"))
+		-on1 "polySelectConstraint -sz 0"
+		-label2 (uiRes("m_polygonConstraint.kTriangles")) 
+		-on2 "polySelectConstraint -sz 1"
+		-label3 (uiRes("m_polygonConstraint.kQuads")) 
+		-on3 "polySelectConstraint -sz 2"
+		-label4 (uiRes("m_polygonConstraint.kNsided")) 
+		-on4 "polySelectConstraint -sz 3"
+		PolyFSizRadio;
+			
+	radioButtonGrp -label (uiRes("m_polygonConstraint.kPlanarity"))  -numberOfRadioButtons 3
+		-cw 1 80 -cw 2 70 //-cw 3 140 -cw 4 130
+		-label1 (uiRes("m_polygonConstraint.kOff"))
+		-on1 "polySelectConstraint -p 0"
+		-label2 (uiRes("m_polygonConstraint.kPlanar")) 
+		-on2 "polySelectConstraint -p 2"
+		-label3 (uiRes("m_polygonConstraint.kNonplanar")) 
+		-on3 "polySelectConstraint -p 1"
+		PolyFPlnRadio;
+			
+	radioButtonGrp -label (uiRes("m_polygonConstraint.kConvexity"))  -numberOfRadioButtons 3
+		-cw 1 80 -cw 2 70 //-cw 3 140 -cw 4 130
+		-label1 (uiRes("m_polygonConstraint.kOff"))
+		-on1 "polySelectConstraint -c 0"
+		-label2 (uiRes("m_polygonConstraint.kConcave")) 
+		-on2 "polySelectConstraint -c 1"
+		-label3 (uiRes("m_polygonConstraint.kConvex")) 
+		-on3 "polySelectConstraint -c 2"
+		PolyFCvxRadio;
+			
+	radioButtonGrp -label (uiRes("m_polygonConstraint.kDomains"))  -numberOfRadioButtons 3
+		-cw 1 80 -cw 2 70 //-cw 3 140 -cw 4 130
+		-label1 (uiRes("m_polygonConstraint.kOff"))
+		-on1 "polySelectConstraint -h 0"
+		-label2 (uiRes("m_polygonConstraint.kHoled")) 
+		-on2 "polySelectConstraint -h 1"
+		-label3 (uiRes("m_polygonConstraint.kNonholed")) 
+		-on3 "polySelectConstraint -h 2"
+		PolyFHolRadio;
+	radioButtonGrp -label (uiRes("m_polygonConstraint.kMapping"))  -numberOfRadioButtons 3
+		-cw 1 80 -cw 2 70 //-cw 3 140 -cw 4 130
+		-label1 (uiRes("m_polygonConstraint.kOff"))
+		-on1 "polySelectConstraint -tx 0"
+		-label2 (uiRes("m_polygonConstraint.kMapped")) 
+		-on2 "polySelectConstraint -tx 1"
+		-label3 (uiRes("m_polygonConstraint.kUnmapped")) 
+		-on3 "polySelectConstraint -tx 2"
+		PolyFMapRadio;
+
+	checkBoxGrp -label (uiRes("m_polygonConstraint.kTopology"))  -numberOfCheckBoxes 2
+		-cw 1 80 -cw 2 70 -cw 3 130
+		-label1 (uiRes("m_polygonConstraint.kLamina")) 
+		-label2 (uiRes("m_polygonConstraint.kNontriangulable")) 
+		-cc "getPolyFacetTopoValue()"
+		PolyFTopCheck;
+
+	setParent ..;
+	setParent ..;
+// Facet Geometry
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse true
+		-label (uiRes("m_polygonConstraint.kGeometry"))  polyFGeomGrp;
+	columnLayout -adj true -cal left colF;
+// Facet Area
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse false
+		-label (uiRes("m_polygonConstraint.kArea"))  polyFAreaGrp;
+	columnLayout -adj true -cal left colF;
+
+	checkBox -label (uiRes("m_polygonConstraint.kActivate"))
+		-onc "polySelectConstraint -ga true"
+		-ofc "polySelectConstraint -ga false"
+		polyFAreaCheck;
+
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMin"))
+		-cw 1 90 -min 0.0 -max 1000.0
+		-fieldMinValue 0.0 -fieldMaxValue 10000.0
+		-pre 3
+		-cc "float $fv[] = `polySelectConstraint -q -gab`;polySelectConstraint -gab #1 $fv[1]"
+		minFAreaSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMax"))
+		-cw 1 90 -min 0.0 -max 1000.0
+		-fieldMinValue 0.0 -fieldMaxValue 10000.0
+		-pre 3
+		-cc "float $fv[] = `polySelectConstraint -q -gab`;polySelectConstraint -gab $fv[0] #1"
+		maxFAreaSld;
+			
+	setParent ..;
+	setParent ..;			
+// Facet Mapped Area
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse true
+		-label (uiRes("m_polygonConstraint.kMappedArea"))  polyF2dAreaGrp;
+	columnLayout -adj true -cal left colF;
+			
+	radioButtonGrp -label "" -numberOfRadioButtons 3
+		-cw 1 1 -cw 2 89 -cw 3 100// -cw 4 100
+		-label1 (uiRes("m_polygonConstraint.kOff"))
+		-on1 "polySelectConstraint -ta 0"
+		-label2 (uiRes("m_polygonConstraint.kUnsigned"))
+		-on2 "polySelectConstraint -ta 1"
+		-label3 (uiRes("m_polygonConstraint.kSigned"))
+		-on3 "polySelectConstraint -ta 2"
+		polyFArea2Radio;
+
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMin"))
+		-cw 1 90 -fmn -999 -fmx 999 -min 0 -max 10
+		-cc "float $fv[] = `polySelectConstraint -q -tab`;polySelectConstraint -tab #1 $fv[1]"
+		minFArea2Sld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMax"))
+		-cw 1 90 -fmn -999 -fmx 999 -min 0 -max 10
+		-cc "float $fv[] = `polySelectConstraint -q -tab`;polySelectConstraint -tab $fv[0] #1"
+		maxFArea2Sld;
+			
+	setParent ..;
+	setParent ..;
+// Facet Distance
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse true
+		-label (uiRes("m_polygonConstraint.kDistance"))  polyFDistGrp;
+	columnLayout -adj true -cal left colF;
+			
+	radioButtonGrp -label "" -numberOfRadioButtons 4
+		-cw 1 1 -cw 2 89 -cw 3 100// -cw 4 100 -cw 5 100
+		-label1 (uiRes("m_polygonConstraint.kOff"))
+		-on1 "polySelectConstraint -d 0"
+		-label2 (uiRes("m_polygonConstraint.kPoint"))
+		-on2 "polySelectConstraint -d 1"
+		-label3 (uiRes("m_polygonConstraint.kAxis"))
+		-on3 "polySelectConstraint -d 2"
+		-label4 (uiRes("m_polygonConstraint.kPlane"))
+		-on4 "polySelectConstraint -d 3"
+		PolyFDistRadio;
+
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMin"))
+		-cw 1 90 -min 0 -max 100
+		-cc "float $fv[] = `polySelectConstraint -q -db`;polySelectConstraint -db #1 $fv[1]"
+		minFDistSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMax"))
+		-cw 1 90 -min 0 -max 100
+		-cc "float $fv[] = `polySelectConstraint -q -db`;polySelectConstraint -db $fv[0] #1"
+		maxFDistSld;
+			
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kPx"))
+		-cw 1 90 -min -1000 -max 1000 -fieldMinValue -100000 -fieldMaxValue 100000 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -dp`;polySelectConstraint -dp #1 $fv[1] $fv[2]"
+		pntFDistPxSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kPy"))
+		-cw 1 90 -min -1000 -max 1000 -fieldMinValue -100000 -fieldMaxValue 100000 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -dp`;polySelectConstraint -dp $fv[0] #1 $fv[2]"
+		pntFDistPySld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kPz"))
+		-cw 1 90 -min -1000 -max 1000 -fieldMinValue -100000 -fieldMaxValue 100000 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -dp`;polySelectConstraint -dp $fv[0] $fv[1] #1"
+		pntFDistPzSld;
+			
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kVx"))
+		-cw 1 90 -min -100 -max 100 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -da`;polySelectConstraint -da #1 $fv[1] $fv[2]"
+		pntFDistVxSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kVy"))
+		-cw 1 90 -min -100 -max 100 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -da`;polySelectConstraint -da $fv[0] #1 $fv[2]"
+		pntFDistVySld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kVz"))
+		-cw 1 90 -min -100 -max 100 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -da`;polySelectConstraint -da $fv[0] $fv[1] #1"
+		pntFDistVzSld;
+			
+	setParent ..;
+	setParent ..;
+// Facet Orientation
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse true
+		-label (uiRes("m_polygonConstraint.kOrientation"))  polyFOriGrp;
+	columnLayout -adj true -cal left colF;
+			
+	radioButtonGrp -label "" -numberOfRadioButtons 3
+		-cw 1 1 -cw 2 89 -cw 3 100// -cw 4 100
+		-label1 (uiRes("m_polygonConstraint.kOff"))
+		-on1 "polySelectConstraint -o 0"
+		-label2 (uiRes("m_polygonConstraint.kOrientation"))
+		-on2 "polySelectConstraint -o 1"
+		-label3 (uiRes("m_polygonConstraint.kDirection"))
+		-on3 "polySelectConstraint -o 2"
+		PolyFOriRadio;
+
+	string $unitsLabel;
+	float $angleBounds[];
+	$unitsLabel = getAngleLabelAndBounds($angleBounds);
+
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMin"))
+		-annotation (uiRes("m_polygonConstraint.kAngleSliderAnnotation"))
+		-extraLabel $unitsLabel
+		-cw 1 90 -min $angleBounds[0] -max $angleBounds[1]
+		-cc ("updateAngleSelectConstraint \"orientbound\" \"" + $scrollFormName + "\" \"minFOriSld\" \"maxFOriSld\"")
+		minFOriSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMax"))
+		-annotation (uiRes("m_polygonConstraint.kAngleSliderAnnotation"))
+		-extraLabel $unitsLabel
+		-cw 1 90 -min $angleBounds[0] -max $angleBounds[1]
+		-cc ("updateAngleSelectConstraint \"orientbound\" \"" + $scrollFormName + "\" \"minFOriSld\" \"maxFOriSld\"")
+		maxFOriSld;
+			
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kVx"))
+		-cw 1 90 -min -100 -max 100 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -oa`;polySelectConstraint -oa #1 $fv[1] $fv[2]"
+		pntFOriVxSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kVy"))
+		-cw 1 90 -min -100 -max 100 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -oa`;polySelectConstraint -oa $fv[0] #1 $fv[2]"
+		pntFOriVySld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kVz"))
+		-cw 1 90 -min -100 -max 100 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -oa`;polySelectConstraint -oa $fv[0] $fv[1] #1"
+		pntFOriVzSld;
+			
+	setParent ..;
+	setParent ..;
+// Facet Visibility
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse true
+		-label (uiRes("m_polygonConstraint.kVisibility"))  polyFVisiGrp;
+	columnLayout -adj true -cal left colF;
+			
+	checkBox -label (uiRes("m_polygonConstraint.kActivate"))
+		-onc "polySelectConstraint -v true"
+		-ofc "polySelectConstraint -v false"
+		polyFVisiCheck;
+			
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kAngle"))
+		-cw 1 90 -min 0 -max 360
+		-cc "polySelectConstraint -va #1"
+		visiFAngSld;
+
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kPx"))
+		-cw 1 90 -min -1000 -max 1000 -fieldMinValue -100000 -fieldMaxValue 100000 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -vp`;polySelectConstraint -vp #1 $fv[1] $fv[2]"
+		pntFVisiPxSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kPy"))
+		-cw 1 90 -min -1000 -max 1000 -fieldMinValue -100000 -fieldMaxValue 100000 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -vp`;polySelectConstraint -vp $fv[0] #1 $fv[2]"
+		pntFVisiPySld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kPz"))
+		-cw 1 90 -min -1000 -max 1000 -fieldMinValue -100000 -fieldMaxValue 100000 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -vp`;polySelectConstraint -vp $fv[0] $fv[1] #1"
+		pntFVisiPzSld;
+			
+	setParent ..;
+	setParent ..;
+	
+	setParent ..;	// end fac geom column
+	setParent ..;	// end fac geom frame
+// Facet Random
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse false 
+		-label (uiRes("m_polygonConstraint.kRandom"))  polyFRdmGrp;
+	columnLayout -adj true -cal left colF;
+			
+	checkBox -label (uiRes("m_polygonConstraint.kActivate"))
+		-onc "polySelectConstraint -r true"
+		-ofc "polySelectConstraint -r false"
+		polyFRdmCheck;
+			
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kRatio"))
+		-cw 1 90 -min 0 -max 1
+		-cc "polySelectConstraint -rr #1"
+		rdmFRatSld;
+
+	setParent ..;
+	setParent ..;
+
+	setParent ..;	// end face column
+	setParent ..;	// end face frame
+	setUITemplate -popTemplate;
+	formLayout -e -vis true $scrollFormName;
+}
+
+// Create texture coord layout
+///////////////////////////////////////////////////////////////////////
+global proc polygonConstraintMap(
+string $mapLayoutName,
+string $scrollFormName)
+{
+	setParent $scrollFormName;
+	formLayout -e -vis false $scrollFormName;
+	setUITemplate -pushTemplate DefaultTemplate;
+	$widgetList =
+		`frameLayout -vis false -cl false -cll false -lv false $mapLayoutName`;
+	columnLayout -adj true -cal left colF;
+	
+	formLayout -e
+		-af $mapLayoutName bottom 0 
+		-af $mapLayoutName right  0 
+		-af $mapLayoutName left  0 
+		-af $mapLayoutName top 0 
+		$scrollFormName;
+
+// UV Properties
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse false 
+		-label (uiRes("m_polygonConstraint.kProperties")) polyMPropGrp;
+	columnLayout -adj true -cal left colF;
+	radioButtonGrp -label (uiRes("m_polygonConstraint.kLocation"))  -numberOfRadioButtons 3
+		-cw 1 80 -cw 2 70 //-cw 3 130 -cw 4 130
+		-label1 (uiRes("m_polygonConstraint.kOff"))
+		-on1 "polySelectConstraint -w 0"
+		-label2 (uiRes("m_polygonConstraint.kOnBorder"))
+		-on2 "polySelectConstraint -w 1"
+		-label3 (uiRes("m_polygonConstraint.kInside"))
+		-on3 "polySelectConstraint -w 2"
+		PolyMLocRadio;
+	
+	setParent ..;
+	setParent ..;
+// UV Geometry
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse true
+		-label (uiRes("m_polygonConstraint.kGeometry"))  polyMGeomGrp;
+	columnLayout -adj true -cal left colF;
+// UV Order
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse false 
+		-label (uiRes("m_polygonConstraint.kNeighbors2"))  polyMOrdGrp;
+	columnLayout -adj true -cal left colF;
+			
+	checkBox -label (uiRes("m_polygonConstraint.kActivate"))
+		-onc "polySelectConstraint -or true"
+		-ofc "polySelectConstraint -or false"
+		polyMOrderCheck;
+			
+	intSliderGrp -field true -label (uiRes("m_polygonConstraint.kMin"))
+		-cw 1 90 -min 0 -max 10 -fmx 255
+		-cc "int $iv[] = `polySelectConstraint -q -orb`;polySelectConstraint -orb #1 $iv[1]"
+		minMOrderSld;
+	intSliderGrp -field true -label (uiRes("m_polygonConstraint.kMax"))
+		-cw 1 90 -min 0 -max 10 -fmx 255
+		-cc "int $iv[] = `polySelectConstraint -q -orb`;polySelectConstraint -orb $iv[0] #1"
+		maxMOrderSld;
+	
+	setParent ..;
+	setParent ..;
+// UV Angle
+//-----------------------------------------------------------------------
+    frameLayout -collapsable true -collapse true
+		-label (uiRes("m_polygonConstraint.kAngle")) polyMAngGrp;
+	columnLayout -adj true -cal left colF;
+
+	checkBox -label (uiRes("m_polygonConstraint.kActivate"))
+		-onc "polySelectConstraint -a true"
+		-ofc "polySelectConstraint -a false"
+		polyMAngCheck;
+
+	string $unitsLabel;
+	float $angleBounds[];
+	$unitsLabel = getAngleLabelAndBounds($angleBounds);
+
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMin"))
+		-annotation (uiRes("m_polygonConstraint.kAngleSliderAnnotation"))
+		-extraLabel $unitsLabel
+		-cw 1 90 -min $angleBounds[0] -max $angleBounds[1]
+		-cc ("updateAngleSelectConstraint \"anglebound\" \"" + $scrollFormName + "\" \"minMAngSld\" \"maxMAngSld\"")
+		minMAngSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMax"))
+		-annotation (uiRes("m_polygonConstraint.kAngleSliderAnnotation"))
+		-extraLabel $unitsLabel
+		-cw 1 90 -min $angleBounds[0] -max $angleBounds[1]
+		-cc ("updateAngleSelectConstraint \"anglebound\" \"" + $scrollFormName + "\" \"minMAngSld\" \"maxMAngSld\"")
+		maxMAngSld;
+			
+	setParent ..;
+	setParent ..;
+// UV Mapped Area
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse true
+		-label (uiRes("m_polygonConstraint.kMappedArea"))  polyM2dAreaGrp;
+	columnLayout -adj true -cal left colF;
+			
+	radioButtonGrp -label "" -numberOfRadioButtons 3
+		-cw 1 1 -cw 2 89 -cw 3 100// -cw 4 100
+		-label1 (uiRes("m_polygonConstraint.kOff"))
+		-on1 "polySelectConstraint -ta 0"
+		-label2 (uiRes("m_polygonConstraint.kUnsigned"))
+		-on2 "polySelectConstraint -ta 1"
+		-label3 (uiRes("m_polygonConstraint.kSigned"))
+		-on3 "polySelectConstraint -ta 2"
+		polyMArea2Radio;
+
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMin"))
+		-cw 1 90 -fmn -999 -fmx 999 -min 0 -max 10
+		-cc "float $fv[] = `polySelectConstraint -q -tab`;polySelectConstraint -tab #1 $fv[1]"
+		minMArea2Sld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMax"))
+		-cw 1 90 -fmn -999 -fmx 999 -min 0 -max 10
+		-cc "float $fv[] = `polySelectConstraint -q -tab`;polySelectConstraint -tab $fv[0] #1"
+		maxMArea2Sld;
+			
+	setParent ..;
+	setParent ..;
+// UV Distance		
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse true
+		-label (uiRes("m_polygonConstraint.kDistance"))  polyMDistGrp;
+	columnLayout -adj true -cal left colF;
+			
+	radioButtonGrp -label "" -numberOfRadioButtons 4
+		-cw 1 1 -cw 2 89 -cw 3 100// -cw 4 100 -cw 5 100
+		-label1 (uiRes("m_polygonConstraint.kOff"))
+		-on1 "polySelectConstraint -d 0"
+		-label2 (uiRes("m_polygonConstraint.kPoint"))
+		-on2 "polySelectConstraint -d 1"
+		-label3 (uiRes("m_polygonConstraint.kAxis"))
+		-on3 "polySelectConstraint -d 2"
+		-label4 (uiRes("m_polygonConstraint.kPlane"))
+		-on4 "polySelectConstraint -d 3"
+		PolyMDistRadio;
+
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMin"))
+		-cw 1 90 -min 0 -max 100
+		-cc "float $fv[] = `polySelectConstraint -q -db`;polySelectConstraint -db #1 $fv[1]"
+		minMDistSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMax"))
+		-cw 1 90 -min 0 -max 100
+		-cc "float $fv[] = `polySelectConstraint -q -db`;polySelectConstraint -db $fv[0] #1"
+		maxMDistSld;
+			
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kPx"))
+		-cw 1 90 -min -1000 -max 1000 -fieldMinValue -100000 -fieldMaxValue 100000 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -dp`;polySelectConstraint -dp #1 $fv[1] $fv[2]"
+		pntMDistPxSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kPy"))
+		-cw 1 90 -min -1000 -max 1000 -fieldMinValue -100000 -fieldMaxValue 100000 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -dp`;polySelectConstraint -dp $fv[0] #1 $fv[2]"
+		pntMDistPySld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kPz"))
+		-cw 1 90 -min -1000 -max 1000 -fieldMinValue -100000 -fieldMaxValue 100000 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -dp`;polySelectConstraint -dp $fv[0] $fv[1] #1"
+		pntMDistPzSld;
+		
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kVx"))
+		-cw 1 90 -min -100 -max 100 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -da`;polySelectConstraint -da #1 $fv[1] $fv[2]"
+		pntMDistVxSld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kVy"))
+		-cw 1 90 -min -100 -max 100 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -da`;polySelectConstraint -da $fv[0] #1 $fv[2]"
+		pntMDistVySld;
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kVz"))
+		-cw 1 90 -min -100 -max 100 -pre 2
+		-cc "float $fv[] = `polySelectConstraint -q -da`;polySelectConstraint -da $fv[0] $fv[1] #1"
+		pntMDistVzSld;
+			
+	setParent ..;
+	setParent ..;
+			
+	setParent ..;	// end uv geom column
+	setParent ..;	// end uv geom frame
+// UV Random
+//-----------------------------------------------------------------------
+	frameLayout -collapsable true -collapse false 
+		-label (uiRes("m_polygonConstraint.kRandom"))  polyMRdmGrp;
+	columnLayout -adj true -cal left colF;
+			
+	checkBox -label (uiRes("m_polygonConstraint.kActivate"))
+		-onc "polySelectConstraint -r true"
+		-ofc "polySelectConstraint -r false"
+		polyMRdmCheck;
+			
+	floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kRatio"))
+		-cw 1 90 -min 0 -max 1
+		-cc "polySelectConstraint -rr #1"
+		rdmMRatSld;
+
+	setParent ..;
+	setParent ..;
+
+	setParent ..;	// end map column
+	setParent ..;	// end map frame
+	setUITemplate -popTemplate;
+	formLayout -e -vis true $scrollFormName;
+}
+
+global proc polygonSelectionPropagateSetAngle( float $angle )
+{
+	polySelectConstraint -at $angle;
+}
+
+global proc polygonSelectionPropagateSet()
+{
+	int $i = `optionMenuGrp -q -sl PolyPropSelect`;
+	if ( $i == 1 )	// off
+		polySelectConstraint -bo false -bp false -sh false -cr false -ap false -lp false -rp false;
+	if ( $i == 2 )	// shell
+		polySelectConstraint -bo false -bp false -sh true -cr false -ap false -lp false -rp false;
+	if ( $i == 3 )	// border
+		polySelectConstraint -bo false -bp true -sh false -cr false -ap false -lp false -rp false;
+	if ( $i == 4 )	// crease
+		polySelectConstraint -bo false -bp false -sh false -cr true -ap false -lp false -rp false;
+	if ( $i == 5 )	// angle
+		polySelectConstraint -bo false -bp false -sh false -cr false -ap true -lp false -rp false;
+	if ( $i == 6 )	// loop
+		polySelectConstraint -bo false -bp false -sh false -cr false -ap false -lp true -rp false;
+	if ( $i == 7 )	// ring
+		polySelectConstraint -bo false -bp false -sh false -cr false -ap false -lp false -rp true;
+
+	if ( $i == 5 )
+		floatSliderGrp -e -en true PolyPropAngle;
+	else
+		floatSliderGrp -e -en false PolyPropAngle;
+}
+
+// Create top control : main proc
+///////////////////////////////////////////////////////////////////////
+global proc polygonConstraint(string $whichPanel)
+{
+	// get parent window name
+	string $fullName = `scriptedPanel -q -ctl $whichPanel`;
+	string $buffer[];
+	$numTokens = `tokenize $fullName "|" $buffer`;
+	$isSeparate = `scriptedPanel -q -to $whichPanel`;
+
+	if ($isSeparate) {
+		// parent window adjusts to fit its children size
+		window -e -resizeToFitChildren true $buffer[0];
+		// parent window icon name
+		string $polConstraintName = (uiRes("m_polygonConstraint.kIconName"));
+		window -e -iconName $polConstraintName $buffer[0];
+	}
+	
+	string $topLayoutName	= "polyConstraintForm";
+	string $scrollName		= "polyConstraintScroll";
+	string $scrollFormName	= "polyConstraintScrollForm";
+	string $vtxLayoutName	= "polyConstraintVtx";
+	string $edgLayoutName	= "polyConstraintEdg";
+	string $facLayoutName	= "polyConstraintFac";
+	string $mapLayoutName	= "polyConstraintOff";
+
+	setUITemplate -pushTemplate DefaultTemplate;
+
+// Create the top level layout
+	formLayout  $topLayoutName;	
+
+// Mode buttons
+	radioButtonGrp -label (uiRes("m_polygonConstraint.kConstrain"))  -numberOfRadioButtons 2
+		-cw 1 95 -cw 2 130 -cw 3 115
+		-label1 (uiRes("m_polygonConstraint.kNothing")) 
+		-on1 "polySelectConstraint -m 0"
+		-label2 (uiRes("m_polygonConstraint.kNextSelection")) 
+		-on2 "polySelectConstraint -m 1"
+		PolyModRadio;
+	radioButtonGrp -label (uiRes("m_polygonConstraint.kBlank"))  -numberOfRadioButtons 2
+		-cw 1 95 -cw 2 130 -cw 3 115
+		-label1 (uiRes("m_polygonConstraint.kCurrentAndNext")) 
+		-on1 "polySelectConstraint -m 2"
+		-label2 (uiRes("m_polygonConstraint.kAllAndNext")) 
+		-on2 "polySelectConstraint -m 3"
+		-shareCollection PolyModRadio
+		PolyModRadio2;
+		
+// Scrollable area containing the frames for various types
+	scrollLayout -cr true -h 300 $scrollName; //-h 300 enough to see facet properties
+		formLayout $scrollFormName;
+		setParent ..;	// end formLayout
+	setParent ..;		// end scrollLayout $scrollName
+
+// Propagation 
+	frameLayout -collapsable false -borderVisible false -label ""
+		polyExtendGrp;
+	
+	    formLayout propF ;
+		
+            // automatic propagation
+			formLayout propagationForm;
+				optionMenuGrp -label (uiRes("m_polygonConstraint.kPropagation")) -cc "polygonSelectionPropagateSet" PolyPropSelect;
+					menuItem -label (uiRes("m_polygonConstraint.kOff"));
+					menuItem -label (uiRes("m_polygonConstraint.kShell"));
+					menuItem -label (uiRes("m_polygonConstraint.kBorder"));
+					menuItem -label (uiRes("m_polygonConstraint.kCrease"));
+					menuItem -label (uiRes("m_polygonConstraint.kPropAngle"));
+					menuItem -label (uiRes("m_polygonConstraint.kPropLoop")) PolyPropEdgeLoop;
+					menuItem -label (uiRes("m_polygonConstraint.kPropRing")) PolyPropEdgeRing;
+				setParent -menu ..;
+
+				floatSliderGrp -field true -label (uiRes("m_polygonConstraint.kMaxAngle")) 
+					-cw 1 90 -min 0 -max 180
+					-cc "polygonSelectionPropagateSetAngle #1"
+					-en false
+					PolyPropAngle;
+
+				formLayout -e
+					-af PolyPropSelect "left" 0
+					-ac PolyPropAngle "left" 4 PolyPropSelect
+					-af PolyPropAngle "right" 0
+					propagationForm;
+			setParent ..;
+
+			// buttons
+			formLayout -numberOfDivisions 100 selectButtonForm ;
+			    // propagation buttons
+	            button -width 150 -label (uiRes("m_polygonConstraint.kGrowSelectionRegion"))    -c "polySelectConstraint -pp 1"
+					buttonMore;
+				button -width 150 -label (uiRes("m_polygonConstraint.kShrinkSelectionRegion"))    -c "polySelectConstraint -pp 2"
+					buttonLess;
+				button -width 165 -label (uiRes("m_polygonConstraint.kSelectSelectionBoundary"))  -c "polySelectConstraint -pp 3"
+					buttonBorder;
+
+				//  Force the buttons to have a common width, this will not only
+				//  look better but also allow the buttons to be centred in the
+				//  window.
+				int $divisions = `formLayout -query -numberOfDivisions selectButtonForm`;
+				int $space = 4; 						// Space between buttons.
+				int $left  = $divisions/3;		// Left division
+				int $right = $divisions*2/3;	// Right division
+				formLayout -e
+					-af buttonMore   "top"    0
+					-af buttonMore   "bottom" 0
+					-af buttonMore   "left"   0
+					-ac buttonMore   "right"  $space buttonLess
+
+					-af buttonLess   "top"    0
+					-af buttonLess   "bottom" 0
+					-ap buttonLess   "left"   0 $left
+					-ap buttonLess   "right"  0 $right
+
+					-af buttonBorder "top"    0
+					-af buttonBorder "bottom" 0
+					-af buttonBorder "right"  0
+					-ac buttonBorder "left"   $space buttonLess
+					selectButtonForm;
+					
+			setParent ..;	// end formLayout selectButtonForm
+
+			formLayout closeButtonForm ;
+				// Close buttons
+				if ($isSeparate) {
+					string $closeCmd = ("evalDeferred(\"deleteUI " + $buffer[0] + "\");");
+
+					button -width 200 -label (uiRes("m_polygonConstraint.kCloseAndReset"))  -c ("resetPolySelectConstraint; " + $closeCmd )
+						buttonCloseReset;
+					button -width 250 -label (uiRes("m_polygonConstraint.kCloseAndRemember"))  -c ("rememberPolySelectConstraint; " + $closeCmd)
+						buttonCloseRemember;
+
+					formLayout -e
+						-af buttonCloseReset "left" 0
+						-ac buttonCloseRemember "left" $space buttonCloseReset
+						-af buttonCloseRemember "right"  0
+						closeButtonForm;
+				}
+			setParent ..;	// end formLayout closeButtonForm
+			
+			formLayout -e
+				-af propagationForm "top"	0
+				-af propagationForm "left"	0
+				-af propagationForm "right"	0
+				-an propagationForm "bottom"
+				
+				-ac selectButtonForm "top" 	0 propagationForm
+				-af selectButtonForm "left"	0
+				-af selectButtonForm "right"	0
+				-ac closeButtonForm "top" 5 selectButtonForm
+				-af closeButtonForm "left"	0
+				-af closeButtonForm "right"	0
+				//-af closeButtonForm "bottom" 0
+				propF;
+			
+		setParent ..; 		// end formLayout propF
+	setParent ..; 			// end frameLayout polyExtendGrp;
+
+	// setup the layout
+	formLayout -e
+		-af PolyModRadio "top"		0 
+		-an PolyModRadio "bottom"
+		-af PolyModRadio "left"		0
+		-af PolyModRadio "right"	0
+		-af PolyModRadio2 "left"		0
+			
+		-ac PolyModRadio2 "top"		0 PolyModRadio
+		-ac $scrollName "top"		0 PolyModRadio2
+		-ac $scrollName "bottom"	0 polyExtendGrp
+		-af $scrollName "left"		0
+		-af $scrollName "right"		0
+
+		-an polyExtendGrp "top"
+		-af polyExtendGrp "bottom"	0
+		-af polyExtendGrp "left"	0
+		-af polyExtendGrp "right"	0
+		$topLayoutName;
+
+	setParent ..;	// end formLayout $topLayoutName
+
+	setUITemplate -popTemplate;
+	
+// Update current component frame
+	restorePolySelectConstraint;
+	polygonConstraintUpdate($whichPanel/*,TOCLEAN
+							  $scrollFormName,
+							  $vtxLayoutName,
+							  $edgLayoutName,
+							  $facLayoutName,
+							  $mapLayoutName*/);
+
+// Give callback for the Monitor to refresh window
+	polySelectConstraintMonitor -cc "polygonConstraintUpdate" $whichPanel;
+	scriptJob -event "selectionConstraintsChanged" ("polygonConstraintUpdate "+$whichPanel) -parent "PolyPropSelect";
+}

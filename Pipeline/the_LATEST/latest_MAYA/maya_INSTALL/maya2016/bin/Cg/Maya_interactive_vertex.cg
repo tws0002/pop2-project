@@ -1,0 +1,380 @@
+// FastShader_vertex.cg
+//
+//
+#include "Maya_Lighting.cgh"
+
+// Default settings
+#define PASS_NORMAL
+#define WORLD_SPACE
+#define CREATE_COLOR
+
+
+// Conditionals
+#if defined (OBJECT_NORMAL)
+	#define PASS_BUMP_UV
+	#undef PASS_NORMAL
+#endif
+
+#if defined (BUMP_MAP)
+	#define PASS_BUMP_UV
+	#define PASS_TANGENT
+#endif
+
+#if defined (OBJECT_SPACE) 
+	#undef WORLD_SPACE
+#endif // OBJECT_SPACE
+
+#if defined (COLOR_PER_VERTEX)
+	#define PASS_COLOR
+#endif // COLOR_PER_VERTEX
+
+
+#if !defined(CONSTANT_COLOR)  // there is a texture map
+
+	#if defined (LAYER_TWO) 
+		#define PASS_TEX1_UV
+		#define PASS_TEX1_2DTEX
+	#endif
+
+	#define PASS_TEX0_UV
+	#define PASS_TEX0_2DTEX
+#endif
+
+#if !defined(CONSTANT_TRANSPARENCY) 
+	#define PASS_TEX0_ALPHA_UV
+	#define PASS_TEX0_ALPHA_2DTEX
+#endif
+
+#if defined (COLOR_PER_VERTEX)
+	#define PASS_VERTEX_COLOR
+	#define PASS_CONSTS_COLOR
+#endif
+
+// Fragment structure
+//
+struct vert2frag
+{
+    float4 hPosition            : POSITION;		// Clip-space vertex position
+    float4 position             : TEXCOORD0;	// World/Object-space vertex position
+
+#if defined (PASS_NORMAL)
+	float3 normal				: TEXCOORD1;	// World/Object-space normal vector
+#endif // PASS_NORMAL
+
+#if defined (PASS_TANGENT)
+	float4 tangent				: TEXCOORD2;	// World-space tangent vector + possible sign of binormal
+#endif // PASS_TANGENT
+
+#if defined (PASS_BUMP_UV)
+	float2 bumpTexUv			: TEXCOORD3;	// Object space normal map
+#endif  // PASS_BUMP_UV
+
+#if defined (PASS_TEX0_UV) || defined (PASS_TEX0_ALPHA_UV) 
+	#if defined (PASS_TEX0_ALPHA_UV) 
+		float4 colorTexUv			: TEXCOORD4;	// Color base layer + alpha packed
+	#else
+		float2 colorTexUv			: TEXCOORD4;	// Color base layer only
+	#endif
+#endif
+
+#if defined (PASS_TEX1_UV) 
+	#if defined (PASS_TEX1_ALPHA_UV)
+		float4  pass2TexUv			: TEXCOORD5;	// Used by second layer  + alpha packed
+	#else
+		float2  pass2TexUv			: TEXCOORD5;	// Used by second layer  
+	#endif
+#endif // PASS_TEX1_UV
+
+#if defined (PASS_VERTEX_COLOR)
+	float4 vertexColor				: TEXCOORD7;	// User defined CPV either unclamped or as a layer modulator 
+
+#endif
+
+	float4 vertexBaseColor			: COLOR0;		// Base Color map
+
+#if defined(TWO_SIDED_LIGHTING)
+	float4	frontColor				: COLOR1;		// Secondary front color (currently use only to pass side information)
+	float4	backColor				: BCOL1;		// Secondary back color (currently use only to pass side information)
+#endif
+
+
+};
+
+
+// Vertex structure
+struct app2vert
+{
+    float4 position             : POSITION;		// Object space position
+    float4 normal               : NORMAL;		// Object space normal
+
+#if defined (PASS_TANGENT)
+	float3 tangent				: TEXCOORD1;	// Object-space tangent vector 
+ 	float  binormal				: TEXCOORD2;	// binormal vector sign 
+#endif // PASS_TANGENT
+
+#if defined (PASS_BUMP_UV)
+	float2 bumpTexUv			: TEXCOORD3;
+#endif // BUMP_MAP
+
+#if defined (PASS_TEX0_UV) 
+	float2 colorTexUv			: TEXCOORD4;
+#endif // PASS_TEX0_UV
+
+#if defined (PASS_TEX1_UV) 
+	float2 pass2TexUv 			: TEXCOORD5;
+#endif // PASS_TEX1_UV
+
+
+#if defined (PASS_TEX0_ALPHA_UV)
+	float2 transpTexUv			: TEXCOORD6;	
+#endif
+
+#if defined (PASS_TEX1_ALPHA_UV)
+	float2 pass2AlphaTexUv		: TEXCOORD7;
+#endif
+
+#if defined (PASS_VERTEX_COLOR)
+	float4 colorPerVertex		: TEXCOORD0;	// support unclamped color 
+
+#elif defined (PASS_COLOR) 
+	float4 colorPerVertex		: COLOR0;
+
+#endif // PASS_VERTEX_COLOR
+
+};
+
+#if defined (PASS_BUMP_UV)
+	uniform float4	bumpTexMatrix0;
+	uniform float4	bumpTexMatrix1; 
+#endif  // PASS_BUMP_UV
+
+#if defined (PASS_TEX0_UV) 
+	uniform float4	colorTexMatrix0;
+	uniform float4	colorTexMatrix1;
+#endif  // PASS_TEX0_UV
+
+#if defined (PASS_TEX0_ALPHA_UV) 
+	uniform float4	transpTexMatrix0;
+	uniform float4	transpTexMatrix1;
+#endif  // PASS_TEX1_ALPHA_UV
+
+
+#if defined (PASS_TEX1_UV) 
+	uniform float4	pass2TexMatrix0;
+	uniform float4	pass2TexMatrix1;
+#endif  // PASS_TEX1_UV
+
+#if defined (PASS_TEX1_ALPHA_UV) 
+	uniform float4	pass2AlphaTexMatrix0;
+	uniform float4	pass2AlphaTexMatrix1;
+#endif  // PASS_TEX1_ALPHA_UV
+
+
+#if defined PASS_CONSTS_COLOR
+	uniform float4  constantColor;		
+#endif
+
+#if !defined(TWO_SIDED_LIGHTING)						
+	uniform float	normalMultiplier;	// -1 if normal (and binormal) needs to be inverted, 1 otherwise.
+#endif	
+
+////////////////////////////////////////////////////////
+// functions
+////////////////////////////////////////////////////////
+
+// Clip space 
+
+float4  clipPosition(float4 position) {
+    // Q: To check, why even send the model view matrix if we are
+    // getting the position invariant one ?
+    //
+
+	return mul(glstate.matrix.mvp, position);
+}
+
+// Object space transformation
+
+#if !defined(WORLD_SPACE)  // Work in object space
+
+// Don't need these there, but these are forced upon us, still
+//
+uniform float4x4 objToWorldMatrix;
+uniform float4x4 objToWorldMatrix_invtrans;
+
+float3 tranformVector(float3 vec) {
+	// Compute unnormalized world space normal
+	//
+	return vec;
+}
+
+float4 tranformPosition(float3 pos) {
+	// Compute unnormalized world space normal
+	//
+	return float4(pos, 1.0);
+}
+
+float4 transformTangent(float3 tangent, float sign) 
+// Compute and pack the tanget vector
+//
+{
+	return float4(tangent, sign);
+}
+
+
+#else // WORLD_SPACE
+
+uniform float4x4 objToWorldMatrix;
+uniform float4x4 objToWorldMatrix_invtrans;
+
+float3 tranformVector(float3 vect)
+// Compute unnormalized world space normal
+//
+{
+	return mul(objToWorldMatrix, float4(vect, 0.0)).xyz;
+}
+
+float4 tranformPosition(float3 vect)
+// Compute unnormalized world space normal
+//
+{
+	return mul(objToWorldMatrix, float4(vect, 1.0));
+}
+
+float4 transformTangent(float3 tangent, float sign) 
+// Compute and pack the tanget vector
+//
+{
+	// TO DO
+	return float4(tangent, sign);
+}
+
+#endif // WORLDS_SPACE
+
+
+///////////////////////////////////////////////////////////
+// Main vertex function entry
+///////////////////////////////////////////////////////////
+
+vert2frag main( app2vert IN )
+{
+
+    vert2frag OUT;
+    
+    // Compute the clip-space vertex position.
+    //
+    OUT.hPosition = clipPosition(IN.position);
+
+    // Compute the world-space vertex position.
+    //
+    OUT.position = tranformPosition(IN.position.xyz); 
+
+	#if defined (PASS_NORMAL)
+		OUT.normal = tranformVector(IN.normal.xyz);
+
+		#if !defined(TWO_SIDED_LIGHTING)						
+			OUT.normal *= normalMultiplier;
+		#endif		
+
+	#endif
+
+	// Compute world space tangents (packed sign of binormal)
+	#if defined (PASS_TANGENT) 
+		OUT.tangent = transformTangent(IN.tangent, IN.binormal);
+
+		#if !defined(TWO_SIDED_LIGHTING)						
+			OUT.tangent.w *= normalMultiplier;	// sign of the binormal
+		#endif
+	#endif
+
+	// UV pass throughs
+	//
+	#if defined (PASS_BUMP_UV) // bump map pass
+		// Compute the transformed UV coordinates
+		OUT.bumpTexUv = float2( dot(bumpTexMatrix0, float4(IN.bumpTexUv, 0.0, 1.0)),
+								dot(bumpTexMatrix1, float4(IN.bumpTexUv, 0.0, 1.0)) );
+		
+	#endif  // PASS_BUMP_UV
+
+	#if defined (PASS_TEX0_UV)  // single texture pass
+		// Compute the transformed UV coordinates
+		OUT.colorTexUv.xy = float2( dot(colorTexMatrix0, float4(IN.colorTexUv, 0.0, 1.0)),
+								 dot(colorTexMatrix1, float4(IN.colorTexUv, 0.0, 1.0)) );
+		
+	#endif  // PASS_TEX0_UV
+
+	#if defined (PASS_TEX0_ALPHA_UV)  // single alpha texture pass pack it with first pass
+		// Compute the transformed UV coordinates
+		OUT.colorTexUv.zw = float2( dot(transpTexMatrix0, float4(IN.transpTexUv, 0.0, 1.0)),
+									  dot(transpTexMatrix1, float4(IN.transpTexUv, 0.0, 1.0)) );		
+	#endif  // PASS_TEX0_ALPHA_UV
+
+
+	#if defined (PASS_TEX1_UV)  // single texture pass
+		// Compute the transformed UV coordinates
+		OUT.pass2TexUv.xy = float2( dot(pass2TexMatrix0, float4(IN.pass2TexUv, 0.0, 1.0)),
+								  dot(pass2TexMatrix1, float4(IN.pass2TexUv, 0.0, 1.0)) );
+		
+	#endif  // PASS_TEX1_UV
+
+	#if defined (PASS_TEX1_ALPHA_UV)  // single alpha texture pass
+		// Compute the transformed UV coordinates
+		OUT.pass2TexUv.zw = float2( dot(pass2AlphaTexMatrix0, float4(IN.pass2AlphaTexUv, 0.0, 1.0)),
+									  dot(pass2AlphaTexMatrix1, float4(IN.pass2AlphaTexUv, 0.0, 1.0)) );		
+	#endif  // PASS_TEX1_UV
+
+
+	#if defined (PASS_VERTEX_COLOR)
+		// Prepare the verted color and send to fragment
+		// use a magic number to defined "undefined" color 
+		if (IN.colorPerVertex.a < 0.0) {
+			OUT.vertexColor = constantColor;
+		}
+		else {
+			OUT.vertexColor = IN.colorPerVertex;
+		}
+
+		// There is no undefined colors in the color set pass the data
+		// with out testing it.
+		//
+
+		OUT.vertexBaseColor = float4(0.0, 0.0, 0.0, 1.0);	// ambient color
+
+	#else
+
+		// Compute vertex color (ambient color)
+		//
+		#if defined (PASS_COLOR)
+			// get the cpv on the way in
+			// TO DO ambient CPV blending should be done in the vertex program 
+			// This gives us a single pass shader to support CPV blending.
+			//
+			OUT.vertexBaseColor = IN.colorPerVertex;	// Ambient color...
+
+		#elif defined (CREATE_COLOR)
+			// get the const colour for example 
+			OUT.vertexBaseColor = float4(0.0, 0.0, 0.0, 1.0);  
+		#else
+			// Error color
+			OUT.vertexBaseColor = float4(0.9, 0.5, 0.5, 1.0);   
+		#endif
+	#endif
+
+
+	#if defined(TWO_SIDED_LIGHTING)
+		// Use secondary color to pass sidedness value over
+		// to the fragment program. Send "white" for the
+		// front side and "black" for the back side.
+		// Want to change this for use with the FACE resigister
+		//
+		#if defined(INVERT_NORMAL)
+			OUT.frontColor = float4(0.0, 0.0, 0.0, 0.0);
+			OUT.backColor  = float4(1.0, 1.0, 1.0, 1.0);
+		#else
+			OUT.frontColor = float4(1.0, 1.0, 1.0, 1.0);
+			OUT.backColor  = float4(0.0, 0.0, 0.0, 0.0);
+		#endif
+	#endif
+
+
+    return OUT;
+}

@@ -1,0 +1,208 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  April 28, 1997
+//
+//  Description:
+//      The offsetCurvePreset() procedure executes a offset curve operation on 
+//      a curve based on the offset option vars.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+
+proc string addViewNormal()
+//
+//	Description :
+//		To add current camera view direction as the 
+//		direction of projection.
+//
+{
+	// get the current camera view.
+	//
+	string $cameraName = `lookThru -q` ;
+	float $coiDistance = `camera -q -coi $cameraName` ;
+	string $ppm = `createNode pointMatrixMult` ;
+	setAttr ".inPoint" -type double3 0.0 0.0 (-$coiDistance) ;
+	setAttr ".vectorMultiply" true ;
+	connectAttr ($cameraName+".worldMatrix[0]")	($ppm+".inMatrix") ;
+	float $coi[] = `getAttr ($ppm+".output")` ;
+	delete $ppm ;
+
+	// add the direction.
+	//
+	string $result = " -ugn true -nr " ;
+	int $i ;
+	for( $i = 0 ; $i < 3 ; $i++ ) {
+		$result = $result + $coi[$i] ;	
+		$result = $result + " " ;	
+	}
+	return $result ;
+}
+
+proc string pieceTogetherOffsetCurveCmd(
+ 	int $history,
+	int $curvePartial,
+	int $connectBreaks,
+	int $stitch,
+	int $cutLoop,
+	float $cutRadius,
+	float $distance,
+	float $tolerance,
+	int $subdivisionDensity,
+	int $normal)
+//
+//	Description :
+//		Piece together a offsetCurve command.
+//
+{
+	string $cmd;
+	$cmd = "offsetCurve ";
+
+	// construction history
+	$cmd = $cmd + " -ch ";
+	if ( $history == 1 ) $cmd = $cmd + "on";
+	else  $cmd = $cmd + "off";
+	
+	// curve range.
+	//
+	$cmd = $cmd + " -rn " ;
+	if( $curvePartial == 1 ) $cmd = $cmd + "true" ;
+	else $cmd = $cmd + "false" ;
+
+	// connect breaks
+	$cmd = $cmd + " -cb " + $connectBreaks;
+
+	// stitch
+	if ( $stitch == 1 ) $cmd = $cmd + " -st true";
+	else $cmd = $cmd + " -st false";
+
+	// cut loops
+	if ( $cutLoop == 1 ) $cmd = $cmd + " -cl true -cr " + $cutRadius;
+	else $cmd = $cmd + " -cl false";
+
+	// offset distance
+	$cmd = $cmd + " -d " + $distance;
+
+	// offset tolerance
+	$cmd = $cmd + " -tol " + $tolerance;
+
+	// subdivision density
+	$cmd = $cmd + " -sd " + $subdivisionDensity;
+
+
+	// normal only defined if getting from view, else default ???
+	if ( $normal == 0 )	{
+		$cmd = $cmd + addViewNormal();
+	}
+	else {
+		$cmd = $cmd + " -ugn false ";
+	}
+	return $cmd;
+
+}
+
+global proc offsetCurvePreset(
+ 	int $history,
+	int $curvePartial,
+	int $connectBreaks,
+	int $stitch,
+	int $cutLoop,
+	float $cutRadius,
+	float $distance,
+	float $tolerance,
+	int $subdivisionDensity,
+	int $normal)
+//
+//	offsetCurve with the preset options.
+//	Use this proc when operation dragged to Shelf.
+//
+{
+	// Get the list of nurbs curves selected. Works for curves or curves on surface
+	// Do this here because addViewNormal creates a node which will blow away the
+	// selection list
+	//
+	global int $gSelectNurbsCurvesBit;
+	global int $gSelectCurvesOnSurfacesBit;
+	global int $gSelectSurfaceEdgeBit;
+	global int $gSelectIsoparmsBit;
+	global int $gSelectMeshEdge;
+
+	string $curvesList[] = `filterExpand -ex true -sm $gSelectMeshEdge -sm $gSelectNurbsCurvesBit -sm $gSelectCurvesOnSurfacesBit -sm $gSelectSurfaceEdgeBit -sm $gSelectIsoparmsBit`;
+
+	// build the command
+	string $cmd = pieceTogetherOffsetCurveCmd($history,
+											  $curvePartial,
+											  $connectBreaks,
+											  $stitch,
+											  $cutLoop,
+											  $cutRadius,
+											  $distance,
+											  $tolerance,
+											  $subdivisionDensity,
+											  $normal);
+
+	// placeholder for one selection item
+	int $nitems = 1;
+	$cmd = appendToCmdPlaceHoldersForSelectionItems( $cmd, $nitems );
+
+	int $numCurves = size($curvesList) ;
+	if( $numCurves < 1 ) {
+		string $msg = (uiRes("m_offsetCurvePreset.kSelectionError")) ; 
+		error($msg);
+	} else {
+
+		// compute each offset in turn
+		string $offsetResults[];
+		string $curve[1];
+		for( $i = 0 ; $i < $numCurves ; $i++ ) {
+			$curve[0] = $curvesList[$i];
+			string $results[] = executeCmdOnItems( $cmd, $curve );	
+			$offsetResults = stringArrayCatenate($offsetResults, $results);
+		}
+
+		// select the results.
+		//
+
+		int $resultCount = size($offsetResults);
+
+		if ( $resultCount > 0 ) 
+		{
+			string $selectString;
+        	$selectString = "select -r ";
+			int $i;
+			for ( $i = 0; $i < $resultCount; $i++ ) 
+			{
+				$selectString +=  $offsetResults[$i];
+				$selectString += " ";
+			}
+			$selectString += ";";
+			select -cl;
+			eval($selectString);
+
+		}
+	}
+}

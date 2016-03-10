@@ -1,0 +1,180 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+// Creation Date:  Oct 1, 2004
+//
+//  Procedure Name:
+//      proxyActivate
+//
+//  Description:
+//      Activates the given reference for the corresponding proxy set. If
+//	doFileIO is true, loads the newly active proxy, and unloads the old active
+//	proxy. In either case, establishes the right set of connections to make the
+//	active proxy the newly specified one.
+//
+//  Input Arguments:
+//      Name of reference node
+//		Do file IO
+//
+//  Return Value:
+//      None.
+//
+
+global proc proxyActivate(string $newRefNode, int $doFileIO)
+//
+//	Description:
+//      Activates the given reference for the corresponding proxy set. If
+//	doFileIO is true, loads the newly active proxy, and unloads the old active
+//	proxy. In either case, establishes the right set of connections to make the
+//	active proxy the newly specified one.
+//
+//
+{
+	// First, check if the currentProxyName corresponds to a valid reference
+	//
+	if( !`exists isValidReference` ){
+		source "proxyUtils.mel";
+	}
+	if( isValidReference( $newRefNode ) == 0 ){
+		error (uiRes("m_proxyActivate.kInvalidReference"));
+		return;
+	}
+
+	// Next, check if the reference node has a proxy manager.
+	//
+	string $proxyManagerPlug = `connectionInfo -sfd ($newRefNode + ".proxyMsg")`;
+	if( $proxyManagerPlug == "" ){
+		// No proxy manager, abort
+		//
+		string $msgFormat = (uiRes("m_proxyActivate.kReferenceNotAProxy"));
+		error (`format -s $newRefNode $msgFormat`);
+		return;
+	}
+	string $proxyManager = `plugNode $proxyManagerPlug`;
+
+	// Next, process the current active proxy reference, as needed.
+	//
+
+	// Get the active proxy reference
+	//
+	string $activeDstPlugs[] = `connectionInfo -dfs ($proxyManager + ".activeProxy")`;
+	if( size($activeDstPlugs) == 1 ){
+
+		// Recall that the active proxy points to the entry in the proxyList
+		// that is the active one, and not directly to the reference node
+		// (to avoid a fan-in).
+		//
+		string $activePlug = $activeDstPlugs[0];
+		string $dstPlugs[] = `connectionInfo -dfs ($activePlug)`;
+
+		if( size($dstPlugs) == 1 ){
+
+			string $refNode = `plugNode $dstPlugs[0]`;
+			string $nodeType = `nodeType $refNode`;
+
+			if( $nodeType == "reference" ){
+
+				// Make the old active proxy inactive
+				//
+				disconnectAttr ($proxyManager + ".activeProxy") $activePlug;
+
+				// Make the new file the active proxy
+				//
+				connectAttr ($proxyManager + ".activeProxy") $proxyManagerPlug;
+
+
+				if( $doFileIO ){
+					// Now check if the reference is loaded, and if so,
+					// unload it.
+					//
+					string $fileName = `reference -rfn $refNode -q -filename`;
+					if( $fileName != "" ){
+						if( !`file -q -dr $fileName` ){
+							file -unloadReference $refNode $fileName;
+						}
+					}
+				}
+
+				// If the original reference node was created with grouping,
+				// hookup the new reference node to the same transforms that
+				// the original reference node is connected via the .msg
+				// attribute from the transform's to the .associatedNode
+				// attribute of the reference).
+				//				
+				string $srcLstPlugs[] = `listConnections -source true -connections true -plugs true ($refNode+".associatedNode")`;
+				for($i=0; $i<size($srcLstPlugs); $i+=2) 
+				{
+					disconnectAttr ($srcLstPlugs[$i+1]) ($srcLstPlugs[$i]) ;
+					connectAttr ($srcLstPlugs[$i+1]) ($newRefNode + "." + plugAttr($srcLstPlugs[$i])) ;					
+				}
+				
+				// *** backward compatibility ***				
+				// If the original reference node was created with grouping,
+				// hookup the new reference node to the same transforms that
+				// the original reference node is connected via the .msg
+				// attribute (to the transform's .isHistoricallyInteresting
+				// attribute).
+				//
+				$dstPlugs = `connectionInfo -dfs ($refNode + ".msg")`;
+				int $sizePlugs = size($dstPlugs);
+				int $indexPlugs = 0;
+				while( $indexPlugs < $sizePlugs ){
+					string $node = `plugNode $dstPlugs[$indexPlugs]`;
+					if( `nodeType $node` == "transform" ){
+						// We have an actual transform
+						//
+						if( `isConnected ($refNode + ".msg") ($node + ".isHistoricallyInteresting")` ){
+							disconnectAttr ($refNode + ".msg") ($node + ".isHistoricallyInteresting");
+							connectAttr ($newRefNode + ".msg") ($node + ".isHistoricallyInteresting");
+						}
+					}
+					$indexPlugs++;
+				}			
+			} else {
+				string $msgFormat = (uiRes("m_proxyActivate.kProxyInvalid"));
+				error ( `format -s $newRefNode $msgFormat`);
+			}
+		} else {
+			string $msgFormat = (uiRes("m_proxyActivate.kProxyNotFound"));
+			error (`format -s $newRefNode $msgFormat`);
+		}
+	} else if( size($activeDstPlugs) > 1 ){
+		string $msgFormat = (uiRes("m_proxyActivate.kMoreThanOneProxy"));
+		error(`format -s $newRefNode $msgFormat`);
+	} else {
+		// Make the new file the active proxy
+		//
+		// Recall that the active proxy points to the entry in the proxyList
+		// that is the active one, and not directly to the reference node
+		// (to avoid a fan-in).
+		//
+		connectAttr ($proxyManager + ".activeProxy") $proxyManagerPlug;
+	}
+
+
+	if( $doFileIO ){
+		// Finally, load the desired file
+		// 
+		file -lr $newRefNode;
+	}
+}

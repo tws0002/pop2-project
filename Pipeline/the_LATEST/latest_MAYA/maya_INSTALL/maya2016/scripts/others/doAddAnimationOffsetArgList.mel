@@ -1,0 +1,254 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Nov. 26, 2003
+//
+//	Procedure Name:
+//		doAddAnimationOffsetArgList
+//
+//	Description:
+//		Add a transfromOffset node to the selected node so that its animation can be redirected.
+//
+//	Input Arguments:
+//	$version: The version of this function call.  Used to know how to 
+//	interpret the $args array.
+//		"1" : Offset mode
+//  
+//	$args
+//	Version 1
+//  [0]     $root : Root of object
+//	[1]		$redirectionMode : The mode to use to offset the selected object
+//			0 = offset both rotation and translation
+//			1 = offset rotation 
+//			2 = offset translation
+//
+//	//	Return Value:
+//		Name of the new offset node
+//
+
+proc
+float[] getChildPsuedoBounds(string $child, float $bounds[] )
+{
+	float $matrix[] = `xform -query -matrix -worldSpace $child`;
+	float $pos[] = {$matrix[12],$matrix[13],$matrix[14]};
+
+	$bounds[0] = min($bounds[0], $pos[0]);
+	$bounds[1] = min($bounds[1], $pos[1]);
+	$bounds[2] = min($bounds[2], $pos[2]);
+	$bounds[3] = max($bounds[3], $pos[0]);
+	$bounds[4] = max($bounds[4], $pos[1]);
+	$bounds[5] = max($bounds[5], $pos[2]);
+
+	return $bounds;
+}
+
+proc
+float[] psuedoBoundingBox(string $rootObject)
+{
+	float $matrix[] = `xform -query -matrix -worldSpace $rootObject`;
+	float $bounds[] = {$matrix[12],$matrix[13],$matrix[14],
+					   $matrix[12],$matrix[13],$matrix[14]};
+
+	string $children[] = `listRelatives -allDescendents -fullPath -type transform $rootObject`;
+
+	for ($child in $children)
+	{
+		$bounds = getChildPsuedoBounds($child, $bounds);
+		getChildPsuedoBounds($child, $bounds);
+	}
+
+	return $bounds;
+}
+
+proc  rewireToOffset ( string $root, string $offsetNode,
+					   string $rootAttr, string $offsetAttr,
+					   float $cachedValue)
+{
+	string $rootPlug = $root+"."+$rootAttr;
+	string $attrSource = `connectionInfo -sourceFromDestination $rootPlug`;
+
+	if ($attrSource != "")
+	{
+		disconnectAttr $attrSource $rootPlug;
+		connectAttr $attrSource ($offsetNode+".inRoot"+$offsetAttr);
+	}
+	else
+	{
+		setAttr ($offsetNode+".inRoot"+$offsetAttr) $cachedValue;
+	}
+
+	connectAttr ($offsetNode+".outRoot"+$offsetAttr) ($rootPlug);
+}
+
+proc 
+string createOffset ( string $root, 
+					  int $redirectRotation, 
+					  int $redirectTranslation )
+{
+	string $offsetNode = `createNode characterOffset -name ($root+"Redirection#")`;
+    
+	float $cachedTrans[] = `getAttr ($root+".translate")`;
+
+	if ($redirectRotation)
+	{
+		float $cachedRot[] = `getAttr ($root+".rotate")`;
+
+		rewireToOffset($root, $offsetNode, "rotateX", "RotateX", $cachedRot[0]);
+		rewireToOffset($root, $offsetNode, "rotateY", "RotateY", $cachedRot[0]);
+		rewireToOffset($root, $offsetNode, "rotateZ", "RotateZ", $cachedRot[0]);
+		
+		if (`objectType -isType "joint" $root`)
+		{
+			connectAttr ($root+".jointOrientX") 
+						($offsetNode+".rootJointOrientX");
+			connectAttr ($root+".jointOrientY") 
+						($offsetNode+".rootJointOrientY");
+			connectAttr ($root+".jointOrientZ") 
+					    ($offsetNode+".rootJointOrientZ");
+		}
+	}
+    
+	
+	rewireToOffset ($root, $offsetNode, 
+					"translateX", "TranslateX", $cachedTrans[0]);
+	rewireToOffset ($root, $offsetNode, 
+					"translateY", "TranslateY", $cachedTrans[1]);
+	rewireToOffset ($root, $offsetNode, 
+					"translateZ", "TranslateZ", $cachedTrans[2]);
+
+	connectAttr ($root+".parentMatrix") 
+				($offsetNode+".rootParentMatrix");
+	connectAttr ($root+".parentInverseMatrix") 
+				($offsetNode+".rootParentInverseMatrix");
+	connectAttr ($root+".rotateOrder") 
+				($offsetNode+".rootRotateOrder");
+				
+	return $offsetNode;
+}
+
+global proc string doAddAnimationOffsetArgList( string $version, string $args[] )
+{
+	int $versionNo = $version;
+	string $root =  $args[0];
+	int $redirectionMode = $args[1];
+
+	int $redirectRotation = ($redirectionMode == 0) || 
+							($redirectionMode == 1);
+	int $redirectTranslation = ($redirectionMode == 0) || 
+							   ($redirectionMode == 2);
+                               
+	string $offsetNode = 
+				createOffset($root, $redirectRotation, $redirectTranslation);
+	
+	if ($offsetNode != "")
+	{
+		float $rootPos[] = `xform -query -worldSpace -translation $root`;
+		float $boundingBox[];
+		
+		if (`objectType -isType "joint" $root`)
+		{
+			$boundingBox = psuedoBoundingBox($root);
+		}
+		else
+		{
+			$boundingBox = `xform -query -worldSpace -boundingBox $root`;
+		}
+        
+		float $boxSize[];
+		
+		$boxSize[0] = $boundingBox[3] - $boundingBox[0];
+		$boxSize[1] = $boundingBox[4] - $boundingBox[1];
+		$boxSize[2] = $boundingBox[5] - $boundingBox[2];
+		
+		float $manipScale = sqrt (	$boxSize[0]*$boxSize[0] +
+									$boxSize[1]*$boxSize[1] +
+									$boxSize[2]*$boxSize[2]	) * 0.05;
+
+		$manipScale = max ($manipScale, 0.5);
+        
+		string $offsetManips[] = createOffsetControls($rootPos, $manipScale,
+													  $redirectRotation,
+													  $redirectTranslation);
+
+		if ($redirectRotation)
+		{
+			string $rotateHandle = $offsetManips[0];
+			
+			connectAttr ($rotateHandle+".rotateX") 
+						($offsetNode+".offsetRootRotateX");
+			connectAttr ($rotateHandle+".rotateY") 
+						($offsetNode+".offsetRootRotateY");
+			connectAttr ($rotateHandle+".rotateZ") 
+						($offsetNode+".offsetRootRotateZ");
+
+			connectAttr ($rotateHandle+".translateX") 
+						($offsetNode+".offsetRootRotatePivotX");
+			connectAttr ($rotateHandle+".translateY") 
+						($offsetNode+".offsetRootRotatePivotY");
+			connectAttr ($rotateHandle+".translateZ") 
+						($offsetNode+".offsetRootRotatePivotZ");
+			connectAttr ($rotateHandle+".rotateOrder") 
+						($offsetNode+".offsetRootRotateOrder");
+
+			connectAttr ($rotateHandle+".scaleX") 
+						($offsetNode+".rotateControlScaleX");
+			connectAttr ($rotateHandle+".scaleY") 
+						($offsetNode+".rotateControlScaleY");
+			connectAttr ($rotateHandle+".scaleZ") 
+						($offsetNode+".rotateControlScaleZ");
+						
+			connectAttr ($rotateHandle+".parentMatrix") 
+						($offsetNode+".rotateControlParentMatrix");
+                
+            select -replace $rotateHandle;
+		}
+		else
+		{
+			// since rotation redirection isn't being handled, 
+			// we need to set the inital translation offset to be
+			// wherever our root node currently is
+			setAttr ($offsetNode+".initialOffsetRootTranslateX") $rootPos[0];
+			setAttr ($offsetNode+".initialOffsetRootTranslateY") $rootPos[1];
+			setAttr ($offsetNode+".initialOffsetRootTranslateZ") $rootPos[2];
+			
+			connectAttr ($offsetManips[1]+".parentMatrix") 
+						($offsetNode+".rotateControlParentMatrix");
+		}
+
+		if ($redirectTranslation)
+		{
+			string $translateHandle = $offsetManips[1];
+		
+			connectAttr ($translateHandle+".translateX") ($offsetNode+".offsetRootTranslateX");
+			connectAttr ($translateHandle+".translateY") ($offsetNode+".offsetRootTranslateY");
+			connectAttr ($translateHandle+".translateZ") ($offsetNode+".offsetRootTranslateZ");
+            
+            if (!$redirectRotation)
+            {
+                select -replace $translateHandle;
+            }
+		}
+	}
+    
+    return $offsetNode;
+}

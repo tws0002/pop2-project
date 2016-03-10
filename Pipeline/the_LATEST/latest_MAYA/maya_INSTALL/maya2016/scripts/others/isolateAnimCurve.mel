@@ -1,0 +1,164 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+global string $gUnisolatedCurves[] = {};
+global string $gIsolatedCurves[] = {};
+global int $gUnisolateJobNum = -1;
+
+global
+proc isolateFcurveSelectionCallback(string $editor)
+//
+// This is triggered during a selection-changed callback when "Isolate Select"
+// is enabled. If the selection change impacted what is shown in the fcurve
+// editor we cancel "Isolate Select" mode.
+//
+{
+	int $sameCurves = 1;
+	global int $gUnisolateJobNum;
+	global string $gIsolatedCurves[];
+	string $shownCurves[] = `animCurveEditor -q -curvesShown $editor`;
+	if (size($shownCurves) == size($gIsolatedCurves)) {
+		for ($ii = 0; $ii < size($shownCurves); $ii++) {
+			if ($shownCurves[$ii] != $gIsolatedCurves[$ii]) {
+				$sameCurves = 0;
+				break;
+			}
+		}
+		if ($sameCurves) {
+			// Since the selection callback is only run once, we need to
+			// re-enable it here since we are staying in "Isolate Select".
+			//
+			string $callback = ("isolateFcurveSelectionCallback "+$editor);
+			$gUnisolateJobNum = `scriptJob -runOnce true -event "SelectionChanged" $callback`;
+			return;
+		}
+	}
+	clearIsolateSelectionCache 0;
+}
+
+global
+proc clearIsolateSelectionCache(int $killScriptJob)
+//
+// Clear the cached items that are saved for use in order to toggle off
+// an "Isolate Select" operation.
+//
+// This is currently triggered either:
+//   - during a selection-changed script job callback set up during
+//     an "Isolate Select" operation. This job is set up as -runOnce,
+//	   so it will be immediately killed thereafter which is why we can
+//     clear its job num.
+//   - After the user toggles off an Isolate Select or does some other
+//     operation that makes the isolate job obsolete. In this case we
+//     want to kill the script job.	
+//	
+{
+	global int $gUnisolateJobNum;
+	global string $gUnisolatedCurves[];
+	global string $gIsolatedCurves[];		
+	clear($gUnisolatedCurves);
+	clear($gIsolatedCurves);	
+	if ($killScriptJob) {
+		if ($gUnisolateJobNum > 0) {
+			scriptJob -k $gUnisolateJobNum;
+		}
+	}
+	$gUnisolateJobNum = -1;
+	if (`iconTextCheckBox -q -exists isolateCurveButton`) {
+		iconTextCheckBox -e -v 0 isolateCurveButton;
+	}
+}
+
+global 
+proc isolateAnimCurve(int $doIsolate, string $selConn, string $editor)
+//
+// If $doIsolate == true:	
+//  If curve(s) are selected in the graph editor, isolate them.
+//  Otherwise, if channel(s) are selected in the channel box, isolate them.
+//  This can be useful if you want to work with the fcurve outliner collapsed.
+//	At time of isolate, a list of the selected curves is stored for use in
+//  de-isolate.	
+// If $doIsolate == false:
+//  If we have some cached curves, restore the display to those curves.
+//
+{
+	global int $gUnisolateJobNum;
+	global string $gUnisolatedCurves[];	
+	global string $gIsolatedCurves[];
+	
+	if ($doIsolate) {
+		clearIsolateSelectionCache(1);
+
+		$gUnisolatedCurves = `animCurveEditor -q -curvesShown $editor`;
+		string $callback = ("isolateFcurveSelectionCallback "+$editor);
+		$gUnisolateJobNum = `scriptJob -runOnce true -event "SelectionChanged" $callback`;
+	} else {
+		if (size($gUnisolatedCurves) > 0) {
+			selectionConnection -e -clear $selConn;
+			for ($curve in $gUnisolatedCurves) {
+				string $attr = getAnimAttr($curve);
+				if ("" != $attr) {
+					selectionConnection -e -select $attr $selConn;
+				}
+			}
+			if ($gUnisolateJobNum > 0) {
+				clearIsolateSelectionCache(1);
+			}
+		}
+		return;
+	}
+	
+	string $selCurves[] = `keyframe -query -sl -name`;
+	string $selAttrs[];
+	if (size($selCurves) > 0) {
+		if (! `exists getAnimAttr`) {
+			source "loadAnimMenuLibrary.mel";
+		}
+		for ($curve in $selCurves) {
+			string $attr = getAnimAttr($curve);
+			if ("" != $attr) {
+				$selAttrs[size($selAttrs)] = $attr;
+			}
+		}
+	} else {
+		$selAttrs = `selectedChannelBoxPlugs`;
+	}
+
+	if (size($selAttrs) == 0) {
+		if ($gUnisolateJobNum > 0) {
+			// The user has tried to isolate select when nothing relevant
+			// is selected. Clear the back-up cache since we will consider
+			// nothing isolated at this point.
+			//
+			clearIsolateSelectionCache(1);
+		}
+
+		warning((uiRes("m_isolateAnimCurve.kMustSelectCurvesToIsolate")));
+	} else {
+		selectionConnection -e -clear $selConn;
+		for ($attr in $selAttrs) {
+			selectionConnection -e -select $attr $selConn;
+		}
+		$gIsolatedCurves = `animCurveEditor -q -curvesShownForceUpdate $editor`;
+		if (`iconTextCheckBox -q -exists isolateCurveButton`) {
+			iconTextCheckBox -e -v 1 isolateCurveButton;
+		}
+	}
+}

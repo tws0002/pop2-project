@@ -1,0 +1,267 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//	Procedure Name:
+//	AEbevelPlusTemplate
+//
+//	Description Name;
+//	Creates the attribute editor controls for the bevel plus node
+//
+//	Input Value:
+//	nodeName
+//
+//	Output Value:
+//	None
+//
+
+global proc AEbpFormatControls( string $nodeName )
+{
+	string $formatAttrName = $nodeName + ".outputPoly";
+	string $connections[] = `listConnections $formatAttrName`;
+
+	if (size($connections) == 0) {
+		// If the output type is not polys,
+		// dim all the poly-related controls.
+		editorTemplate -dimControl $nodeName "polyOutMethod" true;
+		editorTemplate -dimControl $nodeName "polyOutCount" true;
+
+		editorTemplate -dimControl $nodeName "polyOutExtrusionType" true;
+		editorTemplate -dimControl $nodeName "polyOutExtrusionSamples" true;
+		editorTemplate -dimControl $nodeName "polyOutCurveType" true;
+		editorTemplate -dimControl $nodeName "polyOutCurveSamples" true;
+	} else {
+		editorTemplate -dimControl $nodeName "polyOutMethod" false;
+
+		$formatAttrName = $nodeName + ".polyOutMethod";
+		int $value = `getAttr $formatAttrName`;
+
+		if ( $value == 0 )
+		{
+			// face count
+			editorTemplate -dimControl $nodeName "polyOutCount" false;
+
+			// sampling
+			editorTemplate -dimControl $nodeName "polyOutExtrusionType" true;
+			editorTemplate -dimControl $nodeName "polyOutExtrusionSamples" true;
+			editorTemplate -dimControl $nodeName "polyOutCurveType" true;
+			editorTemplate -dimControl $nodeName "polyOutCurveSamples" true;
+		}
+		else
+		{
+			// face count
+			editorTemplate -dimControl $nodeName "polyOutCount" true;
+
+			// sampling
+			editorTemplate -dimControl $nodeName "polyOutExtrusionType" false;
+			editorTemplate -dimControl $nodeName "polyOutExtrusionSamples" false;
+			editorTemplate -dimControl $nodeName "polyOutCurveType" false;
+			editorTemplate -dimControl $nodeName "polyOutCurveSamples" false;
+		}
+	}
+}
+
+global proc AEbpSideCheckBoxChange(string $bevelCheckBoxGrp, string $attr)
+{
+	int $side, $start, $end;
+	$start = `checkBoxGrp -query -value1 $bevelCheckBoxGrp`;
+	$end   = `checkBoxGrp -query -value2 $bevelCheckBoxGrp`;
+	
+	if ($start && $end) $side = 4;
+	else if ($start && !$end) $side = 2;
+	else if (!$start && $end) $side = 3;
+	else $side = 1;
+	
+	setAttr $attr $side;
+}
+
+global proc AEbpSideNew( string $attributeUIName, string $attr)
+{
+	string $bevelCheckBox = "AEbpCheckBoxGrpBevel";
+	string $atStartNew = (uiRes("m_AEbevelPlusTemplate.kAtStartNew"));
+	string $atEndNew =  (uiRes("m_AEbevelPlusTemplate.kAtEndNew"));
+	checkBoxGrp -numberOfCheckBoxes 2
+		-label $attributeUIName
+		-labelArray2 $atStartNew $atEndNew
+		-changeCommand("AEbpSideCheckBoxChange " + $bevelCheckBox + " " + $attr)
+		$bevelCheckBox;
+
+	AEbpSideReplace($attributeUIName, $attr);
+}
+
+global proc AEbpSideReplace ( string $attributeUIName, string $attr )
+{
+	string $bevelCheckBox = "AEbpCheckBoxGrpBevel";
+
+	int $side = `getAttr $attr`;
+	int $start, $end;
+	
+	if (1 == $side) {
+		$start = false;
+		$end = false;
+	} else if (2 == $side) {
+		$start = true;
+		$end = false;
+	} else if (3 == $side) {
+		$start = false;
+		$end = true;
+	} else {
+		$start = true;
+		$end = true;
+	}
+	
+	checkBoxGrp -edit -valueArray2 $start $end $bevelCheckBox;
+	checkBoxGrp -edit -changeCommand
+		("AEbpSideCheckBoxChange " + $bevelCheckBox + " " + $attr)
+		$bevelCheckBox;
+	checkBoxGrp -edit -enable true $bevelCheckBox;
+}
+
+global proc AEbpCapSideNew( string $attributeUIName ,  string $attr )
+{
+	string $bevelCheckBox = "AEbpCheckBoxGrpCap";
+	string $atStart = (uiRes("m_AEbevelPlusTemplate.kAtStart"));
+	string $atEnd =  (uiRes("m_AEbevelPlusTemplate.kAtEnd"));
+	checkBoxGrp -numberOfCheckBoxes 2
+		-label $attributeUIName
+		-labelArray2 $atStart $atEnd
+		-changeCommand("AEbpSideCheckBoxChange " + $bevelCheckBox + " " + $attr)
+		$bevelCheckBox;
+		
+	AEbpCapSideReplace($attributeUIName, $attr);
+}
+
+proc int AEbpCapSideVisible( string $attr )
+//
+// Description:
+//     Only allow the cap option in the attribute editor when
+//     we have polys.  Otherwise, the number of surfaces changes.
+{
+	string $opa = `substitute "capSides" $attr "outputPoly"`;
+	string $opc[] = `listConnections $opa`;
+	int $vis = false;
+	if( size($opc) > 0 ) $vis = true;
+	return $vis;
+}
+
+global proc AEbpCapSideReplace ( string $attributeUIName, string $attr )
+{
+	string $bevelCheckBox = "AEbpCheckBoxGrpCap";
+	int $vis = `AEbpCapSideVisible $attr`;
+
+	if( $vis ) {
+		int $side = `getAttr $attr`;
+		int $start, $end;
+	
+		if (1 == $side) {
+			$start = false;
+			$end = false;
+		}
+		else if (2 == $side) {
+			$start = true;
+			$end = false;
+		}
+		else if (3 == $side) {
+			$start = false;
+			$end = true;
+		}
+		else {
+			$start = true;
+			$end = true;
+		}
+		checkBoxGrp -edit -valueArray2 $start $end $bevelCheckBox;
+		checkBoxGrp -edit -changeCommand
+			("AEbpSideCheckBoxChange " + $bevelCheckBox + " " + $attr)
+			$bevelCheckBox;
+	}
+	checkBoxGrp -edit -visible $vis $bevelCheckBox;
+}
+
+global proc AEbevelPlusTemplate( string $nodeName )
+{
+	editorTemplate -beginScrollLayout;
+		string $inputCurves = (uiRes("m_AEbevelPlusTemplate.kInputCurves"));
+		string $bevel = (uiRes("m_AEbevelPlusTemplate.kBevel"));
+		editorTemplate -beginLayout (uiRes("m_AEbevelPlusTemplate.kBevelPlusHistory")) -collapse false;
+			editorTemplate -callCustom
+						("AEinputNew     \""+$inputCurves+"\"")
+						("AEinputReplace \""+$inputCurves+"\"")
+						"inputCurves";
+
+			editorTemplate -callCustom
+						("AEbpSideNew     \""+$bevel+"\"")
+						("AEbpSideReplace \""+$bevel+"\"")
+						"numberOfSides";
+
+			editorTemplate -label (uiRes("m_AEbevelPlusTemplate.kBevelWidth")) -addControl "width";
+			editorTemplate -label (uiRes("m_AEbevelPlusTemplate.kBevelDepth"))-addControl "depth";
+			editorTemplate -label (uiRes("m_AEbevelPlusTemplate.kExtrudeDisance")) -addControl "extrudeDepth";
+			string $cap = (uiRes("m_AEbevelPlusTemplate.kCap"));
+			string $outerStyleCurve = (uiRes("m_AEbevelPlusTemplate.kOuterStyleCurve"));
+			string $innerStyleCurve = (uiRes("m_AEbevelPlusTemplate.kInnerStyleCurve"));
+			editorTemplate -callCustom
+				("AEbpCapSideNew     \""+$cap+"\"")
+				("AEbpCapSideReplace \""+$cap+"\"")
+				"capSides";
+			editorTemplate -label (uiRes("m_AEbevelPlusTemplate.kBevelInsideCurves")) -addControl "bevelInside";
+
+			editorTemplate -callCustom
+						("AEinputNew     \""+$outerStyleCurve+"\"")
+						("AEinputReplace \""+$outerStyleCurve+"\"")
+						"outerStyleCurve";
+
+			editorTemplate -callCustom
+						("AEinputNew     \""+$innerStyleCurve+"\"")
+						("AEinputReplace \""+$innerStyleCurve+"\"")
+						"innerStyleCurve";
+
+			editorTemplate -addControl "tolerance";
+
+		editorTemplate -endLayout;
+	
+		editorTemplate -beginLayout (uiRes("m_AEbevelPlusTemplate.kPolygonOutputOptions")) -collapse true;
+			editorTemplate -label (uiRes("m_AEbevelPlusTemplate.kMethod")) -addControl "polyOutMethod" "AEbpFormatControls";
+			editorTemplate -beginLayout (uiRes("m_AEbevelPlusTemplate.kSampling")) -collapse false;
+				editorTemplate -label " " -addControl "polyOutExtrusionType";
+				editorTemplate -label " " -addControl "polyOutExtrusionSamples";
+				editorTemplate -label " " -addControl "polyOutCurveType";
+				editorTemplate -label " " -addControl "polyOutCurveSamples";
+			editorTemplate -endLayout;
+
+			editorTemplate -beginLayout (uiRes("m_AEbevelPlusTemplate.kCount")) -collapse false;
+				editorTemplate -label (uiRes("m_AEbevelPlusTemplate.kCountLabel")) -addControl "polyOutCount";
+			editorTemplate -endLayout;
+
+		editorTemplate -endLayout;
+
+		//suppressed attributes
+		editorTemplate -suppress "polygonType";
+		editorTemplate -suppress "polyOutUseChordHeight";
+		editorTemplate -suppress "polyOutUseChordHeightRatio";
+		editorTemplate -suppress "polyOutChordHeight";
+		editorTemplate -suppress "polyOutChordHeightRatio";
+
+		// include/call base class/node attributes
+		AEdependNodeTemplate $nodeName;
+
+	editorTemplate -addExtraControls;
+	editorTemplate -endScrollLayout;
+}

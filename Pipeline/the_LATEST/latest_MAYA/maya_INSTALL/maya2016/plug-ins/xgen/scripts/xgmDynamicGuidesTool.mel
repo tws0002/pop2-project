@@ -1,0 +1,206 @@
+// Copyright (C) 1997-2013 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+/**
+ * @file xgmDynamicGuidesTool.mel
+ * @brief Contains the tool for converting guides into a dynamic hair system.
+ *
+ * <b>CONFIDENTIAL INFORMATION: This software is the confidential and
+ * proprietary information of Walt Disney Animation Studios ("WDAS").
+ * This software may not be used, disclosed, reproduced or distributed
+ * for any purpose without prior written authorization and license
+ * from WDAS. Reproduction of any section of this software must include
+ * this legend and all copyright notices.
+ * Copyright Disney Enterprises, Inc. All rights reserved.</b>
+ *
+ * @author Patrick Witting
+ * @author Stephen D. Bowline
+ *
+ * @version Created 12/30/04
+ */
+
+
+global proc xgmDynamicGuidesTool( string $parent )
+{
+    global string $xgmDynamicGuidesToolCreate = "";
+    global string $xgmDynamicGuidesToolAccept = "";
+    global string $xgmDynamicGuidesToolCancel = "";
+    global string $helpDynamicGuidesTool =
+        "\n\nDynamic Guides UI:\nTurn Selected Guides into Hair System\n";
+
+    columnLayout -parent $parent;
+    $xgmDynamicGuidesToolCreate =
+            `button -label (uiRes("m_xgmDynamicGuidesTool.kCreateHairSystem")) -w 340 
+                -ann (uiRes("m_xgmDynamicGuidesTool.kCreateHairSystemAnn"))
+                -command "xgmDynamicGuidesToolCreate"`;
+
+    rowLayout -nc 2 -width 340 -cw2 170 170;
+    {
+        $xgmDynamicGuidesToolAccept =
+            `button -label (uiRes("m_xgmDynamicGuidesTool.kAccept")) -w 170 
+                -ann (uiRes("m_xgmDynamicGuidesTool.kAcceptAnn"))
+                -command "xgmDynamicGuidesToolAccept"`;
+        $xgmDynamicGuidesToolCancel =
+            `button -label (uiRes("m_xgmDynamicGuidesTool.kCancel")) -w 170
+                -ann (uiRes("m_xgmDynamicGuidesTool.kCancelAnn"))
+                -command "xgmDynamicGuidesToolCancel"`;
+        setParent ..;
+    }
+
+    setParent ..;
+}
+
+global proc xgmDynamicGuidesToolCreate()
+{
+    global string $xgmDynamicGuidesGroup;
+    global string $xgmDynamicGuidesToolCurvesFromGuides[];
+
+    if ( `objExists $xgmDynamicGuidesGroup` ){
+        warning( (uiRes("m_xgmDynamicGuidesTool.kDynamicguidesHairSystemAlreadyInUse1")) );
+        return;
+    }
+
+    int $lockLength = 1;
+    int $hide = 1;
+
+    xgmCreateCurvesFromGuides( $hide, $lockLength );
+
+    string $curves[] = xgmSelectedCurves( 1 );
+    $xgmDynamicGuidesToolCurvesFromGuides = `ls -sl`;
+
+    string $dyn[] = xgmMakeCurvesDynamicHairs();
+    select -r $dyn[0] $dyn[1];
+    group -n $xgmDynamicGuidesGroup;
+    xgmGroomParent $xgmDynamicGuidesGroup;
+
+    // now rename parent directories inside OutputCurves so that the curves can
+    // associated by name.
+    string $curvesOut[] = `ls -dag -type nurbsCurve $xgmDynamicGuidesGroup`;
+    for ( $curveOut in $curvesOut ) {
+        string $follicle[] = `listConnections -s 1 -d 0 $curveOut`;
+        string $curveShape[] = `ls -dag -type nurbsCurve  $follicle[0]`;
+        string $curveTransform[] = `listRelatives -p $curveShape[0]`;
+        string $newName = $curveTransform[0];
+        hide $curveTransform[0];
+        rename $curveTransform[0] ( $curveTransform[0] + "_DG" );
+
+        string $oldName[] = `listRelatives -p $curveOut`;
+        rename $oldName[0] $newName;
+    }
+}
+
+global proc xgmMakeCurvesDynamic()
+{
+	source "performMakeCurvesDynamic.mel";
+	makeCurvesDynamicOptions();
+}
+
+global proc xgmNDynamicGuidesToolCreate()
+{
+    global string $xgmDynamicGuidesGroup;
+    global string $xgmDynamicGuidesToolCurvesFromGuides[];
+
+    if ( `objExists $xgmDynamicGuidesGroup` ){
+        warning( (uiRes("m_xgmDynamicGuidesTool.kDynamicguidesHairSystemAlreadyInUse2")) );
+        return;
+    }
+
+    int $lockLength = 1;
+    int $hide = 1;
+
+    xgmCreateCurvesFromGuides( $hide, $lockLength );
+
+    string $curves[] = xgmSelectedCurves( 1 );
+	catchQuiet ( $desc = python("xgui.createDescriptionEditor(False).currentDescription()"));
+	catchQuiet ( $patches = python("xg.descriptionPatches(\""+$desc+"\")"));
+	for ($patch in $patches) 
+    {
+		$geom = `xgmPatchInfo -p $patch -g`;
+		select -add $geom ;
+	}
+
+	xgmMakeCurvesDynamic();
+}
+
+global proc xgmSelectCurvesFromHairSystem()
+{
+	string $hairSystemShape[] = `ls -sl`;
+	if((size($hairSystemShape) > 0) && `nodeType $hairSystemShape[0]` == "hairSystem")
+	{
+		string $follicles[] = `listConnections -shapes true -type "follicle" ($hairSystemShape[0]+".inputHair")`;
+		for ($foll in $follicles)
+		{
+			string $curves[] = `listConnections -shapes true -type "nurbsCurve" ($foll +".outCurve")`;
+			select -add $curves ;  
+		}
+	}
+}
+
+global proc xgmDynamicGuidesToolAccept()
+{
+    global string $xgmDynamicGuidesGroup;
+    string $selOrig[] = `ls -sl`;
+
+    global string $xgmDynamicGuidesToolCurvesFromGuides[];
+
+    if ( !`objExists $xgmDynamicGuidesGroup` ) {
+        warning( (uiRes("m_xgmDynamicGuidesTool.kNoDynamicguidesHairSystemToAccept")));
+        return;
+    }
+
+    select -r $xgmDynamicGuidesGroup;
+    xgmSelectedCurvesToGuidesByName;
+    if (`objExists $xgmDynamicGuidesGroup` ) delete $xgmDynamicGuidesGroup;
+    if (`objExists $xgmDynamicGuidesToolCurvesFromGuides[0]` )
+        delete $xgmDynamicGuidesToolCurvesFromGuides[0];
+
+    changeSelectMode -object;
+}
+
+
+global proc xgmDynamicGuidesToolCancel()
+{
+    global string $xgmDynamicGuidesGroup;
+    global string $xgmDynamicGuidesToolCurvesFromGuides[];
+
+    if ( !`objExists $xgmDynamicGuidesGroup` ) {
+        warning( (uiRes("m_xgmDynamicGuidesTool.kNoDynamicguidesHairSystemToCancel")) );
+        return;
+    }
+
+    select -r $xgmDynamicGuidesGroup;
+    string $curves[] = xgmSelectedCurves( 1 );
+
+    for ( $curve in $curves ) {
+        string $parent[] = `listTransforms $curve`;
+        string $buffer[];
+        int $n = `tokenize $parent[0] "|" $buffer`;
+        string $name = $buffer[$n-1];
+        string $guide = `substitute "_tempCurve" $name ""`;
+        showHidden -a $guide;
+    }
+
+    if (`objExists $xgmDynamicGuidesGroup` ) delete $xgmDynamicGuidesGroup;
+    if (`objExists $xgmDynamicGuidesToolCurvesFromGuides[0]` )
+        delete $xgmDynamicGuidesToolCurvesFromGuides[0];
+
+    changeSelectMode -object;
+}

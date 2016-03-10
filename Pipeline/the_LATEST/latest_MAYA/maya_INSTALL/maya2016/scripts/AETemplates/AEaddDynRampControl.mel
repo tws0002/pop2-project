@@ -1,0 +1,184 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Procedure Name:
+//	AEaddDynRampControl
+//
+//  Description Name;
+//	Creates the attribute editor controls for the ramp widget
+//	for dynamic attributes. Heavily based and dependent on the
+//	original AEaddRampControl.
+//
+//	This version will only create the UI if the attribute exists.
+//	Once the UI is created, the UI is hidden when the attribute
+//	does not exist and visible when the attribute does exist.
+//	This functionality of hiding and only creation on demand is
+//	located in the AEmakeDynRampControlInteractiveReplace proc.
+//
+//  Input Value:
+//	nodeName 
+//
+//  Output Value:
+//	None
+// 
+
+global proc AEmakeDynRampControlInteractiveNew (string $nodeAttr)
+{
+	// Ensure script sources
+	//
+	if( !`exists AEmakeCompactRamp` || !`exists AEmakeLargeRamp` )
+	{
+		source AEaddRampControl.mel;
+	}
+
+	// Only create the UI if the attribute exists (dynamicAttr support)
+	//
+	int $attrExists = `objExists $nodeAttr`;
+	if( !$attrExists ) return;
+
+	// For AEmakeLargeRamp (($rampDrawMethod < 1) || ($rampDrawMethod > 2)),
+	// we wish to encapsulate the UI within a frameLayout, do so here.
+	//
+	// NOTE: We specifically do *not* use `editorTemplate -beginLayout/endLayout`
+	// because we wish to control the visibility of the layout.
+	//
+	int $rampDrawMethod = 0;
+	if( `optionVar -exists "gradientControlDrawMethod"` )
+	{
+		$rampDrawMethod = `optionVar -q "gradientControlDrawMethod"`;
+	}
+	int $subBlock = (($rampDrawMethod < 1) || ($rampDrawMethod > 2));
+	if( $subBlock )
+	{
+		setUITemplate -pst attributeEditorTemplate;
+		string $buffer[];
+		tokenize($nodeAttr, ".", $buffer);
+		string $attr = $buffer[1];
+		string $rampName = $attr + "Ramp";
+		string $rampTitle = nodeTypeNiceName($attr);
+		frameLayout -label $rampTitle -collapse false -vis true ($rampName + "Frame");
+	}
+
+	switch( $rampDrawMethod )
+	{
+	case 1:
+		eval( "AEmakeCompactRamp( \"" + $nodeAttr + "\",0,0,0,false )" );
+		break;
+	case 2:
+		eval( "AEmakeCompactRamp( \"" + $nodeAttr + "\",1,0,0,false )" );
+		break;
+	case 3:
+		eval( "AEmakeLargeRamp( \"" + $nodeAttr + "\",0,0,0,0,false )" );
+		break;
+	case 4:
+		eval( "AEmakeLargeRamp( \"" + $nodeAttr + "\",1,0,0,0,false )" );
+		break;
+	default:
+		eval( "AEmakeLargeRamp( \"" + $nodeAttr + "\",1,1,0,0,false )" );
+		break;
+	}
+
+	if( $subBlock )
+	{
+		setUITemplate -ppt;
+	}
+}
+
+global proc AEmakeDynRampControlInteractiveReplace (string $nodeAttr)
+{
+	string $buffer[];
+	tokenize($nodeAttr, ".", $buffer);
+	string $attr = $buffer[1];
+
+	string $rampName = $attr + "Ramp";
+
+	// Check for existence of attribute
+	//
+	int $attrExists = `objExists $nodeAttr`;
+
+	// Check for existence of UI
+	//
+	string $frameName = $rampName + "Frame";
+	string $formName = $rampName + "Form";
+	string $textName = $rampName + "Label";
+	int $uiExists = `formLayout -q -exists $formName`;
+
+	// Now execute based on state
+	//
+	if( $uiExists && $attrExists )
+	{
+		// Show the ramp control
+		//
+		formLayout -e -vis true $formName;
+
+		// Show the text label
+		//
+		if( `text -q -exists $textName` ) text -e -vis true $textName;
+		if( `frameLayout -q -exists $frameName` ) frameLayout -e -vis true $frameName;
+
+		gradientControl -edit -at $nodeAttr $rampName;
+		if( `objExists ($nodeAttr +"Input")` ){
+			attrEnumOptionMenuGrp -edit -at ($nodeAttr + "Input") ($rampName + "Input");
+		}
+		if( `objExists ($nodeAttr +"InputScale")` ){
+			attrFieldSliderGrp -edit -at ($nodeAttr + "InputScale") ($rampName + "InputScale");
+		}
+		if( `objExists ($nodeAttr +"InputBias")` ){
+			attrFieldSliderGrp -edit -at ($nodeAttr + "InputBias") ($rampName + "InputBias");
+		}
+	}
+	else if( $uiExists && !$attrExists )
+	{
+		// Hide the ramp control
+		//
+		formLayout -e -vis false $formName;
+		
+		// Hide the text label
+		//
+		if( `text -q -exists $textName` ) text -e -vis false $textName;
+		if( `frameLayout -q -exists $frameName` ) frameLayout -e -vis false $frameName;
+	}
+	else if( !$uiExists && $attrExists )
+	{
+		// Create the UI
+		//
+		AEmakeDynRampControlInteractiveNew( $nodeAttr );
+	}
+
+	// In the case of (!$uiExists && !$attrExists) there is nothing to be done.
+	//
+}
+
+global proc AEaddDynRampControl( string $rampName )
+{
+	int $rampDrawMethod = 0;
+	if( `optionVar -exists "gradientControlDrawMethod"` ){
+		$rampDrawMethod = `optionVar -q "gradientControlDrawMethod"`;
+	}
+
+	editorTemplate -callCustom "AEmakeDynRampControlInteractiveNew" 
+						"AEmakeDynRampControlInteractiveReplace" $rampName;
+
+	editorTemplate -suppress ($rampName + "Input");
+	editorTemplate -suppress ($rampName + "InputBias");
+	editorTemplate -suppress ($rampName + "InputScale");
+}

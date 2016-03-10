@@ -1,0 +1,311 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  April 2006
+//
+//  Description:
+//      Builds a menu to remove render layer adjustments.
+//
+
+proc addLast(string $buffer[], string $item)
+{
+    // Append a string to the end of an array.
+    //
+
+    $buffer[size($buffer)] = $item;
+}
+
+proc string first(string $buffer[])
+{
+    // Return the first element of buffer, return "" if buffer is empty.
+    //
+
+    if (size($buffer) == 0) return "";
+    return $buffer[0];
+}
+
+proc downStreamNetwork( string $node, string $result[] )
+{
+    // Find all downstream nodes from node
+    //
+
+    // Check if node is already in result.
+    for ($item in $result) {
+        if ($item == $node)
+            return;
+    }
+
+    addLast($result, $node);
+
+    // Do a depth first traversal to find the shading group.
+    if (`objectType $node` == "shadingEngine") {
+        // Done
+    }
+    else {
+        string $nonMessageConnections[];
+
+        string $connections[] = `listConnections -connections true
+            -plugs true -source false -destination true $node`;
+
+        // Foreach destination (output) connection on node.
+        for ($i = 0; $i < size($connections); $i += 2) {
+            // All message connections are skipped.
+            if (plugAttr($connections[$i]) != "message") {
+                addLast($nonMessageConnections, $connections[$i]);
+                addLast($nonMessageConnections, $connections[$i+1]);
+            }
+        }
+        for ($i = 0; $i < size($nonMessageConnections); $i += 2) {
+            string $dstPlug = $nonMessageConnections[$i + 1];
+            string $dstNode = plugNode($dstPlug);
+            downStreamNetwork($dstNode, $result);
+        }
+    }
+}
+
+proc string instancePath(string $objectPlug)
+{
+    // Return the instance path for a specified object group plug.
+    //
+
+    string $result;
+
+    string $objectNode = plugNode($objectPlug);
+    string $parents[] = `listRelatives -path -allParents $objectNode`;
+    string $plugInstance = match("instObjGroups\\[[0-9]+\\]", $objectPlug);
+    if ($plugInstance != "") {
+        string $buffer[];
+        tokenize($plugInstance, "[]", $buffer);
+        int $instanceNumber = $buffer[1];
+        $result = $parents[$instanceNumber];
+    }
+    else {
+        $result = first($parents);
+    }
+
+    return $result;
+}
+
+proc string getRenderableSet(string $objectPlug)
+{
+    // Find the renderable set connected to objectPlug.
+    //
+
+    string $nodes[] = `listConnections $objectPlug`;
+    for ($node in $nodes) {
+        if (`objectType $node` == "shadingEngine") {
+            return $node;
+        }
+    }
+    return "";
+}
+
+proc string getMaterial(string $set)
+{
+    // Find the material connected to set
+    //
+
+    return first(`listConnections -source true -destination false ($set+".surfaceShader")`);
+}
+
+proc pairArrayAdd(string $array[], string $item, string $addValue)
+{
+    // If item is found in the list of pairs array, append addValue
+    // to the end. If item is not found, append the pair "item,addValue"
+    // to the end of the list array.
+    //
+
+    int $isFound = false;
+
+    for ($i = 0; $i < size($array); $i = $i + 1) {
+        string $buffer[];
+        tokenize($array[$i], ",", $buffer);
+        if ($buffer[0] == $item) {
+            $isFound = true;
+            break;
+        }
+    }
+
+    if ($isFound) {
+        // Found, append the addValue
+        $array[$i] = $array[$i] + " " + $addValue;
+    }
+    else {
+        // Not found, create a new entry
+        $array[$i] = $item + "," + $addValue;
+    }
+}
+
+//
+//  Procedure Name:
+//      buildMaterialRemoveOverrideMenu
+//
+//  Description:
+//      Builds a menu to providing functionality to remove render layer SG
+//      adjustments. If type is set to "-shader", node is expected to
+//      be a shader and the menu will display all surfaces which are
+//      currently using node as a render layer adjustment. If type is
+//      set to "-surface", node is expected to be a surface and the
+//      menu will display all materials currently used as adjustments.
+//
+//  Input Arguments:
+//      type : set to either "-shader" or "-surface"
+//      node : the name of the node to build the menu relative to
+//      menu : the name of the popup menu's parent
+//
+//  Return Value:
+//      None.
+//
+global proc buildMaterialRemoveOverrideMenu(string $type, string $node, string $menu)
+{
+	setParent -m $menu;
+
+	menu -e -deleteAllItems $menu;
+
+    if ($type == "-shader") {
+
+        //
+        // 1. Find all SG adjustments downstream from the specified node.
+        //
+
+        string $objectPlugs[];
+
+        string $downStreamNodes[];
+        downStreamNetwork($node, $downStreamNodes);
+        string $currentLayer = `editRenderLayerGlobals -q -currentRenderLayer`;
+        for ($dsNode in $downStreamNodes) {
+            if (`objectType $dsNode` == "shadingEngine") {
+                string $plugs[] = `listConnections -plugs true ($dsNode+".dagSetMembers")`;
+                for ($plug in $plugs) {
+                    // Is this a connection to the current layer ?
+                    if (plugNode($plug) == $currentLayer) {
+                        // Is this an output adjustment ?
+                        if (match("outAdjustments.*outValue$", $plug) != "") {
+                            // Figure out the object corresponding to this adjustment.
+                            string $adjPlug = substitute("outValue$", $plug, "outPlug");
+                            string $objectPlug = first(`listConnections -plugs true $adjPlug`);
+                            if ($objectPlug != "") addLast($objectPlugs, $objectPlug);
+                        }
+                    }
+                }
+            }
+        }
+
+        //
+        // 2. Sort all adjustments by object name
+        //
+
+        sort($objectPlugs);
+
+        //
+        // 3. Build the menu showing object names
+        //
+
+        if (size($objectPlugs) > 0) {
+            string $allPlugs = stringArrayToString($objectPlugs, " ");
+
+            menuItem -label (uiRes("m_buildMaterialRemoveOverrideMenu.kAllItems"))
+                -command ("evalEcho editRenderLayerAdjustment -remove "+$allPlugs);
+
+            menuItem -divider true;
+        }
+
+        for ($objectPlug in $objectPlugs) {
+            string $objectName = instancePath($objectPlug);
+            if (match("objectGroups\\[[0-9]+\\]$", $objectPlug) != "") {
+                string $componentList[] = `getAttr ($objectPlug+".objectGrpCompList")`;
+                string $components = substituteAllString(stringArrayToString($componentList, " "), "\"", "");
+                menuItem -label ($objectName+" "+$components)
+                    -command ("evalEcho editRenderLayerAdjustment -remove "+$objectPlug);
+            }
+            else {
+                menuItem -label $objectName
+                    -command ("evalEcho editRenderLayerAdjustment -remove "+$objectPlug);
+            }
+        }
+
+        if (size($objectPlugs) == 0) {
+            menuItem -enable off -label (uiRes("m_buildMaterialRemoveOverrideMenu.kNoShaderOverride"));
+        }
+    }
+    else if ($type == "-surface") {
+        //
+        // 1. Find all SG adjustments to the specified surface and group them
+        // together by material.
+        //
+
+        string $materialPlugPair[];
+
+        string $shapes[] = `listRelatives -shapes $node`;
+        string $currentLayer = `editRenderLayerGlobals -q -currentRenderLayer`;
+        for ($shape in $shapes) {
+            string $connections[] = `listConnections -connections true $shape`;
+            for ($i = 0; $i < size($connections); $i += 2) {
+                string $objectPlug = $connections[$i+0];
+                // Is the plug connected to the current layer ?
+                if ($connections[$i+1] == $currentLayer) {
+                    //
+                    // Is this an object group connection ?
+                    //
+                    // NOTE: the instance group of the objectPlug will not
+                    // have a multi-index. The "node name" of the plug will
+                    // encode the instance.
+                    //
+                    if (match("^"+$shape+"\\.instObjGroups", $objectPlug) != "" ||
+                        match("^"+$node+"|"+$shape+"\\.instObjGroups", $objectPlug) != "")
+                    {
+                        // Get the set connected to this group.
+                        string $setName = getRenderableSet($objectPlug);
+                        if ($setName != "") {
+                            // Get the material connected to the set.
+                            string $name = getMaterial($setName);
+                            if ($name == "") $name = $setName;
+                            pairArrayAdd($materialPlugPair, $name, $objectPlug);
+                        }
+                    }
+                }
+            }
+        }
+
+        //
+        // 2. Sort the adjustments by material name
+        //
+
+        sort($materialPlugPair);
+
+        //
+        // 3. Build the menu showing material names
+        //
+
+        for ($i = 0; $i < size($materialPlugPair); $i++) {
+            string $buffer[];
+            tokenize($materialPlugPair[$i], ",", $buffer);
+            menuItem -label $buffer[0]
+                -command ("evalEcho editRenderLayerAdjustment -remove "+$buffer[1]);
+        }
+
+        if (size($materialPlugPair) == 0) {
+            menuItem -enable off -label (uiRes("m_buildMaterialRemoveOverrideMenu.kNoSurfaceOverride"));
+        }
+    }
+}

@@ -1,0 +1,180 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//
+//<doc>
+//<name searchPathArray>
+//
+//<synopsis>
+//		searchPathArray( string $name, string $pathArray[] )
+//
+//<returns>
+//		string Full path to file.
+//
+//<description>
+//		Looks for a readable file in the directories listed in pathArray.
+//<P>
+//	Notes:<br>
+//		Intial white space in $name is ignored (chopped)<br>
+//		Name beginning with "/" are returned as-is<br>
+//		Empty string entries in pathArray are skipped, use . for cwd.<br>
+//		Path elements beginning in "$" are treated as environment variables.
+//
+//<flags>
+//		string $name Name of the file being searched for
+//		string $pathArray[] Array of directory paths.
+//
+//<examples>
+//	string $path[] = { ".", "$HOME/maya/projects/default" };
+//	searchPathArray( "workspace.mel", $path );
+//
+//</doc>
+
+proc int existsReadable(string $filename)
+{
+	int $debug = 0;
+	string $func  = "existsReadable";
+
+	if ( $debug ) trace("// " + $func + "( " + $filename + " )\n" );
+
+//	int $id = fopen($filename,"r");
+//	if ( $id != 0 ) {
+//		fclose($id);
+//	}
+	int $id = filetest("-r",$filename);
+
+	if ( $debug ) trace("// " + $func + " return " + ( $id != 0 ) + " \n" );
+
+	return ( $id != 0 );
+}
+
+proc string chopGetenv(string $envNameWithDollar)
+{
+//	int $debug = 1;
+//	string $func  = "chopGetenv";
+
+	string $chopped = substitute("^\\$", $envNameWithDollar, "" );
+//	if ( $debug ) trace("// " + $func + ": chopped:" + $chopped + "\n");
+	return getenv( $chopped );
+}
+	
+
+proc string expandEnv(string $path)
+//	Description:
+//		Expand file name paths containing environment variables
+//
+//	Notes:
+//		We assume that any whole component of the path can be
+// 		an environment variable.  This means we can parse
+//		/usr/people/$USER/foo  but not
+//		/usr/people/$USER.foo/bar
+{
+	int $debug = 0;
+	string $func  = "expandEnv";
+
+	if ( $debug ) trace("// " + $func + "( " + $path + " )\n" );
+
+	// If no $ sign, no expansion		
+	if ( "" == match("\\\$",$path ) ) {
+		if ( $debug ) trace(" Tried to match \\\$\n" );
+		if ( $debug ) trace("// " + $func + ": not env.\n");
+		return $path;
+	}
+	
+	// If no /, simple variable name only
+	if ( "" == match("/",$path ) ) {
+		if ( $debug ) trace("// " + $func + ": simple expansion\n");
+		
+		return chopGetenv($path);
+	}
+
+	// Aha! the path is comprised of literal and env components...
+	if ( $debug ) trace("// " + $func + ": multi part\n");
+
+	string $result = "";
+
+	if ( match("^/",$path ) != "" )
+		$result = "/";
+		
+	string $parts[];
+	tokenize( $path, "/", $parts );
+
+	// Reconstruct the path, expanding the env components
+	string $dir;
+	for ($dir in $parts) {
+		if ( "" != match("^\\\$",$dir ) ) {
+			$dir =  chopGetenv($dir);
+			// fail on any unset envs
+			if ( $dir == "" ) {
+				if ( $debug ) trace("// " + $func + ": env part not set\n");
+				return "";
+			}
+		}
+
+		$result = $result + "/" + $dir;
+	}
+		
+	return $result;
+		
+}
+
+global proc string searchPathArray( string $name, string $pathArray[] )
+{
+	int $debug = 0;
+	string $func  = "searchPathArray";
+
+	// strip off leading white space
+	$name = substitute("^[ 	]*", $name, "" );
+
+	// return empty names directly
+	if ($name == "" )
+		return $name;
+
+	// return absolute paths directly
+	if ( match("^/",$name ) != "" ) {
+		if ($debug) trace("// " + $func + ": absolute path\n");
+		return $name;
+	}
+	// Search for $name in the path list
+	string $fullPath;
+	for ( $dir in $pathArray ) {
+		// Expand environment variables
+		if ( $debug ) trace("// " + $dir + ": before expansion\n");
+		$dir = expandEnv($dir);
+		if ( $debug ) trace("// " + $dir + ": after expansion\n");
+
+		// Skip empty path entries
+		if ( "" == $dir )
+			continue;
+
+		// strip off trailing white space
+		$dir = substitute("[ 	]*$", $dir, "" );
+
+		// Test this path and return if successful
+		$fullPath = $dir + "/" + $name;
+		if ( existsReadable($fullPath) )
+			return ($fullPath);	
+	}
+
+	return "";
+}

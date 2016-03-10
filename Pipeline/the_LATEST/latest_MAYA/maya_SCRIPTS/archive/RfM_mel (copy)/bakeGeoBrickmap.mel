@@ -1,0 +1,107 @@
+
+// Sets up rib injection points and output channels so that a volume 
+// shader named "bakeGeoBrickmap" can bake a brickmap suitable for
+// later use as geometry. Weaknesses/assumptions:
+//		we only wish to use channels Cs,Os,P,N
+//		a temporary pointcloud will be written to the project directory,
+//		the final brickmap will be written to data directory,
+//		the PATH environment variable points to $RMSTREE/bin.
+// Malcolm Kesson August 22nd 2013
+// March 5th 2014: Now writes and compiles the "bakeGeoBrickmap" shader.
+// April 2rd 2014: All baking is now done to "/temp/".
+// See, www.fundza.com/rms/bake_brickgeo/index.html
+
+//-----------------------------------------------------
+global proc clearBakeAttrs() {
+	setAttr -type "string" 
+		renderManGlobals.rman__torattr___defaultRiAttributesScript "";
+	setAttr -type "string" 
+		renderManGlobals.rman__torattr___postWorldBeginScript "";
+	setAttr -type "string" 
+		renderManGlobals.rman__torattr___postRenderScript "";
+}
+//-----------------------------------------------------
+// A reasonable value of maxerror is 0.002
+global proc bakeGeoBrickmap(float $maxerror) {
+	
+	if(attributeExists("rman__torattr___postWorldBeginScript","renderManGlobals") == 0) {
+		print("Please open the \"Advanced\" tab in the Render Settings window. This\n");
+		print("will cause the RfM plugin to create a RenderMan specific attribute\n");
+		print("that is needed in order to bake a pointcloud.\n");
+		return;
+		}
+	string $rsl = "class bakeGeoBrickmap(string filename = \"\") {\n";
+    $rsl += "public void volume(output color Ci, Oi) {\n";
+    $rsl += "    if (filename != \"\") {\n";
+    $rsl += "        bake3d(filename, \"Cs,Os,P,N\", P, calculatenormal(P),\n";
+    $rsl += "            \"Cs\", Ci, \"Os\", Oi, \"P\", P, \"N\", calculatenormal(P));\n";
+    $rsl += "        }\n";
+    $rsl += "    }\n";
+	$rsl += "}";
+	// 1 Ensure "bakeGeoBrickmap.slo" is in the project directory. If it isn't 
+	//	 we save the RSL source file and compile it.
+	string $projpath = `workspace -q -rootDirectory`;
+	string $sloname = "bakeGeoBrickmap.slo";
+	string $slopath = $projpath + $sloname;
+	if(`file -q -exists $slopath` == 0) {
+		int $f = fopen($projpath + "bakeGeoBrickmap.sl", "w");
+		fprint($f, $rsl);
+		fclose($f);
+		string $rmantree = getenv("RMANTREE");
+		string $compiler = "\"" + $rmantree + "/bin/shader\"";
+		print("Compiling: " + $compiler + " -o " + $slopath + " " + $projpath + "bakeGeoBrickmap.sl" + "\n");
+		system($compiler + " -o " + $slopath + " " + $projpath + "bakeGeoBrickmap.sl");
+		} 
+		
+	// Assign the volume shader
+	string $shdname = "bakeGeoBrickmap";
+	string $ptcname = "/temp/geobake_tmp.ptc";
+	string $atmosShader = "RiAtmosphere(\"" + $shdname + "\",\"string filename\",\"" + $ptcname + "\");";
+	setAttr -type "string" renderManGlobals.rman__torattr___postWorldBeginScript $atmosShader;
+	
+	// Add channels
+	if(attributeExists("rman__torattr___class","bakeGeo_chan_cs") == 0)
+		rmanAddChannel("rmanFinalGlobals", "color Cs", "bakeGeo_chan_cs", 0);
+	if(attributeExists("rman__torattr___class","bakeGeo_chan_os") == 0)
+		rmanAddChannel("rmanFinalGlobals", "color Os", "bakeGeo_chan_os", 0);
+	if(attributeExists("rman__torattr___class","bakeGeo_chan_p") == 0)
+		rmanAddChannel("rmanFinalGlobals", "point P", "bakeGeo_chan_p", 0);
+	if(attributeExists("rman__torattr___class","bakeGeo_chan_n") == 0)
+		rmanAddChannel("rmanFinalGlobals", "normal N", "bakeGeo_chan_n", 0);
+	
+	// Add baking attributes
+	string $attrs = "\\n";
+	$attrs += "Attribute \\\"cull\\\" \\\"hidden\\\" 0\\n";
+	$attrs += "Attribute \\\"cull\\\" \\\"backfacing\\\" 0\\n";
+	$attrs += "Attribute \\\"dice\\\" \\\"rasterorient\\\" 0\\n";
+	setAttr -type "string" 
+			renderManGlobals.rman__torattr___defaultRiAttributesScript 
+			("RiArchiveRecord(\"comment\",\"" + $attrs + "\");");
+	
+	// Create a path for the final brickmap
+	string $scene = `file -q -sceneName -shortName`;
+	if(size($scene) == 0)
+		$scene = "untitled";
+	int $frame = `currentTime -q`;
+	string $bkmname = $scene + "." + $frame + ".bkm";
+	string $bkmpath = "/temp/" + $bkmname;
+	
+	// Create the brickmake command
+	string $cmd = "\\n";	
+	$cmd += "System \\\"brickmake ";
+	$cmd += "-maxerror " + $maxerror + " -progress 2 -addpn 1 " + $ptcname + " ";
+	$cmd += $bkmpath;
+	$cmd += "\\\"\\n";
+	setAttr -type "string" 
+			renderManGlobals.rman__torattr___postRenderScript 
+			("RiArchiveRecord(\"comment\",\"" + $cmd + "\");");
+	print("bakeGeoBrickmap: >" + $cmd + "<\n"); 
+	// Render
+	execRmanMenuItem("Render");
+	clearBakeAttrs();
+	print("bakeGeoBrickmap: Removed bake attributes.\n");
+
+	}
+
+
+

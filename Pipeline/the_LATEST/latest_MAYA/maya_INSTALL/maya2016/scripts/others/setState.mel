@@ -1,0 +1,296 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+// Creation Date:  13 April 1997
+//
+//
+//<doc>
+//<name setState>
+//
+//<synopsis>
+//		setState( string $type, int $state )
+//
+//<returns>
+//		None.
+//
+//<description>
+//		Sets the nodeState attr for all nodes in the
+//		scene that match the type passed in.
+//<P>
+//  Note that setting the state for certain types of nodes
+//	can have unpredictable results (things will stop building,
+//	evaluating, etc, and it can be difficult to determine
+//	what is happening in the scene in certain complex cases).
+//	Use this mainly for things like expressions, etc.
+//
+//<flags>
+//		string $type : type of node to operate on.
+//			valid choices are: iksolver, constraint, expression, particle,
+//			rigidbody, snapshot or "all", which will do all of the above.
+//
+//		int $state : state to set for the node.
+//			"off" will turn the node off ("blocking" mode),
+//			and "on" will turn the node on ("normal" mode).
+//
+//<examples>
+//  setState "expression" on;
+//
+//</doc>
+
+proc setStates( string $typeList[], int $state, string $stateAttr,
+			    int $on, int $off, int $preOn)
+{
+	string $node;
+	string $type;
+	string $nodes[];
+	
+	for ( $type in $typeList ) {
+		string $cmd = "ls -type " + $type;
+
+		if ( 0 == catch( $nodes = `eval $cmd` ) ) {
+			for ( $node in $nodes ) {
+				if( `getAttr -settable ( $node + $stateAttr ) `)
+					{
+					if ( $state ) {
+						if ( $preOn != $on ) {
+							setAttr ( $node + $stateAttr ) $preOn;
+						}
+						setAttr ( $node + $stateAttr ) $on;
+					} else {
+						setAttr ( $node + $stateAttr ) $off;
+					}
+				}
+			}
+		}
+	}
+}	
+
+	
+
+global proc setState( string $type, int $state )
+{
+	string $nodes[];
+	switch( $type ) {
+		case "all":
+			setState "constraint" $state;
+			setState "expression" $state;
+			setState "fluid" $state;
+			setState "nCloth" $state;
+			setState "nParticle" $state;
+			setState "nRigid" $state;
+			setState "dynamicConstraint" $state;
+			setState "nucleus" $state;
+			setState "globalstitch" $state;
+			setState "iksolver" $state;
+			setState "particle" $state;
+			setState "rigidbody" $state;
+			setState "snapshot" $state;
+			break;
+		case "iksolver":
+			ikSystem -e -sol $state;
+
+			// update the checkBox status in Skeleton menu.
+			//
+            if( `menuItem -exists globalSolveEnableItem` ) {
+    			catch(`menuItem -e -cb $state globalSolveEnableItem`);
+            }
+			break;
+		case "constraint":
+			string $twoOffConstraints[] = { "pointConstraint",
+			 								"pointOnPolyConstraint",
+											"aimConstraint",
+											"orientConstraint",
+											"parentConstraint",											
+											"scaleConstraint",
+											"normalConstraint",
+											"tangentConstraint",
+											"THconstraint" };
+			setStates( $twoOffConstraints, $state, ".nodeState", 0, 2, 2 );
+
+			string $oneOffConstraints[]  = { "geometryConstraint" };
+			setStates( $oneOffConstraints, $state, ".nodeState", 0, 1, 1 );
+
+			break;
+		case "expression":
+			$nodes = `ls -type expression`;
+			for( $node in $nodes )
+			{
+				if( `getAttr -settable ( $node + ".nodeState" ) `	) {
+					if( $state ) {
+						setAttr ( $node + ".nodeState" ) 1;
+						setAttr ( $node + ".nodeState" ) 0;
+					} else {
+						setAttr ( $node + ".nodeState" ) 2;
+					}
+				}
+
+				// Expressions sometimes have intervening unit conversion
+				// nodes, so make sure they get the same blocked/normal
+				// state as the expression driving them.
+				//
+				string $units[] = `listConnections
+					-skipConversionNodes 0
+					-source 0 -destination 1
+					($node+".output")`;
+				for ($unit in $units)
+				{
+					if ((nodeType($unit) == "unitConversion") ||
+						(nodeType($unit) == "timeToUnitConversion") ||
+						(nodeType($unit) == "unitToTimeConversion"))
+					{
+						if( `getAttr -settable ( $node + ".nodeState" ) `	) {
+							if( $state ) {
+								setAttr ( $unit + ".nodeState" ) 1;
+								setAttr ( $unit + ".nodeState" ) 0;
+							} else {
+								setAttr ( $unit + ".nodeState" ) 2;
+							}
+						}
+					}
+				}
+			}
+			break;
+		case "fluid":
+			$nodes = `ls -type fluidShape`;
+				for( $node in $nodes ) {
+					if( `getAttr -settable ( $node + ".disableInteractiveEval" )` ) {
+						if ($state) {
+							setAttr ( $node + ".disableInteractiveEval" ) 0;
+						} else {
+							setAttr ( $node + ".disableInteractiveEval" ) 1;
+						}
+					}
+				}
+			break;
+		case "globalstitch":
+			if ($state) {
+				performanceOptions -disableStitch off;
+			} else {
+				performanceOptions -disableStitch on;
+			}
+			break;
+		case "nCloth":
+			$nodes = `ls -type nCloth`;
+				for( $node in $nodes ) {
+					if( `getAttr -settable ( $node + ".isDynamic" )` ){
+						if ($state) {
+							setAttr ( $node + ".isDynamic" ) 1;
+						} else {
+							setAttr ( $node + ".isDynamic" ) 0;
+						}
+					}
+				}
+			break;
+		case "nParticle":
+			$nodes = `ls -type nParticle`;
+				for( $node in $nodes ) {
+					if( `getAttr -settable ( $node + ".isDynamic" )` ){
+						if ($state) {
+							setAttr ( $node + ".isDynamic" ) 1;
+						} else {
+							setAttr ( $node + ".isDynamic" ) 0;
+						}
+					}
+				}
+			break;
+		case "nucleus":
+			$nodes = `ls -type nucleus`;
+				for( $node in $nodes ) {
+					if( `getAttr -settable ( $node + ".enable" )` ){	
+						if ($state) {
+							setAttr ( $node + ".enable" ) 1;
+						} else {
+							setAttr ( $node + ".enable" ) 0;
+						}
+					}
+				}
+			break;
+		case "nRigid":
+			$nodes = `ls -type nRigid`;
+				for( $node in $nodes ) {
+					if( `getAttr -settable ( $node + ".isDynamic" )` ){
+						if ($state) {
+							setAttr ( $node + ".isDynamic" ) 1;
+						} else {
+							setAttr ( $node + ".isDynamic" ) 0;
+						}
+					}
+				}
+			break;
+		case "dynamicConstraint":
+			$nodes = `ls -type dynamicConstraint`;
+				for( $node in $nodes ) {
+					if( `getAttr -settable ( $node + ".enable" )` ){
+						if ($state) {
+							setAttr ( $node + ".enable" ) 1;
+						} else {
+							setAttr ( $node + ".enable" ) 0;
+						}
+					}
+				}
+			break;
+		case "particle":
+			if( `isTrue DynamicsExists` ) {
+
+				$nodes = `ls -exactType particle`;
+				for( $node in $nodes ) {
+					if( `getAttr -settable ( $node + ".isDynamic" )` ){
+						if ($state) {
+							setAttr ( $node + ".isDynamic" ) 1;
+						} else {
+							setAttr ( $node + ".isDynamic" ) 0;
+						}
+					}
+				}
+ 			}
+			break;
+		case "rigidbody":
+			if( `isTrue DynamicsExists` ) {
+				$nodes = `ls -type rigidSolver`;
+				for( $node in $nodes ) {
+					if( `getAttr -settable ( $node + ".state" )` ){
+						if ($state) {
+							setAttr ( $node + ".state" ) 1;
+						} else {
+							setAttr ( $node + ".state" ) 0;
+						}
+					}
+				}
+			
+			}
+			break;
+		case "snapshot":
+			$nodes = `ls -type snapshot`;
+				for( $node in $nodes ) {
+					if( `getAttr -settable ( $node + ".nodeState" )` ){
+						if ($state) {
+							setAttr ( $node + ".nodeState" ) 1;
+							setAttr ( $node + ".nodeState" ) 0;
+						} else {
+							setAttr ( $node + ".nodeState" ) 2;
+						}
+					}
+				}
+			break;
+	}
+}

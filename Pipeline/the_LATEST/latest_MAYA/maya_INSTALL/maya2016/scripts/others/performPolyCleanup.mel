@@ -1,0 +1,569 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date: May 11, 1999
+//
+//
+//  Procedure Name:
+//
+//      performPolyCleanup (UI interface). 
+//
+//		Input Arguments:
+//			0 : Execute the command	(polyCleanup, with current option variables)
+//			1 : Show the option box for cleanup	
+//			2 : Return the command (polyCleanup, with current option variables)
+//		Returns:
+//			cleanup command 	
+//
+//  Description:
+//
+//      Perform a 'cleanup' of various 'bad' polygon geometry
+//		attributes. This includes:
+//
+//		Deletion of:
+//		- zero area face 
+//		- zero area edges 
+//		- zero area mapped faces 
+//
+//		Triangulization of :
+//		  - non-planar polygons
+//		  - 4 to N sided polygons
+//		  - concave polygons
+//		  - polygons with holes.
+//
+//      Triangulization will occur first, before deletion.
+// 
+// 
+//////////////////////////////////////////////////////////////////////
+
+proc setOptionVars (int $forceFactorySettings)
+//
+// Description:
+//		Set user definable options
+// Arguments:
+//		forceFactorySettings : use defaults
+// Returns:
+//
+//
+{
+	// Just do selection, no cleanup. 
+	// 1 : Default do cleanup
+	// 2 : Do selection only
+	if ($forceFactorySettings || !`optionVar -exists polyCleanupOperation`)
+		optionVar -intValue polyCleanupOperation 1;	
+
+	// Construction history. Default build history
+	if ($forceFactorySettings || !`optionVar -exists polyCleanupHistory`)
+		optionVar -intValue polyCleanupHistory 1;	
+
+	// All meshes. Default off
+	if ($forceFactorySettings || !`optionVar -exists polyCleanupAllMeshes`)
+		optionVar -intValue polyCleanupAllMeshes 0;	
+
+	//----------------------------------------------------------------------
+
+	// Things to cleanup -- tesselate
+	//
+	// Quads
+	if ($forceFactorySettings || !`optionVar -exists polyCleanupQuads`)
+		optionVar -intValue polyCleanupQuads 0;	
+	// N-Sided
+	if ($forceFactorySettings || !`optionVar -exists polyCleanupNSided`)
+		optionVar -intValue polyCleanupNSided 0;	
+	// Concave
+	if ($forceFactorySettings || !`optionVar -exists polyCleanupConcave`)
+		optionVar -intValue polyCleanupConcave 0;	
+	// Non-planar
+	if ($forceFactorySettings || !`optionVar -exists polyCleanupNonPlanar`)
+		optionVar -intValue polyCleanupNonPlanar 0;	
+	// Holes
+	if ($forceFactorySettings || !`optionVar -exists polyCleanupHoles`)
+		optionVar -intValue polyCleanupHoles 0;	
+
+	// Things to cleanup -- others
+	//
+	// Nonmanifold geometry
+	if ($forceFactorySettings || !`optionVar -exists polyCleanupNonManifold`) {
+		optionVar -intValue polyCleanupNonManifold -1;
+	}
+	// Shared uvs
+	if ($forceFactorySettings || !`optionVar -exists polyCleanupSharedUVs`) {
+		optionVar -intValue polyCleanupSharedUVs 0;
+	}
+
+	// Things to cleanup -- delete
+	//
+	// Zero area geometry faces
+	if ($forceFactorySettings || !`optionVar -exists polyCleanupZeroGeomFace`)
+		optionVar -intValue polyCleanupZeroGeomFace 0;	
+	if ($forceFactorySettings || !`optionVar -exists polyCleanupZeroGeomFTol`)
+		optionVar -floatValue polyCleanupZeroGeomFTol 0.00001;
+	// Zero length edges
+	if ($forceFactorySettings || !`optionVar -exists polyCleanupZeroGeomEdge`)
+		optionVar -intValue polyCleanupZeroGeomEdge 0;	
+	if ($forceFactorySettings || !`optionVar -exists polyCleanupZeroGeomETol`)
+		optionVar -floatValue polyCleanupZeroGeomETol 0.00001;
+	// Zero area mappings on faces
+	if ($forceFactorySettings || !`optionVar -exists polyCleanupZeroMap`)
+		optionVar -intValue polyCleanupZeroMap 0;	
+	if ($forceFactorySettings || !`optionVar -exists polyCleanupZeroMapTol`)
+		optionVar -floatValue polyCleanupZeroMapTol 0.00001;
+	// Lamina faces
+	if ($forceFactorySettings || !`optionVar -exists polyCleanupLaminaFace`)
+		optionVar -intValue polyCleanupLaminaFace 0;	
+
+
+	// Things to show only -- can't handle
+	if ($forceFactorySettings || !`optionVar -exists polyCleanupNoTrgFace`)
+		optionVar -intValue polyCleanupNoTrgFace 0;	
+
+// 
+//	if ($forceFactorySettings || !`optionVar -exists polyCleanup`)
+//		optionVar -intValue polyCleanup 0;	
+//	if ($forceFactorySettings || !`optionVar -exists polyCleanup`)
+//		optionVar -intValue polyCleanup 0;	
+}
+
+global proc 
+performPolyCleanupSetup( string $parent, int $forceFactorySettings )
+//
+// Description:
+//		Do the setup of widget states
+// Arguments:
+//		parent : parent widget
+//		forceFactorySettings : set to defaults
+// Returns:
+//		none
+//
+{
+	setOptionVars($forceFactorySettings);
+	setParent $parent;	
+
+	int $ival;
+	float $fval;
+
+	// Cleanup options
+	$ival = `optionVar -query polyCleanupAllMeshes`;	
+	if($ival == 0)
+		radioButtonGrp -edit -sl 1 polyCleanupAllMeshes;
+	else
+		radioButtonGrp -edit -sl 2 polyCleanupAllMeshes;
+
+	$ival = `optionVar -query polyCleanupOperation`;	
+	radioButtonGrp -edit -sl $ival polyCleanupOperation;
+
+	$ival = `optionVar -query polyCleanupHistory`;		
+	checkBoxGrp -edit -value1 $ival polyCleanupHistory;	
+
+	// Items to cleanup
+	$ival = `optionVar -query polyCleanupQuads`;
+	checkBoxGrp -edit -value1 $ival polyCleanupQuads;
+
+	$ival = `optionVar -query polyCleanupNSided`;
+	checkBoxGrp -edit -value1 $ival polyCleanupNSided;
+
+	$ival = `optionVar -query polyCleanupConcave`;
+	checkBoxGrp -edit -value1 $ival polyCleanupConcave;
+
+	$ival = `optionVar -query polyCleanupHoles`;
+	checkBoxGrp -edit -value1 $ival polyCleanupHoles;
+
+	$ival = `optionVar -query polyCleanupNonPlanar`;
+	checkBoxGrp -edit -value1 $ival polyCleanupNonPlanar;
+
+	// Cleanup nonmanifold geometry
+	//
+	$ival = `optionVar -query polyCleanupNonManifold`;
+	if ($ival == 0) $ival = -1;
+	checkBoxGrp -edit -value1 ($ival > 0 ? true : false) polyCleanupNonManifold;
+	radioButtonGrp -edit
+		-select `abs ($ival)`
+		-enable ($ival > 0 ? true : false)
+		polyCleanupNonManifoldType;
+
+	// Cleanup shared UVs
+//	$ival = `optionVar -query polyCleanupSharedUVs`;
+//	checkBoxGrp -edit -value1 $ival polyCleanupSharedUVs;
+
+
+	$ival = `optionVar -query polyCleanupZeroGeomFace`;
+	checkBoxGrp -edit -value1 $ival polyCleanupZeroGeomFace;
+	if ($ival == 0)
+		disable -v true polyCleanupZeroGeomFTol;
+	else
+		disable -v false polyCleanupZeroGeomFTol;
+	$fval = `optionVar -query polyCleanupZeroGeomFTol`;
+	floatSliderGrp -edit -value $fval polyCleanupZeroGeomFTol;
+
+
+	$ival = `optionVar -query polyCleanupZeroGeomEdge`;
+	checkBoxGrp -edit -value1 $ival polyCleanupZeroGeomEdge;
+	if ($ival == 0)
+		disable -v true polyCleanupZeroGeomETol;
+	else
+		disable -v false polyCleanupZeroGeomETol;
+	$fval = `optionVar -query polyCleanupZeroGeomETol`;
+	floatSliderGrp -edit -value $fval polyCleanupZeroGeomETol;
+
+	$ival = `optionVar -query polyCleanupZeroMap`;
+	checkBoxGrp -edit -value1 $ival polyCleanupZeroMap;
+	if ($ival == 0)
+		disable -v true polyCleanupZeroMapTol;
+	else
+		disable -v false polyCleanupZeroMapTol;
+	$fval = `optionVar -query polyCleanupZeroMapTol`;
+	floatSliderGrp -edit -value $fval polyCleanupZeroMapTol;
+
+	$ival = `optionVar -query polyCleanupLaminaFace`;
+	checkBoxGrp -edit -value1 $ival polyCleanupLaminaFace;
+}
+
+global proc 
+performPolyCleanupCallback (string $parent, int $doIt)
+//
+// Description:
+//		Save option variables before application or save.
+// Arguments:
+//		parent : parent widget
+//		doIt : perform action
+// Returns:
+//		none
+//
+{
+	setParent $parent;
+	
+	int $ival = `radioButtonGrp -q -sl polyCleanupAllMeshes`;
+	
+	if($ival == 1)
+		optionVar -intValue polyCleanupAllMeshes 0;
+	else
+		optionVar -intValue polyCleanupAllMeshes 1;
+
+	optionVar -intValue polyCleanupOperation
+		`radioButtonGrp -query -sl polyCleanupOperation`;
+	optionVar -intValue polyCleanupHistory
+		`checkBoxGrp -query -value1 polyCleanupHistory`;	
+
+	optionVar -intValue polyCleanupQuads
+		`checkBoxGrp -query -value1 polyCleanupQuads`;
+	optionVar -intValue polyCleanupNSided
+		`checkBoxGrp -query -value1 polyCleanupNSided`;
+	optionVar -intValue polyCleanupConcave
+		`checkBoxGrp -query -value1 polyCleanupConcave`;
+	optionVar -intValue polyCleanupHoles
+		`checkBoxGrp -query -value1 polyCleanupHoles`;
+	optionVar -intValue polyCleanupNonPlanar
+		`checkBoxGrp -query -value1 polyCleanupNonPlanar`;
+
+	// Cleanup nonmanifold geometry
+	//
+	int $ival = `checkBoxGrp -query -value1 polyCleanupNonManifold` ? 1 : -1;
+	optionVar -intValue polyCleanupNonManifold
+		($ival * `radioButtonGrp -query -select polyCleanupNonManifoldType`);
+
+	// Cleanup shared UVs
+//	optionVar -intValue polyCleanupSharedUVs
+//		`checkBoxGrp -query -value1 polyCleanupSharedUVs`;
+
+	optionVar -intValue polyCleanupZeroGeomFace
+		`checkBoxGrp -query -value1 polyCleanupZeroGeomFace`;
+	optionVar -floatValue polyCleanupZeroGeomFTol
+		`floatSliderGrp -query -value polyCleanupZeroGeomFTol`;
+	optionVar -intValue polyCleanupZeroGeomEdge
+		`checkBoxGrp -query -value1 polyCleanupZeroGeomEdge`;
+	optionVar -floatValue polyCleanupZeroGeomETol
+		`floatSliderGrp -query -value polyCleanupZeroGeomETol`;
+	optionVar -intValue polyCleanupZeroMap
+		`checkBoxGrp -query -value1 polyCleanupZeroMap`;
+	optionVar -floatValue polyCleanupZeroMapTol
+		`floatSliderGrp -query -value polyCleanupZeroMapTol`;
+	optionVar -intValue polyCleanupLaminaFace
+		`checkBoxGrp -query -value1 polyCleanupLaminaFace`;
+
+	if ($doIt) {
+		performPolyCleanup 0; 
+		addToRecentCommandQueue "performPolyCleanup 0" "PolyCleanup";
+	}
+}
+
+proc 
+performPolyCleanupOptions()
+//
+// Description:
+//		Options for poly cleanup
+// Arguments:
+//		none
+// Returns:
+//		none
+//
+{
+	// Global template variables for form spacing
+	global int $gOptionBoxTemplateFrameSpacing;
+	
+	string $commandName = "performPolyCleanup";
+	string $callback = ($commandName + "Callback");
+	string $setup = ($commandName + "Setup");
+
+	string $layout = getOptionBox();
+	setParent $layout;
+	setUITemplate -pushTemplate OptionBoxTemplate;
+	waitCursor -state 1;	
+
+	// Form layout
+	scrollLayout;
+	string $parent = `formLayout polyCleanupOptions`;
+	
+		// General options frame
+		string $generalFrame = 
+		`frameLayout -label (uiRes("m_performPolyCleanup.kGeneralFrame"))`;
+
+			columnLayout;
+
+			radioButtonGrp -vr -label (uiRes("m_performPolyCleanup.kOperation"))
+				-numberOfRadioButtons 2
+				-label1 (uiRes("m_performPolyCleanup.kOperation1"))
+				-label2 (uiRes("m_performPolyCleanup.kOperation2"))
+				polyCleanupOperation;
+
+
+			radioButtonGrp -vr -label (uiRes("m_performPolyCleanup.kScope"))
+				-numberOfRadioButtons 2
+				-label1 (uiRes("m_performPolyCleanup.kScope1"))
+				-label2 (uiRes("m_performPolyCleanup.kScope2"))
+				polyCleanupAllMeshes;
+
+
+			checkBoxGrp -label1 (uiRes("m_performPolyCleanup.kConstructHist"))
+				polyCleanupHistory;
+
+		setParent $parent;
+	
+		// Tesselation options frame
+		string $tesselationFrame = 
+		`frameLayout -label (uiRes("m_performPolyCleanup.kTesselationFrame"))`;
+	
+			columnLayout;
+
+			checkBoxGrp -label1 (uiRes("m_performPolyCleanup.kFourSidedFaces")) polyCleanupQuads;
+			checkBoxGrp -label1 (uiRes("m_performPolyCleanup.kMoreFaces")) polyCleanupNSided;
+			checkBoxGrp -label1 (uiRes("m_performPolyCleanup.kConcaveFaces")) polyCleanupConcave;
+			checkBoxGrp -label1 (uiRes("m_performPolyCleanup.kFacesWithHoles")) polyCleanupHoles;	
+			checkBoxGrp -label1 (uiRes("m_performPolyCleanup.kNonPlanarFaces")) polyCleanupNonPlanar;	
+	
+		setParent $parent;
+		
+		// Remove geometry options frame
+		string $removeGeomFrame = 
+		`frameLayout -label (uiRes("m_performPolyCleanup.kRemoveGeomFrame"))`;
+
+			columnLayout;
+
+			checkBoxGrp -label1 (uiRes("m_performPolyCleanup.kLaminaFaces"))
+				polyCleanupLaminaFace;
+
+			checkBoxGrp -label1 (uiRes("m_performPolyCleanup.kNomanifold"))
+				-changeCommand "radioButtonGrp -edit -enable #1 polyCleanupNonManifoldType"
+				polyCleanupNonManifold;
+			radioButtonGrp -vr 
+				-label ""
+				-numberOfRadioButtons 2
+				-label1 (uiRes("m_performPolyCleanup.kNormalsAndGeom"))
+				-label2 (uiRes("m_performPolyCleanup.kGeomOnly")) 
+				polyCleanupNonManifoldType;
+
+
+			checkBoxGrp -label1 (uiRes("m_performPolyCleanup.kEdgesZeroLength"))
+				-on1 ("disable -v false polyCleanupZeroGeomETol")
+				-of1 ("disable -v true polyCleanupZeroGeomETol")
+				polyCleanupZeroGeomEdge;
+			floatSliderGrp -label (uiRes("m_performPolyCleanup.kLengthTol"))
+				-pre 6
+				-minValue 0.0
+				-maxValue 10.0
+				//-fieldMinValue 0.0 
+				//-fieldMaxValue 0.01
+				polyCleanupZeroGeomETol;
+			checkBoxGrp -label1 (uiRes("m_performPolyCleanup.kFacesZeroGeomArea"))
+				-on1 ("disable -v false polyCleanupZeroGeomFTol")
+				-of1 ("disable -v true polyCleanupZeroGeomFTol")
+				polyCleanupZeroGeomFace;
+			floatSliderGrp -label (uiRes("m_performPolyCleanup.kAreaTol"))
+				-pre 6
+				-minValue 0.0
+				-maxValue 10.0
+				//-fieldMinValue 0.0 
+				//-fieldMaxValue 0.01
+				polyCleanupZeroGeomFTol;
+			checkBoxGrp -label1 (uiRes("m_performPolyCleanup.kFacesZeroMapArea"))
+				-on1 ("disable -v false polyCleanupZeroMapTol")
+				-of1 ("disable -v true polyCleanupZeroMapTol")
+				polyCleanupZeroMap;
+			floatSliderGrp -label (uiRes("m_performPolyCleanup.kAreaTol2"))
+				-pre 6
+				-minValue 0.0
+				-maxValue 10.0
+				//-fieldMinValue 0.0 
+				//-fieldMaxValue 0.01
+				polyCleanupZeroMapTol;
+	
+		setParent $parent;
+
+	setParent ..;
+
+	// Attach frames to form layout
+	formLayout -e
+		-af $generalFrame "top" $gOptionBoxTemplateFrameSpacing
+		-af $generalFrame "left" $gOptionBoxTemplateFrameSpacing
+		-af $generalFrame "right" $gOptionBoxTemplateFrameSpacing
+		-an $generalFrame "bottom"
+
+		-ac $tesselationFrame "top" $gOptionBoxTemplateFrameSpacing $generalFrame
+		-af $tesselationFrame "left" $gOptionBoxTemplateFrameSpacing
+		-af $tesselationFrame "right" $gOptionBoxTemplateFrameSpacing
+		-an $tesselationFrame "bottom" 
+
+		-ac $removeGeomFrame "top" $gOptionBoxTemplateFrameSpacing $tesselationFrame
+		-af $removeGeomFrame "left" $gOptionBoxTemplateFrameSpacing
+		-af $removeGeomFrame "right" $gOptionBoxTemplateFrameSpacing
+		-af $removeGeomFrame "bottom" $gOptionBoxTemplateFrameSpacing
+
+	$parent;
+
+	//
+	// Standard template stuff
+	//
+	waitCursor -state 0;
+    setUITemplate -popTemplate;
+       
+    string $applyBtn = getOptionBoxApplyBtn();
+    button -edit -label (uiRes("m_performPolyCleanup.kCleanupButton"))
+           -command ($callback + " " + $parent + " " + 1)
+        $applyBtn;
+
+    string $saveBtn = getOptionBoxSaveBtn();
+    button -edit 
+        -command ($callback + " " + $parent + " " + 0 + "; hideOptionBox")
+        $saveBtn;
+
+    string $resetBtn = getOptionBoxResetBtn();
+    button -edit 
+        -command ($setup + " " + $parent + " " + 1)
+        $resetBtn;
+             
+    setOptionBoxTitle( (uiRes("m_performPolyCleanup.kCleanupOptions")) );
+
+	//	Customize the 'Help' menu item text.
+	//
+	setOptionBoxHelpTag( "Cleanup" );
+
+    eval (($setup + " " + $parent + " " + 0));      
+    showOptionBox();
+}
+
+proc string 
+assembleCmd()
+//
+// Description:
+//		Build a command based on the current option variables.
+// Arguments:
+//		None.
+// Returns:
+//		string command
+//
+{
+	// polyCleanupArgList takes a string array
+	//
+	string $cmd = "polyCleanupArgList 3 { " + 
+		// Find out global parameters
+		//
+			"\"" + `optionVar -query polyCleanupAllMeshes` + "\"" + 
+			",\"" + `optionVar -query polyCleanupOperation` + "\"" + 
+			",\"" + `optionVar -query polyCleanupHistory` + "\"" + 
+		// Find out which ones to tesselate
+		//
+			",\"" + `optionVar -query polyCleanupQuads` + "\"" + 
+			",\"" + `optionVar -query polyCleanupNSided` + "\"" + 
+			",\"" + `optionVar -query polyCleanupConcave` + "\"" + 
+			",\"" + `optionVar -query polyCleanupHoles` + "\"" + 
+			",\"" + `optionVar -query polyCleanupNonPlanar` + "\"" + 
+		// Find out which ones to remove
+		//
+			",\"" + `optionVar -query polyCleanupZeroGeomFace` + "\"" + 
+			",\"" + `optionVar -query polyCleanupZeroGeomFTol` + "\"" +
+			",\"" + `optionVar -query polyCleanupZeroGeomEdge` + "\"" +
+			",\"" + `optionVar -query polyCleanupZeroGeomETol` + "\"" + 
+			",\"" + `optionVar -query polyCleanupZeroMap` + "\"" +
+			",\"" + `optionVar -query polyCleanupZeroMapTol` + "\"" +
+		// Find out which uvs to cleanup
+		//
+//			",\"" + `optionVar -query polyCleanupSharedUVs` + "\"" + 
+			",\"" + 0 + "\"" + 
+			",\"" + `optionVar -query polyCleanupNonManifold` + "\"" + 
+
+		// Find out which lamina faces to remove
+			",\"" + `optionVar -query polyCleanupLaminaFace` + "\"" +
+		" };";
+
+	return ($cmd);
+}
+
+global proc 
+string performPolyCleanup(int $option)
+//
+// Description:
+//		Polygon cleanup (UI wrapper)
+// Arguments:
+//
+// Returns:
+//
+//
+{
+	string $cmd = "";
+
+	switch ($option)
+	{
+	  case 1: 
+		// Just show the option box
+		performPolyCleanupOptions();
+		break;
+
+	  default:
+		// Build a new command based on current
+		// option variables.
+		//
+		setOptionVars(false);
+		$cmd = assembleCmd();
+
+		// Placing on to the shelf, just return the command.
+		//Shelf button will be a snapshot of the cleanup option vars at time of adding
+		if ($option == 2)
+		{
+			return $cmd;
+		}
+
+		evalEcho $cmd;
+		break;
+	}
+
+	return $cmd;
+}

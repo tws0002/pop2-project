@@ -1,0 +1,250 @@
+// Copyright (C) 1997-2013 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+/**
+ * @file xgmLatticeTool.mel
+ * @brief Contains the xgmLatticeTool MEL procedure.
+ *
+ * <b>CONFIDENTIAL INFORMATION: This software is the confidential and
+ * proprietary information of Walt Disney Animation Studios ("WDAS").
+ * This software may not be used, disclosed, reproduced or distributed
+ * for any purpose without prior written authorization and license
+ * from WDAS. Reproduction of any section of this software must include
+ * this legend and all copyright notices.
+ * Copyright Disney Enterprises, Inc. All rights reserved.</b>
+ *
+ * @author Patrick Witting
+ * @author Lee Gramling
+ * @author Ying Liu
+ *
+ * @version Created 12/30/04
+ */
+
+global proc xgmLatticeTool( string $parent )
+{
+    columnLayout -parent $parent;
+
+    intSliderGrp 
+        -ann (uiRes("m_xgmLatticeTool.kLatticeDivisionsXAnn"))
+        -label (uiRes("m_xgmLatticeTool.kDivisionsx"))
+        -cw3 100 80 240
+        -field 1
+        -min 2
+        -max 10
+        -fieldMinValue 2
+        -fieldMaxValue 100
+        -dc "xgmLatticeToolCCX"
+        -cc "xgmLatticeToolCCX"
+        -value 3
+        xgmLatticeToolDivisionsX;
+
+    intSliderGrp 
+        -ann (uiRes("m_xgmLatticeTool.kLatticeDivisionsYAnn"))
+        -label (uiRes("m_xgmLatticeTool.kDivisionsy"))
+        -cw3 100 80 240
+        -field 1
+        -min 2
+        -max 10
+        -fieldMinValue 2
+        -fieldMaxValue 100
+        -dc "xgmLatticeToolCCY"
+        -cc "xgmLatticeToolCCY"
+        -value 3
+        xgmLatticeToolDivisionsY;
+
+    intSliderGrp 
+        -ann (uiRes("m_xgmLatticeTool.kLatticeDivisionsInZAnn"))
+        -label (uiRes("m_xgmLatticeTool.kDivisionsz"))
+        -cw3 100 80 240
+        -field 1
+        -min 2
+        -max 10
+        -fieldMinValue 2
+        -fieldMaxValue 100
+        -dc "xgmLatticeToolCCZ"
+        -cc "xgmLatticeToolCCZ"
+        -value 3
+        xgmLatticeToolDivisionsZ;
+
+    gridLayout -numberOfColumns 3 -cellWidthHeight 113 25;
+    {
+        button -label (uiRes("m_xgmLatticeTool.kCreateLattice")) -w 113 
+            -ann (uiRes("m_xgmLatticeTool.kCreateLatticeAnn"))
+            -command "xgmLatticeToolCreate";
+        button -label (uiRes("m_xgmLatticeTool.kAcceptResults")) -w 113 
+            -ann (uiRes("m_xgmLatticeTool.kAcceptResultsAnn"))
+            -command "xgmLatticeToolAccept";
+        button -label (uiRes("m_xgmLatticeTool.kUndoResults")) -w 113 
+            -ann ((uiRes("m_xgmLatticeTool.kUndoResultsAnn"))) 
+            -command "xgmLatticeToolDelete";
+
+        setParent ..;
+    }
+
+    setParent ..;
+}
+
+
+global proc xgmLatticeToolMovePositions( float $now[], float $goal[] )
+{
+    global string $xgmLatticeToolGuideList[];
+    global int    $xgmLatticeToolNcvList[];
+
+    // move to goal positions
+    int $i=0;  // guide index
+    int $j=0;  // float array index
+
+    for ( $guide in $xgmLatticeToolGuideList ) {
+        int $ncvs = $xgmLatticeToolNcvList[$i];
+        for ( $k=0; $k<$ncvs; $k++ ){    
+            float $x = $goal[$j] - $now[$j]; $j++;
+            float $y = $goal[$j] - $now[$j]; $j++;
+            float $z = $goal[$j] - $now[$j]; $j++;
+            // Dont apply to the base point
+            if ( $k > 0 ) {
+                move -r $x $y $z ( $guide + ".vtx[" + $k + "]" );
+            }
+        }
+        $i++;
+    }
+
+    xgmBakeGuideVertices;
+}
+
+
+global proc xgmLatticeToolDeleteLeftoverNodes()
+{
+    string $deleteNodes[] = `ls "*_xgmLattice"`;
+    if ( $deleteNodes[0] != "" )
+        delete $deleteNodes;
+}
+
+
+global proc xgmLatticeToolCreate( )
+{
+    global string $xgmLatticeToolGuideList[];
+    global int    $xgmLatticeToolNcvList[];
+    global float  $xgmLatticeToolBeforePos[];
+
+    int $divX = `intSliderGrp -q -v xgmLatticeToolDivisionsX`;
+    int $divY = `intSliderGrp -q -v xgmLatticeToolDivisionsY`;
+    int $divZ = `intSliderGrp -q -v xgmLatticeToolDivisionsZ`;
+
+    print "xgmLatticeToolCreate0:\n";
+    string $tweaks[] = `ls "tweak*"`;
+    print $tweaks;
+
+    if ( !`objExists xgmLatticeToolDeformer` ) {
+        xgmLatticeToolDeleteLeftoverNodes;
+        $xgmLatticeToolGuideList = `xgmSelectedGuides "" 1`;
+        $xgmLatticeToolNcvList = `xgmGuideNcvArray $xgmLatticeToolGuideList`;
+        // stored in case of Undo
+        $xgmLatticeToolBeforePos = `xgmGuidePositionsArray 
+                                    $xgmLatticeToolGuideList $xgmLatticeToolNcvList`;
+
+        string $nodesBefore[] =
+            `ls -type "tweak" -type "xgmSplineGuide" "tweak*" "*Orig*"`;
+
+        string $myLatticeObjs[] =
+            `lattice -oc 1 -dv $divX $divY $divZ -n xgmLatticeToolDeformer`;
+
+        string $nodesAfter[] =
+            `ls -type "tweak" -type "xgmSplineGuide" "tweak*" "*Orig*"`;
+
+        string $nodesLattice[] = `stringArrayRemove $nodesBefore $nodesAfter`;
+
+        for ( $node in $nodesLattice )
+            rename $node ($node+"_xgmLattice");
+
+        hilite xgmLatticeToolDeformerLattice ;  
+        changeSelectMode -component;
+
+    } else {
+        warning (uiRes("m_xgmLatticeTool.kDefAlreadyExists"));
+	}
+}
+
+
+global proc xgmLatticeToolDelete()
+{
+    global string $xgmLatticeToolGuideList[];
+    global int    $xgmLatticeToolNcvList[];
+    global float  $xgmLatticeToolBeforePos[];
+
+    if ( `objExists xgmLatticeToolDeformer` ) delete xgmLatticeToolDeformer;
+    xgmLatticeToolDeleteLeftoverNodes;
+
+    float $now[] = `xgmGuidePositionsArray $xgmLatticeToolGuideList
+                                           $xgmLatticeToolNcvList`;
+    xgmLatticeToolMovePositions $now $xgmLatticeToolBeforePos;
+    changeSelectMode -object;
+}
+
+
+global proc xgmLatticeToolAccept()
+{
+    global string $xgmLatticeToolGuideList[];
+    global int    $xgmLatticeToolNcvList[];
+
+    float $goal[] = `xgmGuidePositionsArray $xgmLatticeToolGuideList
+                                            $xgmLatticeToolNcvList`;
+
+    if (`objExists xgmLatticeToolDeformer` ) delete xgmLatticeToolDeformer;
+    xgmLatticeToolDeleteLeftoverNodes;
+
+    float $now[] = `xgmGuidePositionsArray $xgmLatticeToolGuideList
+                                           $xgmLatticeToolNcvList`;
+
+    xgmLatticeToolMovePositions $now $goal;
+
+    print "xgmLatticeToolAccept:\n";
+
+    string $tweaks[] = `ls "tweak*"`;
+    print $tweaks;
+    changeSelectMode -object;
+}
+
+
+global proc xgmLatticeToolCCX()
+{
+    if ( `objExists xgmLatticeToolDeformer` ) {
+        int $divX = `intSliderGrp -q -v xgmLatticeToolDivisionsX`;
+        setAttr xgmLatticeToolDeformerLatticeShape.sDivisions $divX;
+    }
+}
+
+
+global proc xgmLatticeToolCCY()
+{
+    if ( `objExists xgmLatticeToolDeformer` ) {
+        int $divY = `intSliderGrp -q -v xgmLatticeToolDivisionsY`;
+        setAttr xgmLatticeToolDeformerLatticeShape.tDivisions $divY;
+    }
+}
+
+
+global proc xgmLatticeToolCCZ()
+{
+    if ( `objExists xgmLatticeToolDeformer` ) {
+        int $divZ = `intSliderGrp -q -v xgmLatticeToolDivisionsZ`;
+        setAttr xgmLatticeToolDeformerLatticeShape.uDivisions $divZ;
+    }
+}

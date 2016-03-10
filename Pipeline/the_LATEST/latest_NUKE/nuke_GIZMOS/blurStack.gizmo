@@ -1,0 +1,283 @@
+#! C:/Program Files/Nuke9.0v6/nuke-9.0.6.dll -nx
+version 9.0 v6
+Gizmo {
+ addUserKnob {20 User}
+ addUserKnob {6 colorFalloff_panelDropped l "panel dropped state" -STARTLINE +HIDDEN}
+ addUserKnob {3 quality l Quality t "The number of blurs you want to apply. Increasing this value will make a nicer blur but also increase render time"}
+ quality 10
+ addUserKnob {22 update l Update t "Commit any new changes" -STARTLINE T "#!/usr/bin/env python\n# -*- coding: utf-8 -*-\n\nfrom __future__ import with_statement  # < py 2.5.X\n\n\"\"\"\nDescription\n+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\nCreates a stack of blurs which update interactively within Nuke's viewer.\nBecause this script lives within the context of a Nuke gizmo, there is no\n__name__ statement or main function.\n\nFilename\n+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++\nblurStack_helper_function.py\n\"\"\"\n\n# IMPORT STANDARD LIBRARIES\nimport math\n\n# IMPORT THIRD-PARTY LIBRARIES\nimport nuke\n\n\ndef set_bias(inputH, bias):\n    \"\"\"\n    Pushes values in a smooth way from one extreme to another between the range\n    of 0 to 1. This function is used in set_contrast to define the contrast\n    of the output image\n\n    Args:\n        inputH (float): A value to bias in one direction or another\n        bias (float): The amount to bias the value. If bias is clamped at zero\n                      and all values above zero perform a log operation\n                      on modulate inputH's ouput value\n\n    Returns:\n        float or int: Will return 0 if bias is on or below 0, else it returns\n                      a float above the value of 0\n    \"\"\"\n    if bias > 0:\n        power = math.log10(bias) / math.log10(0.5)\n        return math.pow(inputH, power)\n    else:\n        return 0\n# end set_bias\n\n\ndef set_contrast(inputH, contrast):\n    \"\"\"\n    Changes an input value image, making darks darker and lights lighter\n    set_contrast uses bias depending on whether the input value is below or\n    above the exact midpoint value of the image, 0.5. This operation is meant\n    to be done per-channel (r,g,b) individually.\n\n    .. note::\n        The value is reduced to 1/2 to order to keep the number within the\n        range of 0 to 1\n\n    Args:\n        inputH (float): The value to change the contrast of\n        contrast (float): The amount to change the contrast of the inputH.\n                          A value of 0.5 does nothing, values lower than 0.5\n                          increase contrast and values above reduce contrast\n\n    Returns:\n        float: The output value from the operation\n    \"\"\"\n    if input < 0.5:\n        outValue = set_bias(2 * inputH, 1 - contrast)\n    else:\n        outValue =  2 - set_bias(2 - (2 * inputH), 1 - contrast)\n    return outValue * 0.5\n# end set_contrast\n\n\ndef set_gamma(inputH, gamma):\n    \"\"\"\n    Changes the gamma of an inputH, much like bias but the effect is created\n    by modifying the value by a power function, instead of how set_bias does it\n    through a log division\n\n    Args:\n        inputH (float): The input value to change the gamma of\n        gamma (float): The gamma value whose inverse is applied to inputH\n\n    Returns:\n        float: The output value from the operation\n    \"\"\"\n    return math.pow(inputH, 1/gamma)\n# end set_gamma\n\n\ndef set_compression(inputH, lo, hi):\n    \"\"\"\n    Linearly squashes values so that the input's maximum value is restricted by\n    the hi, its lo cannot be lower than lo, and every value in-between is some\n    percentage between the two ranges\n\n    Args:\n        inputH (float): The input value to change the gamma of\n        lo (float): The lowest allowed value of the output\n        hi (float): The highest allowed value of the output\n\n    Returns:\n        float: The output value from the operation\n    \"\"\"\n    return ((hi-lo) * inputH) + lo\n# end set_compression\n\n\ndef set_expansion(inputH, lo, hi):\n    \"\"\"\n    Linearly stretches values so that the input's maximum value is restricted by\n    the hi, its lo cannot be lower than lo, and every value in-between is some\n    percentage between the two ranges. It is essentially the inverse process\n    of set_compression but has the same types of inputs\n\n    Args:\n        inputH (float): The input value to change the gamma of\n        lo (float): The lowest allowed value of the output\n        hi (float): The highest allowed value of the output\n\n    Returns:\n        float: The output value from the operation\n    \"\"\"\n    returnval = 0\n    if (lo == hi):\n        if inputH < lo:\n            return 0\n        else:\n            return 1\n    else:\n        return float(inputH - lo) / (hi-lo)\n# end set_expansion\n\n\n# Get node attribute information\n# :NOTE: If the output of \"step\" that results from these attributes is within\n# the range of 0 to 1, these attributes basically have no effect on the actual\n# blurStack's output. But if the value returned from the for-loop is outside of\n# 0 to 1, a fail-safe op is done to clamp the values within 0 to 1\n#\n# (in other words, these attributes are used to check, not in any node's knobs)\n#\nthisNode = nuke.thisNode()\n# thisNode = nuke.toNode(\"Group1\")\nquality = int(thisNode.knob(\"quality\").getValue())\nminimum = int(thisNode.knob(\"minBlur\").getValue())\nmaximum = int(thisNode.knob(\"maxBlur\").getValue())\ncontrast = thisNode.knob(\"contrast\").getValue()\ngamma = thisNode.knob(\"gamma\").getValue()\ncompress = thisNode.knob(\"compression\").getValue()\nexpand = thisNode.knob(\"expansion\").getValue()\ncolorFallOff = thisNode.knob(\"colorFalloff\").getValue()\n\nwith thisNode:\n    # GET INFO FOR REINITIALIZATION\n    connectedNode = thisNode.input(0)\n\n    # RESET ALL BUT COLOR_CONSTANT\n    nAll = nuke.allNodes()\n    \[nuke.delete(n) for n in nAll if n.knob(\"name\").value() != \"COLOR_CONSTANT\"]\n\n    # REINITIALIZATION FROM START\n    inputH = nuke.nodes.Input()\n    inputH.setInput(0, connectedNode)\n\n    for i in xrange(quality):\n        # perform some simple math ops to modify the\n        # (otherwise) linear step function\n        #\n        step = 1 - float(i)/quality\n        color = step\n        step = set_contrast(step, contrast)\n        step = set_gamma(step, gamma)\n        step = set_compression(step, compress\[0], compress\[1])\n        step = set_expansion(step, expand\[0], expand\[1])\n        if step < 0:\n            step = \"0\"\n        elif step > 1:\n            step = \"1\"\n        else:\n            step = \"1 - float(\{\})/nuke.thisGroup().knob('quality').getValue()\".format(i)\n            step = \"set_contrast(\{\}, nuke.thisGroup().knob('contrast').getValue())\".format(step)\n            step = \"set_gamma(\{\}, nuke.thisGroup().knob('gamma').getValue())\".format(step)\n            step = \"set_compression(\{\}, nuke.thisGroup().knob('compression').x(),\"\\\n                   \"nuke.thisGroup().knob('compression').y())\".format(step)\n            step = \"set_expansion(\{\}, thisNode.knob('expansion').x(), \"\\\n                   \"thisNode.knob('expansion').y())\".format(step)\n\n        blur = nuke.nodes.Blur()\n        merge = nuke.nodes.Merge()\n\n        blur.connectInput(0, inputH)\n        blur.knob(\"size\").setExpression('\[python \{\} * (nuke.thisGroup().knob(\"maxBlur\").value() - nuke.thisGroup().knob(\"minBlur\").value()) + nuke.thisGroup().knob(\"minBlur\").value()]'.format(step))\n\n        multiplyR = nuke.nodes.Multiply()\n        multiplyG = nuke.nodes.Multiply()\n        multiplyB = nuke.nodes.Multiply()\n        multiplyR.knob(\"channel\").setValue(\"rgb\")\n        multiplyG.knob(\"channels\").setValue(\"rgb\")\n        multiplyB.knob(\"channels\").setValue(\"rgb\")\n        multiplyR.knob(\"channels\").setEnable(1)  # red only\n        multiplyG.knob(\"channels\").setEnable(2)  # green only\n        multiplyB.knob(\"channels\").setEnable(4)  # blue only\n        colorFalloff = '1 - ((1- \{\}) * \{\})'\n\n        colorExpression = \[]\n        for x in xrange(3):\n            print color\n            strH = 'nuke.thisGroup().knob(\"colorFalloff\").getValue(\{\})'.format(x)\n            strH = '\[python \{\}]'.format(strH)\n            colorExpression.append(strH)\n        \n        multiplyR.knob(\"value\").setExpression(colorFalloff.format(colorExpression\[0], color))\n        multiplyG.knob(\"value\").setExpression(colorFalloff.format(colorExpression\[1], color))\n        multiplyB.knob(\"value\").setExpression(colorFalloff.format(colorExpression\[2], color))\n        multiplyR.connectInput(0, blur)\n        multiplyG.connectInput(0, multiplyR)\n        multiplyB.connectInput(0, multiplyG)\n\n        merge.connectInput(1, multiplyB)\n        if i == 0:\n            merge.connectInput(0, inputH)\n        else:\n            merge.connectInput(0, previous)\n\n        previous = merge\n\n    # create one more\n    blur = nuke.nodes.Blur()\n    merge = nuke.nodes.Merge()\n\n    blur.connectInput(0, inputH)\n    blur.knob(\"size\").setExpression('\[python nuke.thisGroup().knob(\"minBlur\").value()]')\n\n    merge.connectInput(1, blur)\n\n    if i == 0:\n        merge.connectInput(0, inputH)\n    else:\n        merge.connectInput(0, previous)\n\n    output = nuke.nodes.Output()\n    output.connectInput(0, merge)\n"}
+ addUserKnob {19 colorFalloff t "Sets the fringe color on the blur"}
+ colorFalloff {0 0 0 0}
+ addUserKnob {6 colorFalloff_panelDropped l "panel dropped state" -STARTLINE +HIDDEN}
+ addUserKnob {26 ""}
+ addUserKnob {7 minBlur l "Minimum Blur" t "Change to non-zero value to increase blur across the entire input" R 0 100}
+ addUserKnob {7 maxBlur l "Maximum Blur" t "Increase the spread of the blur" R 0 100}
+ maxBlur 5
+ addUserKnob {26 ""}
+ addUserKnob {7 contrast l Contrast t "Change how quickly the smallest blur radius transitions to the high blur radius. Setting to 0.5 will have no effect"}
+ contrast 0.5
+ addUserKnob {7 gamma l Gamma t "Change the falloff of the blur. Setting it to 1 will have no effect" R 0 2}
+ gamma 1
+ addUserKnob {14 compression l Compression t "Determine how quickly the blur reaches its maximum value. Setting \[0, 1] has no effect." R 0 100}
+ compression {0 1}
+ addUserKnob {14 expansion l Expansion t "Determine how long the blur stays in its minimum value before trying to reach its maximum value. Setting to \[0, 1] has no effect." R 0 100}
+ expansion {0 1}
+}
+ Input {
+  inputs 0
+  name Input1
+ }
+set N51cbec00 [stack 0]
+ Blur {
+  size {{"\[python nuke.thisGroup().knob(\"minBlur\").value()]"}}
+  name Blur11
+ }
+push $N51cbec00
+ Blur {
+  size {{"\[python 0 * (nuke.thisGroup().knob(\"maxBlur\").value() - nuke.thisGroup().knob(\"minBlur\").value()) + nuke.thisGroup().knob(\"minBlur\").value()]"}}
+  name Blur10
+ }
+ Multiply {
+  channels {rgba.red -rgba.green -rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(0)]) * 0.1)"}}
+  name Multiply28
+ }
+ Multiply {
+  channels {-rgba.red rgba.green -rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(1)]) * 0.1)"}}
+  name Multiply29
+ }
+ Multiply {
+  channels {-rgba.red -rgba.green rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(2)]) * 0.1)"}}
+  name Multiply30
+ }
+push $N51cbec00
+ Blur {
+  size {{"\[python 0 * (nuke.thisGroup().knob(\"maxBlur\").value() - nuke.thisGroup().knob(\"minBlur\").value()) + nuke.thisGroup().knob(\"minBlur\").value()]"}}
+  name Blur9
+ }
+ Multiply {
+  channels {rgba.red -rgba.green -rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(0)]) * 0.2)"}}
+  name Multiply25
+ }
+ Multiply {
+  channels {-rgba.red rgba.green -rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(1)]) * 0.2)"}}
+  name Multiply26
+ }
+ Multiply {
+  channels {-rgba.red -rgba.green rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(2)]) * 0.2)"}}
+  name Multiply27
+ }
+push $N51cbec00
+ Blur {
+  size {{"\[python set_expansion(set_compression(set_gamma(set_contrast(1 - float(7)/nuke.thisGroup().knob('quality').getValue(), nuke.thisGroup().knob('contrast').getValue()), nuke.thisGroup().knob('gamma').getValue()), nuke.thisGroup().knob('compression').x(),nuke.thisGroup().knob('compression').y()), thisNode.knob('expansion').x(), thisNode.knob('expansion').y()) * (nuke.thisGroup().knob(\"maxBlur\").value() - nuke.thisGroup().knob(\"minBlur\").value()) + nuke.thisGroup().knob(\"minBlur\").value()]"}}
+  name Blur8
+ }
+ Multiply {
+  channels {rgba.red -rgba.green -rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(0)]) * 0.3)"}}
+  name Multiply22
+ }
+ Multiply {
+  channels {-rgba.red rgba.green -rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(1)]) * 0.3)"}}
+  name Multiply23
+ }
+ Multiply {
+  channels {-rgba.red -rgba.green rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(2)]) * 0.3)"}}
+  name Multiply24
+ }
+push $N51cbec00
+ Blur {
+  size {{"\[python set_expansion(set_compression(set_gamma(set_contrast(1 - float(6)/nuke.thisGroup().knob('quality').getValue(), nuke.thisGroup().knob('contrast').getValue()), nuke.thisGroup().knob('gamma').getValue()), nuke.thisGroup().knob('compression').x(),nuke.thisGroup().knob('compression').y()), thisNode.knob('expansion').x(), thisNode.knob('expansion').y()) * (nuke.thisGroup().knob(\"maxBlur\").value() - nuke.thisGroup().knob(\"minBlur\").value()) + nuke.thisGroup().knob(\"minBlur\").value()]"}}
+  name Blur7
+ }
+ Multiply {
+  channels {rgba.red -rgba.green -rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(0)]) * 0.4)"}}
+  name Multiply19
+ }
+ Multiply {
+  channels {-rgba.red rgba.green -rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(1)]) * 0.4)"}}
+  name Multiply20
+ }
+ Multiply {
+  channels {-rgba.red -rgba.green rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(2)]) * 0.4)"}}
+  name Multiply21
+ }
+push $N51cbec00
+ Blur {
+  size {{"\[python set_expansion(set_compression(set_gamma(set_contrast(1 - float(5)/nuke.thisGroup().knob('quality').getValue(), nuke.thisGroup().knob('contrast').getValue()), nuke.thisGroup().knob('gamma').getValue()), nuke.thisGroup().knob('compression').x(),nuke.thisGroup().knob('compression').y()), thisNode.knob('expansion').x(), thisNode.knob('expansion').y()) * (nuke.thisGroup().knob(\"maxBlur\").value() - nuke.thisGroup().knob(\"minBlur\").value()) + nuke.thisGroup().knob(\"minBlur\").value()]"}}
+  name Blur6
+ }
+ Multiply {
+  channels {rgba.red -rgba.green -rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(0)]) * 0.5)"}}
+  name Multiply16
+ }
+ Multiply {
+  channels {-rgba.red rgba.green -rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(1)]) * 0.5)"}}
+  name Multiply17
+ }
+ Multiply {
+  channels {-rgba.red -rgba.green rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(2)]) * 0.5)"}}
+  name Multiply18
+ }
+push $N51cbec00
+ Blur {
+  size {{"\[python set_expansion(set_compression(set_gamma(set_contrast(1 - float(4)/nuke.thisGroup().knob('quality').getValue(), nuke.thisGroup().knob('contrast').getValue()), nuke.thisGroup().knob('gamma').getValue()), nuke.thisGroup().knob('compression').x(),nuke.thisGroup().knob('compression').y()), thisNode.knob('expansion').x(), thisNode.knob('expansion').y()) * (nuke.thisGroup().knob(\"maxBlur\").value() - nuke.thisGroup().knob(\"minBlur\").value()) + nuke.thisGroup().knob(\"minBlur\").value()]"}}
+  name Blur5
+ }
+ Multiply {
+  channels {rgba.red -rgba.green -rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(0)]) * 0.6)"}}
+  name Multiply13
+ }
+ Multiply {
+  channels {-rgba.red rgba.green -rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(1)]) * 0.6)"}}
+  name Multiply14
+ }
+ Multiply {
+  channels {-rgba.red -rgba.green rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(2)]) * 0.6)"}}
+  name Multiply15
+ }
+push $N51cbec00
+ Blur {
+  size {{"\[python set_expansion(set_compression(set_gamma(set_contrast(1 - float(3)/nuke.thisGroup().knob('quality').getValue(), nuke.thisGroup().knob('contrast').getValue()), nuke.thisGroup().knob('gamma').getValue()), nuke.thisGroup().knob('compression').x(),nuke.thisGroup().knob('compression').y()), thisNode.knob('expansion').x(), thisNode.knob('expansion').y()) * (nuke.thisGroup().knob(\"maxBlur\").value() - nuke.thisGroup().knob(\"minBlur\").value()) + nuke.thisGroup().knob(\"minBlur\").value()]"}}
+  name Blur4
+ }
+ Multiply {
+  channels {rgba.red -rgba.green -rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(0)]) * 0.7)"}}
+  name Multiply10
+ }
+ Multiply {
+  channels {-rgba.red rgba.green -rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(1)]) * 0.7)"}}
+  name Multiply11
+ }
+ Multiply {
+  channels {-rgba.red -rgba.green rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(2)]) * 0.7)"}}
+  name Multiply12
+ }
+push $N51cbec00
+ Blur {
+  size {{"\[python set_expansion(set_compression(set_gamma(set_contrast(1 - float(2)/nuke.thisGroup().knob('quality').getValue(), nuke.thisGroup().knob('contrast').getValue()), nuke.thisGroup().knob('gamma').getValue()), nuke.thisGroup().knob('compression').x(),nuke.thisGroup().knob('compression').y()), thisNode.knob('expansion').x(), thisNode.knob('expansion').y()) * (nuke.thisGroup().knob(\"maxBlur\").value() - nuke.thisGroup().knob(\"minBlur\").value()) + nuke.thisGroup().knob(\"minBlur\").value()]"}}
+  name Blur3
+ }
+ Multiply {
+  channels {rgba.red -rgba.green -rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(0)]) * 0.8)"}}
+  name Multiply7
+ }
+ Multiply {
+  channels {-rgba.red rgba.green -rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(1)]) * 0.8)"}}
+  name Multiply8
+ }
+ Multiply {
+  channels {-rgba.red -rgba.green rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(2)]) * 0.8)"}}
+  name Multiply9
+ }
+push $N51cbec00
+ Blur {
+  size {{"\[python set_expansion(set_compression(set_gamma(set_contrast(1 - float(1)/nuke.thisGroup().knob('quality').getValue(), nuke.thisGroup().knob('contrast').getValue()), nuke.thisGroup().knob('gamma').getValue()), nuke.thisGroup().knob('compression').x(),nuke.thisGroup().knob('compression').y()), thisNode.knob('expansion').x(), thisNode.knob('expansion').y()) * (nuke.thisGroup().knob(\"maxBlur\").value() - nuke.thisGroup().knob(\"minBlur\").value()) + nuke.thisGroup().knob(\"minBlur\").value()]"}}
+  name Blur2
+ }
+ Multiply {
+  channels {rgba.red -rgba.green -rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(0)]) * 0.9)"}}
+  name Multiply4
+ }
+ Multiply {
+  channels {-rgba.red rgba.green -rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(1)]) * 0.9)"}}
+  name Multiply5
+ }
+ Multiply {
+  channels {-rgba.red -rgba.green rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(2)]) * 0.9)"}}
+  name Multiply6
+ }
+push $N51cbec00
+ Blur {
+  size {{"\[python set_expansion(set_compression(set_gamma(set_contrast(1 - float(0)/nuke.thisGroup().knob('quality').getValue(), nuke.thisGroup().knob('contrast').getValue()), nuke.thisGroup().knob('gamma').getValue()), nuke.thisGroup().knob('compression').x(),nuke.thisGroup().knob('compression').y()), thisNode.knob('expansion').x(), thisNode.knob('expansion').y()) * (nuke.thisGroup().knob(\"maxBlur\").value() - nuke.thisGroup().knob(\"minBlur\").value()) + nuke.thisGroup().knob(\"minBlur\").value()]"}}
+  name Blur1
+ }
+ Multiply {
+  channels {rgba.red -rgba.green -rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(0)]) * 1.0)"}}
+  name Multiply1
+ }
+ Multiply {
+  channels {-rgba.red rgba.green -rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(1)]) * 1.0)"}}
+  name Multiply2
+ }
+ Multiply {
+  channels {-rgba.red -rgba.green rgba.blue none}
+  value {{"1 - ((1- \[python nuke.thisGroup().knob(\"colorFalloff\").getValue(2)]) * 1.0)"}}
+  name Multiply3
+ }
+push $N51cbec00
+ Merge {
+  inputs 2
+  name Merge1
+ }
+ Merge {
+  inputs 2
+  name Merge2
+ }
+ Merge {
+  inputs 2
+  name Merge3
+ }
+ Merge {
+  inputs 2
+  name Merge4
+ }
+ Merge {
+  inputs 2
+  name Merge5
+ }
+ Merge {
+  inputs 2
+  name Merge6
+ }
+ Merge {
+  inputs 2
+  name Merge7
+ }
+ Merge {
+  inputs 2
+  name Merge8
+ }
+ Merge {
+  inputs 2
+  name Merge9
+ }
+ Merge {
+  inputs 2
+  name Merge10
+ }
+ Merge {
+  inputs 2
+  name Merge11
+ }
+ Output {
+  name Output1
+ }
+end_group

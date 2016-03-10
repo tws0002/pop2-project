@@ -1,0 +1,707 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+// 
+// hikRigDisplayUtils.mel
+//
+// Description:
+//		Utility methods Related to the visibility of the rig and the skeleton.
+//
+
+
+
+///////////////////////////////////////////////////////////////////////
+// Local methodes...
+///////////////////////////////////////////////////////////////////////
+
+// Get the numeric indices of all FK nodes for the named character
+proc int[] getFkNodeIds( string $character )
+{
+    int $ids[] = {};
+    
+    string $rig = hikGetControlRig( $character );
+    if ( size( $rig ) > 0 )
+    {
+        string $node;
+
+        int $i;
+        for( $i=0; $i<hikGetNodeCount(); $i++)
+        {
+            $node = hikGetSkNode( $rig, $i );
+            if ( size( $node ) == 0 )
+                continue;
+
+            $ids[ size($ids) ] = $i;
+        }
+    }
+    
+    return $ids;
+}
+
+// Get the numeric indices of all IK nodes for the named character
+proc int[] getIkNodeIds( string $character )
+{
+    int $ids[] = {};
+
+    string $node;
+
+    int $i;
+    for( $i=0; $i < GetHIKEffectorCount(); $i++)
+    {
+        $node = hikGetIKEffectorNode ( $character, $i );
+        if ( size( $node ) == 0 )
+            continue;
+
+        $ids[ size($ids) ] = $i;
+    }
+    
+    return $ids;
+}
+
+
+// Count the number of entries between min and max inclusive. 
+// Entries in ids must be sorted in increasing order.
+proc int getIndicesInRangeCount( int $ids[], int $min, int $max )
+{
+    int $count = 0;
+
+    for ( $id in $ids )
+    {
+        if ( $id > $max )
+            break;
+
+        if ( $id >= $min )
+            $count++;
+    }
+    return $count;
+}
+
+proc int getSkeletonSpineCount( string $character )
+{
+    // Spine joints are located at index 8 and indices 23-31.
+    // Since HIK supports a variable # of spine joints, we 
+    // need to determine how many of the indices between 23 and 31
+    // are actually being used. 
+
+    // To do this, we request a list of all ids used by the named character ...
+    int $ids[] = getFkNodeIds( $character );
+    
+    // ... and count the number of indices present between 23 and 31 (inclusive).
+    int $count = getIndicesInRangeCount( $ids, 23, 31 );
+    
+    // Since characters always have a spine joint at index 8, we add 1.
+    return ( $count + 1 );
+}
+
+
+// Local helper function to show/hide IK auxiliaries
+//
+proc string[] getAllAuxiliaryNodesFromCharacter( string $character )
+{
+	string $auxNodes[ ];
+	
+	string $controlSet = hikGetControlRig( $character );
+	
+	if( size( $controlSet ) > 0 )
+	{
+		int $arraySize = 0;
+		for( $i = 0; $i < GetHIKEffectorCount( ); $i++ )
+		{
+			string $attrName = $controlSet + "." + GetHIKEffectorName( $i );
+			string $nodes[ ] = `listConnections $attrName`;
+			
+			if( size( $nodes ) > 1 )
+			{
+				for( $j = 1; $j < size( $nodes ); $j++ )
+				{
+					$auxNodes[ $arraySize ] = $nodes[ $j ];
+					$arraySize++;
+				}
+			}
+		}
+	}
+	
+	return $auxNodes;
+}
+
+
+proc int readHIKRigStyle( string $filename,
+                             string $names[],
+                             string $styles[],
+                             float  $sizes[],
+                             string $colors[],
+                             float  $rotatX[],
+                             float  $rotatY[],
+                             float  $rotatZ[],
+                             float  $transX[],
+                             float  $transY[],
+                             float  $transZ[],
+                             float  $scaleX[],
+                             float  $scaleY[],
+                             float  $scaleZ[] )
+{
+    // Initialize arrays
+    $names  = {};
+    $styles = {};
+    $sizes  = {};
+    $colors = {};
+    $rotatX = {};
+    $rotatY = {};
+    $rotatZ = {};
+    $transX = {};
+    $transY = {};
+    $transZ = {};
+    $scaleX = {};
+    $scaleY = {};
+    $scaleZ = {};
+
+    int $retval = false;
+        
+    // Open and read specified file
+    int $fileId = `fopen $filename "r"`;
+    while( $fileId != 0  )
+    {
+        $retval = true;
+        
+        string $nextLine = `fgetline $fileId`;
+        if ( size($nextLine) == 0 )
+            break;
+            
+        string $s[];
+        tokenize( strip( $nextLine), $s );
+        
+        // Each line must contain at least 5 fields ( name, id, style, sz, color )
+        int $len = size( $s );
+        if ( $len < 5 || strcmp( $s[0], "#" ) == 0 )
+            continue;
+
+        // set name
+        $names[ size( $names ) ] = strip( $s[0] );
+        
+        // set style
+        $styles[ size( $styles ) ] = strip( $s[2] );
+
+        // Set radius
+        $sizes[ size( $sizes ) ] = float( $s[3] );
+    
+        // set color
+        $colors[ size( $colors ) ] = strip( $s[4] );
+
+        // Additional fields are initialized with default values
+        int $inx = size( $transX );
+        $rotatX[ $inx ] = 0.0;
+        $rotatY[ $inx ] = 0.0;
+        $rotatZ[ $inx ] = 0.0;
+        
+        $transX[ $inx ] = 0.0;
+        $transY[ $inx ] = 0.0;
+        $transZ[ $inx ] = 0.0;
+
+        $scaleX[ $inx ] = 1.0;
+        $scaleY[ $inx ] = 1.0;
+        $scaleZ[ $inx ] = 1.0;
+
+        // If rotate, translate, and/or scale offsets are provided, read these values
+        if ( $len < 7 )
+            continue;
+
+        // set rotate offsets
+        $rotatX[ $inx ] = float( $s[5] );
+        $rotatZ[ $inx ] = float( $s[6] );
+
+        if ( $len < 9 )
+            continue;
+
+        // set translate offsets
+        $transY[ $inx ] = float( $s[7] );
+        $transZ[ $inx ] = float( $s[8] );
+
+        if ( $len < 12 )
+            continue;
+            
+        // set scale offsets
+        $scaleX[ $inx ] = float( $s[9] );
+        $scaleY[ $inx ] = float( $s[10] );
+        $scaleZ[ $inx ] = float( $s[11] );
+    }
+    fclose $fileId;
+
+    // report success/failure reading the file.
+    return $retval;
+}
+proc scaleArray( float $vals[], float $scale )
+{
+    int $i;
+    for ( $i=0; $i<size($vals); $i++ )
+        $vals[$i] *= $scale;
+}
+proc string getRigStyleFilename( string $type, string $file )
+{
+    string $scriptPath = substitute( "Mel procedure found in: ", (string)`whatIs "hikGetRigStyleName"`, "");
+    string $dirname = `dirname $scriptPath`;
+    return ( $dirname + "/Rig" + $type + "Style" + $file + ".txt" );
+}
+
+
+/* // Leave for now, in case we move to RGB based colors for items
+global proc float[] getRigStyleColorRGB( string $c )
+{
+    switch( $c )
+    {
+        case "yellow" : return { 1.00, 1.00, 0.00 };
+        case "red"    : return { 1.00, 0.25, 0.25 };
+        case "blue"   : return { 0.25, 0.25, 1.00 };
+        default       : return { 1.00, 1.00, 1.00 };
+    }
+}
+*/
+
+proc int getRigStyleColorIndex( string $c )
+{
+    switch( $c )
+    {
+        case "yellow" : return 25;
+        case "red"    : return 4;
+        case "blue"   : return 6;
+        default       : return 0;
+    }
+}
+
+proc int getRigIkStyle( string $style )
+{
+    switch( $style )
+    {
+        case "none"   : return 0;
+        case "circle" : return 1;
+        case "square" : return 2;
+        case "cube"   : return 3;
+        case "sphere" : return 4;
+        case "hcross" : return 5;
+        case "lcross" : return 6;
+        default       : return 0;
+    }
+}
+
+proc int getRigFkStyle( string $style )
+{
+    switch( $style )
+    {
+        case "none"   : return 0;
+        case "bone"   : return 1;
+        case "stick"  : return 2;
+        case "box"    : return 3;
+        case "circle" : return 4;
+        case "square" : return 5;
+        default       : return 0;
+    }
+}
+
+
+
+
+///////////////////////////////////////////////////////////////////////
+// Global methodes...
+///////////////////////////////////////////////////////////////////////
+
+
+// Show/Hide rig auxiliary nodes
+// NOTE: if $auxType = 0 -> affects only auxiliary effectors
+//          $auxType = 1 -> affects only auxiliary pivots
+//          $auxType = 2 -> affects both types
+//
+global proc hikShowHideRigAuxiliaryNodes( string $character, int $showOrHide, int $auxType )
+{
+	if( size( $character ) == 0 )
+		return;
+	
+	string $auxNodes[] = getAllAuxiliaryNodesFromCharacter( $character );
+	if( size( $auxNodes ) > 0 )
+	{
+		for( $node in $auxNodes )
+		{
+			int $isAux = hikIsAuxiliary( $node );
+			if( $auxType == 2            ||
+				$auxType == 0 &&  $isAux ||
+				$auxType == 1 && !$isAux)
+			{
+				if( $showOrHide )
+					showHidden $node;
+				else
+					hide $node;
+			}
+		}
+	}
+}
+
+// Show/Hide IK Nodes of a Rig
+global proc hikShowHideRigIKNodes(string $pCharacter, int $pShowOrHide)
+{
+	int $i;
+	string $curIKNode;
+	string $lControlRig = hikGetControlRig($pCharacter);
+	if($lControlRig != "")
+	{
+		for($i = 0; $i < GetHIKEffectorCount(); $i++)
+		{
+			$curIKNode = hikGetIKEffectorNode($pCharacter, $i);
+
+			if( $curIKNode != "" )
+			{
+				if( $pShowOrHide )
+					showHidden $curIKNode;
+				else
+					hide $curIKNode;
+			}
+		}
+	}
+}
+
+// Show/Hide FK Nodes of a Rig
+global proc hikShowHideRigFkNodes(string $pCharacter, int $pShowOrHide)
+{
+	int $i;
+	string $curFkNode;
+	string $lControlRig = hikGetControlRig($pCharacter);
+	if( $lControlRig != "" )
+	{
+		for($i = 1; $i < hikGetNodeCount(); $i++)
+		{
+			$curFkNode = hikGetSkNode($lControlRig, $i);
+
+			if( $curFkNode != "" )
+			{				
+				if( $pShowOrHide )
+					showHidden $curFkNode;
+				else
+					hide $curFkNode;
+			}
+		}
+	}
+}
+
+// Show/Hide Skeleton Nodes of a Character
+global proc hikShowHideSkeletonNodes(string $pCharacter, int $pShowOrHide)
+{
+	int $i;
+	string $lSKNodes[] = hikGetSkeletonNodes($pCharacter);
+	
+	// We ignore the reference node altogether ( $i=1 ) because it's visibility will
+	// affect all the other nodes and not to mention 
+	// FBX export issues ( see bug #374372 for more details )
+	//
+	for( $i = 1; $i < size( $lSKNodes ); $i++ )
+	{
+		if( attributeExists( "drawStyle", $lSKNodes[ $i ] ) )
+		{
+			string $drawStyleAttr = $lSKNodes[ $i ] + ".drawStyle";
+	
+			if( $i == 0 || !$pShowOrHide )
+				setAttr $drawStyleAttr 2; // None look
+			else
+				setAttr $drawStyleAttr 0; // Bone look
+		}
+		else
+		{
+			if( $pShowOrHide ) 
+				showHidden $lSKNodes[ $i ];
+			else
+				hide $lSKNodes[ $i ];
+		}
+	}
+}
+
+// Show or hides the character rig/sk depending on the
+// current input source.
+//
+global proc hikShowHideSkOrRigOnSourceInput( string $character )
+{
+	string $currCharacter = $character;
+	
+	if( size( $currCharacter ) > 0 )
+	{
+		int $enabled = hikIsCharacterEnabled( $currCharacter );
+		int $input   = hikGetInputType( $currCharacter );
+		
+		if( $input == 1 && $enabled )
+		{
+			// If in active rig input
+			//
+			hikShowHideRigIKNodes( $currCharacter, true );
+			hikShowHideRigFkNodes( $currCharacter, true );
+			hikShowHideSkeletonNodes( $currCharacter, false );
+		}
+		else
+		{
+			// In any other input state, only the character 
+			// skeleton is shown
+			//
+			hikShowHideRigIKNodes( $currCharacter, false );
+			hikShowHideRigFkNodes( $currCharacter, false );
+			hikShowHideSkeletonNodes( $currCharacter, true );
+		}
+	}
+}
+
+// Are Character's Skeleton objects visible
+global proc int hikIsCharacterSkeletonVisible(string $pCharacter)
+{
+	int $lShowOrHide;
+	
+	if( size( $pCharacter ) > 0 )
+	{
+		string $curSKNode;
+		$curSKNode = hikGetSkNode($pCharacter, 1);
+
+		if( $curSKNode != "" )
+		{
+			if( attributeExists( "drawStyle", $curSKNode ) )
+				$lShowOrHide = `getAttr ( $curSKNode + ".drawStyle" )` != 2; // != None look
+			else
+				$lShowOrHide = `getAttr ( $curSKNode + ".visibility" )`;
+		}
+	}
+
+	return $lShowOrHide;
+}
+
+// Are Character's IK objects visible
+global proc int hikIsRigIKVisible(string $pCharacter)
+{
+	int $lShowOrHide;
+	string $curIKNode = hikGetIKEffectorNode($pCharacter, 1);
+
+	if( $curIKNode != "" )
+	{
+		string $curIKNodeVisAttr = $curIKNode + ".visibility";
+		$lShowOrHide = `getAttr $curIKNodeVisAttr`;
+	}
+
+	return $lShowOrHide;
+}
+
+// Are Character's Rig FK objects visible
+global proc int hikIsRigFKVisible(string $pCharacter)
+{
+	int $lShowOrHide;
+	string $curFkNode;
+	string $lControlRig = hikGetControlRig($pCharacter);
+	if( $lControlRig != "" )
+	{
+		$curFkNode = hikGetSkNode($lControlRig, 1);
+
+		if( $curFkNode != "" )
+		{
+			string $curFkNodeVisAttr = $curFkNode + ".visibility";
+			$lShowOrHide = `getAttr $curFkNodeVisAttr`;
+		}
+	}
+
+	return $lShowOrHide;
+}
+
+// Rig auxiliary nodes is visible
+// NOTE: if $auxType = 0 -> auxiliary effectors
+//          $auxType = 1 -> auxiliary pivots
+//          $auxType = 2 -> both types
+//
+global proc int hikIsRigAuxiliaryNodesVisible( string $character, int $auxType )
+{
+	if( size( $character ) == 0 )
+		return false;
+		
+	string $auxNodes[] = getAllAuxiliaryNodesFromCharacter( $character );
+	if( size( $auxNodes ) == 0 )
+		return true;
+	
+	for( $node in $auxNodes )
+	{
+		int $isAux = hikIsAuxiliary( $node );
+		if( $auxType == 2            ||
+			$auxType == 0 &&  $isAux ||
+			$auxType == 1 && !$isAux)
+		{
+			if( !`getAttr ( $node + ".visibility" )` )
+				return false;
+		}
+	}
+	
+	return true;
+}
+
+
+
+
+global proc string hikGetRigStyleName( int $style )
+{
+    switch( $style )
+    {
+        case 0  : return "Wire";
+        case 1  : return "Stick";
+        case 2  : return "Box";
+        default : return "Invalid";
+    }
+}
+
+global proc hikSetRigFkLookAndFeel( string $character, string $look )
+{
+    string $names[];
+    string $styles[];
+    float  $sizes[];
+    string $colors[];
+    float  $rx[], $ry[], $rz[];
+    float  $tx[], $ty[], $tz[];
+    float  $sx[], $sy[], $sz[];
+
+    int $stat = readHIKRigStyle( getRigStyleFilename( "Fk", $look ), 
+                                 $names,
+                                 $styles, $sizes, $colors, 
+                                 $rx, $ry, $rz, 
+                                 $tx, $ty, $tz, 
+                                 $sx, $sy, $sz );
+
+    if ( $stat == false )
+        return;
+
+    // Determine the number of spine links on the character
+    int $nspines   = getSkeletonSpineCount( $character ) ;
+    int $spine0    = 8;
+    int $spine1    = 23;
+    int $spine9    = 31;
+    int $lastSpine = $spine1 + $nspines - 2;
+
+    float $scale = hikGetCharacterScale( $character );
+    scaleArray( $sizes, $scale );
+    scaleArray( $tx, $scale );    
+    scaleArray( $ty, $scale );
+    scaleArray( $tz, $scale );
+    
+    // The BOX look has a tappered spine
+    float $inc = 0.0;
+    if ( strcmp( $look, "Box" ) == 0 && $nspines > 2 )
+    {
+        string $chest = hikGetIKEffectorNode( $character, 10 );
+        if ( size( $chest ) > 0 )
+        {
+            float $sn = `getAttr ( $chest + ".radius" )` * 2;
+            float $s0 = $sizes[ $spine0 ];
+
+            $inc = ( $sn - $s0 ) / ( $nspines - 1);
+        }
+    }
+
+    string $rig = hikGetControlRig( $character );
+    if ( size( $rig ) == 0 )
+        return;
+
+    int $i, $ids[] = getFkNodeIds( $character );
+    for( $i in $ids )
+    {
+        string $curFkNode = hikGetSkNode( $rig, $i );
+
+        // Skip if node is not an hikFKJoint
+        //
+        if( nodeType( $curFkNode ) != "hikFKJoint" )
+            continue;
+
+        // If a special appearance has been assigned to the last spine,
+        // make sure this is applied to the "actual" terminal link on the spine.
+        int $j = ( ( $nspines == 1 && $i == $spine0 ) ||
+                   ( $nspines  > 1 && $i == $lastSpine ) ) ? $spine9 : $i ;
+
+        float $delta = 0.;
+        if ( $inc != 0. && $j != $spine9 && 
+             $j >= $spine1 && $j < $spine9 )
+        {    
+            $delta = ( $j - $spine1 + 1 ) * $inc;
+        }
+
+        int $style = getRigFkStyle( $styles[$j] );
+        int $color = getRigStyleColorIndex( $colors[$j] );
+
+        setAttr ( $curFkNode + ".look" )             $style;
+        setAttr ( $curFkNode + ".radius" )           ( $sizes[$j] + $delta );
+        setAttr ( $curFkNode + ".scaleOffset" )      $sx[$j] $sy[$j] $sz[$j];
+        setAttr ( $curFkNode + ".translateOffset" )  $tx[$j] $ty[$j] $tz[$j];
+        setAttr ( $curFkNode + ".rotateOffset" )     $rx[$j] $ry[$j] $rz[$j];
+        setAttr ( $curFkNode + ".overrideColor" )    $color;
+    }
+}
+
+global proc hikSetRigIkLookAndFeel( string $character, string $look )
+{
+    string $names[];
+    string $styles[];
+    float  $sizes[];
+    string $colors[];
+    float  $rx[], $ry[], $rz[];
+    float  $tx[], $ty[], $tz[];
+    float  $sx[], $sy[], $sz[];
+
+    int $stat = readHIKRigStyle( getRigStyleFilename( "Ik", $look ), 
+                                 $names,
+                                 $styles, $sizes, $colors, 
+                                 $rx, $ry, $rz, 
+                                 $tx, $ty, $tz, 
+                                 $sx, $sy, $sz );
+
+    if ( $stat == false )
+        return;
+
+    float $scale = hikGetCharacterScale( $character );
+    scaleArray( $sizes, $scale );
+    scaleArray( $tx, $scale );    
+    scaleArray( $ty, $scale );
+    scaleArray( $tz, $scale );
+
+    int $i, $ids[] = getIkNodeIds( $character );
+    for( $i in $ids )
+    {
+        int $style = getRigIkStyle( $styles[$i] );
+        int $color = getRigStyleColorIndex( $colors[$i] );
+
+        string $curIkNode = hikGetIKEffectorNode( $character, $i);
+
+        setAttr ( $curIkNode + ".look" )             $style;
+        setAttr ( $curIkNode + ".radius" )           $sizes[$i];
+        setAttr ( $curIkNode + ".scaleOffset" )      $sx[$i] $sy[$i] $sz[$i];
+        setAttr ( $curIkNode + ".translateOffset" )  $tx[$i] $ty[$i] $tz[$i];
+        setAttr ( $curIkNode + ".rotateOffset" )     $rx[$i] $ry[$i] $rz[$i];
+        setAttr ( $curIkNode + ".overrideColor" )    $color;
+    }
+}
+
+global proc int hikGetLastSelectedRigStyle()
+{
+    return `optionVar -q "mayahikLastSelectedRigStyle"`;
+}
+
+global proc hikSetLastSelectedRigStyle( int $inx )
+{
+    optionVar -iv "mayahikLastSelectedRigStyle" $inx;
+}
+
+global proc hikSetRigLookAndFeel( string $character, int $inx )
+{
+    string $style = hikGetRigStyleName( $inx );
+    hikSetRigIkLookAndFeel( $character, $style );
+    hikSetRigFkLookAndFeel( $character, $style );
+    hikSetLastSelectedRigStyle( $inx );
+}

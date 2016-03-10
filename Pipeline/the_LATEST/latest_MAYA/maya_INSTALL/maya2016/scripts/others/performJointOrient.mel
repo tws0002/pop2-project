@@ -1,0 +1,432 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  August 2001
+//
+//  Description:
+//		This script provides an option box dialog for the "joint -e -oj"
+//      command used to control the joint orientation.
+//
+//	Input Arguments:
+//		boolean showOptionBox	true - show the option box dialog
+//								false - just execute the command
+//
+
+// Global Procs
+
+global proc jointOrientToggleAxesVisibility()
+{
+    string $joints[] = `ls -sl -type joint`;
+    for ( $j in $joints )
+    {
+        string $attr = $j + ".displayLocalAxis";
+        int $val = `getAttr $attr`;
+        setAttr $attr ( ( $val ) ? 0 : 1 );
+    }
+}
+
+//  Procedure Name:
+//      setOptionVars
+//
+//  Description:
+//		Initialize the option values.
+//
+//  Input Arguments:
+//      Whether to set the options to default values.
+//
+//  Return Value:
+//      None.
+//
+proc setOptionVars(int $forceFactorySettings)
+{
+    // Remove previously used pref. variables
+    if ( `optionVar -exists orJntAxis` )
+        optionVar -remove orJntAxis;
+
+    if ( `optionVar -exists orientJointSecond` )
+        optionVar -remove orientJointSecond;
+
+    // Primary Axis
+    if ($forceFactorySettings || !`optionVar -exists orJntAxisName`) {
+        optionVar -stringValue orJntAxisName "xyz";
+    }
+
+    // zero scale orient
+    //
+    if ($forceFactorySettings || !`optionVar -exists orientJntZSO`) {
+        optionVar -intValue orientJntZSO 1;
+    }
+
+    // children
+    //
+    if ($forceFactorySettings || !`optionVar -exists orientJntChildren`) {
+        optionVar -intValue orientJntChildren 1;
+    }
+    
+    // Secondary axis
+    if ($forceFactorySettings || !`optionVar -exists orJntOrientName`) {
+        optionVar -stringValue orJntOrientName "yup";
+    }
+}
+
+//
+//  Procedure Name:
+//      jointOrientSetup
+//
+//  Description:
+//		Update the state of the option box UI to reflect the option values.
+//
+//  Input Arguments:
+//      parent               - Top level parent layout of the option box UI.
+//                             Required so that UI object names can be 
+//                             successfully resolved.
+//
+//		forceFactorySettings - Whether the option values should be set to
+//                             default values.
+//
+//  Return Value:
+//      None.
+//
+global proc jointOrientSetup( string $parent, int $forceFactorySettings)
+{
+    jointOrientUtils;
+
+    //	Retrieve the option settings
+    //
+    setOptionVars($forceFactorySettings);
+
+    setParent $parent;
+
+    // Query the optionVar's and set the values into the controls.
+    string $oj  = `optionVar -query orJntAxisName`;
+    string $sao = `optionVar -query orJntOrientName`;
+
+    string $axes[] = { $oj, $sao };
+    jointOrientSetOrientAxes( $parent, $axes );
+
+    //	Children
+    //
+    checkBoxGrp -edit
+        -value1 `optionVar -query orientJntChildren`
+        ojChildrenChkBox;
+
+    // Scale orient
+    //
+    checkBoxGrp -edit
+        -value1 `optionVar -query orientJntZSO`
+        ojZSOChkBox;
+}
+
+//
+//  Procedure Name:
+//      jointOrientCallback
+//
+//  Description:
+//		Update the option values with the current state of the option box UI.
+//
+//  Input Arguments:
+//      parent - Top level parent layout of the option box UI.  Required so
+//               that UI object names can be successfully resolved.
+//
+//		doIt   - Whether the command should execute.
+//
+//  Return Value:
+//      None.
+//
+// ********* Change 'jointOrient' in this proc to be the name of your command
+global proc jointOrientCallback( string $parent, int $doIt)
+{
+    setParent $parent;
+
+    string $axes[];
+    jointOrientGetOrientAxes( $parent, $axes );
+
+    optionVar -stringValue orJntAxisName   $axes[0];
+    optionVar -stringValue orJntOrientName $axes[1];
+
+    // Children
+    //
+    optionVar -intValue orientJntChildren
+        `checkBoxGrp -query -value1 ojChildrenChkBox`;
+
+    // zero scale orient
+    //
+    optionVar -intValue orientJntZSO
+        `checkBoxGrp -query -value1 ojZSOChkBox`;
+
+    if ($doIt) {
+        performJointOrient 0; 
+        addToRecentCommandQueue "performJointOrient 0" "jointOrient";
+    }
+}
+
+
+
+//
+//  Procedure Name:
+//      jointOrientOptions
+//
+//  Description:
+//      Construct the option box UI.  Involves accessing the standard option
+//      box and customizing the UI accordingly.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+proc jointOrientOptions()
+{
+	//	Name of the command for this option box.
+	//
+	string $commandName = "jointOrient";
+
+	//	Build the option box actions.
+	//
+	string $callback = ($commandName + "Callback");
+	string $setup    = ($commandName + "Setup");
+
+	//	Get the option box.
+	//
+	string $layout = getOptionBox();
+	setParent $layout;
+	
+	//	Pass the command name to the option box.
+	//
+	setOptionBoxCommandName("joint");
+	
+	//	Activate the default UI template.
+	//
+	setUITemplate -pushTemplate DefaultTemplate;
+
+	//	Turn on the wait cursor.
+	//
+	waitCursor -state 1; 
+
+	tabLayout -scr true -tv false;
+
+    string $parent = `columnLayout -adjustableColumn 1`;
+    jointOrientOptionsSetup( $parent );
+
+    separator ;
+
+    int $cw1 = 180;
+    checkBoxGrp
+        -columnWidth 1 $cw1
+        -label1 (uiRes("m_performJointOrient.kOrientChildJoints"))
+        -numberOfCheckBoxes 1 ojChildrenChkBox;
+
+    checkBoxGrp
+        -columnWidth 1 $cw1
+        -label1 (uiRes("m_performJointOrient.kReorientTheLocalScaleAxes"))
+        -numberOfCheckBoxes 1 ojZSOChkBox;
+
+    separator;
+    
+    rowLayout 
+        -numberOfColumns 3
+        -columnWidth3 ($cw1) 200 100
+        -columnOffset3 0 0 0
+        -columnAlign3 left left left;
+
+    separator -visible false;
+    button 
+        -label      (uiRes("m_performJointOrient.kToggleAxesVisibilityLabel")) 
+        -command    "jointOrientToggleAxesVisibility" 
+        ojLocalAxisButton;
+
+    setParent .. ;
+
+	//	Turn off the wait cursor.
+	//
+	waitCursor -state 0;
+	
+	//	Deactivate the default UI template.
+	//
+	setUITemplate -popTemplate;
+
+	//	'Apply' button.
+	//
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit
+		-label (uiRes("m_performJointOrient.kOrient")) 
+		-command ($callback + " " + $parent + " " + 1)
+		$applyBtn;
+
+	//	'Save' button.
+	//
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + $parent + " " + 0 + "; hideOptionBox")
+		$saveBtn;
+
+	//	'Reset' button.
+	//
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + " " + $parent + " " + 1)
+		$resetBtn;
+
+	//	Set the option box title.
+	//
+	setOptionBoxTitle (uiRes("m_performJointOrient.kOrientJointOptions"));
+
+	//	Customize the 'Help' menu item.
+	//
+	setOptionBoxHelpTag( "joint" );
+
+	//	Set the current values of the option box.
+	//
+	eval (($setup + " " + $parent + " " + 0));
+	
+	//	Show the option box.
+	//
+	showOptionBox();
+}
+
+//
+//  Procedure Name:
+//      jointOrientHelp
+//
+//  Description:
+//		Return a short description about this command.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      string.
+//
+proc string jointOrientHelp()
+{
+	return 
+	"  Command: joint -e -oj - Modifies the joint orientation of a joint.\n" +
+	"Selection: joints";
+}
+
+//
+//  Procedure Name:
+//      assembleCmd
+//
+//  Description:
+//		Construct the command that will apply the option box values.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+proc string assembleCmd()
+{
+    setOptionVars(false);
+
+    string $cmd = "joint -e ";
+    
+    string $mode = `optionVar -query orJntAxisName`;
+    $cmd += ( " -oj " + $mode );
+    
+    string $secondAxisCmd = `optionVar -query orJntOrientName`;
+    if ( strcmp( $secondAxisCmd, "none" ) != 0 )
+        $cmd += ( " -secondaryAxisOrient " + $secondAxisCmd );
+
+	int $children;
+	$children = `optionVar -query orientJntChildren`;
+	if ($children) {
+		$cmd += (" -ch");
+	}
+
+	int $zso;
+	$zso = `optionVar -query orientJntZSO`;
+	if ($zso) {
+		$cmd += (" -zso");
+	}
+
+	return $cmd;
+}
+
+//
+//  Procedure Name:
+//      performJointOrient
+//
+//  Description:
+//		Perform the jointOrient command using the corresponding 
+//		option values.  This procedure will also show the option box
+//		window if necessary as well as construct the command string
+//		that will invoke the jointOrient command with the current
+//		option box values.
+//
+//  Input Arguments:
+//      0 - Execute the command.
+//      1 - Show the option box dialog.
+//      2 - Return the command.
+//
+//  Return Value:
+//      None.
+//
+global proc string performJointOrient(int $action)
+{
+
+	string $cmd = "";
+
+	switch ($action) {
+
+		//	Execute the command.
+		//
+		case 0:
+			//	Retrieve the option settings
+			//
+			setOptionVars(false);
+
+			//	Get the command.
+			//
+			$cmd = `assembleCmd`;
+
+			//	Execute the command with the option settings.
+			//
+			evalEcho($cmd);
+
+			break;
+
+		//	Show the option box.
+		//
+		case 1:
+			jointOrientOptions;
+			break;
+
+		//	Return the command string.
+		//
+		case 2:
+			//	Retrieve the option settings.
+			//
+			setOptionVars (false);
+
+			//	Get the command.
+			//
+			$cmd = `assembleCmd`;
+			break;
+	}
+	return $cmd;
+}
+

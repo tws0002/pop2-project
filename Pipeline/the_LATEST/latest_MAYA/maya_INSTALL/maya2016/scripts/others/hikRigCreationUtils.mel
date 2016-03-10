@@ -1,0 +1,1600 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+// 
+// hikRigCreationUtils.mel
+//
+// Description:
+//		Utility methods Related to the Creation of a rig. This should not contain
+//		any UI code. All code that references UI or triggers UI
+//		updates should live in the right *UI.mel or *Operations.mel
+//
+
+
+///////////////////////////////////////////////////////////////////////
+// Local methodes...
+///////////////////////////////////////////////////////////////////////
+
+proc string CreateEffector2State()
+{
+	string $eff2state = `createNode "HIKEffector2State"`;
+	setAttr ($eff2state+".isHistoricallyInteresting") 0;
+	return $eff2state;
+}
+
+
+proc string CreateState2FK()
+{
+	string $state2fk = `createNode "HIKState2FK"`;
+	setAttr ($state2fk+".isHistoricallyInteresting") 0;	
+	return $state2fk;
+}
+
+proc string CreateFK2State()
+{
+	string $fk2state = `createNode "HIKFK2State"`;
+	setAttr ($fk2state+".isHistoricallyInteresting") 0;	
+	return $fk2state;
+}
+
+proc string CreateState2Effector()
+{
+	string $state2eff = `createNode "HIKState2Effector"`;
+	setAttr ($state2eff+".isHistoricallyInteresting") 0;
+	return $state2eff;
+}
+
+proc string CreateEffectorFromCharacterState() 
+{
+	string $eff = `createNode "HIKEffectorFromCharacter"`;
+	setAttr ($eff+".isHistoricallyInteresting") 0;
+	return $eff;
+}
+
+proc duplicateKgActivation( string $duplicatedNode, string $srcNode )
+{
+
+	string $keingGroups[] = `listConnections -s 0 -d 1 -type "keyingGroup" ($srcNode+".message")`;
+
+	for( $kg in $keingGroups )
+	{
+		keyingGroup -e -act $kg $duplicatedNode;
+	}
+}
+
+proc removeKg( string $node )
+{	
+	string $connections[] = `listConnections -s 0 -d 1 -connections 1 -plugs 1 -type "keyingGroup" $node`;
+	
+	for( $i = 0; $i< size( $connections ); $i += 2 )
+	{
+		disconnectAttr $connections[$i] $connections[$i+1];
+	}
+}
+
+
+proc string CreateComputeLocal() 
+{
+	string $computeLocalNode = `createNode "ComputeLocal"`;
+	string $plug = $computeLocalNode + ".isHistoricallyInteresting";
+	setAttr $plug 0;
+	return $computeLocalNode;
+}
+
+//
+// First determine the node of type $nodeType that $masterEff.$attr is connected to.
+// Then connect $newEff.$attr to the next free slot on this same node.
+//
+proc connectToNextFreeSlotInNode(string $newEff,string $masterEff,string $attr,string $nodeType)
+{
+	string $masterEffPlug = $masterEff + "." + $attr;
+
+	// Get a list of all nodes connected to the specified attribute on the master effectors
+	string $masterEffConn[] = `listConnections -s 0 -d 1 -p 1 -type $nodeType $masterEffPlug`;
+	if(size($masterEffConn) == 0)
+		return;
+
+	// Tokenize the returned attribute name.
+	string $buffer[];
+	tokenize($masterEffConn[0], ".",$buffer);
+
+	// If it is malformed (i.e. not of the form node.attr[index] ), exit
+	if ( size($buffer) <= 1 )
+		return;
+
+	// Separate the index from the attribute name
+	string $destNode      = $buffer[0];
+	string $attrWithIndex = $buffer[1];
+	tokenize($attrWithIndex, "[",$buffer);
+	string $attrNoIndex = $buffer[0];
+
+	// List existing elements of the multi atttribute plug
+	string $plugNoIndex = $destNode + "." + $attrNoIndex;
+	
+	string $existingMultiConnections[] = `listAttr -multi $plugNoIndex`;
+
+	// Iterate over possible indices, to identify the next available multi index
+	int $index = getNextFreeMultiIndex( $plugNoIndex, 0 );
+
+	// Build destinaton and src attribute names and connect them
+	string $candidatePlug = $destNode + "." + $attrNoIndex + "[" + $index + "]";
+	string $newEffPlug    = $newEff + "." + $attr;
+	connectAttr $newEffPlug $candidatePlug;
+}
+
+proc int connectNonMultiToNextFreeMultiSlotInNode( string $outputNode, string $outputAttr, string $inputNode, string $inputAttr )
+{
+	string $outputPlug = $outputNode + "." + $outputAttr;
+	string $inputPlug  = $inputNode + "." + $inputAttr;
+	int $inputIndices[] = `getAttr -multiIndices $inputPlug`;
+
+	int $nextFreeIndex = 0;
+	int $listSize = size($inputIndices);
+	if ( $listSize > 0 )
+	{
+		$nextFreeIndex = $inputIndices[$listSize-1] + 1;
+	}
+
+	string $inputPlugIndexed = $inputPlug + "[" + $nextFreeIndex + "]" ;
+	connectAttr $outputPlug $inputPlugIndexed;
+
+	return $nextFreeIndex;
+}
+
+proc connectNonMultiToMultiSlotZeroInNode( string $outputNode, string $outputAttr, string $inputNode, string $inputAttr )
+{
+	string $outputPlug = $outputNode + "." + $outputAttr;
+	string $inputPlug = $inputNode + "." + $inputAttr;
+	int $inputIndices[] = `getAttr -multiIndices $inputPlug`;
+	for ( $value in $inputIndices )
+	{
+		if ( $value == 0 )
+			return;
+	}
+	string $inputPlugIndexed = $inputPlug + "[0]" ;
+	connectAttr $outputPlug $inputPlugIndexed;
+}
+
+proc ConnectArrayAttributeToNonArrayAttribute(string $pNodeOut, string $pAttrOut, int $pIndexOut, string $pNodeIn, string $pAttrIn)
+{
+		string $in = $pNodeIn + "." + $pAttrIn;
+		string $out = $pNodeOut + "." + $pAttrOut;
+
+		if($pIndexOut >= 0) $out = $out + "[" + $pIndexOut + "]";
+
+		connectAttr -f $out $in;
+}
+
+// Build the required connectors from the deconcentrator and parent to the compute local nodes
+proc string BuildComputeLocalConnections( string $node, string $hikeffectorname, string $EffFromState, int $index )
+{
+	string $computelocal = CreateComputeLocal();
+	string $gxmAttrName = $hikeffectorname + "GXM";
+	string $gxAttrName = $hikeffectorname + "GX";	
+
+	ConnectArrayAttributeToNonArrayAttribute($EffFromState, $gxmAttrName, $index, $computelocal, "GX");
+
+	hikConnectAttribute($node, "parentMatrix", $computelocal, "PGX");
+	hikConnectAttribute($node, "jointOrient", $computelocal, "PreR");
+	hikConnectAttribute($node, "rotateAxis", $computelocal, "PostR");
+	hikConnectAttribute($node, "rotateOrder", $computelocal, "rotateOrder");
+
+	return $computelocal;
+}
+
+
+proc string FindAnimLayerBlendNode(string $plug,string $layer)
+// returns the empty string if a blend node does not exist for the layer.
+{
+	string $currPlug = $plug;
+	string $sourceBlendNodes[] = `listConnections -s 1 -d 0 -type animBlendNodeBase $currPlug`;
+	while(size($sourceBlendNodes) > 0)
+	{
+		string $msgPlug = $sourceBlendNodes[0] + ".message";
+		string $layers[] = `listConnections -s 0 -d 1 -type animLayer $msgPlug`;
+		if($layers[0] == $layer)
+		{
+			//found it...
+			return $sourceBlendNodes[0];
+		}
+		//not this one, keep moving up stream...
+		$currPlug = $sourceBlendNodes[0];
+		$sourceBlendNodes = `listConnections -s 1 -d 0 -type animBlendNodeBase $currPlug`;            
+	} 
+	// couldn't find it... return failure.
+	return "";
+}
+
+proc connectIkAlternateGX( string $node, string $hikeffectorname, string $EffFromState, int $index )
+{
+	string $gxmAttrName = $hikeffectorname + "GXM";
+
+   	ConnectArrayAttributeToNonArrayAttribute($EffFromState, $gxmAttrName, $index, $node, "alternateGX");
+}
+
+proc string BuildEffectorFromStateInside(string $pControlSet, int $pConnectNode, string $layerName, int $connectAlternateGX, int $connectDoubleEval )
+{
+	string $EffFromState = CreateState2Effector();
+	int $LastEffectorId = GetHIKEffectorCount();
+	
+	int $addToLayer = 1;
+
+	if( !$pConnectNode || $layerName == "" )
+    {
+		$addToLayer = 0;	
+	}
+
+	for($i = 0; $i < $LastEffectorId; $i++)
+	{
+		$hikeffectorname = GetHIKEffectorName($i);
+		$AttrName = $pControlSet + "." + $hikeffectorname;
+		string $IkNode[] = `listConnections -s 1 -d 0 -type "hikIKEffector" $AttrName`;
+
+		int $effectorIndex = 0; // 0 = main effector, > 0 is an extra effector or a pivot
+		
+		for( $node in $IkNode )
+		{
+			// Add the effector to anim layer.
+			string $txPlug = $node + ".tx";
+			string $tyPlug = $node + ".ty";
+			string $tzPlug = $node + ".tz";
+			string $rxPlug = $node + ".rx";
+			string $ryPlug = $node + ".ry";
+			string $rzPlug = $node + ".rz";
+			if($addToLayer)
+			{
+				animLayer -e -addRelatedKG 0 -at $txPlug $layerName;
+				animLayer -e -addRelatedKG 0 -at $tyPlug $layerName;
+				animLayer -e -addRelatedKG 0 -at $tzPlug $layerName;
+				animLayer -e -addRelatedKG 0 -at $rxPlug $layerName;
+				animLayer -e -addRelatedKG 0 -at $ryPlug $layerName;
+				animLayer -e -addRelatedKG 0 -at $rzPlug $layerName;
+			}
+	
+			// Build the name of the pivot offset attr
+			string $pivotOffsetAttr = $hikeffectorname + "pivotOffset";
+			// Connect the pivot to the de-concentrator node
+			string $indexOfConnectedToPlug = connectNonMultiToNextFreeMultiSlotInNode( $node, "pivotOffset", $EffFromState, $pivotOffsetAttr );
+
+			
+			if($pConnectNode > 0)
+			{
+				string $computelocal = BuildComputeLocalConnections( $node, $hikeffectorname, $EffFromState, $effectorIndex );
+
+				if($addToLayer)
+				{
+					string $txBlendNode = FindAnimLayerBlendNode($txPlug,$layerName);
+					hikConnectAttributeInv($txBlendNode, "inputB", $computelocal, "tx");
+					string $tyBlendNode = FindAnimLayerBlendNode($tyPlug,$layerName);
+					hikConnectAttributeInv($tyBlendNode, "inputB", $computelocal, "ty");
+					string $tzBlendNode = FindAnimLayerBlendNode($tzPlug,$layerName);
+					hikConnectAttributeInv($tzBlendNode, "inputB", $computelocal, "tz");
+					
+					string $rxBlendNode = FindAnimLayerBlendNode($rxPlug,$layerName);
+					hikConnectAttributeInv($rxBlendNode, "inputBX", $computelocal, "rx");
+					string $ryBlendNode = FindAnimLayerBlendNode($ryPlug,$layerName);
+					hikConnectAttributeInv($ryBlendNode, "inputBY", $computelocal, "ry");
+					string $rzBlendNode = FindAnimLayerBlendNode($rzPlug,$layerName);
+					hikConnectAttributeInv($rzBlendNode, "inputBZ", $computelocal, "rz");
+				}
+				else
+				{				
+					hikConnectAttributeInv($node, "translate", $computelocal, "translate");
+					hikConnectAttributeInv($node, "rotate", $computelocal, "rotate");
+				}								
+			}
+
+			if( $connectAlternateGX )		
+			{
+				connectIkAlternateGX( $node, $hikeffectorname, $EffFromState, $effectorIndex );
+			}
+	
+            if( $connectDoubleEval )
+            {
+				string $gxmAttrName = $hikeffectorname + "GXM";
+
+			   	ConnectArrayAttributeToNonArrayAttribute( $EffFromState, $gxmAttrName, $effectorIndex, $node, "altConstraintTargetGX" );
+            } 
+			
+			$effectorIndex++;
+		}
+	}
+	return $EffFromState;
+}
+
+
+proc string BuildFKFromStateInside(string $pControlSet, int $pConnectNode,string $layerName, int $connectAlternateGX, int $connectDoubleEval )
+{
+	int $addToLayer = 1;
+
+	if( !$pConnectNode || $layerName == "" )
+    {
+		$addToLayer = 0;	
+	}
+    	
+	string $FKFromState = CreateState2FK();
+	$Character = hikGetCharacterDefinition($pControlSet);
+	hikConnectCharacterDefinition($Character, $FKFromState);
+	int $LastNodeId = hikGetNodeCount();
+	for($i = 1; $i < $LastNodeId; $i++)
+	{
+		$hiknodename = GetHIKNodeName($i);
+		// Should never write in reference
+		//if($hiknodename != "Reference")
+		{
+			$AttrName = $pControlSet + "." + $hiknodename;
+			string $FkNode[] = `listConnections $AttrName`;
+			if(size($FkNode) > 0)
+			{
+				string $node = $FkNode[0];
+				
+				int $isJoint = `objectType -isAType "joint" $node`;
+				int $isHFkJoint = `objectType -isAType "hikFKJoint" $node`;
+
+				if( $isHFkJoint && $connectAlternateGX )
+				{
+      			    hikConnectAttribute($FKFromState, ($hiknodename + "GX"), $node, "alternateGX");
+                }
+
+                if( $connectDoubleEval )
+                {
+      			    hikConnectAttribute($FKFromState, ($hiknodename + "GX"), $node, "altConstraintTargetGX");                    
+                } 
+
+
+				if( $pConnectNode )
+                {
+				    //Add the fk bone to anim layer.
+				    string $txPlug = $node + ".tx";
+				    string $tyPlug = $node + ".ty";
+				    string $tzPlug = $node + ".tz";
+				    string $rxPlug = $node + ".rx";
+				    string $ryPlug = $node + ".ry";
+				    string $rzPlug = $node + ".rz";
+				    if($addToLayer)
+				    {
+					    animLayer -e -addRelatedKG 0 -at $rxPlug $layerName;
+					    animLayer -e -addRelatedKG 0 -at $ryPlug $layerName;
+					    animLayer -e -addRelatedKG 0 -at $rzPlug $layerName;
+
+					    if( !hikIsRotateOnlyFK( $i ) )
+					    {
+						    animLayer -e -addRelatedKG 0 -at $txPlug $layerName;
+						    animLayer -e -addRelatedKG 0 -at $tyPlug $layerName;
+						    animLayer -e -addRelatedKG 0 -at $tzPlug $layerName;
+					    }
+				    }
+			
+				    string $computelocal = CreateComputeLocal();					
+
+				    string $parentNode = firstParentOf($node);
+				    if($parentNode !="")
+				    {
+					    string $hikparentname = hikGetNodeNameFromNode($parentNode);
+
+                	    if($addToLayer && $i == 1 /*hips*/)
+					    {
+                            // ENCS-1010
+                            // Minimal change to fix ENCS-1010
+                            // by doing the change on $addtoLayer we ensure that the fix affect networks built on the flag 
+                            // for baking and legacy mode retargeting prupose but htey dont affect the permanent rigSynch and rigAlign network
+                            // we also do the change only for the hips since the rest of the FK will follow
+					        hikConnectAttribute($node, "parentMatrix", $computelocal, "PGX");
+
+                        }
+                        else
+                        {
+                            // ENCS-1100 Original Behavior
+					        hikConnectAttribute($FKFromState, ($hikparentname + "GX"), $computelocal, "PGX");
+                        }
+				    }
+				    hikConnectAttribute($FKFromState, ($hiknodename + "GX"), $computelocal, "GX");
+
+    			    if($addToLayer)
+				    {
+					    string $rxBlendNode = FindAnimLayerBlendNode($rxPlug,$layerName);
+					    hikConnectAttributeInv($rxBlendNode, "inputBX", $computelocal, "rx");
+					    string $ryBlendNode = FindAnimLayerBlendNode($ryPlug,$layerName);
+					    hikConnectAttributeInv($ryBlendNode, "inputBY", $computelocal, "ry");
+					    string $rzBlendNode = FindAnimLayerBlendNode($rzPlug,$layerName);
+					    hikConnectAttributeInv($rzBlendNode, "inputBZ", $computelocal, "rz");
+					
+					    if( !hikIsRotateOnlyFK( $i ) )
+					    {
+						    string $txBlendNode = FindAnimLayerBlendNode($txPlug,$layerName);
+						    hikConnectAttributeInv($txBlendNode, "inputB", $computelocal, "tx");
+						    string $tyBlendNode = FindAnimLayerBlendNode($tyPlug,$layerName);
+						    hikConnectAttributeInv($tyBlendNode, "inputB", $computelocal, "ty");
+						    string $tzBlendNode = FindAnimLayerBlendNode($tzPlug,$layerName);
+						    hikConnectAttributeInv($tzBlendNode, "inputB", $computelocal, "tz");
+					    }
+				    }
+				    else
+				    {
+					    hikConnectAttributeInv($node, "rotate", $computelocal, "rotate");
+					
+					    if( !hikIsRotateOnlyFK( $i ) )
+					    {
+						    hikConnectAttributeInv($node, "translate", $computelocal, "translate");
+					    }
+				    }
+				
+			        if( $isJoint )
+			        {
+				        hikConnectAttribute($node, "jointOrient", $computelocal, "PreR");
+			        }
+		    	    hikConnectAttribute($node, "rotateAxis", $computelocal, "PostR");
+				    hikConnectAttribute($node, "rotateOrder", $computelocal, "rotateOrder");
+	    	    }
+            }
+		}		
+	}
+	return $FKFromState;
+}
+
+proc string BuildEffectorSyncFromState(string $pControlSet)
+{
+	return BuildEffectorFromStateInside($pControlSet, 0, "", 1, 0  );
+}
+proc string BuildEffectorFromState(string $pControlSet,string $layerName)
+{
+	return BuildEffectorFromStateInside($pControlSet, 1, $layerName, 0, 0 );
+}
+
+// Helper function to copy the attribute value
+proc int copyEffectorID( string $sourceNode, string $destNode )
+{
+	int $effectorID = hikGetEffectorID( $sourceNode );
+
+	string $destIdPlug = $destNode + ".effectorID";
+	setAttr $destIdPlug $effectorID;
+
+	return hikGetEffectorID( $destNode );
+}
+
+// Local utilities
+proc connectNoReconnectWarning( string $src, string $dst )
+{
+    if( !`isConnected $src $dst` )
+    {
+        connectAttr $src $dst;
+    }   
+}
+
+proc int getCreateKeyingGroupsOptionVar()
+{
+	if( !`optionVar -ex hikCreateKeyingGroups` ) {
+		optionVar -intValue hikCreateKeyingGroups 1;
+	}
+	return `optionVar -q hikCreateKeyingGroups`;
+}
+
+// We want to ensure a good set of local rotation axis for the control rig. 
+// By default, all the local roation axis is set such that each of the X,Y, and Z
+// axis is aligned with the world X,Y, and Z axis.  This choice of local rotation
+// axis is bad for some bones.  A simple example is the hips.  If we have Y point up,
+// the when the character begins to do turns or run in a circle, we will get near
+// gimbal lock, and Euler angle interpolations will become unstable.
+proc adjustLocalRotationAxis(string $pCharacter)
+{
+    int $i;
+	string $curFkNode;	
+	string $lControlRig = hikGetControlRig($pCharacter);
+	HIKInitAxis $lControlRig;
+}
+
+// Recursive Parent FK Hierarchy
+proc recursiveParentFK(string $pCharacter, int $nodeId)
+{
+	string	$fkParent;
+	string	$nodeName    = GetHIKNodeName($nodeId);
+	string  $lControlRig = hikGetControlRig($pCharacter);
+
+	// Get Parent node
+    string $connections[] = `listConnections ($lControlRig + "." + $nodeName)`;
+	if (size($connections) > 0)
+    {
+		$fkParent = $connections[0];
+    }
+    else
+    {
+        string $fmt = (uiRes("m_hikRigCreationUtils.kNoParentFound"));
+        string $msg = `format -s ($lControlRig + "." + $nodeName) $fmt`;
+        print ( $msg );
+        return;
+    }
+    
+	// Get childs and parent them to Parent
+	int $i, $lChildCount = `GetHIKChildCount -nid $nodeId $pCharacter`;
+	for($i = 0; $i < $lChildCount; $i++)
+	{
+        int $childId = `GetHIKChildId -nid $nodeId -cid $i $pCharacter`;
+
+        // If the skeleton has a hips translation joint skip it since there are 
+        // no connections to this node -- the below call to listConnections
+        // will return an empty list, causing the recursion over all nodes to fail.
+        if ( $nodeId == 0 && $childId == 49 )
+            $childId  = `GetHIKChildId -nid $childId -cid $i $pCharacter`;
+
+        $nodeName = GetHIKNodeName($childId);
+
+        $connections = `listConnections ($lControlRig + "." + $nodeName)`;
+		if (size($connections) == 0 )
+            continue;
+
+		string $fkChild = $connections[0];
+		// print ($fkChild + "   " + $fkParent);
+		parent $fkChild $fkParent;
+		recursiveParentFK($pCharacter, $childId);
+	}
+
+}
+
+// Unparent Characterized Nodes
+proc unparentRigFKNodes(string $pCharacter)
+{	
+	string $lRigFKNodes[] = hikGetRigFKNodes($pCharacter, 1);
+	string	$curNode;
+
+	for($curNode in $lRigFKNodes)
+	{
+		// if not child of world
+		if( firstParentOf($curNode) != "" )
+				parent -w $curNode;
+	}
+}
+
+// Update IK nodes for a given defined Character
+proc updateIKNodes(string $pCharacter,float $characterScale, string $keyingGroups[])
+{
+	string	$curNode, $curIKNode, $nodeName;
+	int $i; 
+	string $lControlRig = hikGetControlRig($pCharacter);
+	string	$tmpNode[];
+	string	$referenceNode;
+	string	$tmpCtrlRigObjectName = $lControlRig + ".Reference";
+
+	// Get Reference Node
+	if (size(`listConnections $tmpCtrlRigObjectName`) > 0)
+	{
+			$tmpNode = `listConnections $tmpCtrlRigObjectName`;
+			$referenceNode = $tmpNode[0];
+	}
+
+	for($i = 0; $i < GetHIKEffectorCount(); $i++)
+	{
+		
+		$nodeName = GetHIKEffectorName($i);
+		if(size($lControlRig))
+		{
+			$curIKNode = hikGetIKEffectorNode($pCharacter, $i);
+		}
+		else		
+		{
+				$curIKNode = "";				
+		}
+
+		if( $curIKNode == "" && hikGetSkNode( $pCharacter, GetFKIdFromEffectorId( $i ) ) != "" )
+		{
+		
+			string $IkName = $pCharacter + "_Ctrl_" + $nodeName;
+			$IkName = `createNode "hikIKEffector" -n $IkName`;
+			hikAddIkToControlRig($lControlRig, $IkName, $i, 0);
+			//AddManipulatorToControlRig($IkName);
+			parent $IkName $referenceNode;
+
+			string $ikRadius = $IkName + ".radius";
+			string $ikReachT = $IkName + ".reachTranslation";
+			string $ikReachR = $IkName + ".reachRotation";
+			
+			string $ikPinning = $IkName + ".pinning";
+			string $ikPivotOffsetX = $IkName + ".pivotOffsetX";
+			string $ikPivotOffsetY = $IkName + ".pivotOffsetY";
+			string $ikPivotOffsetZ = $IkName + ".pivotOffsetZ";
+						
+			if($nodeName == "LeftHandThumbEffector" ||
+			   $nodeName == "LeftHandIndexEffector" ||
+			   $nodeName == "LeftHandMiddleEffector" ||
+			   $nodeName == "LeftHandRingEffector" ||
+			   $nodeName == "LeftHandPinkyEffector" ||
+			   $nodeName == "LeftHandExtraFingerEffector" ||
+			   $nodeName == "RightHandThumbEffector" ||
+			   $nodeName == "RightHandIndexEffector" ||
+			   $nodeName == "RightHandMiddleEffector" ||
+			   $nodeName == "RightHandRingEffector" ||
+			   $nodeName == "RightHandPinkyEffector" ||
+			   $nodeName == "RightHandExtraFingerEffector" ||
+			   $nodeName == "LeftFootThumbEffector" ||
+			   $nodeName == "LeftFootIndexEffector" ||
+			   $nodeName == "LeftFootMiddleEffector" ||
+			   $nodeName == "LeftFootRingEffector" ||
+			   $nodeName == "LeftFootPinkyEffector" ||
+			   $nodeName == "LeftFootExtraFingerEffector" ||
+			   $nodeName == "RightFootThumbEffector" ||
+			   $nodeName == "RightFootIndexEffector" ||
+			   $nodeName == "RightFootMiddleEffector" ||
+			   $nodeName == "RightFootRingEffector" ||
+			   $nodeName == "RightFootPinkyEffector" ||
+			   $nodeName == "RightFootExtraFingerEffector")
+			{
+				setAttr $ikRadius (1.5*$characterScale);
+			}
+			else
+			{
+				setAttr $ikRadius (3*$characterScale);
+			}
+			
+			// Set default reach
+			//
+			if( $nodeName == "LeftAnkleEffector"  ||
+			    $nodeName == "RightAnkleEffector" ||
+			    $nodeName == "HipsEffector")
+			{
+				setAttr $ikReachT 1;
+				setAttr $ikReachR 1;
+			}
+			else
+			{
+				setAttr $ikReachT 0;
+			}
+			
+			// Set default pinning
+			//
+			if( $nodeName == "LeftAnkleEffector"  ||
+			    $nodeName == "RightAnkleEffector" )
+			{
+				setAttr $ikPinning 3;
+			}
+
+
+			string $useObjectOverrideColorAttr = $IkName + ".overrideEnabled";
+			setAttr $useObjectOverrideColorAttr 1;
+			
+			string $effColor = $IkName + ".overrideColor";
+			setAttr $effColor 4;
+			
+			// Add to the appropriate keying groups
+			hikAddToKeyingGroups($IkName, 1, $keyingGroups);
+		}
+	}
+}
+
+// Update FK nodes for a given defined Character
+proc updateFKNodes(string $pCharacter,float $characterScale, string $keyingGroups[])
+{
+	string	$curNode, $curFKNode, $hikNodeName;
+	int $i; 
+	int $lastBigJoint = hikGetNodeIdFromName("RightForeArmRoll");
+	string $lControlRig = hikGetControlRig($pCharacter);
+	int $lShoulderExtra = hikGetNodeIdFromName("LeftShoulderExtra");
+	int $lHipsTranslation = hikGetNodeIdFromName("HipsTranslation");
+
+	for($i = 0; $i < hikGetNodeCount(); $i++)
+	{
+		$hikNodeName = GetHIKNodeName($i); 
+		string $fkName = $pCharacter + "_Ctrl_" + $hikNodeName;
+		$curNode = hikGetSkNode($pCharacter, $i);
+		if ($curNode != "") {
+            // Silent catch was added in order to continue processing
+            // when the keyable attribute is set in a reference file 
+            // which throws an error. See bug #350194
+            catchQuiet( `setAttr -k off -cb true ($curNode+".visibility")` );
+		}
+		
+		if(size($lControlRig))
+			$curFKNode = hikGetSkNode($lControlRig, $i);
+		else
+			$curFKNode = "";
+
+		if ( (($curNode != "") || ($i==0)) && ( $i != $lHipsTranslation ) )
+		{
+			if( $curFKNode == "" )
+			{
+				if( $i == 0 )
+				{
+					string $name[] = `spaceLocator -n $fkName`;
+					$fkName = $name[ 0 ];
+				}
+				else
+				{
+					$fkName = `createNode "hikFKJoint" -n $fkName`;
+
+					//Set Base Joints size bigger
+					string $jointRadiusAttr = $fkName + ".radius";
+					if( $i <= $lastBigJoint || $i >= $lShoulderExtra)
+						setAttr $jointRadiusAttr (1.5*$characterScale);
+					else
+						setAttr $jointRadiusAttr ($characterScale);
+
+					string $jointDisplay = $fkName + ".look";
+					setAttr $jointDisplay 2; //stick
+					    
+					string $useObjectColorAttr = $fkName + ".useObjectColor";
+					setAttr $useObjectColorAttr 1;
+					
+					string $jointColor = $fkName + ".objectColor";
+					setAttr $jointColor 1;
+					
+					int $sscOff = `optionVar -q hikSegmentScaleCompensateIsOff`;
+					if ( $sscOff )
+					{
+						string $segmentScaleCompensatePlug = $fkName + ".segmentScaleCompensate";					
+						// Turn plug off
+						setAttr $segmentScaleCompensatePlug 0;
+					}
+				}
+				
+				hikAddFkToControlRig($lControlRig , $fkName, $i);
+				if ( $i != 0 )
+					hikAddToKeyingGroups($fkName, 0, $keyingGroups);
+			}
+		}
+		else
+		{
+			if( $curFKNode != "" )
+			{
+				delete $curFKNode;
+			}
+		}
+	}
+}
+
+
+
+// Get State2FK Nodes from a Character
+proc string[] getState2FKFromCharacter(string $pCharacter)
+{
+	string $lState2FK[];
+	string $lSolvers[] = hikGetSolverFromCharacter($pCharacter);
+	if(size($lSolvers))
+	{
+		string $lState2FKAttr = $lSolvers[0] + ".OutputCharacterState";
+		$lState2FK = `listConnections -type HIKState2FK $lState2FKAttr`;
+	}
+	return $lState2FK;
+}
+
+// Get EffFromState Nodes from a Character
+proc string[] getEffFromStateFromCharacter(string $pCharacter)
+{
+	string $lEffFromState[];
+	string $lSolvers[] = hikGetSolverFromCharacter($pCharacter);
+	if(size($lSolvers))
+	{
+		string $lEffFromStateAttr = $lSolvers[0] + ".OutputCharacterState";
+		$lEffFromState = `listConnections -type HIKEffectorFromCharacter $lEffFromStateAttr`;
+	}
+	return $lEffFromState;
+}
+
+proc string[] getDoubleEvalEffStateFromCharacter(string $pCharacter)
+{
+	string $lEffectorFromCharacterState[];
+	string $lSolvers[] = hikGetSolverFromCharacter($pCharacter);
+	if(size($lSolvers))
+	{
+		string $lEffectorFromCharacterStateAttr = $lSolvers[0] + ".doubleEvalCharacterState";
+		$lEffectorFromCharacterState = `listConnections -type HIKEffectorFromCharacter $lEffectorFromCharacterStateAttr`;
+	}
+	return $lEffectorFromCharacterState;
+}
+
+// Get State2Eff Nodes from a Character
+proc string[] getState2EffFromCharacter(string $pCharacter)
+{
+	string $lState2Eff[];
+	string $lEffFromStates[] = getEffFromStateFromCharacter($pCharacter);
+	if(size($lEffFromStates))
+	{
+		string $lEffFromStateAttr = $lEffFromStates[0] + ".OutputEffectorState";
+		$lState2Eff = `listConnections -type HIKState2Effector $lEffFromStateAttr`;
+	}
+	return $lState2Eff;
+}
+
+proc connectDoubleEvalCharacterState(string $pOutput, string $pInput)
+{
+    string $attrOut = $pOutput + ".doubleEvalCharacterState";
+    string $attrIn = $pInput + ".InputCharacterState";
+    connectAttr -f $attrOut $attrIn;
+}
+
+// Create a Control Rig for a given Character
+proc InitializeControlRig(string $pCharacter, string $pControlRig,float $characterScale)
+{
+
+	string $lState2SK[];
+	string $lFK2State;
+	string $lEff2State;
+	string $lPinning2State;
+	string $IKsolver;
+	string $propertyState;
+
+	string $lState2FK[];
+	string $lState2Eff[];
+	string $fkik[];
+
+	// RIG
+	string $lctrlRig = $pControlRig;
+
+		
+	// Character Def
+	string $ltmpRig = hikGetControlRig($pCharacter);
+	if( $ltmpRig != $lctrlRig )
+	{
+		hikConnectCharacterDefinition($pCharacter, $lctrlRig );
+
+
+		// TODO: determine if we already have keying groups or
+		// the user has asked for no keying groups.
+		// For now, assume we don't have any yet and always 
+		// want 'em
+		string $keyingGroups[] = {};
+		if( getCreateKeyingGroupsOptionVar() ) {
+			hikCreateKeyingGroups($pCharacter, $keyingGroups);
+			hikSetKeyingMode();
+		}
+
+
+		// Create FK and IK nodes
+		updateFKNodes($pCharacter,$characterScale, $keyingGroups);
+		updateIKNodes($pCharacter,$characterScale, $keyingGroups);
+		unparentRigFKNodes($pCharacter);
+		recursiveParentFK($pCharacter, 0);
+		adjustLocalRotationAxis($pCharacter);
+
+		////////////////
+		// Build Pipe //
+		////////////////
+
+		// IKSolver
+		$IKsolver =  hikGetOrBuildSolverNode($pCharacter);
+
+		// FK2State
+		$lFK2State = hikGetFK2StateFromCharacter($pCharacter);
+		if( $lFK2State == "" )
+			$lFK2State = hikBuildStateFromFK($lctrlRig);
+
+		// Eff2State
+		$lEff2State = hikGetEff2StateFromCharacter($pCharacter);
+		if( $lEff2State == "" )
+			$lEff2State = hikBuildStateFromEffector($lctrlRig);
+		
+		// Pinning2State
+		$lPinning2State = hikGetPinning2StateFromCharacter($pCharacter);
+		if( $lPinning2State == "" )
+		{
+			$lPinning2State = hikCreatePinningNode();
+			hikConnectEffectorStateObject($lEff2State, $lPinning2State);
+		}
+
+
+		// State2FK and State2IK
+		$lState2FK = getState2FKFromCharacter($pCharacter);
+		$lState2Eff = getState2EffFromCharacter($pCharacter);
+		if(!(size($lState2FK)) && !(size($lState2Eff)))
+			$fkik = hikBuildFKIKSyncFromState($IKsolver, $lctrlRig);
+		else
+		{
+			$fkik[0] = $lState2FK[0];
+			$fkik[1] = $lState2Eff[0];
+		}
+
+		// propertyState
+		$propertyState = hikGetProperty2StateFromCharacter($pCharacter);
+		
+		if(!(size($propertyState)))
+		{
+			// This should not happend unless the file is an old file or if the character has not been
+			// properly locked
+			$propertyState = hikCreatePropertyState();
+			hikConnectPropState($propertyState, $IKsolver);
+		}
+		hikBindEffectors2PropState( $lctrlRig, $propertyState );
+        connectNoReconnectWarning ($propertyState+".rigAlign") ($lctrlRig+".rigAlign");
+
+		string $EffFromChar[] = hikGetEffectorFromCharacterStateFromCharacter($pCharacter);
+		hikConnectPropState($propertyState, $EffFromChar[0]);
+
+		string $doubleEvalEffFromChar[] = getDoubleEvalEffStateFromCharacter($pCharacter);
+		hikConnectPropState($propertyState, $doubleEvalEffFromChar[0]);
+			
+		hikConnectEffectorsToPinningState($lPinning2State, $lctrlRig);
+
+		hikConnectCharacterStateObject($lFK2State, $IKsolver);
+		hikConnectEffectorStateObject($lPinning2State, $IKsolver);
+
+		
+		hikFKIKSync($lctrlRig, $fkik[0], "", $fkik[1], true);
+
+		// The full body stance has been applied, we have the FK in characterized position
+		// no user may have moved the skeleton reference, we have to position th FK ref on the SK reference
+		// The Command ComputeReference will take care of the conversion given a sk ref position it will set the fk trs accordingly
+		string $fkref = hikGetSkNode($lctrlRig, 0);
+		if($fkref != "")
+		{
+			string $refsk = hikGetSkNode($pCharacter, 0);
+			if($refsk != "")
+			{
+				HIKComputeReference -ch $pCharacter -sk $refsk -cr $fkref -scr;
+			}
+		}
+
+	}
+
+	hikUpdateDefinitionUI();
+}
+
+proc string buildFKSyncFromState(string $pControlSet)
+{
+	return BuildFKFromStateInside($pControlSet, 0,"", 1, 0  );
+}
+
+
+
+///////////////////////////////////////////////////////////////////////
+// Global methodes...
+///////////////////////////////////////////////////////////////////////
+
+// Create a new Control Rig for a given Character
+global proc string hikDoCreateControlRig(string $pCharacter,float $characterScale)
+{
+    string $errorMessageInvalidSkeleton = (uiRes("m_hikRigCreationUtils.kInvalidSkeleton"));
+    string $errorMessageNoCharacterSelected = (uiRes("m_hikRigCreationUtils.kNoCharacter"));
+    
+	if( $pCharacter != "")
+	{
+		if(hikValidateSkeleton($pCharacter))
+		{
+			// Prior to crate the rig, ensure that the character is ready to receive one
+			hikPostCharacterisationStep( $pCharacter );
+			
+			string $lnewRigNode = hikCreateControlRigNode();
+			string $lctrlRigName = $pCharacter + "_ControlRig";
+			$lctrlRig = `rename $lnewRigNode $lctrlRigName`;
+
+			InitializeControlRig($pCharacter, $lctrlRig,$characterScale);
+			
+			string $fmt = (uiRes("m_hikRigCreationUtils.kNewRig"));
+			string $messageNewRigCreated = `format -s $lctrlRig $fmt`;
+			print ($messageNewRigCreated);
+
+
+			// Ensure that the character gets in RigInput mode
+			hikSetRigInput( $pCharacter );
+			
+			return $lctrlRig;
+		}
+		else
+		{
+			print ($errorMessageInvalidSkeleton);
+			return $pCharacter;
+		}
+	}
+	else
+	{
+		print ($errorMessageNoCharacterSelected);
+		return $pCharacter;
+	}
+}
+
+global proc hikCreateControlRigWithScale()
+{
+	float $characterScale = hikGetCharacterScale(hikGetCurrentCharacter());
+
+	hikDoCreateControlRig(hikGetCurrentCharacter(),$characterScale);
+
+}
+
+global proc string hikCreateControlRigNode()
+{
+	string $setNode = `createNode "HIKControlSetNode"`;
+	setAttr ($setNode+".isHistoricallyInteresting") 0;
+	return $setNode;
+}
+
+
+
+global proc hikAddFkToControlRig(string $pControlSet, string $pFkNode, int $pNodeId)
+{
+	// Check if already Character attribute on Node
+	string $lAttr[] = `listAttr -st "ControlSet" $pFkNode`;
+	if(size($lAttr) == 0)
+	{
+		select $pFkNode;
+		addAttr -shortName ch -longName "ControlSet" -attributeType message;
+	}
+	string $out = $pFkNode + ".ControlSet";
+	string $name = $pControlSet + "." + GetHIKNodeName($pNodeId);
+	connectAttr -f $out $name;
+
+	$lAttr = `listAttr -st "useAlternateGX" $pFkNode`;
+	
+	if(size($lAttr) > 0)
+	{
+        connectAttr -f ($pControlSet+".rigAlignOut") ($pFkNode+".useAlternateGX");
+    }
+	
+	// Lock the translate and scale attributes for that node
+	if( hikIsRotateOnlyFK( $pNodeId ) )
+	{
+		setAttr -lock true ($pFkNode+".translate");
+		setAttr -lock true ($pFkNode+".scale");
+
+		setAttr -k off ($pFkNode+".tx");
+		setAttr -k off ($pFkNode+".ty");
+		setAttr -k off ($pFkNode+".tz");
+	}
+
+	if( $pNodeId > 0 ) // Scaling must remain available on the reference
+	{
+		setAttr -k off ($pFkNode+".sx");
+		setAttr -k off ($pFkNode+".sy");
+		setAttr -k off ($pFkNode+".sz");
+	}
+
+	setAttr -lock true ($pFkNode+".rotateAxis"); // prevent auto orient to mess with FK ENCS-1099
+	
+
+	string $jo = ($pFkNode+".jointOrient");
+	if(`objExists $jo`)
+	{
+		setAttr -lock true ($pFkNode+".jointOrient");
+	}
+
+	setAttr -k off -cb true ($pFkNode+".visibility");
+	
+}
+
+global proc hikAddIkToControlRig(string $pControlSet, string $pIkEffector, int $pEffectorId, int $pEffectorSetId)
+{
+	// Check if already Character attribute on Node
+	string $lAttr[] = `listAttr -st "ControlSet" $pIkEffector`;
+	if(size($lAttr) == 0)
+	{
+		select $pIkEffector;
+		addAttr -shortName ch -longName "ControlSet" -attributeType message;
+	}
+	string $out = $pIkEffector + ".ControlSet";
+	string $name = $pControlSet + "." + GetHIKEffectorName($pEffectorId) + "[" + $pEffectorSetId + "]";
+	connectAttr -f $out $name;
+	
+   	$lAttr = `listAttr -st "useAlternateGX" $pIkEffector`;
+	if(size($lAttr) > 0)
+	{
+        connectAttr -f ($pControlSet+".rigAlignOut") ($pIkEffector+".useAlternateGX");
+    }
+
+	if (`attributeQuery  -node $pIkEffector -exists "effectorID"` == true)
+	{
+		string $lAttrName = $pIkEffector + ".effectorID";
+		setAttr $lAttrName $pEffectorId;
+	}
+	
+	// Add missing attribute: pull and reach scaling
+	if (`attributeQuery  -node $pIkEffector -exists "pull"` == false)
+	{
+		addAttr -longName "pull" -defaultValue 0.0 -minValue 0.0 -maxValue 1.0;
+		setAttr -e -channelBox true ($pIkEffector+".pull");
+	}
+	
+	if (`attributeQuery  -node $pIkEffector -exists "stiffness"` == false)
+	{
+		addAttr -longName "stiffness" -defaultValue 0.0 -minValue 0.0 -maxValue 1.0;
+		setAttr -e -channelBox true ($pIkEffector+".stiffness");		
+	}
+
+	setAttr -k off ($pIkEffector+".sx");
+	setAttr -k off ($pIkEffector+".sy");
+	setAttr -k off ($pIkEffector+".sz");
+	setAttr -k off -cb true ($pIkEffector+".visibility");
+
+}
+
+
+global proc string[] hikBuildFKIKSyncFromState(string $StateObj, string $pControlSet)
+{
+	string $Character = hikGetCharacterDefinition($pControlSet);
+	
+	string $FKSyncWriter = buildFKSyncFromState($pControlSet);
+
+    string $FKDoubleEvalWriter = BuildFKFromStateInside($pControlSet, 0,"", 0, 1 );
+	
+	hikConnectCharacterStateObject($StateObj,$FKSyncWriter);
+	connectDoubleEvalCharacterState($StateObj,$FKDoubleEvalWriter);
+		
+	string $EffStateFromCharacterState = CreateEffectorFromCharacterState();
+	string $DoubleEvalEffStateFromCharacterState = CreateEffectorFromCharacterState();
+		
+	hikConnectCharacterStateObject($StateObj,$EffStateFromCharacterState);
+	connectDoubleEvalCharacterState($StateObj,$DoubleEvalEffStateFromCharacterState);
+
+	hikConnectCharacterDefinition($Character,$EffStateFromCharacterState);
+	hikConnectCharacterDefinition($Character,$DoubleEvalEffStateFromCharacterState);
+		
+	string $IKSyncWriter = BuildEffectorSyncFromState($pControlSet);
+	string $IKDoubleSolveWriter = BuildEffectorFromStateInside($pControlSet, 0, "", 0, 1 );	
+
+	hikConnectEffectorStateObject($EffStateFromCharacterState,$IKSyncWriter);
+	hikConnectEffectorStateObject($DoubleEvalEffStateFromCharacterState,$IKDoubleSolveWriter);
+
+	return {$FKSyncWriter, $IKSyncWriter };
+}
+
+global proc string hikBuildEffectorFromCharacterState(string $pCharacterState, string $pControlSet,string $layerName)
+{
+	string $EffStateFromCharacterState = CreateEffectorFromCharacterState();
+	string $pCharacterSrc = hikGetCharacterDefinition($pControlSet);
+	hikConnectCharacterStateObject($pCharacterState,$EffStateFromCharacterState);
+	hikConnectCharacterDefinition($pCharacterSrc, $EffStateFromCharacterState);
+
+	string $lPropState = hikGetProperty2StateFromCharacter($pCharacterSrc);
+
+	if( $lPropState == "" )
+	{
+		$lPropState = hikCreatePropertyState();
+	}
+	
+	
+	hikConnectPropState($lPropState,$EffStateFromCharacterState);
+	string $EffFromState = BuildEffectorFromState($pControlSet,$layerName);
+	hikConnectEffectorStateObject($EffStateFromCharacterState, $EffFromState);
+
+	return $EffStateFromCharacterState;
+
+}
+
+
+global proc string hikBuildFKFromState(string $pControlSet,string $layerName )
+{
+	return BuildFKFromStateInside($pControlSet, 1,$layerName, 0, 0 );
+}
+
+// NOTE: The following method is also called from hikcharactertoolcmd.cpp,
+//       if you are about to modify it's name make sure to update the 
+//       cpp file too.
+//
+global proc hikCreateAuxEffector( string $effector )
+{
+	if( size( $effector ) == 0 )
+		return;
+
+    // Sync the rig so that the auxiliaries gets created at the actual character position
+    string $rig = hikGetControlRigFromEffector( $effector );
+    if( size( $rig ) == 0 )
+        return;
+
+    hikSyncControlRig( $rig );
+
+	string $auxEffector[ ] = `duplicate $effector`;
+	removeKg( $auxEffector[ 0 ] );
+    catchQuiet( `setAttr ($auxEffector[0]+".useAlternateGX") 0` );
+
+	connectToNextFreeSlotInNode( $auxEffector[ 0 ], $effector, "reachTranslation", "HIKEffector2State" );
+	connectToNextFreeSlotInNode( $auxEffector[ 0 ], $effector, "reachRotation",    "HIKEffector2State" );
+	connectToNextFreeSlotInNode( $auxEffector[ 0 ], $effector, "pivotOffset",      "HIKEffector2State" );
+	connectToNextFreeSlotInNode( $auxEffector[ 0 ], $effector, "worldMatrix[ 0 ]", "HIKEffector2State" );
+
+	string $newEffMsgPlug = $auxEffector[ 0 ] + ".message";
+	string $masterEffAuxiliaryPlug = $effector + ".auxiliaries";
+	connectAttr -nextAvailable $newEffMsgPlug $masterEffAuxiliaryPlug;
+
+	string $attributes[ ] = `listAttr -st "ControlSet" $auxEffector[ 0 ]`;
+	if( size( $attributes ) == 0 )
+		addAttr -shortName ch -longName "ControlSet" -attributeType message;
+		
+	connectToNextFreeSlotInNode( $auxEffector[ 0 ], $effector, "ControlSet", "HIKControlSetNode" );
+
+	string $auxEffectorPlug = $auxEffector[ 0 ] + ".auxEffector";
+	setAttr $auxEffectorPlug 1;
+
+    // Change the new effector look
+    setAttr ($auxEffector[0]+ ".look")             3;   // Default cube look
+	setAttr ($auxEffector[0]+ ".pinning")          0;
+    setAttr ($auxEffector[0]+ ".reachTranslation") 1;
+    setAttr ($auxEffector[0]+ ".reachRotation")    1;
+    setAttr ($auxEffector[0]+ ".pull")             0;
+	catch( `setAttr ($auxEffector[0]+ ".overrideColor")    9`);   // Magenta default color, catch prevents abortion in case Display layers locked the attribute 
+
+	setAttr -k off -cb true ($auxEffector[0]+".visibility");
+	
+	select $auxEffector[ 0 ];
+	// MoBu naming convention
+	rename $auxEffector[ 0 ] ( $effector + "Aux1" );
+}
+
+// NOTE: The following method is also called from the FBXMaya plugin
+//       Do not modify the declaration since future plugins will be compiled agains old versions of Maya
+
+global proc hikCreateAuxEffectorFromNode( string $character, int $effId, string $aux )
+{
+	string $effector = hikGetIKEffectorNode( $character, $effId );
+
+    // Ensure parent effector name is valid (i.e. non-empty)
+	if( size( $effector ) == 0 )
+		return;
+
+	connectToNextFreeSlotInNode( $aux, $effector, "reachTranslation", "HIKEffector2State" );
+	connectToNextFreeSlotInNode( $aux, $effector, "reachRotation",    "HIKEffector2State" );
+	connectToNextFreeSlotInNode( $aux, $effector, "pivotOffset",      "HIKEffector2State" );
+	connectToNextFreeSlotInNode( $aux, $effector, "worldMatrix[ 0 ]", "HIKEffector2State" );
+
+	string $newEffMsgPlug = $aux + ".message";
+	string $masterEffAuxiliaryPlug = $effector + ".auxiliaries";
+	connectAttr -nextAvailable $newEffMsgPlug $masterEffAuxiliaryPlug;
+
+	string $attributes[ ] = `listAttr -st "ControlSet" $aux`;
+	if( size( $attributes ) == 0 )
+		addAttr -shortName ch -longName "ControlSet" -attributeType message $aux;
+		
+	connectToNextFreeSlotInNode( $aux, $effector, "ControlSet", "HIKControlSetNode" );
+
+	string $auxEffectorPlug = $aux + ".auxEffector";
+	setAttr $auxEffectorPlug 1;
+
+}
+
+// NOTE: The following method is also called from hikcharactertoolcmd.cpp,
+//       if you are about to modify it's name make sure to update the 
+//       cpp file too.
+//
+//------------------------------------------------------------------------------
+// 
+// create and activate an auxiliary pivot effector parented to the effector
+// whos name is provided as an input parameter.
+// 
+global proc hikCreateAuxPivot( string $parentEff )
+{
+    // Ensure parent effector name is valid (i.e. non-empty)
+    if( size( $parentEff ) == 0 )
+        return;
+
+    // Sync the rig so that the pivot gets created at the actual character position
+    string $rig = hikGetControlRigFromEffector( $parentEff );
+    if( size( $rig ) == 0 )
+        return;
+
+    hikSyncControlRig( $rig );
+
+
+    // Duplicate the parent effector
+    string $children[ ] = `duplicate $parentEff`;
+    string $childEff = $children[0];
+
+    // Create connections between the child effector and the
+    // keying groups the parent node is currently connected to.
+    duplicateKgActivation( $childEff, $parentEff );
+
+    // Connect the child's message attribute to the parent node's auxiliaries attr.
+    string $childEffMsgPlug  = $childEff + ".message";
+    string $parentEffMsgPlug = $parentEff + ".auxiliaries";
+    connectAttr -nextAvailable $childEffMsgPlug $parentEffMsgPlug;
+	
+    // Copy and assign the parent effector's id to the child effector
+    int $id = copyEffectorID( $parentEff, $childEff );
+
+    // Determine the active character
+    string $character = hikGetCurrentCharacter();
+
+    // Connect to the de-concentrator
+    string $state2Eff[ ]    = getState2EffFromCharacter( $character );
+    string $hikEffName      = GetHIKEffectorName( $id );
+    string $pivotOffsetAttr = $hikEffName + "pivotOffset";
+
+    connectNonMultiToMultiSlotZeroInNode( $parentEff, "pivotOffset", $state2Eff[ 0 ], $pivotOffsetAttr );
+
+    // Activate the pivot
+    connectToNextFreeSlotInNode( $childEff, $parentEff, "reachTranslation", "HIKEffector2State" );
+    connectToNextFreeSlotInNode( $childEff, $parentEff, "reachRotation",    "HIKEffector2State" );
+    connectToNextFreeSlotInNode( $childEff, $parentEff, "pivotOffset",      "HIKEffector2State" );
+    connectToNextFreeSlotInNode( $childEff, $parentEff, "worldMatrix[0]",   "HIKEffector2State" );
+
+    // Add the control set attribute on the node if it doesn't already exist, 
+    // connecting it to the same target as the parent effector control set plug
+    string $lAttr[] = `listAttr -st "ControlSet" $childEff`;
+    if ( size($lAttr) == 0 )
+        addAttr -shortName ch -longName "ControlSet" -attributeType message;
+    connectToNextFreeSlotInNode( $childEff, $parentEff, "ControlSet", "HIKControlSetNode" );
+    catchQuiet( `connectAttr ($parentEff+".useAlternateGX") ($childEff+".useAlternateGX")` );
+
+    // Connect the pivot to the de-concentrator node
+    string $indexOfConnectedToPlug = 
+        connectNonMultiToNextFreeMultiSlotInNode( $childEff, "pivotOffset", $state2Eff[0], $pivotOffsetAttr );
+
+    // Connect the OGXM to a compute local
+    connectIkAlternateGX( $childEff, $hikEffName, $state2Eff[0], $indexOfConnectedToPlug  );
+
+    // Rename the compute local node to something more useful
+    // rename $computelocal ( "ComputeLocal" + $childEff );
+
+    // Initialize attribute values 
+    float $radius = `getAttr ( $parentEff + ".radius")` / 3.0;
+    setAttr ( $childEff + ".radius" )          $radius;
+    setAttr ( $childEff + ".pinning")          0;
+    setAttr ( $childEff + ".reachTranslation") 0;
+    setAttr ( $childEff + ".reachRotation")    0;
+    setAttr ( $childEff + ".pull")             0;
+	setAttr ( $childEff + ".look")             4;   // Default sphere look
+	catch( `setAttr ( $childEff + ".overrideColor" )   18`);  // Light blue default color, catch prevents abortion in case Display layers locked the attribute
+
+	setAttr -k off -cb true ($childEff+".visibility");
+
+    // Ensure that the effector gets added to the same animLayers as the parentEffector
+    // Assumption is made that keyingGroups are properly set so just dealing with one attribute will automatically add all required attributes
+    string $layers[] = `listConnections -s 0 -d 1 -type animLayer ( $parentEff+".translateX")`;
+	
+    for( $layer in $layers )
+    {
+        animLayer -e -attribute ( $childEff+".translateX") $layer;
+    }
+
+    // Make sure that the effector is still selected before exiting
+    select -r $childEff ;
+    // MoBu naming convention
+    rename $childEff ( $parentEff + "Pivot1" );
+}
+
+// NOTE: The following method is also called from the FBXMaya plugin
+//       Do not modify the declaration since future plugins will be compiled agains old versions of Maya
+
+global
+proc hikCreateAuxPivotFromNode( string $character, int $effId, string $auxPivot )
+{
+
+	string $parentEff = hikGetIKEffectorNode( $character, $effId );
+
+    // Ensure parent effector name is valid (i.e. non-empty)
+    if( size( $parentEff ) == 0 )
+        return;
+
+
+    // Create connections between the child effector and the
+    // keying groups the parent node is currently connected to.
+    duplicateKgActivation( $auxPivot, $parentEff );
+
+    // Connect the child's message attribute to the parent node's auxiliaries attr.
+    string $childEffMsgPlug  = $auxPivot + ".message";
+    string $parentEffMsgPlug = $parentEff + ".auxiliaries";
+    connectAttr -nextAvailable $childEffMsgPlug $parentEffMsgPlug;
+	
+    // Copy and assign the parent effector's id to the child effector
+    copyEffectorID( $parentEff, $auxPivot );
+
+    // Connect to the de-concentrator
+    string $state2Eff[ ]    = getState2EffFromCharacter( $character );
+    string $hikEffName      = GetHIKEffectorName( $effId );
+    string $pivotOffsetAttr = $hikEffName + "pivotOffset";
+
+    connectNonMultiToMultiSlotZeroInNode( $parentEff, "pivotOffset", $state2Eff[ 0 ], $pivotOffsetAttr );
+
+    // Activate the pivot
+    connectToNextFreeSlotInNode( $auxPivot, $parentEff, "reachTranslation", "HIKEffector2State" );
+    connectToNextFreeSlotInNode( $auxPivot, $parentEff, "reachRotation",    "HIKEffector2State" );
+    connectToNextFreeSlotInNode( $auxPivot, $parentEff, "pivotOffset",      "HIKEffector2State" );
+    connectToNextFreeSlotInNode( $auxPivot, $parentEff, "worldMatrix[0]",   "HIKEffector2State" );
+
+    // Add the control set attribute on the node if it doesn't already exist, 
+    // connecting it to the same target as the parent effector control set plug
+    string $lAttr[] = `listAttr -st "ControlSet" $auxPivot`;
+    if ( size($lAttr) == 0 )
+        addAttr -shortName ch -longName "ControlSet" -attributeType message $auxPivot;
+    connectToNextFreeSlotInNode( $auxPivot, $parentEff, "ControlSet", "HIKControlSetNode" );
+
+    // Connect the pivot to the de-concentrator node
+    string $indexOfConnectedToPlug = 
+        connectNonMultiToNextFreeMultiSlotInNode( $auxPivot, "pivotOffset", $state2Eff[0], $pivotOffsetAttr );
+
+    // Create RigAling connections
+    connectIkAlternateGX( $auxPivot, $hikEffName, $state2Eff[0], $indexOfConnectedToPlug );
+
+    // source the useAlternateGX value from the parent
+    catchQuiet( `connectAttr ($parentEff+".useAlternateGX") ($auxPivot+".useAlternateGX")` );
+
+}
+
+global proc string hikBuildStateFromEffector(string $pControlSet)
+{
+	string $Eff2State = CreateEffector2State();
+	int $LastEffectorId = GetHIKEffectorCount();
+	for($i = 0; $i < $LastEffectorId; $i++)
+	{
+		$hikeffectorname = GetHIKEffectorName($i);
+		$AttrName = $pControlSet + "." + $hikeffectorname;
+		string $lEffectors[] = `listConnections $AttrName`;
+
+		int $lEffectorSetIndex = 0;
+		for( $lEffector in $lEffectors)
+		{
+			hikConnectArrayAttribute($lEffector, "worldMatrix", -1, $Eff2State, $hikeffectorname + "GX", $lEffectorSetIndex);
+			hikConnectArrayAttribute($lEffector, "reachTranslation", -1, $Eff2State, $hikeffectorname + "ReachT", $lEffectorSetIndex);
+			hikConnectArrayAttribute($lEffector, "reachRotation", -1, $Eff2State, $hikeffectorname + "ReachR", $lEffectorSetIndex);
+			hikConnectArrayAttribute($lEffector, "pivotOffset", -1, $Eff2State, $hikeffectorname + "Pivot", $lEffectorSetIndex);
+
+			if($lEffectorSetIndex == 0)
+			{
+				hikConnectAttribute($lEffector, "pull", $Eff2State, $hikeffectorname + "Pull");
+				hikConnectAttribute($lEffector, "stiffness", $Eff2State, $hikeffectorname + "Stiffness");
+			}			
+
+			$lEffectorSetIndex += 1;
+		}
+	}
+	return $Eff2State;
+}
+
+global proc string hikBuildStateFromFK(string $pControlSet)
+{
+	string $StateFromFK = CreateFK2State();
+	$Character = hikGetCharacterDefinition($pControlSet);
+	hikConnectCharacterDefinition($Character, $StateFromFK);
+	int $LastNodeId = hikGetNodeCount();
+	for($i = 0; $i < $LastNodeId; $i++)
+	{
+		$hiknodename = GetHIKNodeName($i);
+		
+		$AttrName = $pControlSet + "." + $hiknodename;
+		string $FkNode[] = `listConnections $AttrName`;
+		if(size($FkNode) > 0)
+		{
+			string $node = $FkNode[0];
+			
+			hikConnectAttribute($node, "worldMatrix", $StateFromFK, $hiknodename + "GX");
+		}
+		
+	}
+	return $StateFromFK;
+}
+
+
+global proc hikControlRigAddAlignSupport( string $ctrlSet )
+{
+
+    string $character = hikGetCharacterDefinition($ctrlSet);
+
+    if( $character  == "" ) return;
+    
+    string $state2Fk[] = getState2FKFromCharacter( $character );
+    string $state2Eff[] = getState2EffFromCharacter( $character );
+    string $hikProperties = hikGetProperty2StateFromCharacter( $character );
+
+    if( size($state2Fk)==0 || size($state2Eff)==0 || $hikProperties=="" ) return;
+
+    int $i;
+    
+    for( $i=0; $i<hikGetNodeCount(); $i++)
+    {
+    	string $hikNodeName = GetHIKNodeName($i);
+
+	    string $fk[] = `listConnections -s 1 -d 0 ($ctrlSet + "." + $hikNodeName)`;
+	
+        if( size($fk) > 0 )
+	    {
+            if( size( `listAttr -st "alternateGX" $fk[0]` )>0 )
+            {
+                connectNoReconnectWarning ($state2Fk[0]+"."+ $hikNodeName +"GX") ($fk[0]+".alternateGX");
+                connectNoReconnectWarning ($ctrlSet+".rigAlignOut") ($fk[0]+".useAlternateGX");
+            }
+        }
+    }    
+
+    for( $i=0; $i<GetHIKEffectorCount(); $i++)
+    {
+    	string $hikEffName = GetHIKEffectorName($i);
+
+	    string $iks[] = `listConnections -s 1 -d 0 ($ctrlSet + "." + $hikEffName)`;
+	
+        int $plugIndex = 0;
+
+        for( $ik in $iks )
+	    {
+            if( $plugIndex == 0 || !hikIsAuxiliary( $ik ) )
+            {
+                if( size( `listAttr -st "alternateGX" $ik` )>0 )
+                {
+                    connectNoReconnectWarning ($state2Eff[0]+"."+ $hikEffName +"GXM["+$plugIndex+"]") ($ik+".alternateGX");
+                    connectNoReconnectWarning ($ctrlSet+".rigAlignOut") ($ik+".useAlternateGX");
+                    $plugIndex++;
+                }
+            }
+        }
+    }    
+
+    connectNoReconnectWarning ($hikProperties+".rigAlign") ($ctrlSet+".rigAlign");
+
+    string $fmt = (uiRes("m_hikRigCreationUtils.kRigUpgradedForRigAlign"));
+    string $msg = `format -s $character $fmt`;
+    print ( $msg );
+}
+
+global proc hikControlRigAddDoubleEvalSupport( string $ctrlSet )
+{
+
+    string $character = hikGetCharacterDefinition($ctrlSet);
+
+    if( $character  == "" ) return;
+    
+
+    // First check if that character has a solver 
+	string $solvers[] = hikGetSolverFromCharacter($character);
+
+	if( size($solvers) ==  0 ) return;
+
+    // In all case, redo effector state connections
+	string $lEff2State = hikGetEff2StateFromCharacter($character);
+    string $lPinning2State = hikGetPinning2StateFromCharacter( $character );
+
+    if( $lEff2State != "" && $lPinning2State != "" )
+    {
+        hikConnectEffectorStateObject( $lEff2State, $lPinning2State );
+        hikConnectEffectorStateObject( $lPinning2State, $solvers[0] );
+    }
+
+
+    // ensure that it does not already supporting double eval,
+    if( size( `listConnections -d 1 - s 0 ($solvers[0]+".doubleEvalCharacterState")`) ) return;
+
+    // Create the DoubleEval IK/FK feedback pipe
+    string $FKDoubleEvalWriter = BuildFKFromStateInside($ctrlSet, 0,"", 0, 1 );
+	
+	connectDoubleEvalCharacterState($solvers[0],$FKDoubleEvalWriter);
+		
+	string $DoubleEvalEffStateFromCharacterState = CreateEffectorFromCharacterState();
+		
+	connectDoubleEvalCharacterState($solvers[0],$DoubleEvalEffStateFromCharacterState);
+
+	string $propertyState = hikGetProperty2StateFromCharacter($character);
+
+	if( size($propertyState) !=  0 )
+	{
+		hikConnectPropState($propertyState, $DoubleEvalEffStateFromCharacterState);
+	}
+
+	hikConnectCharacterDefinition($character,$DoubleEvalEffStateFromCharacterState);
+		
+	string $IKDoubleSolveWriter = BuildEffectorFromStateInside($ctrlSet, 0, "", 0, 1 );	
+
+	hikConnectEffectorStateObject($DoubleEvalEffStateFromCharacterState,$IKDoubleSolveWriter);
+
+	string $lEff2State = hikGetEff2StateFromCharacter($character);
+	if( $lEff2State == "" )
+	{
+		$lEff2State = hikBuildStateFromEffector( $ctrlSet );
+	}
+
+	string $fmt = (uiRes("m_hikRigCreationUtils.kRigUpgradedForDoubleEval"));
+	string $msg = `format -s $character $fmt`;
+	print ( $msg );
+}
+
+// Get Rig EffectorFromCharacterState Nodes from a Character
+global proc string[] hikGetEffectorFromCharacterStateFromCharacter(string $pCharacter)
+{
+	string $lEffectorFromCharacterState[];
+	string $lSolvers[] = hikGetSolverFromCharacter($pCharacter);
+	if(size($lSolvers))
+	{
+		string $lEffectorFromCharacterStateAttr = $lSolvers[0] + ".OutputCharacterState";
+		$lEffectorFromCharacterState = `listConnections -type HIKEffectorFromCharacter $lEffectorFromCharacterStateAttr`;
+	}
+	return $lEffectorFromCharacterState;
+}
+
+

@@ -1,0 +1,199 @@
+// Copyright (C) 1997-2013 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+/**
+ * @file xgenCleanup.mel
+ * @brief Contains the xgen cleanup procedure for unloading the plugin.
+ *
+ * <b>CONFIDENTIAL INFORMATION: This software is the confidential and
+ * proprietary information of Walt Disney Animation Studios ("WDAS").
+ * This software may not be used, disclosed, reproduced or distributed
+ * for any purpose without prior written authorization and license
+ * from WDAS. Reproduction of any section of this software must include
+ * this legend and all copyright notices.
+ * Copyright Disney Enterprises, Inc. All rights reserved.</b>
+ *
+ * @author Thomas V Thompson II
+ *
+ * @version Created 09/21/05
+ */
+
+
+/**
+ * Cleanup anything xgen added to the environment in preparation for the
+ * plugin to be unloaded.
+ */
+global proc xgenCleanup()
+{
+    // GL: I'm going to do the check-in as embedded python code.
+    // I know it's ugly but I want to spent my time on other bugs before the release.
+	//
+	// I18N_TODO: user messages are displayed in the embedded python below
+	//
+    string $pythonCode =
+        "import maya.cmds as cmds\n" +
+        "import maya.mel as mel\n" +
+        "import traceback\n" +
+        "    \n" +
+        "def lsObjectTypeFilters( startswithStr ):\n" +
+        "    a = cmds.ls(\"objectTypeFilter*\")\n" +
+        "    b = []\n" +
+        "    for i in a:\n" +
+        "        if cmds.getAttr(i + \".typeName\").startswith(startswithStr):\n" +
+        "            b.append( i)\n" +
+        "    return b\n" +
+        "\n" +
+        "def disableXgmFilters():\n" +
+        "    listXgmFilters = lsObjectTypeFilters(\"xgm\")\n" +
+        "    for f in listXgmFilters:\n" +
+        "        disableXgmFilter(f)\n" +
+        "\n" +
+        "def disableXgmFilter( f ):\n" +
+        "    cmds.setAttr( f + \".disable\", 1 )\n" +
+        "\n" +
+        "def deleteXgmFilters():\n" +
+        "    listXgmFilters = lsObjectTypeFilters(\"xgm\")\n" +
+        "    for f in listXgmFilters:\n" +
+        "        deleteXgmFilter(f)\n" +
+        "\n" +
+        "def deleteXgmFilter( f ):\n" +
+        "    msg = \"\"\n" +
+        "    try:\n" +
+        "        inputListCnx = cmds.listConnections( f + \".inputList\", c=True, p=True )\n" +
+        "        outputListCnx = cmds.listConnections( f + \".outputList\", c=True, p=True )\n" +
+        "        selectionListOp = cmds.listConnections( f + \".outputList\" )[0]\n" +
+        "        selectionListInputCnx = cmds.listConnections( selectionListOp + \".inputListA\", c=True, p=True )\n" +
+        "        selectionListOutputCnx = cmds.listConnections( selectionListOp + \".outputList\", c=True, p=True )\n" +
+        "        \n" +
+        "        newSelectionListCnx = []\n" +
+        "        try:\n" +
+        "            newSelectionListCnx = [selectionListInputCnx[1],selectionListOutputCnx[1]]\n" +
+        "        except:\n" +
+        "            pass\n" +
+        "            \n" +
+        "        try:    \n" +
+        "            cmds.connectAttr( newSelectionListCnx[0], newSelectionListCnx[1], f=True )\n" +
+        "        except:\n" +
+        "            msg += \" connectAttr failed.\"\n" +
+        "            raise\n" +
+        "        try:\n" +
+        "            cmds.disconnectAttr( inputListCnx[1], inputListCnx[0] )\n" +
+        "        except:\n" +
+        "            msg += \" disconnectAttr inputListCnx failed.\"\n" +
+        "            raise\n" +
+        "            \n" +
+        "        try:   \n" +
+        "            cmds.delete( f )\n" +
+        "        except:\n" +
+        "            msg += \" delete objectFilter failed.\"\n" +
+        "            raise\n" +
+        "        try:\n" +
+        "            cmds.delete( selectionListOp )\n" +
+        "        except:\n" +
+        "            msg += \" delete selectionListOp failed.\"\n" +
+        "            raise\n" +
+        "         \n" +
+        "    except:\n" +
+        "        msg += \" failure.\"\n" +
+        "        traceback.print_exc()\n" +
+        "    \n" +
+        "    if msg:\n" +
+        "        print \"deleteXgmFilter %s failure. %s\" % (f, msg )\n" +
+        "        \n" +
+        "    \n" +
+        "           \n" +
+        "disableXgmFilters()\n" +
+        "deleteXgmFilters()\n";
+    python $pythonCode ;
+
+    //  Need to delete and recreate these guys as they have copies
+    //  of the old filter.
+    //
+    if (`itemFilter -exists renderableObjectsAndSetsFilter`) {
+        itemFilter -e -cls "other" renderableObjectsAndSetsFilter;
+        delete renderableObjectsAndSetsFilter;
+    }
+    if (`itemFilter -exists lightLinkingObjectFilter`) {
+        itemFilter -e -cls "other" lightLinkingObjectFilter;
+        delete lightLinkingObjectFilter;
+    }
+    itemFilter 
+            -union "renderableObjectShapeFilter" "renderableObjectSetFilter"
+            -text (uiRes("m_xgenCleanup.kRenderableObj"))
+            -category "Multilister"
+            -classification "builtIn"
+            renderableObjectsAndSetsFilter;
+
+    itemFilter 
+            -union "renderableObjectsAndSetsFilter" "DefaultShadingGroupsFilter"
+            -classification "builtIn"
+            lightLinkingObjectFilter;
+
+    // Get a list of all scriptjobs
+    string $ascriptjobs[] = `scriptJob -lj`;
+    for ( $sj in $ascriptjobs )
+    {
+        // Find xgen related scriptjobs
+        if ( `match "xgm" $sj` != "" )
+        {
+            string $aTok[] = {};
+            tokenize $sj " " $aTok;
+            string $strjob = `substitute ":" $aTok[0] ""`;
+            int $njob = $strjob;
+            // Force-kill xgen related script jobs
+            catch( `scriptJob -force -k $njob` );
+        }
+    }
+
+    // Remove all installed file callbacks
+    if ( `pluginInfo -q -l "MUMessageCmd"` )
+    {
+        catch( `muMessageDelete -callback xgmBeforeNewCB` );
+        catch( `muMessageDelete -callback xgmAfterNewCB` );
+        catch( `muMessageDelete -callback xgmBeforeOpenCB` );
+        catch( `muMessageDelete -callback xgmAfterOpenCB` );
+        catch( `muMessageDelete -callback xgmBeforeSaveCB` );
+        catch( `muMessageDelete -callback xgmAfterSaveCB` );
+        catch( `muMessageDelete -callback xgmBeforeImportCB` );
+        catch( `muMessageDelete -callback xgmAfterImportCB` );
+    	catch( `muMessageDelete -callback xgmBeforeCreateReferenceCB` );
+        catch( `muMessageDelete -callback xgmAfterCreateReferenceCB` );
+	catch( `muMessageDelete -callback xgmBeforeLoadReferenceCB` );
+        catch( `muMessageDelete -callback xgmAfterLoadReferenceCB` );
+    }
+
+    // Remove the xgen menu ui
+    if ( `menu -exists "xgenMenu"` )
+    {
+        catch( `deleteUI "xgenMenu"` );
+    }
+
+    //---Removed f7 hotkey functionality in MAYA-26209
+    // Remove any hotkey settings
+    //hotkey -fs "F7";
+
+    // Remove our shelf buttons
+    for ( $sb in {"xgmDescriptionEditorButton"} )
+    {
+        if (`shelfButton -ex -q $sb`)
+            deleteUI -control $sb;
+    }
+}

@@ -1,0 +1,969 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  ==================== expressionEdTextEditor.mel ==========
+//
+//  SYNOPSIS
+//
+//  CONTENTS
+//		(The procs are in the file in the order listed here.)
+//
+//  Expression Editor Text Editor and QFileSystemWatcher handling routines
+//
+//  EEsetActualFileName       Replace invalid characters in object/filenames.
+//  EEgetInternalFileName 	  Restore real object/filenames from that used on disk.
+//
+//	EEdoLaunch				Do the launch of the user's text editor of choice.
+//
+//	EElaunchEditor			Launch a text editor for a regular expression.
+//	EElaunchParticleEditor	Launch a text editor for a particle expression
+//  EEupdateFileExpression  Update a regular expression from a text editor file.
+//  EEupdateParticleFileExpression  Update a particle expression from a text
+//									editor file.
+//  EEdeleteStringElement	Delete an element from a string array.
+//  EEdeleteIntElement		Delete an element from an int array.
+//  EEexpressionIsInTextEditor Return whether an expression is in a text editor.
+
+//	EEgetFileExpression		Callback from TexprEdFileListener.cpp when the user
+//							writes text editor file to disk.  Read file.
+//  EEdeleteEditorFile		Callback from TexprEdFileListener.cpp when user
+//                          dismisses a text editor.  Delete the file.
+
+// ******************************************************************
+//
+//					GLOBAL VARIABLES FOR THE TEXT EDITOR MGMT
+//
+// ******************************************************************
+// 
+
+// The next 4 lists are parallel, and have all the data necessary for
+// building a regular expression command.  
+// EEcurrFiles is the filenames of all files in text editors that are
+// creating/editing regular expressions.  EEcurrFileExprName is the name
+// of the expression being create/edited (which might not be the name
+// of the expression.  It may contain "" if there is no
+// name yet for an expression being created.  EEcurrFileCreateMode contains
+// the create/edit mode of the expression being edited in each editor.
+// EEcurrFileDefObj contains the default object, if any, of the expression
+// being edited/created.  
+//
+global string $EEcurrFiles[];
+global string $EEcurrFileExprName[];
+global int	  $EEcurrFileCreateMode[];   // 1 = creating; 0 = editing
+global string $EEcurrFileDefObj[];
+
+// Count of default filenames. 
+//
+global int	  $EEdefFilenameCount = 0;
+
+
+// ******************************************************************
+//
+//			EXPRESSION EDITOR TEXT EDITOR PROCEDURES
+//
+
+//  ================ EEsetActualFileName ================
+//
+//  SYNOPSIS
+//		Since unix will not correctly handle the "|" character in a filename,
+//		we have to switch it to something else, so let's use "#".  
+//		Likewise, Windows will not handle ":", so replace with "+" (bug #355905).
+//
+proc string  EEsetActualFileName(string $fileName)
+{
+	$fileName = substituteAllString( $fileName, "|", "#" );
+	
+	int $win = `about -win`;
+	string $drive = "";
+	if ( $win == 1 )
+	{
+		// watch out for ":" characters that specify drives
+		//
+		$drive = `match "^[a-zA-Z]:[/\\\\]" $fileName`;
+	}
+	string $tail = $fileName;
+	if ( size($drive) > 0 )
+	{
+		int $start = 1 + size($drive);
+		int $end = size($fileName);
+		$tail = `substring $fileName $start $end`;
+	}
+	$fileName = $drive + substituteAllString( $tail, ":", "+" );
+	
+	return $fileName;
+}
+
+
+//  ================ EEgetInternalFileName ================
+//
+//  SYNOPSIS
+//		There may be grouping and non-unique names, in which there
+//		will be "|" characters in the object name.  But since we can't use
+//		"|" in unix file names, we switched them to "#" for the filename.
+//		Likewise, Windows won't handle ":" so we replaced ":" with "+" (bug #355905).
+//		So now switch back to get to the object/expression name again.
+//
+global proc string	EEgetInternalFileName(string $fileName)
+{
+	$fileName = substituteAllString( $fileName, "#", "|" );
+	$fileName = substituteAllString( $fileName, "+", ":" );
+	
+	return $fileName;
+}
+
+
+//  ================ EEdoLaunch ================
+//
+//  SYNOPSIS
+//      Launch the desired text editor.
+//
+global proc EEdoLaunch(string $exprFile, string $expression)
+{
+	global int $EEcurrentEditor;
+	int $crFI;
+	int $win32 = `about -win`;
+	int $OSMac = `about -mac`;
+	string $finalFileName = EEsetActualFileName($exprFile);
+	$exprFile = $finalFileName;
+
+	// Open the temp file in which the user will edit the expression.
+	//
+	$crFI = fopen($exprFile, "wt" );
+	if (size($expression))
+	{
+		if ( $win32 == 1 )
+		{
+			// bug #355906 - if the expression contains mixed LF and CR/LF
+			// endings, then Windows Notepad may corrupt the file on save.
+			// Strip any CRs here, and let the file mode "wt" convert them
+			// back to CR/LF if need be.
+			//
+			$expression = substituteAllString( $expression, "\r", "" );
+		}
+		fprint($crFI, $expression+"\n");
+	}
+	fclose($crFI);
+
+	// When invoking the editor 2 commands will be issued:  one to invoke
+	// the editor, and the other to delete a file, so, since xwsh allows
+	// only one command, we have to combine them into a script and have
+	// xwsh execute that script.  The file to be deleted will be just this
+	// executable script. The reason for this is that the expression editor
+	// has to know when the user quits the text editor, in order to clean
+	// up the temporary files.  So when the command script (filename.BAT)
+	// is deleted (by itself) this cues the editor to do the cleanup.
+	//
+	// Set the command script name and contents, open the command script
+	// file, write the commands to it, and make it executable.
+	//
+	string $edCmdString;
+	if (`about -linux`)
+	{
+		string $buffer[];
+
+		string $shellCmd = "xterm -geometry 60x24+0+0 -name " + $exprFile + " -e " ;
+		switch($EEcurrentEditor)
+		{
+			case 2:	$edCmdString = "emacs";
+					break;
+			case 3:	$edCmdString = "gvim -f";
+					break;
+			case 4:	$edCmdString = $shellCmd + "vi";
+					break;
+			case 5:	$edCmdString = $shellCmd + "vim";
+					break;
+			case 6:	$edCmdString = "xedit";
+					break;
+			case 7:	$edCmdString = "xemacs";
+					break;
+			case 8:	$edCmdString = getenv("WINEDITOR");
+					tokenize($edCmdString, " ", $buffer);
+					break;
+		}
+	}
+
+	string $exeFile;
+	string $fileCmds; 
+	string $extension = ".BAT"; // use same for all platforms
+
+	if ($win32==1)
+	{
+		$exeFile = $exprFile + $extension;
+		$exeFile = toNativePath($exeFile);
+		$fileCmds = "start /WAIT " + $exprFile + "\ndel " + $exeFile;
+	}
+	else if($OSMac == 1)
+	{
+		$exeFile = $exprFile + $extension;
+		$fileCmds = "open -W -a TextEdit " + $exprFile + ";\nrm " + $exeFile;
+	}
+	else
+	{
+		$exeFile = $exprFile + $extension;
+		$fileCmds = $edCmdString + " " + $exprFile+";\nrm " + $exeFile + ";";
+	}
+
+	if ($exeFile != "") {
+		int $exeFI = fopen ($exeFile, "wt");
+		fprint($exeFI, $fileCmds);
+		fclose ($exeFI);
+	
+		if ($win32==0) {
+			system("chmod +x " + $exeFile);
+		}
+	}
+
+	// Build the command that will launch the editor.
+	//
+	string $edCmd = $exeFile;
+
+	// Tell TexprEdListenAction to listen for changes to the text
+	// file and the command file.
+	//
+	if ($exeFile != "") {
+		expressionEditorListen -listenFile $exeFile;
+	}
+	expressionEditorListen -listenFile $exprFile;
+
+	// Launch the editor.
+	//
+	if ($win32==1)	{
+		system("shell " +$edCmd+">nul: 2>&1");
+	} else {
+		system($edCmd+">/dev/null 2>&1 &");
+	}
+
+}	// EEdoLaunch
+
+
+//  ================ EElaunchEditor ================
+//
+//  SYNOPSIS
+//      Set up to launch a text editor for a regular expression.
+//
+global proc	EElaunchEditor( string $fileName, 
+							string $expression, 
+							string $expressionName)
+{
+	global int    $EEcreateMode;
+	global int	  $EEdefFilenameCount;
+	global string $EEcurrFiles[];
+	global string $EEcurrParticleFiles[];
+	global string $EEcurrFileExprName[];
+	global string $EEcurrFileDefObj[];
+	global int	  $EEcurrFileCreateMode[]; 
+	global int    $EEexpressionInEditor;
+	global int    $EEpExpressionInEditor;
+	global string $EEnodeMode;
+
+	int $fileNum = size($EEcurrFiles);
+
+	int $win32 = `about -win`;
+	int $OSMac = `about -mac`;
+	
+	string $exprFile;
+
+	//	If scriptNodes were used, create a unique script ID from the
+	//	passed as the $expressionName argument.
+	//
+	if ($EEnodeMode == "scriptNode")
+	{
+		$expressionName = EEgetFullScriptName($expressionName);
+	}
+
+	// Set the name of the temp file the expression will be edited
+	// in.  Since there may not be an expression name yet, and the
+	// expression name may change, give the file a "dummy" name,
+	// "exprFile<#>".  Also, keep track of the name of the expression
+	// being edited in each file and the default object name, if 
+	// there is one, for initial creation of an expression.
+	// 
+	//
+	if (size($expressionName))
+	{
+		int $index = EEexpressionIsInTextEditor($expressionName, 0);
+		if ($index > -1)
+		{
+			$EEexpressionInEditor =  $index;
+			$EEpExpressionInEditor = -1;
+			warning (uiRes("m_expressionEdTextEditor.kExprAlreadyInTextEditor"));
+			return;
+		}
+		else
+		{
+			$EEcurrFileExprName[$fileNum] = $expressionName;
+		}
+	}
+	else
+	{
+		$EEcurrFileExprName[$fileNum] = "";
+	}
+
+    string $tmpDir;
+
+	if ($win32 || $OSMac)
+		$tmpDir = getenv ("TMPDIR");
+	else
+		$tmpDir = "/tmp";
+
+	if (size($fileName) > 0)
+	{
+		$exprFile = $tmpDir + "/" + $fileName;
+	}
+	else
+	{
+		$EEdefFilenameCount += 1;
+		$exprFile = $tmpDir + "/exprFile" + $EEdefFilenameCount;
+	}
+
+	// Look through the current list of files and make sure this
+	// name is not already there.  It could be there, but for
+	// another expression.  Yes, this is dumb, but there you are.
+	//
+	int $i, $found, $count = 0;
+	int $done = 0;
+	string $tmpFile = $exprFile;
+
+	while (!$done)
+	{
+		$found = 0; 
+
+		for ($i = 0; $i < size($EEcurrFiles); $i++)
+		{
+			if ($EEcurrFiles[$i] == $tmpFile)
+			{
+				$tmpFile = $exprFile + "." + ($count + 2);
+				$found = 1;
+				$count++;
+				break;
+			}
+		}
+		if (!$found)
+			$done = 1;
+	}
+	$exprFile = $tmpFile;
+
+	if (`about -win`)
+	{
+		$exprFile = $exprFile + ".TXT";
+	}
+
+	// Set a pointer to where in the list of expressions in text editors,
+	// the current expression in the Expression Editor is.  Add the
+	// current expression to the list.  Need to keep track of the file
+	// name and whether in edit or create mode
+	//
+	$EEexpressionInEditor =  $fileNum;
+	$EEpExpressionInEditor = -1;
+
+	$EEcurrFileCreateMode[$fileNum] = $EEcreateMode;
+	$EEcurrFiles[$fileNum] = $exprFile;
+
+	if (`window -exists "expressionEditorWin"`)
+	{
+		string $defaultObj = `textFieldGrp -query -text EEdefNameT`;
+		$EEcurrFileDefObj[$fileNum] = $defaultObj;
+	}
+	else
+	{
+		if (size($expressionName) == 0)
+		{
+	       $EEcurrFileCreateMode[$fileNum] = 1;
+		   $EEcreateMode = 1;
+		}
+		else
+		{
+	       $EEcurrFileCreateMode[$fileNum] = 0;
+		   $EEcreateMode = 0;
+		}
+	}
+
+	// Now launch the text editor.
+	//
+	EEdoLaunch($exprFile, $expression);
+
+}	// EElaunchEditor
+
+
+//  ================ EElaunchParticleEditor ================
+//
+//  SYNOPSIS
+//      Set up to launch a text editor for a particle expression.
+//
+global proc	EElaunchParticleEditor( string $expression, string $particleName)
+{
+	global int $EEexpressionType;
+	global string $EEcurrParticleFiles[];
+	global int $EEpExpressionInEditor;
+	global int $EEexpressionInEditor;
+
+	int $index = EEexpressionIsInTextEditor($particleName, 1);
+
+	if ($index > -1)
+	{
+		$EEexpressionInEditor =  -1;
+		$EEpExpressionInEditor = $index;
+		warning (uiRes("m_expressionEdTextEditor.kExprAlreadyInTextEditor"));
+		return;
+	}
+
+	// Set a pointer to where in the list of expressions in text editors,
+	// the current expression in the Expression Editor is.  Add the
+	// current expression to the list.
+	//
+	int $win32 = `about -win`;
+	int $OSMac = `about -mac`;
+	string $tmpDir;
+	if ($win32 || $OSMac)
+		$tmpDir = getenv("TMPDIR");
+	else
+		$tmpDir = "/tmp";
+
+	string $exprFile = $tmpDir + "/" + $particleName;
+
+	if ($EEexpressionType == 1)
+		$exprFile = $exprFile + ".runtimeBeforeDynamics";
+	else if ($EEexpressionType == 2)
+		$exprFile = $exprFile + ".runtimeAfterDynamics";
+	else
+		$exprFile = $exprFile + ".creation";
+
+	if ($win32 || $OSMac)
+		$exprFile = $exprFile + ".TXT";
+
+	$EEpExpressionInEditor = size($EEcurrParticleFiles);
+	$EEexpressionInEditor = -1;
+	$EEcurrParticleFiles[size($EEcurrParticleFiles)] = $exprFile;
+
+	// Launch the text editor.
+	//
+	// Set up the filename for the temp file to edit the expression in.
+	//
+	EEdoLaunch($exprFile, $expression);
+
+}	// EElaunchParticleEditor
+
+
+
+//  ================ EEupdateFileExpression ================
+//
+//  SYNOPSIS
+//      A text editor file has been written.  So get its contents
+//		and update the expression and the Expression Editor.
+//
+global proc	EEupdateFileExpression(string $fileName, 
+								   string $expression, int $isCurrent)
+{
+	global string $EEcurrFiles[];
+	global string $EEcurrFileExprName[];
+	global string $EEcurrFileDefObj[];
+	global int	  $EEcurrFileCreateMode[];   // 1 = creating; 0 = editing
+	global int $EEeditedInEditor;
+
+	// Find the file in the list.
+	//
+	int $i, $index = -1;
+
+	for ($i = 0; $i < size($EEcurrFiles); $i++)
+	{
+		if ($fileName == $EEcurrFiles[$i])
+		{
+			$index = $i;
+			break;
+		}
+	}
+
+	if ($index == -1)
+		return;
+
+	// Find out if editing or creating this expression.
+	//
+	int $creating = $EEcurrFileCreateMode[$index];
+
+	// Make sure the expression can get through MEL.
+	//
+	string $newExprName;
+
+	if ($creating)
+	{
+		// If creating and the expression is currently in the Expression
+		// Editor, need to do other flags as well, so call the same
+		// procedure as when selecting the create button.
+		// Otherwise just edit the expression itself..
+		//
+		// Don't try to make an expression node if there's no expression.
+		//
+		if ($expression == "")
+			return;
+
+		if ($isCurrent)
+		{
+			$newExprName = EEapplyExpression($expression);
+
+			$EEcurrFileExprName[$index] = $newExprName;
+
+			// Re-call EEdisplayExpression now that the expression name is
+			// in $EEcurrFileExprName.  Otherwise the editor thinks it is
+			// not in text editor mode.
+			//
+			EEdisplayExpression($newExprName);
+		}
+		else
+		{
+			if (size($EEcurrFileDefObj[$index]))
+			{
+				string $theCommand = ("expression -string \""+encodeString($expression)+"\" -o "+$EEcurrFileDefObj[$index]+";");
+				$newExprName = evalEcho( $theCommand );
+			}
+			else
+			{
+				string $theCommand = ("expression -string \""+encodeString($expression)+"\";");
+				$newExprName = evalEcho( $theCommand );
+			}
+			$EEcurrFileExprName[$index] = $newExprName;
+		}
+
+		// No longer in create mode.
+		//
+		$EEcurrFileCreateMode[$index] = 0;
+
+
+	}
+	else
+	{
+		// Editing.  So just edit the expression, and update the
+		// Expression Editor scroll field.
+		//
+		string $theCommand = ("expression -edit -string \"" + encodeString($expression) +"\" " + $EEcurrFileExprName[$index] + ";");
+		$newExprName = evalEcho( $theCommand );
+
+		if ($isCurrent)
+		{
+			$EEeditedInEditor = 1;
+			scrollField -edit -text $expression EEmultiText;
+		}
+	}
+
+}	// EEupdateFileExpression
+
+
+//  ================ EEupdateParticleFileExpression ================
+//
+//  SYNOPSIS
+//      A text editor file has been written.  So get its contents
+//		and update the expression and the Expression Editor.
+//
+global proc	EEupdateParticleFileExpression(string $fileName, 
+											string $expression,
+											int $isCurrent)
+{
+	string $buffer[];
+
+	//	The filename for particle expression is composed of:
+	//  /tmp/<obj>.runtimeBeforeDynamics/runtimeAfterDynamics/create.  So get the individual tokens.
+	//
+	tokenize ($fileName, ".", $buffer);
+	string $temp = $buffer[0];
+	string $runCreate = $buffer[1];
+	tokenize($temp, "/", $buffer);
+	string $nodeName = $buffer[size($buffer) - 1];
+
+	string $exprReturn;
+
+	if ($isCurrent)
+	{
+		// If the particle/expression is currently in the Expression
+		// Editor, do the same as if the "Create/Edit" button had been
+		// pressed.
+		//
+		EEapplyParticleExpression($expression);
+	}
+	else
+	{
+		int $expressionType;
+		// "runtime" is for backward compatibility.
+		if ($runCreate == "runtime") {
+			if(`getAttr ($nodeName + ".expressionsAfterDynamics")`)
+				$expressionType = 2;
+			else
+				$expressionType = 1;
+		} if ($runCreate == "runtimeBeforeDynamics") {
+			$expressionType = 1;
+		} else if ($runCreate == "runtimeAfterDynamics") {
+			$expressionType = 2;
+		} else {
+			$expressionType = 3;
+		}
+
+		// Edit the particle expression and Print the command to the
+		// command window.
+		//
+		EEdynExpressionCmd($expressionType, $expression, $nodeName);
+	}
+
+}	// EEupdateParticleFileExpression
+
+
+
+//  ================ EEdeleteStringElement ================
+//
+//  SYNOPSIS
+//      Remove an element from a string array.
+//
+global proc string[] EEdeleteStringElement(string $array[], int $i)
+{
+	string $tmp[];
+	int $j;
+
+	int $lastElemIndex = size($array) - 2;
+
+	for ($j = 0; $j < $i; $j++)
+		$tmp[$j] = $array[$j];
+	
+	for ($j = $i; $j <= $lastElemIndex; $j++)
+		$tmp[$j] = $array[$j+1];
+
+	return $tmp;
+
+}	// EEdeleteStringElement
+
+
+//  ================ EEdeleteIntElement ================
+//
+//  SYNOPSIS
+//      Remove an element from an int array.
+//
+global proc int[] EEdeleteIntElement(int $array[], int $i)
+{
+	int $tmp[];
+	int $j;
+
+	int $lastElemIndex = size($array) - 2;
+
+	for ($j = 0; $j < $i; $j++)
+		$tmp[$j] = $array[$j];
+	
+	for ($j = $i; $j <= $lastElemIndex; $j++)
+		$tmp[$j] = $array[$j+1];
+
+	return $tmp;
+
+}	// EEdeleteIntElement
+
+
+//  ================ EEexpressionIsInTextEditor ================
+//
+//  SYNOPSIS
+//      Return whether the expression is already in a text editor.
+//
+global proc int EEexpressionIsInTextEditor(string $expressionName, int $isParticle)
+{
+	global int $EEexpressionType;
+	global string $EEcurrFiles[];
+	global string $EEcurrParticleFiles[];
+	global string $EEcurrFileExprName[];
+	global string $EEnodeMode;
+
+	//	If scriptNodes were used, create a unique script ID from the
+	//	passed as the $expressionName argument.
+	//
+	if ($EEnodeMode == "scriptNode")
+	{
+		$expressionName = EEgetFullScriptName($expressionName);
+	}
+
+	// Look through the list of expressions in text editors.  If this one
+	// is there, return its index in the list, otherwise return -1.
+
+	if ($isParticle)
+	{
+		int $i;
+		string $exprFile = "/tmp/" + $expressionName;
+
+		if ($EEexpressionType == 1)
+			$exprFile = $exprFile + ".runtimeBeforeDynamics";
+		else if ($EEexpressionType == 2)
+			$exprFile = $exprFile + ".runtimeAfterDynamics";
+		else
+			$exprFile = $exprFile + ".creation";
+
+		for ($i = 0; $i < size($EEcurrParticleFiles); $i++)
+		{
+			if ($exprFile == $EEcurrParticleFiles[$i])
+			{
+				return $i;
+			}
+		}
+	}
+	else
+	{
+		for ($i = 0; $i < size($EEcurrFileExprName); $i++)
+		{
+			// Test for the filename, in EEcurrFileExprName.
+			//
+			if ($expressionName == $EEcurrFileExprName[$i])
+			{
+				return $i;
+			}
+		}
+	}
+
+	return -1;
+
+}	// EEexpressionIsInTextEditor 
+
+
+// ******************************************************************
+//
+//				EXPRESSION EDITOR QFileSystemWatcher "CALLBACKS" 
+//
+//
+//  ================ EEgetFileExpression ================
+//
+//  SYNOPSIS
+//      Get/read the expression from the temp file on disk.  This
+//		procedure is called from TexprEdFileListener when
+//		QFileSystemWatcher has signalled that the file has been
+//		modified.
+//
+global proc EEgetFileExpression(string $fileName)
+{
+	global int $EEcurrentEditor;
+	global string $EEcurrParticleFiles[];
+	global string $EEcurrFiles[];
+	global int	  $EEpExpressionInEditor;
+	global int	  $EEexpressionInEditor;
+	global string $EEnodeMode;
+
+	string $expression;
+
+	// Read the expression from the file.
+	//
+	int $fd = fopen($fileName, "rt");
+
+	if ($fd == 0)
+	{
+		string $cannotOpenFormat = (uiRes("m_expressionEdTextEditor.kCannotOpen"));
+		string $cannotOpen = `format -stringArg $fileName $cannotOpenFormat`;
+
+		warning $cannotOpen;
+		return;
+	}
+
+	string $tmpExpr;
+	for ($tmpExpr = ""; !`feof $fd`;)
+	{
+		$tmpExpr += fgetline ($fd);
+	}
+	fclose ($fd);
+
+	int $lastIndex = size($tmpExpr);
+
+	// If vi or vim, get rid of an odd character at the end of the file.
+	//
+
+	if ($EEcurrentEditor == 3 || $EEcurrentEditor == 4
+		|| (`about -linux` && $EEcurrentEditor == 5))
+	{
+		if (size($tmpExpr) > 2)
+			$tmpExpr = substring($tmpExpr, 1, $lastIndex - 1);
+	}
+
+
+	$expression = $tmpExpr;
+
+	// There may be grouping and non-unique names, in which there
+	// will be "|" characters in the object name.  But since we can't use
+	// "|" in unix file names, we switched them to "#" for the filename.
+	// So now we have to switch back to get to the object/expression name again.
+	//
+	$internalFileName = EEgetInternalFileName($fileName);
+	$fileName = $internalFileName;
+
+	// If this expression  is currently in the expression editor,
+	// update the text field, and find out if it is a particle.
+	//
+	int $expressionIsCurrent = 0;
+	int $nodeIsParticle = 0;
+
+   	if (`window -exists "expressionEditorWin"`)
+	{
+		if ($EEpExpressionInEditor >= 0)
+		{
+			if ($EEcurrParticleFiles[$EEpExpressionInEditor] == $fileName)
+			{
+				$expressionIsCurrent = 1;
+				$nodeIsParticle = 1;
+			}
+		}
+		else if ($EEexpressionInEditor >= 0)
+		{
+			if ($EEcurrFiles[$EEexpressionInEditor] == $fileName)
+			{
+				$expressionIsCurrent = 1;
+			}
+		}
+
+		if ($expressionIsCurrent)
+			scrollField -edit -text $expression EEmultiText;
+	}
+
+	// Update the expression node -- have to know if it is a
+	// particle or a regular expression.  
+	//
+	if (!$nodeIsParticle)
+	{
+		for ($i = 0; $i < size($EEcurrParticleFiles); $i++)
+		{
+			if ($fileName == $EEcurrParticleFiles[$i])
+			{
+				$nodeIsParticle = 1;
+				break;
+			}
+		}
+	}
+
+	if ($nodeIsParticle)
+		EEupdateParticleFileExpression($fileName, $expression, $expressionIsCurrent);
+	else
+	{
+		if ($EEnodeMode == "scriptNode")
+			EEupdateFileScript($fileName, $expression, $expressionIsCurrent);
+		else
+			EEupdateFileExpression($fileName, $expression, $expressionIsCurrent);
+	}
+
+}	// EEgetFileExpression
+
+
+//  ================ EEdeleteEditorFile ================
+//
+//  SYNOPSIS
+//      Delete a temp file from disk.  This procedure is called from
+//		TexprEdFileListener, when QFileSystemWatcher has signalled that
+//		the .BAT file connected with this text file has been deleted. Now
+//		need to delete this text file as well.
+//
+global proc EEdeleteEditorFile(string $fileName)
+{
+	global int $EEcurrentEditor;
+	global string $EEcurrParticleFiles[];
+	global string $EEcurrFiles[];
+	global string $EEcurrFileExprName[];
+	global string $EEcurrFileDefObj[];
+	global int	  $EEcurrFileCreateMode[];   // 1 = creating; 0 = editing
+	global int	  $EEpExpressionInEditor;
+	global int	  $EEexpressionInEditor;
+
+	sysFile -del $fileName;
+
+	// There may be grouping and non-unique names, in which there
+	// will be "|" characters in the object name.  But since we can't use
+	// "|" in unix file names, we switched them to "#" for the filename.
+	// So now we have to switch back to get to the object/expression name again.
+	//
+	$internalFileName = EEgetInternalFileName($fileName);
+	$fileName = $internalFileName;
+
+	// Remove the file from the list.
+	//
+	int $removed = 0;
+	int $i;
+	for ($i = 0; $i < size($EEcurrParticleFiles); $i++)
+	{
+		if ($fileName == $EEcurrParticleFiles[$i])
+		{
+			int $j;
+
+			$EEcurrParticleFiles = EEdeleteStringElement($EEcurrParticleFiles, $i);
+			// If the deleted file holds the expression that is current
+			// in the editor, re-enable the expression textfield.
+			//
+			if ($EEpExpressionInEditor == $i)
+			{
+				$EEpExpressionInEditor = -1;
+				if (`window -exists "expressionEditorWin"`)
+					scrollField -edit -enable true EEmultiText;
+			}
+			else
+			{
+				// If the current file index is greater than the index
+				// of the element that got removed, decrement it by one.
+				//
+				if ($EEpExpressionInEditor > $i)
+					$EEpExpressionInEditor -= 1;
+			}
+			$removed = 1;
+			break;
+		}
+	}
+	// If editor has been switched to Expression Editor while an expression
+	// is in a text editor, if this is the last file in the editor,
+	// then switch the scroll field back to enabled mode.
+	//
+	if (!$removed)
+	{
+		for ($i = 0; $i < size($EEcurrFiles); $i++)
+		{
+			if ($fileName == $EEcurrFiles[$i])
+			{
+				$EEcurrFiles = EEdeleteStringElement($EEcurrFiles, $i);
+
+				$EEcurrFileExprName = 
+						EEdeleteStringElement($EEcurrFileExprName, $i);
+
+				$EEcurrFileDefObj = 
+						EEdeleteStringElement($EEcurrFileDefObj, $i);
+
+				$EEcurrFileCreateMode = 
+						EEdeleteIntElement($EEcurrFileCreateMode, $i);
+
+				// If the deleted file holds the expression that is current
+				// in the editor, re-enable the expression textfield.
+				//
+				if ($EEexpressionInEditor == $i)
+				{
+					if (`window -exists "expressionEditorWin"`)
+						scrollField -edit -enable true EEmultiText;
+					$EEexpressionInEditor = -1;
+				}
+			else
+			{
+				// If the current file index is greater than the index
+				// of the element that got removed, decrement it by one.
+				//
+				if ($EEexpressionInEditor > $i)
+					$EEexpressionInEditor -= 1;
+			}
+				break;
+			}
+		}
+	}
+
+	if (`window -exists "expressionEditorWin"`)
+	{
+		if ($EEcurrentEditor == 1 && size($EEcurrFiles) == 0)
+			scrollField -edit -enable true EEmultiText;
+	}
+
+}	// EEdeleteEditorFile

@@ -1,0 +1,550 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+// There is no concept of camera type in Maya, so we invent it based on the camera name.
+// e.g. A camera named "top1" is of type "top". "|persp5" is of type "persp", "|someNode|bottom56a" is of type "bottom", etc.
+proc string getCamType(string $camName)
+{
+	if( gmatch( $camName, "*|*") ) {
+		string $dagParts[] = stringToStringArray($camName, "|");
+		$camName = $dagParts[size($dagParts) - 1];
+	}
+	$camName = match( "^[^0-9]+", $camName );
+	return $camName;
+}
+
+// Get a list of all cameras in the scene that are of a certain type using the type concept described above in getCamType().
+proc string[] getAllCamsOfType(string $camType)
+{
+	int $camTypeLen = size($camType);
+	string $cameras[] = `listCameras`; 
+	string $camsOfType[];
+	for($camera in $cameras) {
+		if( getCamType($camera) == $camType ) {
+			$camsOfType = stringArrayCatenate( $camsOfType, { $camera } );
+		}
+	}
+	$camsOfType = sort($camsOfType);
+	return $camsOfType;
+}
+
+global proc MTcreateCameraFromView(){
+		string $curPanel = `getPanel -wf`;
+		if(`getPanel -typeOf $curPanel` == "modelPanel") {
+			string $camera = `modelPanel -q -cam $curPanel`;
+			string $newCameras[] = `duplicate $camera`;
+			string $newCamera = $newCameras[0];
+			showHidden $newCamera;
+			lookThroughModelPanel $newCamera $curPanel;
+		}
+}
+
+global proc int MTstringArrayIdx(string $arr[], string $findStr) {
+	int $curIdx;
+	for($curIdx = 0; $curIdx < size($arr); $curIdx++) {
+		if($arr[$curIdx] == $findStr) {
+			return $curIdx;
+		}
+	}
+	return -1;
+}
+
+global proc string MTgetNextCustomCam(string $thisCamera) {
+		string $cameras[] = `listCameras`;
+		// Reduce to custom cameras only
+		string $camera;
+		string $customCams[];
+		for($camera in $cameras) {
+			if(getCamType($camera) != "persp" &&
+			   getCamType($camera) != "left" &&
+			   getCamType($camera) != "right" &&
+			   getCamType($camera) != "bottom" &&
+			   getCamType($camera) != "front" &&
+			   getCamType($camera) != "top" &&
+			   getCamType($camera) != "side") {
+				$customCams[size($customCams)] = $camera;
+			}
+		}
+		// If there are no custom cameras, just cycle through all cameras
+		if(size($customCams) == 0) {
+			$customCams = $cameras;
+		}
+		int $thisIdx = MTstringArrayIdx($customCams, $thisCamera);
+		if($thisIdx == -1) {
+			$thisIdx = 0;
+		}
+		int $nextIdx = ($thisIdx+1) % size($customCams);
+		return $customCams[$nextIdx];
+	}
+
+global proc MTcycleCustomCams() {
+	string $curPanel = `getPanel -wf`;
+	string $panelType = `getPanel -typeOf $curPanel`;
+	if($panelType == "modelPanel") {
+		string $selectedCam = `modelPanel -q -cam $curPanel`;
+		string $nextCam = `MTgetNextCustomCam $selectedCam`;
+		lookThroughModelPanel $nextCam $curPanel;
+	}
+}
+
+global proc MTviewChange(string $cameraType, string $viewSetArg)
+{
+	string $curPanel = `getPanel -wf`;
+
+	int $tornOff = `panel -q -tearOff $curPanel`;
+	if ($tornOff)
+		return;
+
+	string $curSelection[] = `ls -sl`;
+	string $hiliteList[] = `ls -hilite`;
+
+	string $camsOfType[] = getAllCamsOfType($cameraType);
+
+	// If there's no camera found of this type, make one. This will be the case for "back", "bottom", "left", etc, as they are not built in default cameras in Maya.
+	if(size($camsOfType) == 0) {
+		string $camera[] = `camera -n $cameraType -hc ("viewSet " + $viewSetArg + " %camera")`;
+		hide $camera[0];
+		viewSet $viewSetArg $camera[0];
+		if(!objExists($cameraType)) {
+			// camera -n creates a camera with "1" on the end by default.
+			// We remove that if possible so we're in line with the way Maya's default views are named.
+			select $camera[0];
+			string $newCamName = `rename $cameraType`;
+			lookThroughModelPanel $newCamName $curPanel;
+		} else {
+			lookThroughModelPanel $camera[0] $curPanel;
+		}
+	} else {
+		int $camIndex = 0;
+		if(`getPanel -typeOf $curPanel` == "modelPanel") {
+			string $activeCamera = `modelPanel -q -cam $curPanel`;
+			string $activeCamType = getCamType($activeCamera);
+
+			// e.g. Did the user just ask for "top" (in $camTypeLen) when they're already in a view called "top4"?
+			// If so, we want to switch to the next available camera of type "top" (that could mean "top5", or back to "top").
+			if ( $activeCamType == $cameraType ) {
+				int $camTypeIdx = 0;
+				int $idx = 0;
+				for($camera in $camsOfType) {
+					if( $camera == $activeCamera ) {
+						$camTypeIdx = $idx;
+					}
+					$idx+=1;
+				}
+				$camIndex = ($camTypeIdx+1) % size($camsOfType);
+			}
+		}
+		lookThroughModelPanel $camsOfType[$camIndex] $curPanel;
+	}
+	select $curSelection;
+	hilite $hiliteList;
+}
+
+global proc MTxrayObjTgl() 
+{ 
+	string $objList[] = stringArrayCatenate(`ls -sl -o`, `ls -hilite`); 
+	 
+	if (size($objList) == 0) 
+	{ 
+		warning (uiRes("m_MTprocs.kSelectionWarning")); 
+	} 
+	else 
+	{ 
+		string $obj, $shapenodes[]; 
+		int $xraystatus = false; 
+		int $numSurfaces = 0; 
+		for($obj in $objList) 
+		{ 
+			string $shapeNodes[] = `listRelatives -shapes $obj`; 
+			if($shapeNodes[0] != "") { 
+				string $nodeType = `nodeType $shapeNodes[0]`; 
+				if ($nodeType == "mesh" || $nodeType == "nurbsSurface" || $nodeType == "subdiv") 
+				{ 
+					$numSurfaces++; 
+					int $xraystatuses[] = `displaySurface -q -xRay $obj`; 
+					if ($xraystatuses[0]) { 
+						$xraystatus=1; 
+						break; 
+					} 
+				} 
+			} 
+		} 
+		if($numSurfaces>0) { 
+			if($xraystatus) 
+				displaySurface -xRay 0 $objList; 
+			else 
+				displaySurface -xRay 1 $objList; 
+		} 
+	} 
+} 
+ 
+global proc MTloadRecentFile(int $fileOffset) 
+{ 
+	if(`optionVar -ex "RecentFilesList"`) { 
+		string $recentFilesList[] = `optionVar -query "RecentFilesList"`; 
+		string $recentFilesTypeList[] = `optionVar -query "RecentFilesTypeList"`; 
+		int $numItems = size($recentFilesList); 
+		if($numItems>($fileOffset-1)) { 
+			if(exists("openRecentFile")) { 
+				openRecentFile($recentFilesList[$numItems-$fileOffset], 
+					$recentFilesTypeList[$numItems-$fileOffset]); 
+			} else { 
+				global string $gv_operationMode;  
+				$gv_operationMode = "Open"; 
+				pv_performAction( 
+					$recentFilesList[$numItems-$fileOffset],  
+					$recentFilesTypeList[$numItems-$fileOffset]);  
+			} 
+		} 
+	} 
+} 
+
+global proc MTtglBackfaceCull() 
+{ 
+	string $objList[] = stringArrayCatenate(`ls -sl -o`, `ls -hilite`); 
+	 
+	if (`size ($objList)` == 0) 
+	{ 
+		warning (uiRes("m_MTprocs.kSelectionWarning")); 
+	} 
+	else 
+	{ 
+		int $cullingstate[], $curstate = false; 
+		string $shapenodes[], $shapenode, $obj, $nodetype; 
+		for ($obj in $objList) 
+		{ 
+			$shapenodes = `listRelatives -s $obj`; 
+			if($shapenodes[0] != "") { 
+				if ( `nodeType $shapenodes[0]` == "mesh") 
+				{ 
+					$cullingstate = `polyOptions -q -fullBack`; 
+					if($cullingstate[0]) { 
+						$curstate = true; 
+						break; 
+					} 
+				} 
+			} 
+	 
+		} 
+		if($curstate) 
+			polyOptions -bc; 
+		else 
+			polyOptions -fb; 
+	} 
+} 
+ 
+global proc MTtglEdgesOnly() 
+{ 
+	string $objList[] = stringArrayCatenate(`ls -sl -o`, `ls -hilite`); 
+ 
+	if (`size ($objList)` == 0) 
+	{ 
+		warning (uiRes("m_MTprocs.kSelectionWarning")); 
+	} 
+	else 
+	{ 
+		int $trianglestate[], $curstate = false; 
+		string $shapenodes[], $shapenode, $obj, $nodetype; 
+		for ($obj in $objList) 
+		{ 
+			$shapenodes = `listRelatives -s $obj`; 
+			if($shapenodes[0] != "") { 
+				if ( `nodeType $shapenodes[0]` == "mesh") 
+				{ 
+					$trianglestate = `polyOptions -q -displayTriangle`; 
+					if($trianglestate[0]) { 
+						$curstate = true; 
+						break; 
+					} 
+				} 
+			} 
+		} 
+		polyOptions -dt (!$curstate); 
+	} 
+} 
+ 
+global proc MTtglObjHide() 
+{ 
+	string $objList[] = stringArrayCatenate(`ls -sl -o`, `ls -hilite`); 
+	 
+	if (size($objList)==0) 
+	{ 
+		showHidden -all; 
+	} 
+	else 
+	{ 
+		string $obj; 
+		int $hiddenObj=0; 
+		for ($obj in $objList) { 
+			if(getAttr($obj + ".visibility")==0) { 
+				$hiddenObj=1; 
+				break; 
+			} 
+		} 
+		if($hiddenObj) 
+			showHidden $objList; 
+		else 
+			hide $objList; 
+	} 
+} 
+ 
+global proc MTtglObjTemplate() 
+{ 
+	string $objList[] = stringArrayCatenate(`ls -sl -o`, `ls -hilite`); 
+ 
+	 displayPref -shadeTemplates true; 
+	if (size($objList)==0) 
+	{ 
+		warning (uiRes("m_MTprocs.kSelectionWarning")); 
+	} 
+	else 
+	{ 
+		string $obj; 
+		int $templateObj=off; 
+		for ($obj in $objList) { 
+			if(getAttr($obj + ".template")) { 
+				$templateObj=on; 
+				break; 
+			} 
+		} 
+		for ($obj in $objList) { 
+			setAttr ($obj + ".template") (!$templateObj); 
+		} 
+	} 
+} 
+
+global proc MTtglLockSel() 
+{ 
+	updateLockSelectionIcon; 
+	updateHighlightSelectIcon; 
+	iconTextCheckBox -e -v `selectPref -q -xformNoSelect` lockSelectionIcon; 
+} 
+
+global proc MTselAll() 
+{ 
+	string $selection[] = `ls -selection`; 
+	string $hiliteList[] = `ls -hilite`; 
+ 
+	if(`size($hiliteList)`!=0) { 
+			string $object; 
+			string $newSelection[]; 
+			for ($object in $hiliteList) { 
+				string $componentArray[] = {  
+					 "-polymeshVtxFace", "vtxFace", 
+					"-controlVertex", "cv", 
+					 "-vertex", "vtx", 
+					 "-polymeshVertex", "vtx", 
+					 "-editPoint", "ep", 
+					 "-edge", "e", 
+					 "-polymeshEdge", "e", 
+					 "-subdivMeshEdge", "sme", 
+					 "-surfaceEdge", "u", "v", 
+					 "-polymeshFreeEdge", "e", 
+					 "-facet", "f", 
+					 "-subdivMeshFace", "smf", 
+					 "-surfaceFace", "u", "v", "e", 
+					 "-polymeshFace", "f", 
+					"-hull", "cv", 
+					 "-polymeshUV", "map", 
+					 "-curveParameterPoint", "u", "e", 
+					 "-curveKnot", "e", "u", "v", 
+					 "-surfaceParameterPoint", "e", "u", "v", 
+					 "-surfaceKnot", "e", 
+					 "-surfaceRange", "u", "v", "e", 
+					 "-isoparm", "u", "v", "e", 
+					 "-subdivMeshPoint", "smp", 
+					 "-latticePoint", "pt", 
+					 "-particle", "pt", 
+					 "-springComponent", "sp" 
+				}; 
+				int $i; 
+				int $selectionDone=false; 
+				for ($i=0;$i<`size $componentArray` && !$selectionDone;$i++) { 
+					string $selectComponents[] = {}; 
+					string $componentArg = $componentArray[$i]; 
+					while(($i+1)<`size $componentArray`) { 
+						if(size($componentArray[$i+1])>0 && substring($componentArray[$i+1],1,1) == "-") 
+							break; 
+						else { 
+							int $newSize = size($selectComponents); 
+							$selectComponents[$newSize] = $componentArray[++$i]; 
+						} 
+					} 
+					if( ((`selectMode -q -co`) && (`selectType -q $componentArg`)) || ((`selectMode -q -o`) && (`selectType -ocm -q $componentArg`)) ) { 
+						string $selectComponent; 
+						for ($selectComponent in $selectComponents) { 
+							string $component=$object + "." + $selectComponent + "[*] "; 
+							if(objExists($component)) { 
+								int $newSize = size($newSelection); 
+								$newSelection[$newSize] = $component; 
+								$selectionDone = true; 
+							} 
+						} 
+					} 
+				} 
+			} 
+			select -replace $newSelection; 
+			select -deselect $selection; 
+	} else if(`size $selection`==0) { 
+		select -allDagObjects -visible; 
+	} else { 
+		InvertSelection; 
+	} 
+} 
+
+global proc MTtglSmoothWire() 
+{ 
+	string $currentPanel = `getPanel -underPointer`; 
+	if ("" == $currentPanel) { 
+		$currentPanel = `getPanel -withFocus`; 
+	} 
+	if ("" != $currentPanel) { 
+		string $panelType = `getPanel -typeOf $currentPanel`; 
+		string $displayAppearance = ""; 
+	 
+		if ($panelType ==  "modelPanel") { 
+			$displayAppearance = `modelEditor -query -displayAppearance $currentPanel`; 
+			if ($displayAppearance != "") { 
+				if( $displayAppearance == "wireframe" ) 
+					$displayAppearance = "smoothShaded"; 
+				else 
+					$displayAppearance = "wireframe"; 
+				modelEditor -edit -displayAppearance $displayAppearance $currentPanel; 
+			} 
+		} 
+	} 
+} 
+
+global proc MTtglDefaultLighting() 
+{ 
+	string $currentPanel = `getPanel -withFocus`; 
+	string $panelType = `getPanel -to $currentPanel`; 
+	global string $gDynPaintEditorName; 
+	 
+	if ($panelType ==  "modelPanel") { 
+		if(`modelEditor -q -dl $currentPanel` == "default") { 
+			modelEditor -edit -dl "all" $currentPanel; 
+		} else { 
+			modelEditor -edit -dl "default" $currentPanel; 
+		} 
+	} else if (`isTrue "MayaCreatorExists"` && `scriptedPanel -ex $currentPanel` && `scriptedPanel -q -type $currentPanel` == "dynPaintScriptedPanelType") { 
+		if(`dynPaintEditor -q -dsl $gDynPaintEditorName` == "default") { 
+			dynPaintEditor -e -dsl "all" $gDynPaintEditorName; 
+		} else { 
+			dynPaintEditor -e -dsl "default" $gDynPaintEditorName; 
+		} 
+	} 
+} 
+
+global proc MTtglTextures() 
+{ 
+	string $curPanel = `getPanel -wf`; 
+	string $panelType = `getPanel -typeOf $curPanel`; 
+	 
+	if($panelType == "modelPanel") { 
+		if(`modelEditor -q -displayTextures $curPanel`) { 
+			modelEditor -e -displayTextures off $curPanel; 
+		} else { 
+			modelEditor -e -displayTextures on $curPanel; 
+		} 
+	} else if($curPanel == "polyTexturePlacementPanel1") { 
+		textureWindowToggleTextureImage( "polyTexturePlacementPanel1", "textureWindow"); 
+		refresh; 
+		txtWndUpdateEditor("polyTexturePlacementPanel1", "textureWindow", "null", 101); 
+	} 
+} 
+
+global proc int MTisWindowVis(string $window) 
+{ 
+	if(!`window -q -ex $window` || !`window -q -vis $window` || `window -q -i $window`) { 
+		return false; 
+	} else { 
+		return true; 
+	} 
+} 
+
+global proc int MTtoggleWindow (string $window, string $windowCmd) 
+{ 
+	if(!MTisWindowVis($window)) { 
+		eval($windowCmd); 
+		return true; 
+	} else { 
+		window -e -i true $window; 
+		window -e -tlc 7500 7500 $window; 
+		return false; 
+	} 
+}
+
+global proc MTtoggleCmd(){
+	if(`pluginInfo -q -loaded "modelingToolkit"`){
+		dR_ToggleCommandPanel;
+	}	
+}
+
+global proc MTsetToggleMenuItem()
+{
+	global string $gModelingToolkitButton;
+	string $showModelingToolkit = (uiRes("m_MTprocs.kShowModelingToolkit"));
+	string $hideModelingToolkit = (uiRes("m_MTprocs.kHideModelingToolkit"));
+	int $enabled = `pluginInfo -q -loaded "modelingToolkit"`;
+	int $visible = false;
+	if ($enabled)
+	{
+		$visible = `dockControl -q -vis NEXDockControl`;
+	}
+
+	if (!$enabled)
+	{
+		if (`menuItem -ex ToggleModelingToolkitMenuItem`)
+			menuItem -e -enable false -l $showModelingToolkit ToggleModelingToolkitMenuItem;
+
+		if (`iconTextCheckBox -ex $gModelingToolkitButton`)
+			iconTextCheckBox -e -enable false $gModelingToolkitButton;
+	}
+	else
+	{
+		if (`menuItem -ex ToggleModelingToolkitMenuItem`)
+		{
+			if($visible)
+			{
+				menuItem -e -enable true -l $hideModelingToolkit ToggleModelingToolkitMenuItem;
+			}
+			else
+			{
+				menuItem -e -enable true -l $showModelingToolkit ToggleModelingToolkitMenuItem;
+			}
+		}
+
+		if (`iconTextCheckBox -ex $gModelingToolkitButton`)
+		{
+			iconTextCheckBox -e -value $visible -enable $enabled $gModelingToolkitButton;
+		}
+	}
+
+	if (`menuItem -ex MTKBevelTool`)
+	{
+		menuItem -e -enable $enabled MTKBevelTool;
+		menuItem -e -enable $enabled MTKConnectTool;
+		menuItem -e -enable $enabled MTKMultiCutTool;
+		menuItem -e -enable $enabled MTKQuadDrawTool;
+		menuItem -e -enable $enabled MTKTargetWeldTool;
+	}
+}

@@ -1,0 +1,190 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+// Description:  This procedure is called to apply the preset to 
+//  the node.  If the node's createNodeProc is specified, we use
+//  it to create the node before we apply the preset to the node.  
+//  If the node's deleteNodeProc is specified,
+//  we use it to delete the node afterwards.
+//
+global proc applyPresetToNode( 
+    string $node, 
+    string $createNodeProc,
+    string $deleteNodeProc,
+    string $presetName,
+    float $blend)
+{
+    // Create the node if createNodeProc is specified
+    //
+    if ($createNodeProc != "")
+    {
+        $node = eval ($createNodeProc);
+    }
+
+    applyAttrPreset($node, $presetName, $blend);
+
+    // Delete the node if the deleteNodeProc is specified
+    //
+    if ($deleteNodeProc != "")
+    {
+        if ($node != "")
+        {
+            eval($deleteNodeProc+" "+$node);
+        }
+    }
+}
+
+global proc applyPresetToSelectedNodes( 
+    string $node, 
+    string $createNodeProc,
+    string $deleteNodeProc,
+    string $presetName,
+    float $blend)
+{
+	string $type = nodeType( $node );
+	string $nodes[] = `ls -sl`;
+	string $n;
+	int $foundNode = false;
+	for( $n in $nodes ){
+		string $hist[] = listHistory( $n );
+		string $h;
+		for( $h in $hist ){
+			if( $type == nodeType($h) ){
+				if ( $h == $node ){
+					$foundNode = true;
+				}
+				applyPresetToNode( $h, $createNodeProc, $deleteNodeProc, $presetName, $blend);
+			}
+		}
+	}
+	if( !$foundNode ){
+		applyPresetToNode( $node, $createNodeProc, $deleteNodeProc, $presetName, $blend);
+	}
+}
+
+// Description: This procedure is called to get preset files under the given path
+//
+global proc int getPresetFiles(string $fileList[], string $ppath)
+{
+    clear $fileList;
+    if( `file -q -ex $ppath` ){
+        string $files;  
+// Maya LT (Bolt) does not allow the system command, we can only use the getFileList
+// but to be safe just before the release I'll add defines and revisit it after
+// to be sure that no unexpected error occurs.
+        if( `about -nt` ){
+	        $files = `system ( "dir /b \"" + $ppath + "\""  )`;
+        } else if (`about -linux`) {
+	        $files = `system ( "ls " + $ppath )`;
+        }else if (`about -mac`)
+		{
+	        string $filesList[];
+	        int $i;
+        	
+	        $filesList = `getFileList -folder $ppath`;
+	        for($i = 0; $i < size($filesList); $i++){
+		        $files = $files + $filesList[$i] + "\n";
+	        }
+        } 
+		else 
+		{
+	        warning (uiRes("m_presetMenuForDir.kOsNotRecognized"));
+        }
+        return tokenize( $files, $fileList );
+    }
+    return 0;
+}
+
+// Description:  This procedure is called to build the preset menu for
+//      existing preset of the same node type as the given node.
+//
+global proc int presetMenuForDir( int $numPresetsInMenu[], // arrays pass by reference
+									string $ppath, 
+									string $node, 
+									int $callWithFullPath,
+                                    string $createNodeProc,
+                                    string $deleteNodeProc )
+{
+	int $itemLimit = 30;
+	int $numItems = 0;
+    string $fileList[];
+    int $numTokens = getPresetFiles($fileList, $ppath);
+	// create Directory for current node type
+	if ($numTokens > 0 && !($numTokens == 1 && $fileList[0] == "unknown")) {
+		string $file;
+		for ( $file in $fileList ) {
+			// only show .mel files
+			if(  size( match( ".mel", $file ) ) ){
+				string $presetName = `substitute ".mel" $file ""`;
+				string $cmd = (" \"" + $node +"\" \""+$createNodeProc+"\" \""+$deleteNodeProc+ "\" \"" );
+				if( $callWithFullPath ){
+					$cmd = $cmd + $ppath + "/" + $file + "\" ";
+				} else {
+					$cmd = $cmd + $presetName + "\" ";
+				}
+				
+				string $menuCommand = ("applyPresetToNode" + $cmd );
+				string $applySelectedCommand = ("applyPresetToSelectedNodes" + $cmd );
+
+				$numItems++;
+				menuItem
+				-subMenu true
+				-label ($presetName);
+					menuItem
+						-label (uiRes("m_presetMenuForDir.kReplace"))
+						-c ($menuCommand + "1");
+					menuItem
+						-label (uiRes("m_presetMenuForDir.kReplaceSelected"))
+						-c ($applySelectedCommand + "1");
+					menuItem
+						-label (uiRes("m_presetMenuForDir.kBlend90percent"))
+						-c ($menuCommand + ".9");
+					menuItem
+						-label (uiRes("m_presetMenuForDir.kBlend70percent")) 
+						-c ($menuCommand + ".7");
+					menuItem
+						-label (uiRes("m_presetMenuForDir.kBlend50percent")) 
+						-c ($menuCommand + ".51");
+					menuItem
+						-label (uiRes("m_presetMenuForDir.kBlend25percent")) 
+						-c ($menuCommand + ".25");
+					menuItem
+						-label (uiRes("m_presetMenuForDir.kBlend10percent")) 
+						-c ($menuCommand + ".1");
+				setParent -menu ..;
+
+				$numPresetsInMenu[0] = $numPresetsInMenu[0] + 1;
+
+				// If there are more than $itemLimit presets
+				// we need to split the menu into submenus 
+				// - otherwise it does not fit on the screen.
+				//
+				if( $numPresetsInMenu[0] >= $itemLimit ) {
+					menuItem -subMenu true -label (uiRes("m_presetMenuForDir.kMore"));
+					$numPresetsInMenu[0] = 0;
+				}
+			}
+		}
+	}
+
+	return $numItems;
+
+}

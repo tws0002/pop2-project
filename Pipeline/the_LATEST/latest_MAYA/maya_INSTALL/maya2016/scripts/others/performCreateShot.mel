@@ -1,0 +1,707 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Description:
+//      Handle the creation of shots, and associated option box dialog.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+global proc string getCurrentCameraSequencerShot()
+{
+	// Use the selected shot, or if no single shot is selected,
+	// check if there is a shot at the current time.
+	//
+	string $shot = "";
+	string $selShots[] = `ls -sl -type shot`;
+	if (size($selShots) == 1) {
+		$shot = $selShots[0];
+	} else {
+		$shot = `sequenceManager -q -cs`;
+	}
+	return $shot;
+}
+
+proc setOptionVars (int $forceFactorySettings)
+{
+	int $defaultStart = 1; 
+	int $defaultDuration = 24;
+	int $defaultEnd = $defaultStart + $defaultDuration -1;
+
+	// Shot name
+	//
+	if ($forceFactorySettings || !`optionVar -exists createShotName`) {
+		optionVar -stringValue createShotName "shot1";
+	}	
+
+	if ($forceFactorySettings || !`optionVar -exists createShotCamera`) {
+		optionVar -stringValue createShotCamera "persp";
+	}	
+
+	if ($forceFactorySettings || !`optionVar -exists createShotImage`) {
+		optionVar -stringValue createShotImage "";
+	}	
+
+	if( $forceFactorySettings || !`optionVar -exists createShotStart` ) {
+		optionVar -intValue createShotStart $defaultStart;
+	} 
+	
+	if( $forceFactorySettings || !`optionVar -exists createSequenceStart` ) {
+		optionVar -intValue createSequenceStart $defaultStart;
+	} 
+	
+	if( $forceFactorySettings || !`optionVar -exists createShotEnd` ) {
+		optionVar -intValue createShotEnd $defaultEnd;
+	} 
+	
+	if( $forceFactorySettings || !`optionVar -exists createSequenceEnd` ) {
+		optionVar -intValue createSequenceEnd $defaultEnd;
+	} 
+
+	if( $forceFactorySettings || !`optionVar -exists createShotOpacity` ) {
+		optionVar -floatValue createShotOpacity 1.0;
+	} 
+
+	if( $forceFactorySettings || !`optionVar -exists createShotPlacement` ) {
+		optionVar -intValue createShotPlacement 1;
+	} 
+
+	if ($forceFactorySettings || !`optionVar -exists createShotWResolution`) {
+		optionVar -intValue createShotWResolution 1024;
+	}	 
+	if ($forceFactorySettings || !`optionVar -exists createShotHResolution`) {
+		optionVar -intValue createShotHResolution 778;
+	}
+
+}
+
+
+//
+// Menu entries are:
+//	1 - Current Frame
+//	2 - After Current Shot
+//	3 - Before Current Shot
+//	4 - End of Sequence
+//	5 - Manual
+//
+//	
+proc updateVisibility()
+{
+	int $placement = `optionMenu -q -sl createShotPlacementMenu`;
+
+	int $enable = ( $placement == 5 );   // Only visible when menu set to 'manual'
+        intFieldGrp -e -en $enable sequenceStartValueWidget;
+        intFieldGrp -e -en $enable sequenceEndValueWidget;
+}
+
+global proc shotEndValueChangedCB()
+{
+	int $end = `intFieldGrp -query -value1 shotEndValueWidget`;
+	int $start = `intFieldGrp -query -value1 shotStartValueWidget`;
+	
+	if ( $end <= $start ) {
+		$start = $end - 1;
+		intFieldGrp -edit -value1 $start shotStartValueWidget;
+	}
+
+	placementMenuChanged();
+}
+
+global proc shotStartValueChangedCB()
+{
+	int $end = `intFieldGrp -query -value1 shotEndValueWidget`;
+	int $start = `intFieldGrp -query -value1 shotStartValueWidget`;
+	
+	if ( $start >= $end ) {
+		$end = $start+1;
+		intFieldGrp -edit -value1 $end shotEndValueWidget;
+	}
+
+	placementMenuChanged();
+}
+
+//
+//  Procedure Name:
+//      createShotSetup
+//
+//  Description:
+//		Update the state of the option box UI to reflect the option values.
+//
+//  Input Arguments:
+//      parent               - Top level parent layout of the option box UI.
+//                             Required so that UI object names can be 
+//                             successfully resolved.
+//
+//	forceFactorySettings     - Whether the option values should be set to
+//                             default values.
+//
+//  Return Value:
+//      None.
+//
+global proc createShotSetup (string $parent, int $forceFactorySettings)
+{
+	// Retrieve the option settings.
+	setOptionVars( $forceFactorySettings );
+
+	setParent $parent;
+	
+	// Set the shot name.
+	string $name = `optionVar -query createShotName`;
+	textFieldGrp -edit -text $name shotNameWidget;
+
+	// Set the camera name 
+	string $camera = `optionVar -query createShotCamera`;
+	string $items[] = `optionMenu -q -ill createShotCameraMenu`;
+	for ( $i = 0; $i < size( $items ); $i++ )
+	{
+		$label = `menuItem -q -label $items[$i]`;
+		if ( $label == $camera )
+		{
+			optionMenu -e -sl ($i+1) createShotCameraMenu;
+		}
+	}
+
+	// Set the placement 
+	int $placement = `optionVar -query createShotPlacement`;
+	if( $placement == 0 )
+	{
+		// In case var is not set
+		$placement = 1;
+	}
+	optionMenu -e -sl $placement createShotPlacementMenu;
+	
+	// IP
+	string $image = `optionVar -query createShotImage`;
+	textFieldButtonGrp -edit -text $image -enable true shotImageWidget;	
+	float $opacity = `optionVar -query createShotOpacity`;
+	floatFieldGrp -edit -value1 $opacity -enable ($image != "") shotOpacityWidget;
+
+	//	Set the start and end times.
+	int $shotStart = `optionVar -query createShotStart`;
+	int $shotEnd   = `optionVar -query createShotEnd`;
+	int $sequenceStart = `optionVar -query createSequenceStart`;
+	int $sequenceEnd   = `optionVar -query createSequenceEnd`;
+
+	intFieldGrp -edit -value1 $shotStart -enable true shotStartValueWidget;
+	intFieldGrp -edit -value1 $shotEnd -enable true shotEndValueWidget;	
+	intFieldGrp -edit -value1 $sequenceStart -enable true sequenceStartValueWidget;	
+	intFieldGrp -edit -value1 $sequenceEnd -enable true sequenceEndValueWidget;	
+
+	updateVisibility();	
+}
+
+//
+//  Procedure Name:
+//      createShotCallback
+//
+//  Description:
+//		Update the option values with the current state of the option box UI.
+//
+//  Input Arguments:
+//      parent - Top level parent layout of the option box UI.  Required so
+//               that UI object names can be successfully resolved.
+//
+//	doIt       - Whether the command should execute.
+//
+//  Return Value:
+//      None.
+//
+global proc createShotCallback (string $parent, int $doIt)
+{
+	// This updates the optionVars with the current input values and selections
+	// in the Create Shot Option Box UI.  These values won't necessarily be used
+	// depending on the mode.  (For instance if "After Current Shot" is selected,
+	// the start/end time of the new shot will be based on the current shot in
+	// the scene, not on the UI/optionVar values.
+    setParent $parent;
+
+	// Name
+	//
+	optionVar -stringValue createShotName `textFieldGrp -query -text shotNameWidget`;
+
+	// Camera
+	//
+	optionVar -stringValue createShotCamera `optionMenu -q -v createShotCameraMenu`;
+
+	// Placement
+	//
+	optionVar -intValue createShotPlacement `optionMenu -q -sl createShotPlacementMenu`;
+
+	// IP
+	//
+	optionVar -stringValue createShotImage `textFieldButtonGrp -query -text shotImageWidget`;
+	optionVar -floatValue  createShotOpacity `floatFieldGrp -query -value1 shotOpacityWidget`;
+
+    optionVar -intValue  createShotStart `intFieldGrp -query -value1 shotStartValueWidget`;
+    optionVar -intValue  createShotEnd `intFieldGrp -query -value1 shotEndValueWidget`;
+    optionVar -intValue  createSequenceStart `intFieldGrp -query -value1 sequenceStartValueWidget`;
+    optionVar -intValue  createSequenceEnd `intFieldGrp -query -value1 sequenceEndValueWidget`;
+
+	if ($doIt)
+	{
+		performCreateShot false;
+	}
+}
+
+global proc sequencerEnableOpacityForImage()
+{
+	string $image = `textFieldButtonGrp -q -text shotImageWidget`;
+	floatFieldGrp -edit -enable ($image != "") shotOpacityWidget;
+}
+
+proc string createShotWidgets( string $parent )
+{
+	// Retrieve the option settings.
+	setParent $parent;
+	
+	string $tabForm = `columnLayout -adjustableColumn true`;
+
+	string $name = "shot1";
+	textFieldGrp -label (uiRes("m_performCreateShot.kName"))  -text $name -parent $tabForm shotNameWidget;
+
+	// Camera, or new camera type
+        string $allCameras[] = getCameraChoicesForShots();
+        rowLayout -nc 2 linkCameraLayout;
+        text -label (uiRes("m_performCreateShot.kLinkToCamera"));
+        optionMenu createShotCameraMenu;
+
+        for ($i = 0; $i < size($allCameras); $i++)
+        {
+                menuItem -label $allCameras[$i] ("createShotCameraItem" + $i);
+        }
+
+        setParent ..;	 // End of camera menu set-up
+
+	frameLayout -borderVisible no -labelVisible no -collapsable no startEndFrame;
+		columnLayout -adjustableColumn true;
+		intFieldGrp -label (uiRes("m_performCreateShot.kStartTime"))
+			-cc shotStartValueChangedCB
+			shotStartValueWidget;
+		intFieldGrp -label (uiRes("m_performCreateShot.kEndTime"))
+			-cc shotEndValueChangedCB
+			shotEndValueWidget;
+		setParent ..;
+	setParent ..;
+	
+        rowLayout -nc 2 placementLayout;
+		text -label (uiRes("m_performCreateShot.kNewShotPlacement"));
+		optionMenu -cc placementMenuChanged createShotPlacementMenu;
+		menuItem -label (uiRes("m_performCreateShot.kNewShotCurrentFrame"));
+		menuItem -label (uiRes("m_performCreateShot.kNewShotAfterCurrentFrame"));
+		menuItem -label (uiRes("m_performCreateShot.kNewShotBeforeCurrentFrame"));
+		menuItem -label (uiRes("m_performCreateShot.kNewShotEndOfSequence"));
+		menuItem -label (uiRes("m_performCreateShot.kNewShotManualPlacement"));
+		setParent ..;	 // End of placement menu set-up
+        setParent ..;	 // End of camera menu set-up
+
+	frameLayout -borderVisible no -labelVisible no -collapsable no seqStartEndFrame;
+		columnLayout -adjustableColumn true;
+		intFieldGrp -label (uiRes("m_performCreateShot.kSequenceStartTime"))
+			-value1 1.0 sequenceStartValueWidget;
+		intFieldGrp -label (uiRes("m_performCreateShot.kSequenceEndTime"))
+			-value1 1.0 sequenceEndValueWidget;
+		setParent ..;
+	setParent ..;
+	
+	textFieldButtonGrp -en 1 -cc "sequencerEnableOpacityForImage"
+                                -label (uiRes("m_performCreateShot.kImage"))
+                                -annotation (uiRes("m_performCreateShot.kImageAnnot"))
+                                -text ""
+                                -buttonLabel "..."
+                                -buttonCommand "createShotPromptForImageFilename"
+                                shotImageWidget;
+	floatFieldGrp -label (uiRes("m_performCreateShot.kImageOpacity")) -value1 1.0 shotOpacityWidget;
+
+	return $tabForm;
+}
+
+proc noCurrentShot()
+{
+	warning((uiRes("m_performCreateShot.kNoCurrentShot")));
+}
+
+global proc placementMenuChanged()
+{
+	// This proc is used for two things: 
+	// 1) updating the Create Shot Option box UI elements when the createPlanementMenu box is updated 
+	// 2) updating the sequence start/end optionVar values just before creating a shot, to handle
+	//		changes to the scene since the last time the Create Shot Options box was opened.
+	//
+	int $useUI = `optionMenu -q -ex createShotPlacementMenu`;
+	int $item;
+	int $shotDuration = -1;
+	int $oldStart, $oldEnd;
+	
+	if ($useUI)
+	{ 
+		// use item value from the Options UI.
+		$item = `optionMenu -q -sl createShotPlacementMenu`;
+        $oldStart = `intFieldGrp -q -value1 sequenceStartValueWidget`;
+        $oldEnd = `intFieldGrp -q -value1 sequenceEndValueWidget`;
+		
+		int $end = `intFieldGrp -query -value1 shotEndValueWidget`;
+		int $start = `intFieldGrp -query -value1 shotStartValueWidget`;
+		$shotDuration = $end - $start + 1;
+	}
+	else
+	{
+		// Options UI doesn't exist, use the optionVar values for mode, source start, and source end
+		// to calculate new sequence start / end values.
+		$item = `optionVar -q createShotPlacement`;
+        $oldStart = `optionVar -q createSequenceStart`;
+        $oldEnd = `optionVar -q createSequenceEnd`;
+        
+		int $start = `optionVar -q  createShotStart`;
+		int $end  = `optionVar -q  createShotEnd`;
+		$shotDuration = $end - $start + 1;
+	}
+
+	int $newStart;
+	if($useUI) 
+		$newStart = `intFieldGrp -q -value1 sequenceStartValueWidget`;	// grab the existing value
+	else
+		$newStart = `optionVar -q createSequenceStart`;
+
+
+	switch ($item) {
+
+                //  
+                // _L10N(kNewShotCurrentFrame,"Current Frame");
+		case 1:
+		$newStart = `sequenceManager -q -ct`;
+		break;
+		
+                // _L10N(kNewShotAfterCurrentFrame,"After Current Shot");
+		case 2:
+		{
+			string $shot = getCurrentCameraSequencerShot();
+			if ($shot != "" )
+			{
+				$newStart = `getAttr ( $shot + ".se")` + 1;
+			}
+			else
+			{
+				$newStart = `sequenceManager -q -ct`;
+				noCurrentShot();
+			}
+		}
+		break;
+
+                //_L10N(kNewShotBeforeCurrentFrame,"Before Current Shot");
+		case 3:
+		{
+			string $shot = getCurrentCameraSequencerShot();			
+			if ($shot != "" )
+			{
+				$newStart = `getAttr ( $shot + ".ssf")`;
+				int $start, $end;
+				if($useUI)
+				{
+					$end = `intFieldGrp -query -value1 shotEndValueWidget`;
+					$start = `intFieldGrp -query -value1 shotStartValueWidget`;
+				}
+				else
+				{
+					$end = `optionVar -q createSequenceEnd`;
+					$start = `optionVar -q createSequenceStart`;
+				}
+				int $duration = $end - $start + 1;
+				$newStart -= $duration;
+			}
+			else
+			{
+				$newStart = `sequenceManager -q -ct`;
+				noCurrentShot();
+			}
+		}
+		break;
+
+                //_L10N(kNewShotEndOfSequence,"End of Sequence");
+		case 4:
+		string $shots[] = `ls -type "shot"`;
+
+		// If there are no shots the sequencer node won't have a usable length
+		if (size($shots)>0)
+		{
+			string $seq = getSequencerNode();
+			if( $seq != "" )
+				$newStart = `getAttr ($seq + ".maxFrame")` + 1;
+			break;
+		}
+		else
+		{
+			$newStart = `sequenceManager -q -ct`;
+			noCurrentShot();
+		}
+		break;
+                //-label _L10N(kNewShotManualPlacement,"Manual");
+		case 5:
+			$newStart = $oldStart;
+		    $shotDuration = $oldEnd - $oldStart + 1;
+		
+		break;
+	}
+
+    int $oldStart, $oldEnd, $delta, $newEnd;
+    int $newEnd = $newStart + $shotDuration - 1;
+    if($useUI)
+    {
+		updateVisibility();    
+		intFieldGrp -e -value1 $newStart sequenceStartValueWidget;
+		intFieldGrp -e -value1 $newEnd sequenceEndValueWidget;     
+    }
+    optionVar -intValue  createSequenceStart $newStart;
+    optionVar -intValue  createSequenceEnd $newEnd;
+}
+
+global proc createShotPromptForImageFilename()
+{
+        //$dirMask += ("/*");
+        //string $bgFile = `fileDialog -dm $dirMask`;
+        string $bgFile = `fileDialog`;
+
+        if( $bgFile != "" )
+        {
+                textFieldButtonGrp -e -text $bgFile shotImageWidget;
+				floatFieldGrp -edit -enable 1 shotOpacityWidget;
+        }
+}
+
+global proc createShotOptions ()
+{
+	string $commandName = "createShot";
+
+	// Build the option box "methods"
+	//
+	string $callback = ($commandName + "Callback");
+	string $setup = ($commandName + "Setup");
+
+	//	Get the option box.
+	//
+	//  The value returned is the name of the layout to be used as
+	//	the parent for the option box UI.
+	//
+	string $layout = getOptionBox();
+	setParent $layout;
+
+	setOptionBoxCommandName("shot");
+
+	setUITemplate -pushTemplate DefaultTemplate;
+	waitCursor -state 1;
+	tabLayout -scrollable true -tabsVisible false;	// To get the scroll bars
+
+	string $parent = `columnLayout -adjustableColumn 1`;
+
+	createShotWidgets $parent;
+
+	waitCursor -state 0;
+	setUITemplate -popTemplate;
+
+	//	'Apply' button.
+	//
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit
+		-label (uiRes("m_performCreateShot.kCreateShot")) 
+		-command ($callback + " " + $parent + " " + 1)
+		$applyBtn;
+
+	//	'Save' button.
+	//
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + $parent + " " + 0 + "; hideOptionBox")
+		$saveBtn;
+
+	//	'Reset' button.
+	//
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + " " + $parent + " " + 1)
+		$resetBtn;
+
+	//	Set the option box title.
+	//
+	setOptionBoxTitle((uiRes("m_performCreateShot.kCreateShotOptions")));
+
+	//	Customize the 'Help' menu item text.
+	//
+	setOptionBoxHelpTag( "CreateShot" );
+
+	//	Set the current values of the option box.
+	//
+	eval (($setup + " " + $parent + " " + 0));	
+	
+	//	Show the option box.
+	//
+	showOptionBox();
+}
+
+
+//
+//  Procedure Name:
+//      assembleCmd
+//
+//  Description:
+//		Construct the command that will apply the option box values.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+proc string assembleCmd()
+{
+	string $cmd;
+
+	setOptionVars(false);
+	
+	// This will pick up the latest scene values, and override any 
+	// stale start/end frame values.
+	placementMenuChanged(); 
+
+	// get the shot name
+	string $shotName = "shot1";
+	if (`optionVar -exists createShotName`) {
+		$shotName = `optionVar -query createShotName`;
+	}
+
+	string $shotCamera = "persp";
+	if (`optionVar -exists createShotCamera`) {
+		$shotCamera = `optionVar -query createShotCamera`;
+	}
+
+	string $shotImage = "";
+	if (`optionVar -exists createShotImage`) {
+		$shotImage = `optionVar -query createShotImage`;
+	}
+
+	int $shotStart = 0;
+	if (`optionVar -exists createShotStart`) {
+		$shotStart = `optionVar -query createShotStart`;
+	}
+	
+	int $shotEnd = 0;
+	if (`optionVar -exists createShotEnd`) {
+		$shotEnd = `optionVar -query createShotEnd`;
+	}
+
+	int $sequenceStart = 0;
+	if (`optionVar -exists createSequenceStart`) {
+		$sequenceStart = `optionVar -query createSequenceStart`;
+	}
+
+	int $sequenceEnd = 0;
+	if (`optionVar -exists createSequenceEnd`) {
+		$sequenceEnd = `optionVar -query createSequenceEnd`;
+	}
+
+	float $opacity = 1.0;
+	if (`optionVar -exists createShotOpacity`) {
+		$opacity = `optionVar -query createShotOpacity`;
+	}
+
+	int $wRes = 1024;
+	if (`optionVar -exists createShotWResolution`) {
+		$wRes = `optionVar -query createShotWResolution`;
+	}
+
+	int $hRes = 778;
+	if (`optionVar -exists createShotHResolution`) {
+		$hRes = `optionVar -query createShotHResolution`;
+	}
+
+	// doCreateShotArgList takes a string array 
+	//
+
+	$cmd =	"doCreateShotArgList 1 { " +
+				"\"" + $shotName + "\"" +
+				",\"" + $shotStart + "\"" +
+				",\"" + $shotEnd + "\"" +
+				",\"" + $sequenceStart + "\"" +
+				",\"" + $sequenceEnd + "\"" +
+				",\"" + $shotCamera + "\"" +
+				",\"" + $shotImage + "\"" +
+				",\"" + $opacity + "\"" +	
+				",\"" + $wRes + "\"" +	
+				",\"" + $hRes + "\"" +		
+			" };";
+
+	return $cmd;
+}
+
+//
+//  Procedure Name:
+//      performCreateShot
+//
+//  Description:
+//		Create a shot and add the animatable attributes from the 
+//      selected nodes.  This procedure will also show the option box
+//		window if necessary as well as construct the command string
+//		that will create a shot with the current option box values.
+//
+//  Input Arguments:
+//      0 - Execute the command.
+//      1 - Show the option box dialog.
+//      2 - Return the command.
+//
+//  Return Value:
+//      None.
+//
+global proc string performCreateShot (int $action)
+{
+	string $cmd = "";
+
+	switch ($action) {
+
+		//	Execute the command.
+		//
+		case 0:
+			//	Retrieve the option settings
+			//
+			setOptionVars(false);
+
+			//	Get the command.
+			//
+			$cmd = `assembleCmd`;
+
+			//	Execute the command with the option settings.
+			//
+			if ($cmd != "")
+			    eval($cmd);
+			break;
+
+		//	Show the option box.
+		//
+		case 1:
+			createShotOptions;
+			break;
+		case 2:
+			//	Get the command.
+			//
+			$cmd = `assembleCmd`;
+	}
+	return $cmd;
+}

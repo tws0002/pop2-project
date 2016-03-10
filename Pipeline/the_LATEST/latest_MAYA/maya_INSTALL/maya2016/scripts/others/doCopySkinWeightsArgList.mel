@@ -1,0 +1,188 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Sept, 1999
+//
+//	Procedure Name:
+//		doCopySkinWeightsArgList
+//
+//	Description:
+//		Copy skin weights
+//
+//	Input Arguments:
+//	$version: The version of this option box.  Used to know how to 
+//	interpret the $args array.
+//		"1" : $name
+//  
+//	$args
+//	Version 2
+//	[0]		$cmdArgs : The set of flags to pass through to the command
+//	Version 1
+//	[0]		$smoothOption : Set to "smooth" to use the smooth copy algorithm.  Anything
+//                             else uses the point sampled algorithm.
+//
+//	Return Value:
+//		None
+//
+
+proc int copyTheSkinWeights(string $src, string $dst, string $args, int $showError)
+{
+	// find source and destination skin shapes
+	//
+	string $srcCluster = findRelatedSkinCluster($src);
+	string $dstCluster = findRelatedSkinCluster($dst);
+	string $err;
+	string $fmt = (uiRes("m_doCopySkinWeightsArgList.kIsNotASkinCluster"));
+	if (size($srcCluster) == 0) {
+		$err = `format -s $src -s $src $fmt`;
+	}
+	else if (size($dstCluster) == 0) {
+		$err = `format -s $dst -s $src $fmt`;
+	} else {
+		string $cmd = ("copySkinWeights -ss "+$srcCluster+" -ds " + $dstCluster + $args);
+		evalEcho($cmd);
+		return 1;
+    }
+	if ($showError) {
+		error($err);
+	} else {
+		warning($err);
+	}
+	return 0;
+}
+
+global proc doCopySkinWeightsArgList( string $version, string $args[] )
+{
+	// The hardest aspect of setting up this command is working out what our sources are
+	// and what our targets are; when we need to split the task into multiple operations,
+	// and when everything is part of a single transfer.
+	//
+	// The underlying command supports multiple sources, but only one target surface/skin
+	// pair. The Maya selection on the other hand supports a lot more variety. The input
+	// can be a list of shapes and assemblies of shapes, while the output can be a single
+	// shape, a list of components on a shape, or a hierarchy of shapes. Because both the
+	// source and target list can have multiple selection elements, we can't parse the
+	// selection purely as selection[0] == src and selection[1] == target. The key to
+	// interpretting the selection is identifying the target(s). In the case of per-component
+	// selection, the target can have multiple selection elements, but the one thing we can
+	// rely on is that the LAST element in the selection list MUST be part of the target.
+	// Based on what we find there, we can work out how to turn the Maya selection into
+	// a set of copySkinWeights commands.
+	// 	
+	
+	// If less than two things are selected, it's a bust.
+	//
+    string $currentSelection[] = `ls -selection`;
+	if (size($currentSelection) < 2) 
+	{
+		error( (uiRes("m_doCopySkinWeightsArgList.kNeedsSourceAndDest")) );
+		return;
+	}
+	
+	// Handle the different versions of arguments we accept, and turn them
+	// into a single set of command flags
+	//	
+	string $cmdArgs = " -noMirror";
+	if( $version == "2")
+	{
+		$cmdArgs += $args[0];
+	}
+	else
+	{
+		if( $args[0] == "smooth")
+		    $cmdArgs += " -smooth";
+	}
+	
+	// Take our (last) target out of the list
+	//
+	string $target = $currentSelection[ size( $currentSelection) - 1];	
+	
+	// Explode any source assemblies as the command only works on shapes
+	//
+	string $assemblies[] = `ls -sl -assemblies`;
+	for( $assembly in $assemblies)
+	{
+		if( $assembly != $target)
+		{
+			select -d $assembly;
+			select -af `ls -lf -type controlPoint -ni -dag $assembly`;
+		}
+	}
+	
+	// Examine the last entry in the selection list to work out what kind of target
+	// we're dealing with
+	//
+	int $result = 0;
+	if( size( `ls -assemblies $target` ) )
+	{
+		// We have a heirarchy of targets. Split the task into one copy for each
+		// destination surface we find.
+		//
+		select -d $target;
+		string $targets[] = `ls -lf -type controlPoint -ni -dag $target`;
+		for( $ii in $targets )
+		{
+			string $targetSkin = findRelatedSkinCluster( $ii );
+			if( size( $targetSkin ))
+			{
+				select -add $ii;
+				evalEcho( "copySkinWeights " + $cmdArgs);
+				select -d $ii;				
+				$result++;
+			}
+		}		
+		select -add $target;
+	}
+	else
+	{	
+		if( size( `ls -type controlPoint $target`) || size( `ls -type transform $target`) )
+		{
+			// We have a single shape. Verify there's a skinCluster on it
+			//
+			string $targetSkin = findRelatedSkinCluster( $target );
+			if( size( $targetSkin ))
+			{
+				evalEcho( "copySkinWeights " + $cmdArgs);
+				$result++;
+			}
+		}
+		else
+		{
+			// We (probably) have a list of components. Try and identify the shape
+			// for this 
+			//
+			evalEcho( "copySkinWeights " + $cmdArgs);
+			$result++;		
+		}
+	}
+
+	if( $result == 0)
+	{
+		error( (uiRes("m_doCopySkinWeightsArgList.kNoDestinationSkinsFound")) );
+	}
+	else
+	{
+		string $fmt = (uiRes("m_doCopySkinWeightsArgList.kCopiedResult"));
+	    print `format -s $result $fmt`;
+	}  
+}

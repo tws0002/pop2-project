@@ -1,0 +1,97 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+// updateAnimatedDisplacement
+// This mel command allows one to convert to poly a displacement map that has animation.
+// It generally should be called from within an expression.
+
+// TODO?? allow creation of lower resolution displacement mesh for things like collision? (rendered displacement would then be left with intermediate object off)
+// TODO?? allow for global disable of update of all animated displacement meshes?
+global proc doUpdateAnimatedDisplacement(string $obj, string $mesh, string $displacementInput)
+{
+
+	//string $obj = "pPlaneShape1";
+	//string $mesh = "pPlaneShape1Displacement1";
+	string $oldSel[] = `ls -sl`;
+	if(!objExists( $obj ) || !objExists($mesh) || !objExists( $displacementInput ) ){
+		return;
+	}
+
+	string $shadCons[] = `listConnections -d 1 -sh 1 -type "shadingEngine" ($obj + ".instObjGroups[0]")`;
+	if( size( $shadCons ) < 1 ){
+		return;
+	}
+	string $shadOutDisp = ($shadCons[0] + ".displacementShader");
+	string $displacementConnection = `connectionInfo -sfd $shadOutDisp`;
+	if( size( $displacementConnection ) < 1 ){
+		connectAttr $displacementInput $shadOutDisp;
+	} else {
+		if( $displacementInput != $displacementConnection ){
+			return;
+		}
+	}
+int $undoState = `undoInfo -q -state`;
+undoInfo -state false;
+	setAttr ($obj + ".intermediateObject") false;
+	select -r $obj;
+	displacementToPoly;
+	string $newDisp[] = `ls -sl -dag -type mesh`;
+	setAttr ($obj + ".intermediateObject") true;
+
+	disconnectAttr $displacementInput $shadOutDisp;
+	string $oldDisp = "";
+	string $inHist[] = `listHistory( $mesh + ".inMesh")`;
+	
+	if( size( $inHist ) > 0 ){
+		int $i;
+		for( $i = 1; $i < size($inHist); $i++ ){
+			if( nodeType( $inHist[$i] ) == "mesh" ){
+				$oldDisp = $inHist[$i];
+			}
+		}
+	}
+	
+	if( $oldDisp != "" ){
+		string $destCon[] = `connectionInfo -dfs ($oldDisp + ".outMesh")`;
+		connectAttr -f ($newDisp[0] + ".outMesh") $destCon[0];
+		setAttr ($newDisp[0] + ".intermediateObject") true;
+		string $tforms[]= `listTransforms $oldDisp`;
+		delete $tforms;
+	} else {
+		connectAttr -f ($newDisp[0] + ".outMesh") ($mesh + ".inMesh");
+	}
+
+
+	select -r $oldSel;
+undoInfo -state $undoState;
+}
+
+global proc updateAnimatedDisplacement(string $obj, string $mesh, string $displacementInput)
+{
+	int $p = `play -q -state`;
+	$p = true;
+	string $exp = "doUpdateAnimatedDisplacement "+$obj+" "+$mesh+" "+$displacementInput+ ";";
+	if( $p ){
+		eval ($exp );
+	} else {
+		evalDeferred( $exp  );
+	}
+}

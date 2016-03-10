@@ -1,0 +1,456 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+// Description:  This procedure is called to create a bakeset
+//  with the exact name specified by $bakeSet.  
+//
+global proc string createBakeSetExactName(string $name, string $type)
+{
+    
+    // If the bakeSet does not exist yet, create it. 
+    //
+    if (size(`ls $name`) < 1)
+    {
+        string $bakeSetName = createBakeSet($name, $type); 
+        return $bakeSetName;
+    }
+    return $name;
+}
+
+
+global proc string polyBuildBakeSetMenuItem(string $bakeSet, string $item)
+{
+    string $assignBakeSetAnnotationFormat = (uiRes("m_PolygonsColorMenu.kPolyNewAssignBakeSetAnnotation"));
+    string $assignBakeSetAnnotation = `format -stringArg $bakeSet $assignBakeSetAnnotationFormat `;
+	string $menu = 
+		`menuItem -label $bakeSet  			
+                  -annotation $assignBakeSetAnnotation`;
+
+	menuItem 
+		-edit 
+		-command ("assignBakeSet " + $bakeSet + " \"" + $item + "\"") 
+		$menu;
+
+	// Add an option box to the menu item which will bring up the
+	// bakeSet in the attribute editor
+	//
+    string $buffer[];
+    int $numOfTokens = tokenize( $menu, "|", $buffer);
+    string $optionBoxItem = $buffer[$numOfTokens-1] + "OptionBox";
+    string $optionBoxLabelFormat = (uiRes("m_PolygonsColorMenu.kNewOptionBoxLabel"));
+    string $optionBoxLabel = `format -stringArg $bakeSet $optionBoxLabel `;
+    string $optionBoxAnnotationFormat = (uiRes("m_PolygonsColorMenu.kNewOptionBoxAnnotation"));
+    string $optionBoxAnnotation = `format -stringArg $bakeSet $optionBoxAnnotationFormat `;
+	menuItem 
+		-optionBox true 
+		-annotation $optionBoxAnnotation
+		-label $optionBoxLabel 
+		-command ("assignBakeSet " + $bakeSet + " \"" + $item + "\";" 
+		          + "showBakeSetAE " + $bakeSet )
+        $optionBoxItem;
+
+    return $menu;
+}
+
+global proc polyBuildDummyInitialBakeSetMenuItem(string $type, string $item)
+{
+    string $typeString = "";
+
+    if ($type == "vertexBakeSet")
+    {
+        $typeString = "Vertex";
+    }
+    else
+    {
+		string $errorTypeFormat = (uiRes("m_PolygonsColorMenu.kBakeTypeError"));
+		string $errorTypeMsg = `format -stringArg $type $errorTypeFormat `;
+
+        error -showLineNumber true $errorTypeMsg;
+        return;
+    }
+
+    // If the initial bake set does not exist, then make a 
+    // dummy menu item for it.
+    // 
+    string $bakeSet = "initial"+$typeString+"BakeSet";
+    if ( size(`ls $bakeSet`) < 1)
+    { 
+        string $menu = polyBuildBakeSetMenuItem($bakeSet, $item);
+        
+        // Modify the command associated to the menuItem and the
+        // option box, so that the bakeSet is created before the 
+        // rest the command is executed.
+        //
+        string $oldCommand = `menuItem -query -command $menu`;
+        string $addCommand = 
+            "string $name = createBakeSetExactName(\""+$bakeSet+"\", \""+$type+"\"); ";
+        string $newCommand = $addCommand + $oldCommand;
+        menuItem -edit -command $newCommand $menu;
+        $oldCommand = `menuItem -query -command ($menu+"OptionBox")`;
+        $newCommand = $addCommand + $oldCommand;
+        menuItem -edit -command $newCommand ($menu+"OptionBox");
+    }
+}
+
+
+global proc polyBuildAssignBakingMenu(string $parent, string $item)
+{
+	//
+	// Description:
+	//	This procedure is called to build a menu of existing bakeSets which can
+	//	be assigned to the specified $item or to the current selection.
+	//
+
+	setParent -menu $parent;
+	menu -edit -deleteAllItems $parent;
+
+	string $typeArray[] = bakeSetTypesSuitableFor($item);
+
+	if( size($typeArray) <= 0 ){
+		menuItem 
+			-label (uiRes("m_PolygonsColorMenu.kPolyNewNoBakesetsDefined"))  
+			-enable false
+			polyNewNoBakesetsDefined;
+		return;
+	}
+
+	int $i;
+	for ($i = 0; $i < size($typeArray); $i++)
+	{
+		// Insert a divider if we are about to add a section 
+		// of vertexBakeSets to this menu.
+		//
+		if ($i != 0) menuItem -d true;
+
+		string $type = $typeArray[$i];
+		
+		if("textureBakeSet" == $type)
+			continue;
+
+		// Get a list of all bakeSet nodes which have the current node type
+		//
+		string $bakeSet;
+		string $bakeSetArray[] = `ls -exactType $type`;
+
+        // If the initial bake set does not exist, then put in a dummy
+        // initial bake set for this type of bake set.
+        // If the initial bake set exists, then do not build any
+        // dummpy initial bake set.
+        //
+
+        polyBuildDummyInitialBakeSetMenuItem($type, $item);
+
+		for ( $bakeSet in $bakeSetArray ) 
+		{
+            polyBuildBakeSetMenuItem($bakeSet, $item);
+		}
+	}
+}
+
+
+global proc PolyBuildBakingMenus (string $item)
+{
+    
+    string $type = "vertexBakeSet";
+	string $item = "";
+
+	$type = "vertexBakeSet";
+	menuItem 
+		-label (uiRes("m_PolygonsColorMenu.kPolyNewVertexBakeSet")) 
+        -annotation 
+			(uiRes("m_PolygonsColorMenu.kPolyNewCreateANew2"))
+		-image "polyBakeSetNew.png"
+		-command 
+			("createAndAssignBakeSet "
+				+ $type 
+				+ " \""
+				+ $item
+				+ "\"")
+		vertexBakeSetItem;
+
+
+	// Second menu assigns from existing bake sets. 
+	//
+	string $menuAssign = 
+		`menuItem -label (uiRes("m_PolygonsColorMenu.kPolyNewExistingBakeSet"))  
+			-subMenu true 
+			-image "polyBakeSetAssign.png"
+			-allowOptionBoxes true 
+			assignExistingVertexBakeSetItem`;
+	menuItem 
+		-edit 
+		-postMenuCommand 
+			("polyBuildAssignBakingMenu "
+				+ $menuAssign 
+				+ " \""
+				+ $item 
+				+ "\"")
+		assignExistingVertexBakeSetItem;
+
+
+	setParent -menu ..;
+
+	menuItem -label (uiRes("m_PolygonsColorMenu.kPolyEditExistingBakeSet"))
+		-annotation (uiRes("m_PolygonsColorMenu.kPolyEditExistingBakeSetAnnot"))
+		-image "polyBakeSetEdit.png"
+		-command "polyOpenBakeSetAE";
+
+}
+
+global proc refreshPolygonsColorMenu( string $parent )
+{
+	setParent -menu $parent;
+	
+	if(!`about -evalVersion`)
+	{
+		// Giving the chance to third parties to add their baking menu items
+		//
+		removeMenuItems("PolyColorPrelightOpt", "vertexBakeSetItem");
+		callbacks -executeCallbacks -hook "addVertexBakingMenuItems";
+	}	
+}
+
+//////////////////////////////////////////////////////////////////////
+
+global proc PolygonsColorMenu(string $parent)
+//
+// Description:
+//		Polygon Color menu
+//
+{
+	if (! `isTrue "PolygonsExists"`) return;
+	
+	setParent -menu $parent; 
+
+	if( `menu -query -numberOfItems $parent` != 0 ) {
+		//
+		//	Menu is built already, just refresh it. 
+		//
+        refreshPolygonsColorMenu($parent);
+		return;
+	
+	} 	
+
+	menuItem
+		-label (uiRes("m_PolygonsColorMenu.kPolyColorPrelight"))
+		-annotation (uiRes("m_PolygonsColorMenu.kPolyColorPrelightAnnot"))
+		-image "polyPrelight.png"
+		-command ("performPrelight " + 0)
+		-dragMenuCommand ("performPrelight " + 2)
+		-dragDoubleClickCommand ("performPrelight " + 1)
+		PolygonBakingMenuItemsAnchorPoint
+		;
+
+	menuItem -optionBox true 
+		-annotation (uiRes("m_PolygonsColorMenu.kPolyColorPrelightOptAnnot"))
+		-image "polyPrelight.png"
+		-command ("performPrelight " + 1)
+		PolyColorPrelightOpt
+		;
+
+	// if done separately, then call the below one
+	PolyBuildBakingMenus("");
+
+	menuItem -divider true;
+
+	menuItem 
+		-label (uiRes("m_PolygonsColorMenu.kPolyColorCreateEmptySet")) 
+		-enableCommandRepeat true
+		-annotation (uiRes("m_PolygonsColorMenu.kPolyColorCreateEmptySetAnnot"))
+		-image "polyColorSetCreateEmpty.png"
+		-command "createEmptyColorSet 0"
+		-dragMenuCommand "createEmptyColorSet 0"
+		-dragDoubleClickCommand "createEmptyColorSet 1"
+		;
+
+	menuItem -optionBox true
+		-label (uiRes("m_PolygonsColorMenu.kPolyColorCreateEmptySetOption"))
+		-image "polyColorSetCreateEmpty.png"
+		-command "createEmptyColorSet 1";
+
+	menuItem 
+		-label (uiRes("m_PolygonsColorMenu.kPolyColorDeleteCurSet")) 
+		-enableCommandRepeat true
+		-enable true
+		-annotation (uiRes("m_PolygonsColorMenu.kPolyColorDeleteCurSetAnnot"))
+		-image "polyColorSetDelete.png"
+		-command "colorSetEditCmd delete none"
+		;
+
+	menuItem 
+		-label (uiRes("m_PolygonsColorMenu.kPolyColorRenameCurSet")) 
+		-enableCommandRepeat true
+		-enable true
+		-annotation (uiRes("m_PolygonsColorMenu.kPolyColorRenameCurSetAnnot"))
+		-image "polyColorSetRename.png"
+		-command  "colorSetEditCmd rename none"
+		;
+
+	menuItem 
+		-label (uiRes("m_PolygonsColorMenu.kPolyColorModifyCurSet")) 
+		-enableCommandRepeat true
+		-enable true
+		-annotation (uiRes("m_PolygonsColorMenu.kPolyColorModifyCurSetAnnot"))
+		-image "polyColorSetModify.png"
+		-command  "colorSetEditCmd modify none"
+		;
+
+	menuItem 
+		-label (uiRes("m_PolygonsColorMenu.kPolyColorSetEditor")) 
+		-enableCommandRepeat true
+		-enable true
+		-annotation (uiRes("m_PolygonsColorMenu.kPolyColorSetEditorAnnot"))
+		-image "polyColorSetEditor.png"
+		-command "colorSetEditor"
+		;
+
+	menuItem -divider true;
+
+	menuItem
+		-label (uiRes("m_PolygonsColorMenu.kPolyColorSetKeyframeForVertexColor"))
+		-annotation (uiRes("m_PolygonsColorMenu.kPolyColorSetVtxKeyAnnot"))
+		-image "polyColorSetKeyframe.png"
+		-command "setPolyColorKeyframe"
+		;
+
+	menuItem -divider true;
+
+	menuItem
+		-label (uiRes("m_PolygonsColorMenu.kPolyColorApply"))
+		-annotation (getRunTimeCommandAnnotation("PolygonApplyColor"))
+		-image "polyApplyColor.png"
+		-command "PolygonApplyColor"
+		-dragMenuCommand "performApplyColor 2"
+		-dragDoubleClickCommand "PolygonApplyColorOptions"
+		;
+
+	menuItem -optionBox true 
+		-annotation (getRunTimeCommandAnnotation("PolygonApplyColorOptions"))
+		-image "polyApplyColor.png"
+		-command "PolygonApplyColorOptions"
+		;
+
+	menuItem
+		-label (uiRes("m_PolygonsColorMenu.kPolyColorPtVtxTool"))
+		-annotation (getRunTimeCommandAnnotation("PaintVertexColorTool"))
+		-image "paintVertexColour.png"
+		-command "PaintVertexColorTool"
+		-dragDoubleClickCommand "PaintVertexColorToolOptions"
+		;
+
+	menuItem -optionBox true
+		-annotation (getRunTimeCommandAnnotation("PaintVertexColorToolOptions"))
+		-image "paintVertexColour.png"
+		-command "PaintVertexColorToolOptions"
+		;
+
+	menuItem -divider true;
+
+	menuItem 
+		-label (uiRes("m_PolygonsColorMenu.kPolyToggleDisplayColorsAttribute"))
+		-annotation (uiRes("m_PolygonsColorMenu.kPolyToggleDisplayColorsAttributeModeAnnot"))
+		-image "polyToggleDisplayColor.png"
+		-command "toggleShadeMode"
+		dispColorShadeMode
+		;
+
+	menuItem 
+		-label (uiRes("m_PolygonsColorMenu.kNewPolyColorMaterial"))  
+		-subMenu 1 
+		-tearOff 1
+		;
+	{
+
+		menuItem -label (uiRes("m_PolygonsColorMenu.kPolyNone")) 
+								-image "polyColorMaterialNone.png"
+								-command ("polyChangeColorMatChannel " + 0) materialNoneMenuItem;
+		menuItem -label (uiRes("m_PolygonsColorMenu.kPolyAmbient")) 
+								-image "polyColorMaterialAmbient.png"
+								-command ("polyChangeColorMatChannel " + 1) materialAmbientMenuItem;
+		menuItem -label (uiRes("m_PolygonsColorMenu.kPolyAmbientDiffuse")) 
+								-image "polyColorMaterialAmbientDiffuse.png"
+								-command ("polyChangeColorMatChannel " + 2) materialAmbDiffMenuItem;
+		menuItem -label (uiRes("m_PolygonsColorMenu.kPolyDiffuse")) 
+								-image "polyColorMaterialDiffuse.png"
+								-command ("polyChangeColorMatChannel " + 3) materialDiffuseMenuItem;
+		menuItem -label (uiRes("m_PolygonsColorMenu.kPolySpecular"))  
+								-image "polyColorMaterialSpecular.png"
+								-command ("polyChangeColorMatChannel " + 4) materialSpecularMenuItem;
+		menuItem -label (uiRes("m_PolygonsColorMenu.kPolyEmission"))  
+								-image "polyColorMaterialEmission.png"
+								-command ("polyChangeColorMatChannel " + 5) materialEmissionMenuItem;
+
+		setParent -menu ..;
+	}
+
+
+	menuItem 
+		-label (uiRes("m_PolygonsColorMenu.kNewPolyMaterialBlend")) 
+		-subMenu 1 
+		-tearOff 1
+		;
+	{
+		menuItem -label (uiRes("m_PolygonsColorMenu.kPolyOverwrite")) 
+								-image "polyMaterialBlendOverwrite.png"
+								-command ("polyChangeMaterialBlend " + 0) blendOverwriteItem;
+		menuItem -label (uiRes("m_PolygonsColorMenu.kPolyAdd"))
+								-image "polyMaterialBlendAdd.png"
+								-command ("polyChangeMaterialBlend " + 1) blendAddMenuItem;
+		menuItem -label (uiRes("m_PolygonsColorMenu.kPolySubtract"))
+								-image "polyMaterialBlendSubtract.png"
+								-command ("polyChangeMaterialBlend " + 2) blendSubractItem;
+		menuItem -label (uiRes("m_PolygonsColorMenu.kPolyMultiply"))
+								-image "polyMaterialBlendMultiply.png"
+								-command ("polyChangeMaterialBlend " + 3) blendMultiplyItem;
+		menuItem -label (uiRes("m_PolygonsColorMenu.kPolyDivide"))
+								-image "polyMaterialBlendDivide.png"
+								-command ("polyChangeMaterialBlend " + 4) blendDivideItem;
+		menuItem -label (uiRes("m_PolygonsColorMenu.kPolyAverage")) 
+								-image "polyMaterialBlendAverage.png"
+								-command ("polyChangeMaterialBlend " + 5) blendAverageItem;
+		menuItem -label (uiRes("m_PolygonsColorMenu.kPolyModulate2x"))
+								-image "polyMaterialBlendModx2.png"
+								-command ("polyChangeMaterialBlend " + 6) blendModulateItem;
+
+		setParent -menu ..;
+	}
+
+	menuItem 
+		-label (uiRes("m_PolygonsColorMenu.kPolyColorsPerInstance"))
+		-subMenu true -to true
+		-allowOptionBoxes true;
+	
+	menuItem
+		-label (uiRes("m_PolygonsColorMenu.kPolyColorSelectShared"))
+		-annotation (getRunTimeCommandAnnotation("SelectSharedColorInstances"))
+		-image "polyColorInstancesSelect.png"
+		-command "SelectSharedColorInstances";
+	
+	menuItem
+		-label (uiRes("m_PolygonsColorMenu.kPolyColorShareInstances"))
+		-annotation (getRunTimeCommandAnnotation("ShareColorInstances"))
+		-image "polyColorInstancesShare.png"
+		-command "ShareColorInstances";
+	
+	setParent -menu ..;
+
+	refreshPolygonsColorMenu $parent;
+}

@@ -1,0 +1,153 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  April 13, 2005
+//
+
+
+//  Procedure Name:
+//      doPinHikEffectors
+//
+//  Description:
+//      Sets the pinning state on selected effectors.
+//
+//  Input Arguments:
+//  $version: The version of this option box.  Used to know how to 
+//  interpret the $args array.
+//
+//  $args
+//  Version 1 (Maya 2012)
+//  [0]     $pinState 0/1/2/3 :      if 0, unpins the effectors
+//                                   if 1, pins translation,
+//                                   if 2, pins rotation.
+//                                   if 3, pins both translation and rotation 
+//  [1]     $rmbItem                 The name of the item which the user rmb'ed over.
+//  [2]     $actOnSelected           If true, act on selected effectors in additon to $rmbItem.
+//  [3]     $additive                If true, toggle the state. Otherwise, set it directly.
+// 
+//  Return Value:
+//       none
+//
+global proc int
+checkMultiSelectPinState(string $item, int $translate)
+//
+// If $translate is true, check the pin translate state. If $translate
+// is false, check the pin rotate state.
+//
+// If all selected effectors are pinned in the given state, return 1.
+// If all selected effectors are unpinned in the given state, return 0.
+// If there is a mixed pinning state, return -1.
+{
+	int $result = 0;
+
+	int $pinWhich = $translate ? 1 : 2;
+	int $itemPinState = `getAttr ($item+".pinning")`;
+	if ($itemPinState == $pinWhich ||
+		$itemPinState == 3) {
+		// pinned in the relevant attr
+		//
+		$result = 1;
+	}
+	
+	string $sel[] = `ls -sl -type hikIKEffector`;
+	for ($obj in $sel) {
+		if ($obj == $item) continue;
+		
+		$itemPinState = `getAttr ($obj+".pinning")`;
+		int $checkPin = ($itemPinState == $pinWhich ||
+						 $itemPinState == 3);
+		if ($checkPin != $result) {
+			$result = -1;
+			break;
+		}
+	}
+
+	return $result;
+}
+
+
+
+global proc doPinHikEffectors( string $version, string $args[] )
+{
+	int     $versionNum    = $version;
+	int     $pinWhich      = $args[0];
+	string  $rmbItem       = $args[1];
+	int     $actOnSelected = $args[2];
+	int     $toggle        = (size($args) > 3) ? $args[3] : 0;
+
+	string $objsToPin[];
+	if (size($rmbItem) > 0) {
+		$objsToPin[0] = $rmbItem;
+	}
+
+	if ($actOnSelected) {
+		string $sel[] = `ls -sl -type hikIKEffector`;
+		for ($obj in $sel) {
+			if ($obj == $rmbItem)
+				continue;
+
+			$objsToPin[size($objsToPin)] = $obj;
+		}
+	}
+
+	if ($toggle && ($pinWhich == 1 || $pinWhich == 2) && size($objsToPin[0])) {
+		$multiPin = checkMultiSelectPinState($objsToPin[0],($pinWhich==1));
+		if ($multiPin < 0) {
+			// Disable toggle if multiple effectors with differing states
+			// are selected
+			//
+			$toggle = 0;
+		}
+	}
+
+	for ($obj in $objsToPin) {
+		if (size($obj) == 0)
+			continue;
+
+		string $rmbPlug = $obj + ".pinning";
+		int $currentPin = `getAttr $rmbPlug`;
+
+		if ($toggle) {
+			// Additive pinning for rotation and translation
+			//
+			if (($currentPin == 1 && $pinWhich == 1) ||
+				($currentPin == 2 && $pinWhich == 2))
+				setAttr $rmbPlug 0;
+			else if ($currentPin == 3 && $pinWhich == 2)
+				setAttr $rmbPlug 1;
+			else if ($currentPin == 3 && $pinWhich == 1)
+				setAttr $rmbPlug 2;
+			else if (($currentPin == 1 && $pinWhich == 2) || 
+					 ($currentPin == 2 && $pinWhich == 1) )
+				setAttr $rmbPlug 3;
+			else
+				setAttr $rmbPlug $pinWhich;
+		} else {
+			if( ($currentPin == 1 && $pinWhich == 2) || 
+				($currentPin == 2 && $pinWhich == 1) )
+				setAttr $rmbPlug 3;
+			else if ($pinWhich == 0 || ($currentPin != 3))
+				setAttr $rmbPlug $pinWhich;
+		}
+	}
+}

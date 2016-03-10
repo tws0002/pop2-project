@@ -1,0 +1,327 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+// Global Variables
+// Last directory visited to load a Maya scene file.
+string $gSceneAssemblySceneLastDirectory;
+// Last directory visited to load an Alembic cache file.
+string $gSceneAssemblyCacheLastDirectory;
+// The last workspace to use to test in case of a Set project Change
+string $gSavedWorkSpace;
+
+
+////////////////////////////////////////////////////////////////////////////////////////
+// Assembly Definition Helpers
+///////////////////////////////////////////////////////////////////////////////////////
+
+global proc string assemblyDefinitionRepTypeLabel(string $type)
+{
+  return `adskRepresentation -q -typeLabel $type`;
+}
+
+global proc string[] assemblyDefinitionListRepTypes()
+{
+  string $repTypes[] = `adskRepresentation -q -listRepTypes`;
+  return $repTypes;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////////////
+// Check for Set Project Change
+// Set the variables gSceneAssemblyCacheLastDirectory and gSceneAssemblySceneLastDirectory
+// to "" since we now want them to use the new project setting. Consistent with all Maya
+// Browsers.
+///////////////////////////////////////////////////////////////////////////////////////
+proc checkForResetWorkspace()
+{
+  string $workspace;
+  global string $gSceneAssemblyCacheLastDirectory;
+  global string $gSceneAssemblySceneLastDirectory;
+  global string $gSavedWorkSpace;
+
+  // test for workspace change
+  $workspace = `workspace -query -rootDirectory`;  
+  if (size($gSavedWorkSpace) > 0) {
+     if ($workspace != $gSavedWorkSpace) {
+          $gSceneAssemblyCacheLastDirectory = "";
+          $gSceneAssemblySceneLastDirectory = "";
+	      $gSavedWorkSpace = $workspace;
+	 }
+  }
+  else {
+      $gSavedWorkSpace = $workspace;
+  }
+}
+
+
+////////////////////////////////////////////////////////////////////////////////////////
+// Cache Represention Browser Commands
+///////////////////////////////////////////////////////////////////////////////////////
+global proc string assemblyCacheFileFilter()
+{
+  return (uiRes("m_assemblyDefinitionUtil.kAlembic")) + " (*.abc)"; 
+}
+
+
+global proc string assemblyCacheStartingDirectory()
+{
+  string $workspace;
+  global string $gSceneAssemblyCacheLastDirectory;
+ 
+ 
+  // test for workspace change
+  checkForResetWorkspace();
+  
+  if (size(`workspace -fileRuleEntry alembicCache`) == 0) {
+    workspace -fileRule "alembicCache" "cache/alembic";
+    workspace -saveWorkspace;
+  }
+
+  if(size($gSceneAssemblyCacheLastDirectory) == 0){
+	$workspace = `workspace -fileRuleEntry alembicCache`;
+  	$workspace = `workspace -expandName $workspace`;
+  }else{
+	$workspace = $gSceneAssemblyCacheLastDirectory;
+  }
+
+  return $workspace;
+}
+
+global proc string assemblyFirsCacheFileName(string $files[])
+{
+
+  global string	$gSceneAssemblyCacheLastDirectory;
+
+  // Return the first scene file (if any), stripped of its leading
+  // workspace directory if applicable, and save its directory as
+  // the scene last directory.
+  if(size($files) > 0){
+    // Save the last directory
+	$gSceneAssemblyCacheLastDirectory = dirname($files[0]);
+	$workspace = `workspace -query -rootDirectory`;  		
+	if(startsWith($files[0],$workspace)) {	
+      return stripPrefixFromName($workspace,$files[0]);
+	}
+	return $files[0];
+  }
+  return "";  
+}
+
+
+global proc string cachePreCreateUIProc()
+{
+	string $workspace = assemblyCacheStartingDirectory();
+  	string $filter    = assemblyCacheFileFilter();
+   
+    // Choose a file to import.
+    string $files[] = `fileDialog2
+    -fileFilter $filter -dialogStyle 2 -fileMode 1 -caption (uiRes("m_assemblyDefinitionUtil.kAssignCacheFile"))
+    -optionsUICreate "assemblyDefinitionCreateRepresentationUIOption" -startingDirectory $workspace`;  	
+
+    return assemblyFirsCacheFileName($files);
+}
+
+
+////////////////////////////////////////////////////////////////////////////////////////
+// Scene Represention Browser Commands
+///////////////////////////////////////////////////////////////////////////////////////
+global proc string assemblySceneStartingDirectory()
+{
+  string $workspace;
+  global string $gSceneAssemblySceneLastDirectory;
+ 
+
+  // test for workspace change
+  checkForResetWorkspace();
+ 
+ if (size($gSceneAssemblySceneLastDirectory) == 0) {
+    string $readType  = (uiRes("m_fileOptions.kBestGuess"));
+	$workspace = `workspace -q -fn`;
+	setWorkingDirectory $workspace $readType "scene";
+	$workspace = `workspace -q -dir`;
+  } else {
+	$workspace = $gSceneAssemblySceneLastDirectory;
+  }
+
+  return $workspace;
+}
+
+global proc string assemblyMayaFileFilter()
+{
+  return (uiRes("m_assemblyDefinitionUtil.kMayaScenes")) + " (*.ma *.mb)";
+}
+
+
+global proc string assemblyFirstSceneFileName(string $files[])
+{
+
+  global string	$gSceneAssemblySceneLastDirectory;
+
+  // Return the first scene file (if any), stripped of its leading
+  // workspace directory if applicable, and save its directory as
+  // the scene last directory.
+  if(size($files) > 0){
+    // Save the last directory
+	$gSceneAssemblySceneLastDirectory = dirname($files[0]);
+	$workspace = `workspace -query -rootDirectory`;  		
+	if(startsWith($files[0],$workspace)) {	
+      return stripPrefixFromName($workspace,$files[0]);
+	}
+	return $files[0];
+  }
+  return "";  
+}
+
+global proc string scenePreCreateUIProc()
+{
+	string $workspace = assemblySceneStartingDirectory();
+  	string $filter    = assemblyMayaFileFilter();
+   
+    // Choose a file to import.
+    string $files[] = `fileDialog2
+    -fileFilter $filter -dialogStyle 2 -fileMode 1 -caption (uiRes("m_assemblyDefinitionUtil.kAssignSceneFile"))
+    -optionsUICreate "assemblyDefinitionCreateRepresentationUIOption" -startingDirectory $workspace`;  	
+
+  return assemblyFirstSceneFileName($files);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+// Setting up UI and AE 
+///////////////////////////////////////////////////////////////////////////////////////
+
+global proc assemblyDefinitionUsageMsg()
+{
+    // Get the dialog's formLayout.
+    //
+    string $form = `setParent -q`;
+    // layoutDialog's are not resizable, so hard code a size here,
+    // to make sure all UI elements are visible.
+    //
+    formLayout -e -width 300 $form;
+    string $msg = (uiRes("m_assemblyDefinitionUtil.kAssemblyDefinitionUsage"));
+    string $t = `text -al "left" -l $msg`;
+    string $ok = `button -l (uiRes("m_assemblyDefinitionUtil.kAssemblyDefinitionUsageOK"))
+      -c "layoutDialog -dismiss \"OK\""`;
+    string $help = `button -l (uiRes("m_assemblyDefinitionUtil.kAssemblyDefinitionUsageHelp"))
+      -annotation (uiRes("m_assemblyDefinitionUtil.kAssemblyDefinitionUsageAnnot"))
+      -c "showHelp AssemblyDefinitionUsage"`;
+    // MEL interpreter doesn't like !#1, so use ternary operator instead.
+    string $dontShowAgainCmd = 
+      "optionVar -iv assemblyDefinitionShowUsageMsg (#1 ? 0 : 1)";
+    string $dontShowAgain =
+      `checkBoxGrp -cw2 0 150
+      -numberOfCheckBoxes 1 -label ""
+      -label1 (uiRes("m_assemblyDefinitionUtil.kDontShowUsage"))
+      -v1 false -cc1 $dontShowAgainCmd`;
+    // Use empty text as scalable spacer, otherwise buttons will
+    // resize to follow form size.
+    string $spacer = `text -l ""`;
+
+    int $top = 25;
+    int $bottom = 15;
+    int $edge = 15;
+    formLayout -edit
+        -attachForm            $t    "top"    $top
+        -attachForm            $t    "left"   $edge
+        -attachNone            $t    "bottom"
+        -attachForm            $t    "right"  $edge
+        -attachControl         $spacer "top"  0 $t
+        -attachForm            $spacer "left"  $edge
+        -attachNone            $ok   "top"
+        -attachForm            $ok   "left"   $edge
+        -attachForm            $ok   "bottom" $bottom
+        -attachNone            $help "top"
+        -attachControl         $help "left"   10 $ok
+        -attachForm            $help "bottom" $bottom
+        -attachControl         $dontShowAgain "left" 120 $help
+        -attachForm            $dontShowAgain "bottom" $bottom
+        -attachNone            $dontShowAgain "right"
+    $form;
+}
+
+global proc assemblyDefinitionPostCreateUIProc(string $assemblyDef)
+{
+    if (`optionVar -exists assemblyDefinitionAddLocator`) {     
+        if(`optionVar -query assemblyDefinitionAddLocator`){
+            assemblyCreateRepresentation Locator $assemblyDef;
+        }
+    }
+
+    if (!`optionVar -exists assemblyDefinitionShowUsageMsg`) {
+      optionVar -iv "assemblyDefinitionShowUsageMsg" 1;
+    }
+
+    if (`optionVar -query assemblyDefinitionShowUsageMsg`){
+      layoutDialog -ui "assemblyDefinitionUsageMsg"
+        -title (uiRes("m_assemblyDefinitionUtil.kAssemblyDefinitionCreated"));
+    }
+}
+
+global proc assemblyDefinitionCreateRepresentationUIOption(string $parent)
+{
+    setParent $parent;
+            
+    frameLayout -label (uiRes("m_assemblyDefinitionUtil.kAssemblyDefinitionsLoadOption")) -collapse false ;
+        columnLayout -adj true;
+        checkBoxGrp -ncb 1
+            -cw2 140 300
+            -label  ""
+            -label1 (uiRes("m_assemblyDefinitionUtil.kLoadRepresentation"))
+            -annotation (uiRes("m_assemblyDefinitionUtil.kAnnLoadRepresentation"))
+            -value1 `optionVar -query assemblyLoadRepOnCreation`
+            -cc1 "optionVar -iv assemblyLoadRepOnCreation #1"
+            assemblyLoadRepOnCreationChk;
+}
+
+global proc updateCacheRepresentationAEProc(string $parent)
+{
+	setParent $parent;
+	
+	textFieldGrp -edit 
+                 -placeholderText (uiRes("m_assemblyDefinitionUtil.kCacheRepDataPlaceholderText")) 
+                 -annotation (uiRes("m_assemblyDefinitionUtil.kCacheRepDataAnnotation")) 
+			     assDefRepAttrDataValue;
+	iconTextButton -edit -enable true assDefBrowseRepPath;
+}
+
+
+global proc updateSceneRepresentationAEProc(string $parent)
+{
+	setParent $parent;
+	
+	textFieldGrp -edit 
+                 -placeholderText (uiRes("m_assemblyDefinitionUtil.kSceneRepDataPlaceholderText")) 
+                 -annotation (uiRes("m_assemblyDefinitionUtil.kSceneRepDataAnnotation")) 
+                 assDefRepAttrDataValue;
+	iconTextButton -edit -enable true assDefBrowseRepPath;
+}
+
+
+global proc updateLocatorRepresentationAEProc(string $parent)
+{
+	setParent $parent;	
+	
+	textFieldGrp -edit 
+                 -placeholderText (uiRes("m_assemblyDefinitionUtil.kLocatorRepDataPlaceholderText")) 
+                 -annotation (uiRes("m_assemblyDefinitionUtil.kLocatorRepDataAnnotation")) 
+                 assDefRepAttrDataValue;
+	iconTextButton -edit -enable false assDefBrowseRepPath;
+}

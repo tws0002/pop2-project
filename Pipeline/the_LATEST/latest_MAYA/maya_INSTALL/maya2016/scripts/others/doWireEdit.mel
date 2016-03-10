@@ -1,0 +1,337 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  June, 1997
+//
+//  Description:
+//      This script assembles one or more commands to perform wire
+//		editing operations.
+//
+//  Input Arguments:
+//		int $mode (1 == add, 2 = remove, 3 = holder, 4 = reset, 5 = parent with base, 6 = select base)
+//		int $wireSpec (whether or not the wire node was specified)
+//		string $wireNode (the wire node, if it was specified)
+//
+//  Return Value:
+//      None.
+//
+global proc  doWireEdit(int $mode,int $wireSpec,string $wireNode)
+{
+	string $sel[]=`ls -sl`;
+	int $cnt = size($sel);
+	if (!$cnt)
+	{
+		error ( (uiRes("m_doWireEdit.kNoShapesSpecified")));
+		return;
+	}
+
+	if (!$wireSpec && $cnt<2 && $mode==1)
+	{
+		error ( (uiRes("m_doWireEdit.kSpecifyWireCurveOrWireNode")));
+		return;
+	}	
+
+	string $cmd="";
+	int $ignorelast=0;
+	if (!$wireSpec || $wireNode=="")
+	{
+		$wireNode=$sel[$cnt-1];
+		$ignorelast=1;
+	}
+
+	
+	switch ($mode) {
+	case 1:
+	{
+		// add mode
+		//
+		int $addCount = 0;	// count wires that are added
+		
+		$cmd = "wire -e";
+		for ($i=0;$i<$cnt-$ignorelast;$i++)
+		{
+			if ("" != isCurve($sel[$i])) {
+				$cmd +=(" -w " + $sel[$i]);
+				$addCount++;
+			}
+		}
+
+		if ($addCount) {
+			$cmd += " "+ $wireNode;
+		} else {
+			$cmd = "";
+			error( (uiRes("m_doWireEdit.kFoundNoCurves")));
+		}
+	} break;
+	case 2:
+	{
+		// remove mode
+		//
+		int $removeCount = 0;  // count valid selected wires
+		
+		$cmd = "wire -e -rm";
+		for ($i=0;$i<$cnt;$i++)
+		{
+			string $wireFound = isValidWire($sel[$i]);
+			if ($wireFound != "") {
+				$cmd +=(" -w " + $sel[$i]);
+				$removeCount++;
+			}
+		}
+
+		if ($removeCount) {
+			$cmd += " "+ $wireNode;
+		} else {
+			error( (uiRes("m_doWireEdit.kMustSelectCurveToRemove")));
+			$cmd = "";
+		}
+	} break;
+	case 3:
+	{
+		// holder mode
+		//
+		if (size($sel)%2)
+		{
+			error( (uiRes("m_doWireEdit.kMustSelectHolder")));
+			return;
+		}
+
+		
+		for ($i=0;$i<$cnt;$i+=2)
+		{
+			string $wireFound = isValidWire($sel[$i+1]);
+			if ($wireFound == "") {
+				string $errFormat = (uiRes("m_doWireEdit.kIsNotWireCurve"));
+				string $errMsg = `format -stringArg ($sel[$i+1]) $errFormat`;
+				error($errMsg);
+				return;
+			}
+			if ($ignorelast)
+			{
+				$cmd+=`processWire $sel[$i+1] $wireFound  $sel[$i] 0`;
+			}
+			else
+			{
+				$cmd+=`processWire $sel[$i+1] $wireNode  $sel[$i] 0`;
+			}
+		}
+	} break;
+	case 4:
+	{
+		int $resetCount = 0;	// number of valid reset ops
+		
+		// reset mode
+		//
+		string $selectCmd = "select -r ";
+		for ($i=0;$i<$cnt;$i++)
+		{
+			string $wireFound = isValidWire($sel[$i]);
+			$selectCmd += ($sel[$i]+" ");
+			if ($wireFound != "") {
+				if ($ignorelast)
+				{
+					$cmd+=`processWire $sel[$i] $wireFound "" 0`;
+				}
+				else
+				{
+					$cmd+=`processWire $sel[$i] $wireNode "" 0`;
+				}
+				$resetCount++;
+			}
+		}
+
+		if (! $resetCount) {
+			error( (uiRes("m_doWireEdit.kMustSelectWireToReset")));
+			$cmd = "";
+		} else {
+			$cmd += ($selectCmd+";");
+		}
+	} break;
+	case 5:
+	case 6:
+	{
+		int $parentCount = 0;	// number of valid ops
+		int $op = ($mode - 4);
+		
+		// parent with base wire mode
+		//
+		for ($i=0;$i<$cnt;$i++)
+		{
+			string $wireFound = isValidWire($sel[$i]);
+			if ($wireFound != "") {
+				if ($ignorelast)
+				{
+					$cmd+=`processWire $sel[$i] $wireFound "" $op`;
+				}
+				else
+				{
+					$cmd+=`processWire $sel[$i] $wireNode "" $op`;
+				}
+				$parentCount++;
+			}
+		}
+
+		if (! $parentCount) {
+			error( (uiRes("m_doWireEdit.kMustSelectWireCurve")));
+			$cmd = "";
+		}
+	} break;
+	} // matches switch statement
+
+	if ($cmd != "") {
+		evalEcho($cmd);
+	}
+	return;
+}
+
+global proc string isCurve(string $itemName)
+//
+//	Description:
+//		Return the shape name if the item is a curve or the
+//		transform above a curve. Else return "".
+//
+{
+	if (nodeType($itemName) != "nurbsCurve") {
+		string $children[] = `listRelatives $itemName`;
+		$itemName = "";
+		for ($child in $children) {
+			if (nodeType($child) == "nurbsCurve") {
+				int $intermediateObj = `getAttr ($child+".io")`;
+				if (! $intermediateObj) {
+					$itemName = $child;
+					break;
+				}
+			}
+		}
+	}
+	return $itemName;
+}
+
+
+global proc string isValidWire(string $itemName)
+//
+//	Description:
+//		Return the wire node name it $itemName is a wire.
+//	    Otherwise return "".
+//
+{
+	string $curveName = isCurve($itemName);
+	if ($curveName == "") {
+		// item was not a curve
+		//
+		return "";
+	}
+
+	string $conns[] = `listConnections ($itemName+".ws")`;
+	for ($conn in $conns) {
+		if (nodeType($conn) == "wire") {
+			// found a wire
+			//
+			return $conn;
+		}
+	}
+
+	// no valid wire found
+	//	
+	return "";
+}
+
+global proc string processWire(string $curve,
+							   string $wn,
+							   string $holder,
+							   int $parent)
+//
+//	Description:
+//		construct a command for the reset, parent or holder operation
+//      $parent = 0 : reset
+//      $parent = 1 : group wire and base wire
+//      $parent = 2 : display base wire
+//
+{
+	int $wnull= ($wn=="");
+
+	// check that the curve is valid
+	//
+	if ("" == isCurve($curve)) {
+		string $errFormat = (uiRes("m_doWireEdit.kNotACurve"));
+		string $errMsg = `format -stringArg $curve $errFormat`;
+		error($errMsg);
+		return "";
+	}
+
+	// check that holder is valid if it is specified
+	//
+	if (($holder != "") && ("" == isCurve($holder))) {
+		string $errFormat = (uiRes("m_doWireEdit.kHolderNotACurve"));
+		string $errMsg = `format -stringArg $holder $errFormat`;
+		error($errMsg);
+		return "";
+	}
+	
+	string $nodes[]= `listConnections -p true ($curve + ".ws")`;
+	for ($node in $nodes)
+	{
+      string $tokos[];
+	  int $count = tokenize($node, ".[]", $tokos);
+	  if ($count==3)
+	  {
+		  if (((!$wnull &&  $tokos[0]==$wn) || 
+              ($wnull && (nodeType($tokos[0])=="wire")))
+			  && $tokos[1]=="deformedWire")
+		  {
+			  if ($holder!="")
+				  return ("wire -e -ho " +$tokos[2]+ " " +$holder + " " +
+					$tokos[0] +";") ;
+			  else
+			  {
+				  string $res[]=`listConnections ($tokos[0] +".bw[" +$tokos[2]+ "]")`;
+				  if (size($res))
+				  {
+					  if (0 == $parent) {
+						  return ("select " + $curve + " " + $res[0] + ";resetWire;");
+					  }
+					  else if (1 == $parent) {
+						  string $tr1[]=`pickWalk -d up $curve`;
+						  if ($tr1[0]==$curve)
+						  {
+							return ("group -n "+$curve+"Wires "+ $curve +" "+$res[0]);
+						  }
+						  else
+						  {
+							 return ("parent "+$res[0]+" "+ $tr1[0]);
+						  }
+
+					  } else {
+						  return ("setAttr "+$res[0]+".visibility 1; select -add "+$res[0]+";");
+					  }
+				  } else {
+					  string $errFormat = (uiRes("m_doWireEdit.kBaseWireMissing"));
+					  string $errMsg = `format -stringArg $curve $errFormat`;
+					  error( $errMsg );
+				  }
+			  }
+		  }
+	  }
+	}
+	return "";
+}

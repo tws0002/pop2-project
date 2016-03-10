@@ -1,0 +1,175 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//
+//
+//
+//
+//  Creation Date:  Mar. 14, 1997
+//
+//  Description:
+//      The doCloseSurfaceArgList() procedure executes a close operation on each 
+//		selected object based on the close option vars.
+//
+//  Input Arguments:
+//      None.
+//
+//  Versions:
+//      1 - Maya V1 and V1.5
+//      2 - Maya V2
+
+proc string prepareCloseSurface( string $version, string $args[] )
+{
+
+	string $cmd = "";
+	int $need = 0;
+	if( "1" == $version ) {
+		$need = 4;
+	}
+	else if( "2" == $version ) {
+		$need = 7;
+	}
+	else {
+		warning( (uiRes("m_doCloseSurfaceArgList.kWarningBadVersion")) );
+		$version = "1";
+		$need = 4;
+	}
+
+	if( size($args) < $need ) {
+		error (uiRes("m_doCloseSurfaceArgList.kCloseSurfaceTooFewArgs"));
+		return $cmd;
+	}
+
+	// Set up command strings for each command.
+	string $cmd = "closeSurface";
+	$cmd += " -ch " + $args[0];
+	$cmd += " -ps " + $args[1];
+	$cmd += " -rpo " + $args[2];
+	$cmd += " -d " + $args[3];
+
+	if( "2" == $version ) {
+		$cmd += " -bb " + $args[4];
+		$cmd += " -bki " + $args[5];
+		$cmd += " -p " + $args[6];
+	}
+
+	return $cmd;
+}
+
+global proc doCloseSurfaceArgList( string $version, string $args[] )
+{
+	string $cmd = prepareCloseSurface( $version, $args );
+	if( "" == $cmd ) return;
+
+	// Get a list of each type of acceptable object type - surfaces+iso.
+	//
+	global int $gSelectNurbsSurfacesBit;
+	global int $gSelectIsoparmsBit;
+
+	string $surfaceList[] =`filterExpand -ex true -sm $gSelectNurbsSurfacesBit`;
+	string $isoList[] = `filterExpand -ex true -sm $gSelectIsoparmsBit`;
+
+	$cmd += " %s;";
+	string $surfaceResults[] = executeForEachObject( $surfaceList, $cmd );
+
+	// Processing isoparms is a little more involved.  Use groupObjectsByName().
+	// This big loop groups and processes >1 isoparms and sets the
+	// direction of the command based on the isoparm direction.
+	// Also, if the user selects an isoparm in each direction on the same
+	// surface, this code assumes that the user wants to close the
+	// surface in BOTH directions.
+	//
+
+	$cmd = prepareCloseSurface( $version, $args );
+
+	string $isoparmResults[];
+	string $isoparms[] = groupObjectsByName( $isoList, "\\." );
+	int $numIsoStrs = size($isoparms);
+	for( $i = 0; $i < $numIsoStrs; $i ++ ) {
+
+		string $closeCmd;
+		string $results[];
+		string $objectName[];
+
+		$numNames = `tokenize $isoparms[$i] " " $objectName`;
+		if( $numNames == 1 )  {
+			$closeCmd = $cmd + " " + $isoparms[$i];
+		}
+		else {
+			string $foundU = `match "\\.u\\[" $isoparms[$i]`;
+			string $foundV = `match "\\.v\\[" $isoparms[$i]`;
+			if( size($foundU) > 0 && size($foundV) > 0 ) {
+				tokenize $isoparms[$i] "\\." $objectName;
+				$closeCmd = $cmd + "-d 2 " + $objectName[0];
+			}
+			else {
+				tokenize $isoparms[$i] " " $objectName;
+				$closeCmd = $cmd + " " + $objectName[$i];
+			}
+		}
+
+		if( catch( $results = evalEcho( $closeCmd )) ) {
+			string $fmt = (uiRes("m_doCloseSurfaceArgList.kCloseSurfaceInvalidCmd"));
+			error  `format -s $closeCmd $fmt`;
+		}
+		else {
+			int $j;
+			int $numResults = size( $results );
+			int $numIsoResults = size( $isoparmResults );
+			for( $j = 0; $j < $numResults; $j ++, $numIsoResults ++ ) {
+				$isoparmResults[$numIsoResults] = $results[$j];
+			}
+		}
+	}
+
+	// Process all the results - if there weren't any then display a error
+	//
+	if( 0 == (size($surfaceResults) + size($isoparmResults)) ) {
+		error (uiRes("m_doCloseSurfaceArgList.kCloseSurfaceInvalSelection"));
+			
+	} else {
+		// Select all the results with one select command.  Note that only
+		// resulting surfaces and curves are selected, not dependency nodes.
+		//
+		string $selectString;
+		$selectString = "select ";
+		int $i;
+
+		int $numSurfaces = size($surfaceResults);
+		for( $i = 0; $i < $numSurfaces; $i ++ ) {
+			$selectString += $surfaceResults[$i];
+			$selectString += " ";
+		}
+
+		int $numIsos = size($isoparmResults);
+		for( $i = 0; $i < $numIsos; $i ++ ) {
+			$selectString += $isoparmResults[$i];
+			$selectString += " ";
+		}
+
+		$selectString += ";";
+		select -cl;
+		eval($selectString);
+	}
+}
+

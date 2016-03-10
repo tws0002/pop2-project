@@ -1,0 +1,584 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  ==================== expressionEdTextEditor.mel ==========
+//
+//  SYNOPSIS
+// 		Procedures used for script nodes in the Expression Editor.
+//
+//  CONTENTS
+//		(The procs are in the file in the order listed here.)
+//
+//  EEgetScriptList			Get/return list of all scripts in the scene.
+//  EEisScriptNode			Is the node a script node?
+//  EEscriptNameExists		Does user-typed script node name exist?
+//  EEcheckValidScriptName	Is user-typed script node name valid?
+//	EEgetScriptNodeAttr		Returns the script from the script node.
+//	EEapplyScript			Sets the script to the script node.
+//	EErestoreScript			Restore the current script from the node.
+//	EEscriptListChanged		User selected a new script node.
+//	EEgetFullScriptName		Return the script node and attribute.
+//	EEdisplayScript			Display a script.
+//	EEupdateFileScript		Update the script window when an editor saves 
+//							the script.
+//
+//	EEselectedScriptCB		Callback for script node name textfield.
+//	EEbeforeAfterScriptCB	Callback for the before/after radio button.
+//	EEscriptNodeTestCB		Callback for the test button.
+//	
+// Special note for scriptNodes: The name stored in the $EEcurrFileExprName
+// array is not simply the node name. Since a scriptNode has two different
+// scripts, additional information is needed to determine if the script
+// is a "before" script or an "after" script. The
+// EEgetFullScriptName(string $nodeName) procedure should be used to create
+// a unique name, and everytime the full scriptName needs to be used.
+
+//  ================ EEgetScriptList ================
+//
+//
+//  SYNOPSIS
+//     Get and return the list of all scripts in the scene.
+//
+global proc string[] EEgetScriptList()
+{
+	string $nodeList[];
+	string $scriptList[];
+
+	// Get all the script nodes.
+	//
+	$nodeList = `ls -type script`;
+
+	return $nodeList;
+
+}	// EEgetScriptList
+
+
+//  ================ EEisScriptNode ================
+//
+//  SYNOPSIS
+//      Return whether the object is a script node
+//
+global proc int EEisScriptNode(string $nodeName)
+{
+	if (size(`ls -type script $nodeName`) != 0) {
+		return 1;
+	}
+	return 0;
+
+}	// EEisScriptNode
+
+
+//  ================ EEscriptNameExists ================
+//
+//  SYNOPSIS
+//      Return if the name is of an existing script
+//
+global proc int EEscriptNameExists(string $scriptName)
+{
+	string $allScriptNames[] = EEgetScriptList();
+	int $i, $numScripts;
+	$numExpressions = size($allScriptNames);
+
+	int $nameExists = 0;
+
+	for ($i = 0; $i < $numExpressions; $i++)
+	{
+		if ($allScriptNames[$i] == $scriptName)
+		{
+			$nameExists = 1;
+			break;
+		}
+	}
+	clear($allScriptNames);
+
+	return $nameExists;
+}	// EEscriptNameExists
+
+
+//  ================ EEcheckValidScriptName ================
+//
+//  SYNOPSIS
+//      Make sure the script name sent in is valid.
+//
+global proc int EEcheckValidScriptName(string $scriptName)
+{
+	global string $EEcurrExpressionName;
+	int $nameValid = 1;
+
+	// The user can only name a new script or change the
+	// name of an script being edited;  so if the name
+	// the user typed is already the name of an script node
+	// then it is not valid, so remove it and restore the
+	// previous name.
+	//
+	int $nameExists = EEscriptNameExists($scriptName);
+
+	if ($nameExists)
+	{
+		$nameValid = 0;
+		string $msgFormat = (uiRes("m_scriptNodes.kScriptNameAlreadyUsed"));
+		warning (`format -s $scriptName $msgFormat`);
+
+		// Name already exists, so is not valid to reuse, so restore the
+		// previous name, or blank the field if there was no name.
+		//
+		if (size($EEcurrExpressionName) > 0)
+			textField -e -tx $EEcurrExpressionName EEexprNameT;
+		else
+			textField -e -tx "" EEexprNameT; 
+	}
+
+	return $nameValid;
+
+}	// EEcheckValidScriptName
+
+
+//  ================ EEgetScriptNodeAttr ================
+//
+//  SYNOPSIS
+//      Sets the script to the script node
+//
+proc string EEgetScriptNodeAttr()
+{
+	string $attrName = `textFieldGrp -q -tx EEselScriptNodeNameT`;
+	if (`size($attrName)` == 0) {
+		return "";
+	}
+
+	int $sel = `radioButtonGrp -q -sl EEscriptRBG`;
+	if ($sel == 1) {
+		$attrName += ".before";
+	} else {
+		$attrName += ".after";
+	}
+
+	return $attrName;
+}	// EEgetScriptNodeAttr
+
+
+//  ================ EEapplyScript ================
+//
+//  SYNOPSIS
+//      Sets the script to the correct attribute of the scriptNode.
+//
+global proc string EEapplyScript(string $script)
+{
+	global string $EEnodeMode;
+	global int $EEcreateMode;
+	global string $EEcurrExpressionName;
+	global string $EEorigExpressionName;
+
+	if (!$EEcreateMode) 
+	{
+		string $attrName = EEgetScriptNodeAttr();
+		if (`size($attrName)` == 0) {
+			return "";
+		}
+		setAttr -type "string" $attrName $script;
+
+		return "";
+	}
+
+	//	A new scriptNode should be created.
+	//
+	string $newScriptName, $currScriptName;
+	string $scriptFlag = " -beforeScript ";
+
+	int $beforeAfter = `radioButtonGrp -q -sl EEscriptRBG`;
+	if ($beforeAfter != 1) 
+	{
+		$scriptFlag = " -afterScript ";
+	} 
+
+	// If $currScriptName != $currExpressionName, it means
+	// the new name has not yet been processed or validated.
+	// (This can happen if the user does not press carriage
+	// return, and then selects "Apply", because there is
+	// no focus-out callback available in ELF.)
+	//
+	$currScriptName = `textField -q -tx EEexprNameT`;
+	if (size($currScriptName) > 0 &&
+		$currScriptName != $EEcurrExpressionName)
+	{
+		if (EEcheckValidScriptName($currScriptName)) 
+			$EEcurrExpressionName = $currScriptName;
+	}
+
+	string $cmd = "scriptNode ";
+	if (`size($currScriptName)` == 0 &&
+		`size($EEcurrExpressionName)` == 0)
+	{
+		$cmd += ($scriptFlag + " \"" + encodeString($script) + "\"");
+	}
+	else 
+	{
+		$cmd += ($scriptFlag + " \"" + encodeString($script) + "\" -n " + 
+				$EEcurrExpressionName);
+	}
+
+	string $newScriptName = evalEcho($cmd);
+	if (size($newScriptName) > 0) {
+		EEresetExpressionName($newScriptName);
+		EEsetEditMode("Editing Script");
+
+		$EEcurrExpressionName = $newScriptName;
+		$EEorigExpressionName = $newScriptName;
+
+		attrEnumOptionMenu -e -at ($newScriptName + ".st") EEscriptNodeTypeAOM;
+		textFieldGrp -e -tx $newScriptName EEselScriptNodeNameT;
+
+		textScrollList -e -da EEnodeList;
+		EEselectNodeInList($EEcurrExpressionName);
+	}
+
+	return $newScriptName;
+} 	// EEapplyScript
+
+
+//  ================ EErestoreScript ================
+//
+//  SYNOPSIS
+//      Restore the current script to the editor 
+//
+//
+global proc EErestoreScript()
+{
+	string $attr = EEgetScriptNodeAttr();
+	string $script = `getAttr $attr`;
+	scrollField -e -tx $script EEmultiText;
+
+}	// EErestoreScript
+
+
+//  ================ EEscriptListChanged ================
+//
+//  SYNOPSIS
+//     User has selected a new script node in the node list. 
+//
+global proc EEscriptListChanged(string $scriptNode)
+{
+	global string $EEcurrSelectedNode;
+	global string $EEcurrExpressionName;
+	global string $EEorigExpressionName;
+	global int $EEcurrentEditor;
+	global int $EEdoLaunchTextEd;
+
+	// Here and below have to take into account that the user may
+	// have clicked (esp. double-clicked) on the node that is 
+	// currently already in the editor.  In that case, the only
+	// thing that needs to be done is launch a text editor, if the
+	// the user double-clicked.
+	//
+	if ($scriptNode != $EEcurrSelectedNode)
+	{
+		EEclearAllControls();
+		EEresetNodeControls($scriptNode);
+		EEdisplayScript($scriptNode);
+	}
+
+	// If the user has double-clicked on the node, launch an editor.
+	//
+	string $fullScriptName = EEgetFullScriptName($scriptNode);
+	int	$exprInEditor = EEexpressionIsInTextEditor($fullScriptName, 0);
+	if ($EEdoLaunchTextEd && $EEcurrentEditor != 1 && $exprInEditor == -1)
+	{
+		string $script = `getAttr $fullScriptName`;
+		EElaunchEditor($fullScriptName, $script, $fullScriptName);
+
+		scrollField -e -enable false EEmultiText;
+	}
+
+}	// EEscriptListChanged
+
+
+//  ================ EEgetFullScriptName ================
+//
+//
+//  SYNOPSIS
+//		The name of the node is not a unique script ID. The value of
+//		of the EEscriptRBG radioButtonGrp should also be taken into
+//		account.
+//
+global proc string EEgetFullScriptName(string $scriptNode)
+{
+	//	Make sure a full name was not already passed.
+	//
+	string $buffer[];
+	tokenize($scriptNode, ".", $buffer);
+
+	if (size($buffer) == 2 || size($scriptNode) == 0) 
+	{
+		return $scriptNode;
+	}
+
+	string $attrName;
+	if (`radioButtonGrp -q -sl EEscriptRBG` == 1) {
+		$attrName = "before";
+	} else {
+		$attrName = "after";
+	}
+
+	return ($buffer[0] + "." + $attrName);
+} 	// EEgetFullScriptName
+
+
+//  ================ EEdisplayScript ================
+//
+//  SYNOPSIS
+//		Display a script node script.
+//
+global proc EEdisplayScript(string $scriptNode)
+{
+	global int $EEdoLaunchTextEd;
+	global int $EEcurrentEditor;
+	global int $EEexpressionInEditor;
+	global string $EEorigExpressionName;
+	global string $EEcurrExpressionName;
+
+	if ($scriptNode == "") 
+	{
+		return;
+	}
+
+	//	Set the data into the exitor controls.
+	//
+	text -e -enable true EEexprNameLabel;
+	EEresetExpressionName($scriptNode);
+	textField -e -enable true EEexprNameT;
+
+	string $fullScriptName = EEgetFullScriptName($scriptNode);
+	string $script = `getAttr $fullScriptName`;
+
+	scrollField -e -tx $script EEmultiText;
+	int $scriptInEditor = 
+		EEexpressionIsInTextEditor($fullScriptName, 0);
+
+	if ($EEcurrentEditor != 1 && $EEdoLaunchTextEd && $scriptInEditor == -1)
+	{
+		EElaunchEditor("", $script, $fullScriptName);
+		scrollField -e -enable false EEmultiText;
+	}
+	else 
+	{
+		if ($scriptInEditor == -1)
+		{
+			$EEexpressionInEditor = -1;
+			scrollField -e -enable true EEmultiText;
+		}
+		else 
+		{
+			$EEexpressionInEditor = $scriptInEditor;
+			scrollField -e -enable false EEmultiText;
+		}
+	}
+
+	$EEdoLaunchTextEd = 0;
+	$EEcurrExpressionName = $scriptNode;
+	$EEorigExpressionName = $scriptNode;
+	 
+	EEsetEditMode("Editing Script Node");
+} 	// EEdisplayScript
+
+
+//  ================ EEupdateFileScript ================
+//
+//  SYNOPSIS
+//      A text editor file has been written.  So get its contents
+//		and update the script and the Expression Editor.
+//
+global proc	EEupdateFileScript(string $fileName, 
+								   string $script, int $isCurrent)
+{
+	global string $EEcurrFiles[];
+	global string $EEcurrFileExprName[];
+	global string $EEcurrFileDefObj[];
+	global int	  $EEcurrFileCreateMode[];   // 1 = creating; 0 = editing
+	global int $EEeditedInEditor;
+
+	// Find the file in the list.
+	//
+	int $i, $index = -1;
+
+	for ($i = 0; $i < size($EEcurrFiles); $i++)
+	{
+		if ($fileName == $EEcurrFiles[$i])
+		{
+			$index = $i;
+			break;
+		}
+	}
+
+	if ($index == -1)
+		return;
+
+	// Find out if editing or creating this script.
+	//
+	int $creating = $EEcurrFileCreateMode[$index];
+
+	// Make sure the script can get through MEL.
+	//
+	string $newScriptNode;
+
+	if ($creating)
+	{
+		// If creating and the script is currently in the Expression
+		// Editor, need to do other flags as well, so call the same
+		// procedure as when selecting the create button.
+		// Otherwise just edit the script itself..
+		//
+		// Don't try to make an script node if there's no script.
+		//
+		if ($script == "")
+			return;
+
+		string $currScriptName;
+		string $scriptFlag = " -beforeScript ";
+
+		int $beforeAfter = `radioButtonGrp -q -sl EEscriptRBG`;
+		if ($beforeAfter != 1)
+		{
+			$scriptFlag = " -afterScript ";
+		}
+
+		int $referenceEdits = `radioButtonGrp -q -sl EEscriptNodeRefEditsRBG`;
+		if ($referenceEdits == 2) // Choose ignore reference edits option.
+		{
+			$scriptFlag = " -ignoreReferenceEdits" + $scriptFlag;
+		}
+		
+		$currScriptName = `textField -q -tx EEexprNameT`;
+
+		string $cmd = "scriptNode ";
+		if ((size($currScriptName)) > 0)
+		{
+			if (EEcheckValidScriptName($currScriptName))
+			{
+				$cmd += (" -n " + $currScriptName + " ");
+			}
+		}
+		$cmd += ($scriptFlag + " \"" + encodeString($script) + "\"");
+		$newScriptNode = evalEcho($cmd);
+
+		// No longer in create mode.
+		//
+		$EEcurrFileCreateMode[$index] = 0;
+		$EEcurrExpressionName = $newScriptNode;
+
+		$EEcurrFileExprName[$index] = EEgetFullScriptName($newScriptNode);
+	}
+	else
+	{
+		// Editing.  So just edit the script, and update the
+		// Expression Editor scroll field.
+		//
+		string $cmd = 
+			"setAttr -type \"string\" " + $EEcurrFileExprName[$index] +
+			" \"" + encodeString($script) + "\"";
+		evalEcho($cmd);
+
+		if ($isCurrent)
+		{
+			$EEeditedInEditor = 1;
+			scrollField -e -text $script EEmultiText;
+		}
+	}
+
+}	// EEupdateFileScript
+
+
+//  ================ EEselectedScriptCB ================
+//
+//  SYNOPSIS
+//      Called when the selected script node name textfield 
+//		is changed.
+//
+global proc EEselectedScriptCB()
+{
+	global string $EEnodeMode;
+
+	if ($EEnodeMode != "scriptNode")
+	{
+		return;
+	}
+
+	string $nodeName = `textFieldGrp -q -tx EEselScriptNodeNameT`;
+	if (size($nodeName) == 0) 
+	{
+		//	An empty textfield, so deselect everything.
+		//
+		EEclearAllControls();
+
+		textScrollList -e -da EEnodeList;
+		return;
+	}
+
+	EEclearAllControls();
+	if (EEnodeIsInList($nodeName) > -1)
+	{
+		EEnewSelectedNode($nodeName);
+		attrEnumOptionMenu -e -at ($nodeName + ".st") EEscriptNodeTypeAOM;
+	}
+	else 
+	{
+		//	Reset the textfield with the current object name,
+		//	if there is one.
+		//
+		string $names[];
+		$names = `textScrollList -q -si EEnodeList`;
+		$nodeName = $names[0];
+	}
+
+	//	Re-write the textfield with the nodeName.
+	//
+	textFieldGrp -e -tx $nodeName EEselScriptNodeNameT;
+	EEdisplayScript($nodeName);
+
+} 	// EEselectedScriptCB
+
+
+//  ================ EEbeforeAfterScriptCB ================
+//
+//  SYNOPSIS
+//     Called when the before/after radio button is selected.
+//
+//
+global proc EEbeforeAfterScriptCB()
+{
+	string $scriptNode = `textFieldGrp -q -tx EEselScriptNodeNameT`;
+
+	EEclearAllControls();
+	EEresetNodeControls($scriptNode);
+	EEdisplayScript($scriptNode);
+} 	// EEbeforeAfterScriptCB
+
+
+//  ================ EEscriptNodeTestCB ================
+//
+//  SYNOPSIS
+//      Called when the script node type option menu changes.
+//
+global proc EEscriptNodeTestCB()
+{
+	string $theText = `scrollField -q -tx EEmultiText`;
+	eval($theText);
+}	//	EEscriptNodeTestCB

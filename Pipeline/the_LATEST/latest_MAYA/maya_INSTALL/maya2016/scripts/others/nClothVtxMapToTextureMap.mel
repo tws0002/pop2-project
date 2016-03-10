@@ -1,0 +1,144 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+proc string getNewTextureFileName(string $obj, string $textureNode, string $attrName)
+{
+	string $dirName;
+	string $currName = `getAttr ($textureNode+"."+"ftn")`;
+	string $ext = ".iff";
+	if ($currName == "") {
+		string $sceneName = `file -shn -q -loc`;
+		if ($sceneName == "unknown") {
+			$sceneName = "";
+		} else {
+			string $ext = fileExtension($sceneName);
+			$sceneName = substring($sceneName,1,size($sceneName)-size($ext)-1);
+		}
+		// no name has yet been assigned, so generate a default
+		//
+		string $imageDir = (`workspace -q -rd`+"sourceimages\/");
+		if (`file -q -ex $imageDir`) {
+			workspace -dir $imageDir;
+		}
+		$imageDir += ($sceneName+"\/");
+
+		if (! `file -q -ex $imageDir`) {
+			sysFile -makeDir $imageDir;
+		}
+		$dirName = $imageDir;
+	} else {
+		$dirName = dirname($currName);
+		$ext = fileExtension($currName);
+		$dirName += "\/";
+	}
+
+	string $baseName = ($dirName+$obj+"_vtx_"+$attrName);
+	int $counter = 1;
+	string $fileName = ($baseName+$counter);
+	while (`file -q -exists ($fileName+"."+$ext)`) {
+		$counter++;
+		$fileName = ($baseName+$counter);
+	}
+	return $fileName;
+}
+
+global proc nClothVtxMapToTextureMap( string $version, string $args[] )
+{
+	if (`about -evalVersion`) {
+	    string $cancel = (uiRes("m_nClothVtxMapToTextureMap.kCancel"));
+		confirmDialog
+			-message (uiRes("m_nClothVtxMapToTextureMap.kExportMsg"))
+			-button $cancel -defaultButton $cancel;
+		return;
+	}
+
+	string $attr = $args[0];
+	string $attrName = $args[1];	
+	int $attrType = $args[2];
+	string $useThisMesh = $args[3];
+
+	string $cloth;
+	string $mesh;
+	// The 0 to getNMeshToPaint means we do not accept component
+	// selections, the user must select an nCloth
+	//
+	string $meshAndCloth[] = getNMeshToPaint( $useThisMesh, 0 );
+	string $nComponent;
+	if ($attrType == 2) {
+		$nComponent = getNComponentToEdit(0);
+	}
+
+	if( size($meshAndCloth) > 1 ){
+		$mesh = $meshAndCloth[0];
+		$cloth = $meshAndCloth[1];
+	} else {
+		error((uiRes("m_nClothVtxMapToTextureMap.kMustSelectNClothToPaint")));
+	}
+
+	string $currCtx = `currentCtx`;
+	string $currentSelection[] = `ls -sl`;
+
+	// Connect a file texture node if it isn't connected already.
+	//
+	string $fileName;
+	string $fileType = "iff";
+	string $tMapAttr = 	($attrType == 2) ? $nComponent : $cloth;
+	$tMapAttr += ("."+$attr);
+	string $con[] = `listConnections -d 1 -type file $tMapAttr`;
+	string $extension;
+	if ( size($con) == 0 ) {
+		global int $g3dPaintDeferEval;
+		int $oldVal = $g3dPaintDeferEval;
+		$g3dPaintDeferEval = 0;
+		catch(`paintNClothTexture $attr $attrName $attrType 0 $useThisMesh`);
+		$con = `listConnections -d 1 $tMapAttr`;
+		$g3dPaintDeferEval = $oldVal;
+	}
+
+	// get a new name for this converted texture
+	//
+	$fileName = getNewTextureFileName($cloth,$con[0],$attr);
+	if (`file -q -exists $fileName`) {
+		sysFile -del $fileName;
+	}
+
+	// Export the map for the influence using the new file name
+	//
+	select -r $currentSelection;
+	if ($attrType == 2) {
+		artAttrNComponentToolScript 4 $attrName;
+	} else {
+		artAttrNClothToolScript 4 $attrName;
+	}
+	string $currentCtx = `currentCtx`;
+	artAttrCtx -e -exportfiletype "IFF" $currentCtx;
+	catch(`artAttrCtx -e -exportfilesave $fileName $currentCtx`);
+	string $nodeName = 	($attrType == 2) ? $nComponent : $cloth;
+	nBase -e -clearCachedTextureMap $attr $nodeName;
+	setAttr ($con[0]+".ftn") -type "string" ($fileName+".iff");
+
+	// uncomment this line if we want to enter the paint tool after conversion
+//	paintNClothTexture $attr $attrName $attrType 0 $useThisMesh;	
+
+	// Go back to the original context.
+	select -r $currentSelection;
+	setToolTo $currCtx;
+}

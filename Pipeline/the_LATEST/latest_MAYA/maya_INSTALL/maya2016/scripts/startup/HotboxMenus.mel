@@ -1,0 +1,259 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Jun 3 1997
+// 
+//
+//  Description:
+//      This script creates the Hotbox specific menus.
+//	They are not visible in the main menubar, only
+//	within the HotBox.
+//
+
+if ( !`exists switchModelView` ) {
+	source HotboxCenterMenu;
+}
+if ( !`exists switchPanelToType` ) {
+	source HotboxSouthMenu;
+}
+
+proc buildDefaultHotBoxMenu(string $region, string $parent)
+{
+	switch($region) {
+	case "N" :
+		HotboxNorthMenu($parent);
+		break;
+	case "S" :
+		HotboxSouthMenu($parent);
+		break;
+	case "E" :
+		HotboxEastMenu($parent);
+		break;
+	case "W" :
+		HotboxWestMenu($parent);
+		break;
+	case "C" :
+		HotboxCenterMenu($parent);
+		break;
+	}
+}
+
+// This function builds the hotbox menus.
+// In subsequent calls, existing menus are deleted and new (possibly different) ones are built.
+//
+// Synopsis:
+// 	setParent $gMainWindow;
+// 	buildHotboxMenus();
+// 	hotBox -updateMenus;  // This is not necessary the first time the hotbox menus are built.
+//
+global proc buildHotboxMenus()
+{
+	string $region[] = { "N", "S", "E", "W", "C" };
+	string $menuNamePrefix[] = {   // The hotbox will only accept the menus if they have these names.
+		"Hotbox North", "Hotbox South",
+		"Hotbox East", "Hotbox West", "Hotbox Center"
+	};
+	string $namesForDefaultMenus[] = {   // These names must not contain whitespace.
+		//"NorthHotBoxMenu", "SouthHotBoxMenu",
+		//"EastHotBoxMenu", "WestHotBoxMenu", "CenterHotBoxMenu"
+		"ChangePanelLayout", "ChangePanelType",
+		"ControlPaneVisibility", "ChangeSelectionMask", "CommonModelingPanes"
+	};
+	int $isMenuDefined[] = { 0, 0, 0 };
+	string $filename, $theMenu;
+	int $j, $button;
+
+	if (!`exists isHotBoxMenuDefined`)
+		source menuEditorSetup;
+
+	// First, delete any existing hotbox menus.
+	//
+	global string $gMainWindow;
+	string $menuArray[] = `window -q -ma $gMainWindow`;
+	for ($menu in $menuArray) {
+		string $label = `menu -q -label $menu`;
+
+		// We decide that a menu belongs to the hotbox
+		// when its label contains some key substrings.
+		//
+		if (match("[Hh]ot[Bb]ox",$label) != "") {
+			if (match("[Nn]orth",$label) != ""
+			   || match("[Ss]outh",$label) != ""
+			   || match("[Ee]ast",$label) != ""
+			   || match("[Ww]est",$label) != ""
+			   || match("[Cc]enter",$label) != ""
+			) {
+				// print ("deleting " + $menu + "(" + $label + ") ...\n");  // For debugging purposes only.
+				deleteUI $menu;
+			}
+		}
+	}
+
+	for ($j = 0; $j < size($region); ++$j) {
+
+		string $menuName = `substitute " " $menuNamePrefix[$j] ""`;
+
+		// Construct the user-defined menus.
+		//
+		for ($button = 0; $button < size($isMenuDefined); ++$button) {
+			$isMenuDefined[$button] = isHotBoxMenuDefined($region[$j], 1 + $button);
+			if ($isMenuDefined[$button]) {
+				$filename = getScriptNameForHotBoxMenu($region[$j], 1 + $button);
+				// print ("filename is \"" + $filename + "\"\n");  // For debugging purposes only.
+				if ($filename != "") {
+					$theMenu = `menu -l ($menuNamePrefix[$j] + " " + (1+$button))
+						-allowOptionBoxes true
+						-tearOff true
+						-visible false
+						($menuName + (1+$button))`;
+
+					menu -e -pmc (
+						"if (`menu -q -numberOfItems \"" + $theMenu + "\"` == 0) {"
+							+ "setParent -m \"" + $theMenu + "\";"
+							+ "eval \"source \\\"" + $filename + "\\\"\";"
+						+"}"
+						) $theMenu;
+				} else {
+					// Do not construct any menu - the user has deleted the default one.
+				}
+			}
+		}
+
+		// Now check if default menus need to be constructed.
+		// Loop until we find the first undefined menu.
+		$button = 0;
+		while ($isMenuDefined[$button] && $button < size($isMenuDefined))
+			++$button;
+		if ($button < size($isMenuDefined)) {
+			// Now that we've found an undefined menu, construct a default one ...
+			$theMenu = `menu -l ($menuNamePrefix[$j] + " " + (1+$button))
+				-allowOptionBoxes true
+				-tearOff true
+				-visible false
+				($menuName + (1+$button))`;
+			buildDefaultHotBoxMenu($region[$j],$theMenu);
+			// .. save the menu so it will be accessible from the Marking Menu Editor ...
+			$filename = ("menu_" + $namesForDefaultMenus[$j] );
+			saveMenu $theMenu $filename;
+			// ... and use this menu to define any other undefined menus ...
+			for (++$button; $button < size($isMenuDefined); ++$button) {
+				if (!$isMenuDefined[$button]) {
+					$theMenu = `menu -l ($menuNamePrefix[$j] + " " + (1+$button))
+						-allowOptionBoxes true
+						-tearOff true
+						-visible false
+						($menuName + (1+$button))`;
+					menu -e -pmc (
+						"if (`menu -q -numberOfItems \"" + $theMenu + "\"` == 0) {"
+							+ "setParent -m \"" + $theMenu + "\";" 
+							+ "eval \"source \\\"" + $filename + "\\\"\";"
+						+"}"
+						) $theMenu;
+				}
+			}
+			registerHotBoxMenuWithMenuEditor($filename, $namesForDefaultMenus[$j], $region[$j],
+				!($isMenuDefined[0]), !($isMenuDefined[1]), !($isMenuDefined[2]) );
+		}
+	}
+}
+
+// It's preferable for this code to not be contained within
+// a procedure, because this code will only be run once,
+// and procedure definitions eat up memory.
+//
+{
+	// Build the hotbox menus for the first time.
+	//
+	global string $gMainWindow;
+	string $menu, $fullname;
+	setParent $gMainWindow;
+	buildHotboxMenus();   // this builds the customizable menus
+
+	// Set the HotBox display style 
+	//
+	string $displayStyle = `optionVar -q hotBoxDisplayStyle`;
+	if ($displayStyle == "-dh" || $displayStyle == "-dzo" || $displayStyle == "-dco") {
+		eval("hotBox " + $displayStyle);
+	}
+
+	// Hotbox Utility menus
+	//
+	$menu = "HotBoxRecentCommandsMenu";
+	setParent $gMainWindow;
+	if (!`menu -exists $menu`) {
+		$fullname = `menu -label (uiRes("m_HotboxMenus.kRecentCommands"))
+			-allowOptionBoxes true -tearOff true $menu`;
+			menu -e -pmc ( "HotboxRecentMenu " + $fullname ) 
+				-visible false $menu;
+		setParent -m ..;
+	}
+
+	$menu = "HotBoxControlsMenu";
+	setParent $gMainWindow;
+	if (!`menu -exists $menu`) {
+		$fullname = `menu -label (uiRes("m_HotboxMenus.kHotboxControls"))
+			-allowOptionBoxes true -tearOff true -visible false $menu`;
+
+			// Here's the old way:
+			//
+			// menu -e -pmc ( "HotboxControlsMenu " + $fullname ) -visible false $menu;
+			
+			// Here's the new way, where the script that builds the
+			// menu is no longer a procedure (which saves memory):
+			//
+			menu -e -pmc (
+				"if (`menu -q -ni " + $fullname + "` == 0) {"
+					+ "setParent -m " + $fullname + ";"
+					+ "source HotboxControlsMenu;"
+				+ "}"
+			) $menu;
+		setParent -m ..;
+	}
+
+	hotBox -updateMenus;
+
+	// Initialize the hotBox with the optionVars.
+	//
+    if (`optionVar -query isHotBoxShowAll`) {
+		hotBox -a 1;
+    } else {
+		hotBox -plt  `optionVar -query isHotBoxPolygonsRowVisible`;
+		hotBox -st  `optionVar -query isHotBoxSurfacesRowVisible`;
+		hotBox -at  `optionVar -query isHotBoxAnimationRowVisible`;
+		hotBox -dt  `optionVar -query isHotBoxDynamicsRowVisible`;
+		hotBox -rt  `optionVar -query isHotBoxRenderingRowVisible`;
+		hotBox -clt `optionVar -query isHotBoxClothRowVisible`;
+		hotBox -lt  `optionVar -query isHotBoxLiveRowVisible`;
+		hotBox -customMenuSetsToggleMenus `optionVar -q "showCustomMenuSetsMenusInHotBox"`;
+		hotBox -ct  `optionVar -query isHotBoxCommonRowVisible`;
+		hotBox -pt  `optionVar -query isHotBoxPaneSpecificRowVisible`;
+	}
+    hotBox -rmb `optionVar -query isHotBoxRmbPopupsOn`;
+    hotBox -tr `optionVar -query hotBoxTransparencyLevel`; 
+
+  // Perform other initializations.
+  //
+  hotBox -noClickCommand "panePopAt" -noClickPosition -noClickDelay 0.4;
+}
+
+

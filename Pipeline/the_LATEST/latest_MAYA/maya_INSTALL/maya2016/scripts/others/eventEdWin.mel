@@ -1,0 +1,1638 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  ==================== eventEditWin.mel ==========
+//
+//  SYNOPSIS
+//      Create and show a dialog for creating and editing
+//      particle events
+//      Prefix PE = "Particle Event"
+//
+//
+
+global int $creatingEvent = 1;
+
+// *************************************************************
+//
+//				      GENERAL PROCEDURES
+//
+// *************************************************************
+
+
+//  ================ PEparticleExists ================
+//
+//  SYNOPSIS
+//      Return whether the named particle exists in the scene.
+//
+global proc int PEparticleExists(string $particle)
+{
+	// Call the particleExists action.  This action is written
+	// in C++ so it can take advantage of the many static C++
+	// methods to find particle shapes.
+	//
+	return particleExists( $particle );
+
+}	// PEparticleExists
+
+
+//  ================ PEcreateParticle ================
+//
+//  SYNOPSIS
+//      Create a particle to emit into and return its transform name.
+//
+global proc string PEcreateParticle(string $particleName, string $parentParticle)
+{
+	string $realTarget[];
+
+	// If the user has specified a name, create the particle with
+	// that name.  Otherwise, let it get the default name.
+	//
+	string $cmd = "particle -i 1.0 ";
+
+	// check if the parent system is an nParticle and emit accordingly
+	string $np[] = `ls -dag -type nParticle $parentParticle`;
+	if( size( $np ) > 0 ){
+		$cmd = "nParticle -i 1.0 ";
+	}
+	if (size($particleName) > 0)
+	{
+		$cmd = $cmd + "-name " + $particleName;
+	}
+	$particle = evalEcho($cmd);
+
+	// Update the object list, since a new particle has been
+	// created.
+	//
+	// PEbuildObjectList(true);
+	textScrollList -e -a $particle[0] PEobjectList;
+
+	return $particle[0];
+
+}	// PEcreateParticle
+
+
+//  ================ PEselectedEvent ================
+//
+//  SYNOPSIS
+//      Return the event name the user has selected in the UI,
+//		so we can pass it to subsequent event commands.
+//
+global proc	string PEselectedEvent()
+{
+
+	// Get the current event name.
+	//
+	string $foo = `textFieldGrp -q -text PEselectedEventTF`;
+	return $foo;
+}
+ 
+
+//  ================ PEobjectIsInList ================
+//
+//  SYNOPSIS
+//      Return whether the named object is in the scrolled text list.
+//
+global proc int PEobjectIsInList(string $selectedObj)
+{
+	string $allParticles[] = `textScrollList -q -ai PEobjectList`;
+
+	int $i;
+	for ($i = 0; $i < size($allParticles); $i++)
+	{
+		if ($selectedObj == $allParticles[$i])
+		{
+			return 1;
+		}
+	}
+	return 0;
+}
+
+
+//  ================ PEeventIsInList ================
+//
+//  SYNOPSIS
+//      Return whether the named event is in the scrolled text list.
+//
+global proc int PEeventIsInList(string $selectedEvent)
+{
+	string $allEvents[] = `textScrollList -q -ai PEeventList`;
+
+	int $i;
+	for ($i = 0; $i < size($allEvents); $i++)
+	{
+		if ($selectedEvent == $allEvents[$i])
+		{
+			return 1;
+		}
+	}
+	return 0;
+}
+
+
+//  ================ PEsetEventControls ================
+//
+//  SYNOPSIS
+//      Get the parameters of the event in the arg list, put
+//		them into the controls, and enable/disable controls as
+//		is appropriate for the parameters. 
+//
+global proc PEsetEventControls(string $objectName, string $eventName)
+{
+	textFieldGrp -e -text $eventName PEselectedEventTF;
+
+	// Put the event parameters into the controls.
+	//
+	int $collisionNum = `event -name $eventName -q -count $objectName`;
+	int $emitNum = `event -name $eventName -q -emit $objectName`;
+	int $splitNum = `event -name $eventName -q -split $objectName`;
+	int $dieAtCollision = `event -name $eventName -q -die $objectName`;
+	int $randomize = `event -name $eventName -q -random $objectName`;
+	float $spread = `event -name $eventName -q -spread $objectName`;
+	string $targetParticle = `event -name $eventName -q -target $objectName`;
+	float $inherit;
+	if (size($targetParticle) > 0)
+		$inherit = `particle -q -inherit $targetParticle`;
+	string $procedure = `event -name $eventName -q -proc $objectName`;
+
+	if ($collisionNum == 0)
+	{
+		checkBoxGrp -e -v1 true PEallCollisions;
+		intSliderGrp -e 
+			-enable false -v $collisionNum 
+			PEcollisionNum;
+	}
+	else
+	{
+		checkBoxGrp -e -v1 false PEallCollisions;
+		intSliderGrp -e 
+			-enable true -v $collisionNum 
+			PEcollisionNum;
+	}
+
+	if ($splitNum > 0 || $emitNum > 0)
+	{
+		if ($splitNum > 0 )
+		{
+			checkBoxGrp -e -v1 false -v2 true PEtype;
+			intSliderGrp -e -enable true -v $splitNum PEnumParticles;
+			checkBoxGrp -e -enable false PEdieCheck;
+			checkBoxGrp -e -v1 1 PEdieCheck;
+		}
+		else 
+		{
+			checkBoxGrp -e -v1 true -v2 false PEtype;
+			intSliderGrp -e -enable true -v $emitNum PEnumParticles;
+			checkBoxGrp -e -enable true PEdieCheck;
+			checkBoxGrp -e -v1 $dieAtCollision PEdieCheck;
+		}
+		checkBoxGrp -e -enable true -v1 $randomize PErandom;
+		floatSliderGrp -e -enable true -v $spread PEspread;
+		textFieldGrp -e -enable true -text $targetParticle 
+			PEtargetParticle;
+		floatSliderGrp -e -enable true -v $inherit PEinheritVelocity;
+	}
+	else
+	{
+		checkBoxGrp -e -v1 false -v2 false PEtype;
+		checkBoxGrp -e -enable false PErandom;
+		intSliderGrp -e -enable false -v 0 PEnumParticles;
+		floatSliderGrp -e -enable false -v 0 PEspread;
+		textFieldGrp -e -enable false -text "" PEtargetParticle;
+		floatSliderGrp -e -enable false -v 1.0 PEinheritVelocity;
+		checkBoxGrp -e -v1 $dieAtCollision PEdieCheck;
+	}
+
+	textFieldGrp -e -text $procedure PEeventProcTF;
+}
+
+//  ================ PEbuildObjectList ================
+//
+//  SYNOPSIS
+//      Built the scrolled list of particle objects.
+//
+global proc PEbuildObjectList(int $keepCurSelection)
+{
+	string $selectedObj[];
+
+	// If keeping the current selection, save its name, and save
+	// the event list; otherwise delete the event list.
+	//
+	if ($keepCurSelection)
+		$selectedObj = `textScrollList -q -si PEobjectList`;
+	else
+		textScrollList -e -ra PEeventList;
+
+	// Clear the old object and event list
+	//
+	textScrollList -e -ra PEobjectList;
+	textScrollList -e -ra PEeventList;
+
+	// Get the names of all the particles in the scene.
+	//
+	string $particleShapes[] = `ls -type particle -long`;
+
+	if (size($particleShapes) == 0)
+		return;
+
+	// Get the transform names of the particles
+	//
+	string $particleParents[];	
+	for ($i = 0; $i < size($particleShapes); $i++)
+	{
+		$tmp = `listRelatives -parent -path $particleShapes[$i]`;
+		$particleParents[$i] = $tmp[0];
+		clear ($tmp);
+	}
+	
+	// Build the list.
+	//
+	for ($i = 0; $i < size($particleParents); $i++)
+	{
+		textScrollList -e -a $particleParents[$i] PEobjectList;
+	}
+
+	// Either go back to the original selection, or select the
+	// first object in the list.
+	//
+	if ($keepCurSelection)
+	{
+		textScrollList -e -sii 1 PEobjectList;
+		PEbuildEventList();
+	}
+	else
+	{
+	}
+
+	clear ($particleParents);
+	clear ($particleShapes);
+	
+} // PEbuildObjectList
+
+
+//  ================ PEbuildEventList ================
+//
+//  SYNOPSIS
+//      Built the scrolled list of events for the selected object.
+//
+global proc PEbuildEventList()
+{
+	global int $creatingEvent;
+
+	if (`textScrollList -q -ni PEobjectList` == 0)
+		return;
+
+	// Clear the old event list
+	//
+	textScrollList -e -ra PEeventList;
+
+	// Get the name of the selected object in the object list.
+	//
+	string $selectedObject[] = `textScrollList -q -si PEobjectList`;
+
+	// Get the list of that object's events.
+	//
+	string $events[] = `event -list $selectedObject[0]`;
+
+	if (size($events) > 0)
+	{
+		// There are events.  So set the editor into edit mode and
+		// build the list.
+		//
+		$creatingEvent = 0;
+		text -e -label (uiRes("m_eventEdWin.kEditingEvent"))  PEeditCreateT;
+		button -e -enable false PEeventButton;
+
+		for ($i = 0; $i < size($events); $i++)
+		{
+			textScrollList -e -a $events[$i] PEeventList;
+		}
+
+		// Select the first event.
+		//
+		textScrollList -e -si $events[0] PEeventList;
+		textFieldGrp -e -text $events[0] PEselectedEventTF;
+		textFieldGrp -e -text "" PEeventNameTF;
+
+		// Set the controls to the first event's parameters.
+		//
+		PEsetEventControls($selectedObject[0], $events[0]);
+	}
+	else
+	{
+		// The selected object has no events, so set the editor into
+		// create mode.
+		//
+		$creatingEvent = 1;
+		text -e -label (uiRes("m_eventEdWin.kCreatingEvent"))  PEeditCreateT;
+		button -e -enable true PEeventButton;
+	}
+
+	clear ($events);
+	clear ($selectedObject);
+	
+} // PEbuildEventList
+
+
+//  ================ PEsetSelectedObject ================
+//
+//  SYNOPSIS
+//      Return whether the named particle exists in the scene.
+//
+global proc PEsetSelectedObject()
+{
+	int $i, $j;
+
+	// If nothing is selected in the scene, the first particle in the
+	// list will be selected in the editor. So get the list and mark
+	// the first one selected for now.
+	//
+	string $particles[] = `textScrollList -q -ai PEobjectList`;
+
+	string $selectedObj = $particles[0];
+
+	// Get the particle objects currently selected in the scene.
+	//
+	string $selectedObjs[] = `ls -sl`;
+
+	// Find the first selected particle, if there is one.
+	//
+	int $found = 0;
+	for ($i = 0; $i < size($selectedObjs); $i++)
+	{
+		for ($j = 0; $j < size($particles); $j++)
+		{
+			if ($selectedObjs[$i] == $particles[$j])
+			{
+				$found = 1;
+				$selectedObj = $particles[$j];
+				break;
+			}
+		}
+		if ($found == 1)
+			break;
+	}
+
+	// Make the object selected in the controls
+	//
+	if (`textScrollList -q -ni PEobjectList` > 0)
+	{
+		textScrollList -e -si $selectedObj PEobjectList;
+		textFieldGrp -e -text $selectedObj PEselectedObjectTF;
+	}
+
+	clear ($particles);
+	clear ($selectedObjs);
+
+}	// PEsetSelectedObject
+
+
+
+// *************************************************************
+//
+//						CALLBACKS
+//
+// *************************************************************
+
+
+//  ================ PEobjectListCB ================
+//
+//  SYNOPSIS
+//      Called when a new object is selected in the list.
+//
+global proc PEobjectListCB()
+{
+	// Get the name of the newly selected object, and put it in
+	// the Object Name textfield.
+	//
+	string $selectedObj[] = `textScrollList -q -si PEobjectList`;
+	textFieldGrp -e -text $selectedObj[0] PEselectedObjectTF;
+
+	// Get the event list for this object and select the first event.
+	//
+	PEbuildEventList();
+
+	// Set the controls to the first event's parameters, if there is one.
+	//
+	string $selectedEvent[] = `textScrollList -q -si PEeventList`;
+	if (size($selectedEvent) > 0)
+		PEsetEventControls($selectedObj[0], $selectedEvent[0]);
+	else
+		textFieldGrp -e -text "" PEselectedEventTF;
+	
+}	// PEobjectListCB
+
+
+//  ================ PEeventListCB ================
+//
+//  SYNOPSIS
+//      Called when a new event is selected in the list.
+//
+global proc PEeventListCB()
+{
+	// Get the currently selected object and event names.
+	//
+	string $selectedObject[] = `textScrollList -q -si PEobjectList`;
+	string $selectedEvent[] = `textScrollList -q -si PEeventList`;
+
+	// Select the current event in the event command and set
+	// the controls to this event's parameters.
+	//
+	PEsetEventControls($selectedObject[0], $selectedEvent[0]);
+
+	// Set the editor into edit mode.
+	//
+	$creatingEvent = 0;
+	text -e -label (uiRes("m_eventEdWin.kEditingEvent"))  PEeditCreateT;
+	button -e -enable false PEeventButton;
+
+}	// PEeventListCB
+
+
+//  ================ PEupdateObjectListCB ================
+//
+//  SYNOPSIS
+//      Called when a the "Update Object List" button is selected.
+//
+global proc PEupdateObjectListCB()
+{
+	PEbuildObjectList(true);
+}
+
+
+//  ================ PEselectedObjectCB ================
+//
+//  SYNOPSIS
+//      Called when the selected object textfield is edited.
+//
+global proc PEselectedObjectCB()
+{
+	// Get the object name from the textfield.
+	//
+	string $selectedObj = `textFieldGrp -q -text PEselectedObjectTF`;
+
+	// Check if it is a name already in the scroll list.  If it is, 
+	// select it and put its events in the events list, select the first 
+	// one, and put its parameters into the controls.
+
+	if (size($selectedObj) > 0)
+	{
+		int $isInList = 0;
+
+		// Name is not in the list.  Rebuild the list because the object
+		// may have been added to the scene, but the list has not been
+		// updated yet.
+		//
+		if (!PEobjectIsInList($selectedObj))
+		{
+			PEbuildObjectList(false);
+			if (PEobjectIsInList($selectedObj))
+				$isInList = 1;
+		}
+		else
+		{
+			$isInList = 1;
+		}
+
+		if ($isInList)
+		{
+			// Make the object selected in the object list, and
+			// build its event list.
+			//
+			textScrollList -e -si $selectedObj PEobjectList;
+			PEbuildEventList();
+
+			// Set the controls to the first event's parameters.
+			//
+			string $selectedEvent[] = 
+					`textScrollList -q -si PEeventList`;
+
+			if (size($selectedEvent) > 0)
+				PEsetEventControls($selectedObj, $selectedEvent[0]);
+			else
+				textFieldGrp -e -text "" PEselectedEventTF;
+		}
+		else
+		{
+			// If the object name is not in the updated list, then
+			// signal an error.
+			//
+			warning (uiRes("m_eventEdWin.kInvalidObjectNameWarning"));
+		}
+	}
+	else
+	{
+		warning (uiRes("m_eventEdWin.kNoObjectNameWarning"));
+	}
+
+}	// PEselectedObjectCB
+
+
+//  ================ PEselectedEventCB ================
+//
+//  SYNOPSIS
+//      Called when the selected event textfield is edited.
+//
+global proc PEselectedEventCB()
+{
+	// Get the event name from the textfield.
+	//
+	string $selectedEvent = `textFieldGrp -q -text PEselectedEventTF`;
+
+	// Check if it is a name already in the scroll list.
+	// If it is, select it and  and get its parameters into
+	// the controls.
+
+	if (size($selectedEvent) > 0)
+	{
+		int $isInList = 0;
+
+		if (!PEeventIsInList($selectedEvent))
+		{
+			// Event is not in the list. Rebuild the list in case the
+			// event was created and the list not updated.
+			//
+			PEbuildEventList();
+			if (PEeventIsInList($selectedEvent))
+				$isInList = 1;
+		}
+		else
+		{
+			$isInList = 1;
+		}
+
+		if ($isInList)
+		{
+			// Select the event in the list, get the name of the object
+			// it belongs to, and set the parameters of the event into
+			// controls.
+			//
+			textScrollList -e -si $selectedEvent PEeventList;
+			string $selectedObj[] = 
+						`textScrollList -q -si PEobjectList`;
+			PEsetEventControls($selectedObj[0], $selectedEvent);
+		}
+		else
+		{
+			// If event name is still not in the list, signal an error.
+			//
+			warning (uiRes("m_eventEdWin.kInvalidEventNameWarning"));
+		}
+	}
+	else
+	{
+		warning (uiRes("m_eventEdWin.kNoEventnameWarning"));
+	}
+
+}	// PEselectedEventCB
+
+
+//  ================ PEeventNameCB ================
+//
+//  SYNOPSIS
+//      Called when the event name textfield is edited, to rename
+//		the event.
+//
+global proc PEeventNameCB()
+{
+	global int $creatingEvent;
+
+	// Only rename if in edit mode.
+	//
+	if (!$creatingEvent)
+	{
+		// Get the selected object name from the controls.
+		//
+		string $selectedObj = `textFieldGrp -q -text PEselectedObjectTF`;
+		string $newEventName = `textFieldGrp -q -text PEeventNameTF`;
+
+		// Make sure the event is selected in the object and rename it.
+		// 
+		string $currEvent = PEselectedEvent();
+
+		// If the string is null, no event to work on.
+		//
+		if (size($currEvent) > 0)
+		{
+			// Identifying this event by name, we assign it a new name.
+			//
+			string $cmd = "event -name " + $currEvent + " -e -rename " + $newEventName + " " + $selectedObj;
+			evalEcho ($cmd);
+		}
+
+		// Update the event list and make the new event selected,
+		// and put it in the selected event textfield.
+		//
+		PEbuildEventList();
+		textScrollList -e -si $newEventName PEeventList;
+		textFieldGrp -e -text $newEventName PEselectedEventTF;
+	}
+
+}	// PEeventNameCB
+
+
+//  ================ PEnewEventCB ================
+//
+//  SYNOPSIS
+//      Called when the New Event button is selected.
+//
+global proc PEnewEventCB()
+{
+	global int $creatingEvent;
+
+	// Set the editor into create mode.
+	//
+	$creatingEvent = 1;
+	textFieldGrp -e -text "" PEselectedEventTF;
+	textScrollList -e -da PEeventList;
+	text -e -label (uiRes("m_eventEdWin.kCreatingEvent"))  PEeditCreateT;
+	button -e -enable true PEeventButton;
+}
+
+
+//  ================ PEallCollisionsCB ================
+//
+//  SYNOPSIS
+//      Called when the "All Collisions" checkbox is checked.
+//
+global proc PEallCollisionsCB(int $isOn)
+{
+	global int $creatingEvent;
+
+	// Only set if in edit mode.
+	//
+	// If in edit mode, get the object name and value from the controls, 
+	// and select the event.
+	//
+	string $selectedObj;
+	string $currEvent;
+	if (!$creatingEvent)
+	{
+		$selectedObj = `textFieldGrp -q -text PEselectedObjectTF`;
+		$currEvent = PEselectedEvent();
+	}
+
+	// Enable/disable the Collision Num slider, and, if in edit mode,
+	// set the count in the event.
+	//
+	if ($isOn)
+	{
+		intSliderGrp -e -enable false PEcollisionNum;
+		if ((!$creatingEvent) && (size($currEvent)>0))
+		{
+			string $cmd = "event -name " + $currEvent + " -e -count ";
+			$cmd = $cmd + "0 " + $selectedObj;
+			evalEcho($cmd);
+		}
+	}
+	else
+	{
+		intSliderGrp -e -enable true PEcollisionNum;
+		if ((!$creatingEvent) && (size($currEvent)>0))
+		{
+			string $cmd = "event -name " + $currEvent + " -e -count ";
+			int $newValue = `intSliderGrp -q -v PEcollisionNum`;
+			$cmd = $cmd + $newValue + " " + $selectedObj;
+			evalEcho($cmd);
+		}
+	}
+
+}	// PEallCollisionsCB
+
+
+//  ================ PEcollisionNumberCB ================
+//
+//  SYNOPSIS
+//      Called when the Collision Number textfield is edited.
+//
+global proc PEcollisionNumberCB()
+{
+	global int $creatingEvent;
+
+	// Only set if in edit mode.
+	//
+	if (!$creatingEvent)
+	{
+		// Get the object name and value from the controls.
+		//
+		string $selectedObj = `textFieldGrp -q -text PEselectedObjectTF`;
+		int $newValue = `intSliderGrp -q -v PEcollisionNum`;
+
+		// Select the event in the object and edit the collision count.
+		//
+		string $currEvent = PEselectedEvent();
+		if (size($currEvent)>0)
+		{
+			string $cmd = "event -name " + $currEvent + " -e -count " + $newValue + " " + $selectedObj;
+			evalEcho($cmd);
+		}
+	}
+	
+} // PEcollisionNumberCB
+
+
+//  ================ PEtypeCB ================
+//
+//  SYNOPSIS
+//      Called when the Event Type checkbox group is edited.
+//
+global proc PEtypeCB(int $whichType, int $isOn)
+{
+	// $whichType: 1 = emit;  2 = split;  0 = neither
+
+	global int $creatingEvent;
+
+	string $selectedObj;
+	int $newValue;
+	string $currEvent;
+
+	// If in edit mode, get num particles and select the event.
+	//
+	if (!$creatingEvent)
+	{
+		// Get the object name and value from the controls.
+		//
+		$selectedObj = `textFieldGrp -q -text PEselectedObjectTF`;
+		$newValue = `intSliderGrp -q -v PEnumParticles`;
+		$currEvent = PEselectedEvent();
+	}
+
+	// Toggle on and off appropriate controls, and edit the event,
+	// if in edit mode.
+	//
+	if ($isOn)
+	{
+		// If either box is on, the following controls need to be enabled.
+		//
+		intSliderGrp -e -enable true PEnumParticles;
+		floatSliderGrp -e -enable true PEspread; 
+		checkBoxGrp -e -enable true PErandom;
+		textFieldGrp -e -enable true PEtargetParticle;
+		floatSliderGrp -e -enable true PEinheritVelocity;
+
+		string $cmd;
+		if ($whichType == 1)
+		{
+			// Emitter
+			//
+			checkBoxGrp -e -v2 0 PEtype;
+			if ((!$creatingEvent) && (size($currEvent) > 0))
+			{
+				$cmd = "event -name " + $currEvent + " -e -split 0 -emit " + $newValue + " " + $selectedObj;
+				evalEcho($cmd);
+			}
+			checkBoxGrp -e -enable true PEdieCheck;
+		}
+		else
+		{
+			// Split
+			//
+			checkBoxGrp -e -v1 0 PEtype;
+			if ((!$creatingEvent) && (size($currEvent) > 0))
+			{
+				$cmd = "event -name " + $currEvent + " -e -emit 0 -split " + $newValue + " " + $selectedObj;
+				evalEcho($cmd);
+			}
+			checkBoxGrp -e -v1 0 PEdieCheck;
+			checkBoxGrp -e -enable false PEdieCheck;
+			checkBoxGrp -e -v1 1 PEdieCheck;
+		}
+	}
+	else
+	{
+		int $otherIsOn;
+		if ($whichType == 1)
+			$otherIsOn = `checkBoxGrp -q -v2 PEtype`;
+		else
+			$otherIsOn = `checkBoxGrp -q -v1 PEtype`;
+
+		// If both emit and split are off, disable relevant
+		// controls, and make sure neither are on in the event,
+		// if in edit mode.
+		//
+		if (!$otherIsOn)
+		{
+			checkBoxGrp -e -enable true PEdieCheck;
+			intSliderGrp -e -enable false PEnumParticles;
+			floatSliderGrp -e -enable false PEspread; 
+			checkBoxGrp -e -enable false PErandom;
+			textFieldGrp -e -enable false PEtargetParticle;
+			floatSliderGrp -e -enable false PEinheritVelocity;
+			if ((!$creatingEvent) && (size($currEvent) > 0))
+			{
+				string $cmd = "event -name " + $currEvent + " -e -emit 0 -split 0 " + $selectedObj;
+				evalEcho($cmd);
+			}
+		}
+	}
+
+}	// PEtypeCB
+
+
+//  ================ PErandomCB ================
+//
+//  SYNOPSIS
+//      Called when the Random checkbox is checked.
+//
+global proc PErandomCB(int $isOn)
+{
+	global int $creatingEvent;
+
+	// Only set if in edit mode.
+	//
+	if (!$creatingEvent)
+	{
+		// Get the object name and value from the controls.
+		//
+		string $selectedObj = `textFieldGrp -q -text PEselectedObjectTF`;
+
+		// Select the event in the object and do the edit.
+		//
+		string $currEvent = PEselectedEvent();
+		if (size($currEvent) > 0)
+		{
+			string $cmd = "event -name " + $currEvent + " -e -random " + $isOn + " " + $selectedObj;
+			evalEcho($cmd);
+		}
+	}
+}
+
+
+//  ================ PEnumParticlesCB ================
+//
+//  SYNOPSIS
+//      Called when the Num Particles floatfield is edited.
+//
+global proc PEnumParticlesCB()
+{
+	global int $creatingEvent;
+
+	// Only set if in edit mode.
+	//
+	if (!$creatingEvent)
+	{
+		// Get the object name and value from the controls.
+		//
+		string $selectedObj = `textFieldGrp -q -text PEselectedObjectTF`;
+		int $newValue = `intSliderGrp -q -v PEnumParticles`;
+		
+		// Select the event in the object and do the edit.
+		//
+		string $currEvent = PEselectedEvent();
+		if (size($currEvent) > 0)
+		{
+			if (`checkBoxGrp -q -v1 PEtype`)
+			{	
+				string $cmd = "event -name " + $currEvent + " -e -emit " + $newValue + " " + $selectedObj;
+				evalEcho($cmd);
+			}
+			else if (`checkBoxGrp -q -v2 PEtype`)
+			{
+				string $cmd = "event -name " + $currEvent + " -e -split " + $newValue + " " + $selectedObj;
+				evalEcho($cmd);
+			}
+		}
+	}
+}
+
+//  ================ PEspreadCB ================
+//
+//  SYNOPSIS
+//      Called when the Spread floatfield is edited.
+//
+global proc PEspreadCB()
+{
+	global int $creatingEvent;
+
+	// Only set if in edit mode.
+	//
+	if (!$creatingEvent)
+	{
+		// Get the object name and value from the controls.
+		//
+		string $selectedObj = `textFieldGrp -q -text PEselectedObjectTF`;
+		float $newValue = `floatSliderGrp -q -v PEspread`;
+
+		// Select the event in the object and do the edit.
+		//
+		string $currEvent = PEselectedEvent();
+		if (size($currEvent)>0)
+		{
+			string $cmd = "event -name " + $currEvent + " -e -spread " + $newValue + " " + $selectedObj;
+			evalEcho($cmd);
+		}
+	}
+}
+
+//  ================ PEtargetParticleCB ================
+//
+//  SYNOPSIS
+//      Called when the Target particle textfield is edited.
+//
+global proc PEtargetParticleCB()
+{
+	global int $creatingEvent;
+
+	// Only set if in edit mode.
+	//
+	if (!$creatingEvent)
+	{
+		// Get the selected object name from the controls.
+		//
+		string $selectedObj = `textFieldGrp -q -text PEselectedObjectTF`;
+		string $newParticle = `textFieldGrp -q -text PEtargetParticle`;
+
+		// Select the event in the object and do the edit.
+		//
+		string $currEvent = PEselectedEvent();
+		if (size($currEvent)>0)
+		{
+			string $cmd = "event -name " + $currEvent + " -e -target " + $newParticle + " " + $selectedObj;
+			evalEcho($cmd);
+		}
+	}
+}
+
+
+//  ================ PEinheritVelocityCB ================
+//
+//  SYNOPSIS
+//      Called when the Inherit Velocity floatfield is edited.
+//
+global proc PEinheritVelocityCB()
+{
+	global int $creatingEvent;
+
+	// Only set if in edit mode.
+	//
+	if (!$creatingEvent)
+	{
+		// Get the selected object name, target particle, and 
+		// inherit value from the controls.
+		//
+		string $selectedObj = `textFieldGrp -q -text PEselectedObjectTF`;
+		string $target = `textFieldGrp -q -text PEtargetParticle`;
+		float $inherit = `floatSliderGrp -q -v PEinheritVelocity`;
+
+		// Select the event in the object and do the edit.
+		//
+		string $currEvent = PEselectedEvent();
+		if (size($currEvent)>0)
+		{
+			string $cmd = "particle -e -i " + $inherit + " " + $target;
+			evalEcho($cmd);
+		}
+	}
+}
+
+//  ================ PEparticleDiesCB ================
+//
+//  SYNOPSIS
+//      Called when the Particle Dies checkbox is checked.
+//
+global proc PEparticleDiesCB(int $isOn)
+{
+	global int $creatingEvent;
+
+	// Only set if in edit mode.
+	//
+	if (!$creatingEvent)
+	{
+		// Get the object name and value from the controls.
+		//
+		string $selectedObj = `textFieldGrp -q -text PEselectedObjectTF`;
+
+		// Select the event in the object and do the edit.
+		//
+		string $currEvent = PEselectedEvent();
+		if (size($currEvent) > 0)
+		{
+			string $cmd = "event -name " + $currEvent + " -e -die " + $isOn + " " + $selectedObj;
+			evalEcho($cmd);
+		}
+	}
+}
+
+
+//  ================ PEprocedureCB ================
+//
+//  SYNOPSIS
+//      Called when the Procedure textfield is edited.
+//
+global proc PEprocedureCB()
+{
+	global int $creatingEvent;
+
+	// Only set if in edit mode.
+	//
+	if (!$creatingEvent)
+	{
+		// Get the selected object name from the controls.
+		//
+		string $selectedObj = `textFieldGrp -q -text PEselectedObjectTF`;
+		string $newProcedure = `textFieldGrp -q -text PEeventProcTF`;
+
+		// Select the event in the object and do the edit.
+		//
+		string $currEvent = PEselectedEvent();
+		if (size($currEvent) > 0)
+		{
+			string $cmd = "event -name " + $currEvent + " -e -proc " + $newProcedure + " " + $selectedObj;
+			evalEcho($cmd);
+		}
+	}
+}
+
+
+//  ================ PEapplyCB ================
+//
+//  SYNOPSIS
+//      Called when the Apply (Create/Edit) button is edited.
+//
+global proc PEapplyCB ( )
+{
+	global int $creatingEvent;
+
+	// Get the current particle name.
+	//
+	string $selectedObj[] = `textScrollList -q -si PEobjectList`;
+
+	// Get the option values from the controls
+	//
+	int $collisionNum;
+	if (`checkBoxGrp -q -v1 PEallCollisions`)
+		$collisionNum = 0;
+	else
+		$collisionNum = `intSliderGrp -q -v PEcollisionNum`;
+
+	int $type;
+	if (`checkBoxGrp -q -v1 PEtype`)
+		$type = 1;
+	else if (`checkBoxGrp -q -v2 PEtype`)
+		$type = 2;
+	else
+		$type = 0;
+
+	int $numParticles = `intSliderGrp -q -v PEnumParticles`;
+
+	int $dieAtCollision = `checkBoxGrp -q -v1 PEdieCheck`;
+	int $randomize = `checkBoxGrp -q -v1 PErandom`;
+	float $spread = `floatSliderGrp -q -v PEspread`;
+	float $inherit = `floatSliderGrp -q -v PEinheritVelocity`;
+	string $procedure = `textFieldGrp -q -text PEeventProcTF`;
+	string $eventName = `textFieldGrp -q -text PEeventNameTF`;
+
+	// If editing, get the current event name to edit and select it
+	// in the object.
+	//
+	string $eventToEdit;
+	if (!$creatingEvent)
+	{
+		string $selectedEvent[] = `textScrollList -q -si PEeventList`;
+		$eventToEdit = $selectedEvent[0];
+		// event -s -name $selectedEvent[0] $selectedObj[0];
+	}
+
+	// Now do the create or edit.
+	//
+	string $returnName;
+	string $command;
+
+	if ($type == 0)
+	{
+		// Neither emitter nor split.
+		//
+		if ($creatingEvent)
+			$command = "event ";
+		else
+			$command = "event -name $eventToEdit -e ";
+		$command = ($command+"-die "+$dieAtCollision+" ");
+	}
+	else
+	{
+		// Get the target particle name if the user has specified one.
+		//
+		string $targetParticle = `textFieldGrp -q -text PEtargetParticle`;
+
+		// If the user didn't specify a target particle name, or
+		// specified a name that doesn't exist, create the target
+		// particle.
+		//
+		if ( (size($targetParticle) == 0) ||
+			((size($targetParticle) > 0) && 
+			(!PEparticleExists($targetParticle))) ) 
+		{
+				string $parentParticle = $selectedObj[0];
+				$targetParticle = PEcreateParticle($targetParticle, $parentParticle);
+				textFieldGrp -e -text $targetParticle PEtargetParticle;
+		}
+
+		// Set the target particle's inherit velocity.
+		//
+		string $cmd = "setAttr " + $targetParticle+".inheritFactor " + $inherit;
+		evalEcho ($cmd);
+
+		if ($type == 1)
+		{
+			// Creating/editing an emitter event.
+			//
+			// Build the event command.
+			//
+			if ($creatingEvent)
+				$command = ("event -em "+$numParticles+" ");
+			else
+				$command = ("event -name $eventToEdit -e -em "+$numParticles+" ");
+	
+			$command = ($command+"-die "+$dieAtCollision+" ");
+		}
+		else 
+		{
+			// Creating/editing a split event.
+			//
+			// Build the event command.
+			//
+			if ($creatingEvent)
+				$command = ("event -split "+$numParticles+" ");
+			else
+				$command = ("event -name $eventToEdit -e -split "+$numParticles+" ");
+		}
+
+		$command = ($command+"-target "+$targetParticle+" ");
+		$command = ($command+"-spread "+$spread+" ");
+		$command = ($command+"-random "+$randomize+" ");
+	}
+
+	// Finish building the event command.
+	//
+	$command = ($command+"-count "+$collisionNum+" ");
+
+	if (size($eventName) > 0)
+		$command = ($command+"-name "+$eventName+" ");
+
+	if (size($procedure) > 0)
+		$command = ($command+"-proc "+$procedure+" ");
+
+	$command = ($command+$selectedObj[0]);
+
+	// Echo the command to the command window and execute it.
+	//
+	$returnName = `evalEcho($command)`;
+
+	// Add the event name to the event list, select it, add it
+	// to the selected event textfield, and remove it from the
+	// naming textfield.
+	//
+	if ($creatingEvent)
+	{
+		textScrollList -e -a $returnName PEeventList;
+	}
+
+	textScrollList -e -si $returnName PEeventList;
+	textFieldGrp -e -text $returnName PEselectedEventTF;
+	textFieldGrp -e -text "" PEeventNameTF;
+
+	// Set the editor into edit mode.
+	//
+	$creatingEvent = 0;
+	text -e -label (uiRes("m_eventEdWin.kEditingEvent"))  PEeditCreateT;
+	button -e -enable false PEeventButton;
+
+}	// PEapplyCB
+
+
+//  ================ PEdeleteCB ================
+//
+//  SYNOPSIS
+//      Called when the Delete button is selected.
+//
+global proc PEdeleteCB()
+{
+	// Get the name of the selected object and event, and do
+	// the delete.
+	//
+	string $selectedObj[] = `textScrollList -q -si PEobjectList`;
+	string $selectedEvent[] = `textScrollList -q -si PEeventList`;
+
+	// event -s -name $selectedEvent[0] $selectedObj[0];
+	event -name $selectedEvent[0] -d $selectedObj[0];
+
+	// Clear the selected event textfield.
+	//
+	textFieldGrp -e -text "" PEselectedEventTF;
+
+	// Rebuild the event list and select the first event, if
+	// there is one.
+	//
+	PEbuildEventList();
+}
+
+
+//	=================== PEcloseCB =================
+//
+//	SYNOPSIS
+//		Close the Particle Event editor window
+//
+global proc PEcloseCB()
+{
+	if( `window -exists eventEditorWin` ) {
+		deleteUI eventEditorWin;
+	}
+}
+
+// *************************************************************
+//
+//					STARTUP ROUTINES		
+//
+// *************************************************************
+
+
+//  ================ PEcreateWindow ================
+//
+//  SYNOPSIS
+//      Create and/or show the event editor window.
+//
+
+global proc buildParticleCollisionEventsContextHelpItem(string $nameRoot, string $menuParent)
+{
+	menuItem -label (uiRes("m_eventEdWin.kHelpOnParticleCollisionEvent")) 
+		-enableCommandRepeat false
+		-command "showHelp ParticleCollisionEvents";
+}
+
+global proc PEcreateWindow ( string $win )
+{
+	string $events = (uiRes("m_eventEdWin.kEvents"));
+	window
+		-title (uiRes("m_eventEdWin.kParticleCollisionEventEditor")) 
+		-iconName $events 
+		-menuBar true
+		-titleBar true
+		-width 450
+		-height 650
+		$win;
+
+	addContextHelpProc $win "buildParticleCollisionEventsContextHelpItem";
+	doHelpMenu $win $win;
+
+	formLayout PEmainForm;
+
+	tabLayout 
+		-tabsVisible false 
+		-scrollable true 
+		-hst 0
+		-vst 18
+		PEmainTab;
+
+	columnLayout -adj true
+		PEmainCL;
+
+    // Make the selection frame -- the Expression/Object and
+    // Attributes Lists.
+    //
+    frameLayout -label (uiRes("m_eventEdWin.kSelection")) 
+		-lv true -cll true -cl false -mh 4
+        PEselectionFrame;
+
+    // Create the object and event scrolled lists
+    //
+    formLayout -nd 100
+        PEselectionForm;
+
+    formLayout -nd 100
+        PEobjectsForm;
+
+    formLayout -e
+        -af PEobjectsForm left 0
+        -af PEobjectsForm top 0
+        PEselectionForm;
+
+    text -al "left" -label (uiRes("m_eventEdWin.kObjects"))  PEselectNamesL;
+    formLayout -e
+        -af PEselectNamesL left 0
+        -af PEselectNamesL top 2
+        PEobjectsForm;
+
+    textScrollList -ams false -nr 6 -sc "PEobjectListCB" PEobjectList;
+	if(`about -mac`)
+	{
+		 textScrollList -e -height 110 PEobjectList;
+	}
+	
+    formLayout -e
+        -af PEobjectList left 0
+        -af PEobjectList right 0
+        -af PEobjectList bottom 0
+        -ac PEobjectList top 2 PEselectNamesL
+        PEobjectsForm;
+
+    // Back up to PEselectionForm
+    //
+    setParent ..;
+
+    // Make the events list
+    //
+    formLayout -nd 100
+        PEeventsForm;
+
+    formLayout -e
+        -af PEeventsForm top 0
+        -af PEeventsForm right 0
+        -ap PEobjectsForm left 0 0
+        -ap PEobjectsForm right 0 50
+        -ap PEeventsForm left 0 50
+        -ap PEeventsForm right 0 100
+        PEselectionForm;
+
+    text -al "left" -label $events  PEeventNamesL;
+    formLayout -e
+        -af PEeventNamesL left 0
+        -af PEeventNamesL top 2
+        PEeventsForm;
+
+    textScrollList -ams false -nr 6 -sc "PEeventListCB" PEeventList;
+	if(`about -mac`)
+	{
+		 textScrollList -e -height 110 PEeventList;
+	}
+
+    formLayout -e
+        -af PEeventList left 0
+        -af PEeventList right 0
+        -af PEeventList bottom 0
+        -ac PEeventList top 2 PEeventNamesL
+        PEeventsForm;
+
+    setParent ..;  // Back to PEselectionForm
+
+	button -label (uiRes("m_eventEdWin.kUpdateObjectList")) 
+		-w 140 -h 26
+		-c "PEupdateObjectListCB"
+		PEupdateObjList;
+
+	formLayout -e
+		-ac PEupdateObjList top 4 PEobjectsForm
+		-ap PEupdateObjList left -50 50
+		PEselectionForm;
+
+	setParent ..;  // Back to PEselectionFrame
+	setParent ..;  // Back to PEmainCL;
+
+	textFieldGrp -label (uiRes("m_eventEdWin.kSelectedObject"))  
+		-cc "PEselectedObjectCB"
+		PEselectedObjectTF;
+
+	textFieldGrp -label (uiRes("m_eventEdWin.kSelectedEvent")) 
+		-cc "PEselectedEventCB"
+		PEselectedEventTF;
+
+	textFieldGrp -label (uiRes("m_eventEdWin.kSetEventName"))  
+		-cc "PEeventNameCB"
+		PEeventNameTF;
+
+	separator -hr true -h 20;
+
+    formLayout -nd 100
+		PEnewEventForm;
+
+	text -label (uiRes("m_eventEdWin.kCreatingEvent"))  -al "center" PEeditCreateT;
+	
+	button -label (uiRes("m_eventEdWin.kNewEvent"))  
+		-w 112 -h 26 
+		-c "PEnewEventCB"
+		PEnewEvent;
+
+	formLayout -e
+		-af PEeditCreateT top 8
+		-ap PEeditCreateT "left" -50 30
+		-af PEnewEvent top 4
+		-ap PEnewEvent "left" -50 70
+		PEnewEventForm;
+
+	setParent ..;
+
+	separator -hr true -h 20;
+
+	text -label (uiRes("m_eventEdWin.kCollisionConfirmMsg")) 
+		PEhowOftenText;
+
+	checkBoxGrp -label (uiRes("m_eventEdWin.kAllCollisions")) 
+		-ncb 1
+		-label1 ""
+		-v1 true
+		-on1 ("PEallCollisionsCB 1")
+		-of1 ("PEallCollisionsCB 0")
+		PEallCollisions;
+
+	intSliderGrp -label (uiRes("m_eventEdWin.kCollisionNumber")) 
+		-field true
+		-min 0 -max 20
+		-enable false
+		-cc "PEcollisionNumberCB"
+		PEcollisionNum;
+
+	separator -hr true -h 20;
+
+	text -label (uiRes("m_eventEdWin.kEventType"))  -al "left" PEeventTypeT;
+
+	checkBoxGrp -label (uiRes("m_eventEdWin.kType")) 
+		-ncb 2
+		-label1 (uiRes("m_eventEdWin.kEmit")) 
+		-label2 (uiRes("m_eventEdWin.kSplit")) 
+		-cw 2 100
+		-cw 3 100
+		-on1 ("PEtypeCB 1 1")
+		-on2 ("PEtypeCB 2 1")
+		-of1 ("PEtypeCB 1 0")
+		-of2 ("PEtypeCB 2 0")
+		-v1 0
+		-v2 0
+		PEtype;
+		
+	checkBoxGrp -label (uiRes("m_eventEdWin.kRandomNoOfParticles")) 
+		-ncb 1
+		-label1 ""
+		-v1 false
+		-enable false
+		-on1 ("PErandomCB 1")
+		-of1 ("PErandomCB 0")
+		PErandom;
+
+	intSliderGrp -label (uiRes("m_eventEdWin.kNumParticles")) 
+		-field true
+		-min 0 -max 100
+		-fmx 1000000
+		-enable false
+		-v 1
+		-cc ("PEnumParticlesCB")
+		PEnumParticles;
+		
+	floatSliderGrp -label (uiRes("m_eventEdWin.kSpread")) 
+		-field true
+		-pre 3
+		-min 0 -max 2
+		-v .5
+		-enable false
+		-cc ("PEspreadCB")
+		PEspread;
+		
+	textFieldGrp -label (uiRes("m_eventEdWin.kTargetParticle")) 
+		-text ""
+		-enable false
+		-cc ("PEtargetParticleCB")
+		PEtargetParticle;
+
+	floatSliderGrp -label (uiRes("m_eventEdWin.kInheritVelocity")) 
+		-field true
+		-pre 3
+		-min 0 -max 1
+		-enable false
+		-v 1.0
+		-cc ("PEinheritVelocityCB")
+		PEinheritVelocity;
+
+	separator -hr true -h 20;
+
+	text -label (uiRes("m_eventEdWin.kEventActions"))  -al "left" PEeventActionsT;
+
+	checkBoxGrp -label (uiRes("m_eventEdWin.kOriginalParticleDies")) 
+		-ncb 1
+		-label1 ""
+		-on1 ("PEparticleDiesCB 1")
+		-of1 ("PEparticleDiesCB 0")
+		PEdieCheck;
+
+	textFieldButtonGrp -label (uiRes("m_eventEdWin.kEventProcedure"))  
+		-cc ("PEprocedureCB")
+		-buttonLabel (uiRes("m_eventEdWin.kHelpButton"))
+		-buttonCommand "showHelp ParticleCollisionEventProcedure"
+		PEeventProcTF;
+		
+	separator -hr true -h 20;
+
+	setParent PEmainForm;
+
+    formLayout -nd 100
+		PEbuttonsForm;
+
+	button -label (uiRes("m_eventEdWin.kCreateEvent")) 
+		-h 26
+		-c ("PEapplyCB")
+		PEeventButton;
+
+	button -label (uiRes("m_eventEdWin.kDeleteEvent")) 
+		-h 26
+		-c ("PEdeleteCB")
+		PEdeleteButton;
+
+	button -label (uiRes("m_eventEdWin.kClose")) 
+		-h 26
+		-c ("PEcloseCB")
+		PEcloseButton;
+
+	formLayout -e
+		-af PEeventButton "top" 5 
+		-af PEeventButton "left" 5
+		-ap PEeventButton "right" 3 33
+		-af PEeventButton "bottom" 5
+
+		-af PEdeleteButton "top" 5
+		-ap PEdeleteButton "left" 2 33
+		-ap PEdeleteButton "right" 3 66
+		-af PEdeleteButton "bottom" 5
+
+		-af PEcloseButton "top" 5
+		-ap PEcloseButton "left" 2 66
+		-af PEcloseButton "right" 5
+		-af PEcloseButton "bottom" 5
+		PEbuttonsForm;
+
+	formLayout -e
+		-af PEmainTab "left" 0
+		-af PEmainTab "right" 0
+		-af PEmainTab "top" 0
+		-ac PEmainTab "bottom" 0 PEbuttonsForm
+
+		-af PEbuttonsForm "left" 0
+		-af PEbuttonsForm "right" 0
+		-af PEbuttonsForm "bottom" 0
+		-an PEbuttonsForm "top" 
+		PEmainForm;
+
+	setParent ..;
+
+}	// PEcreateWindow
+
+
+//  ================ PEupdateWindow ================
+//
+//  SYNOPSIS
+//      Update the contenmts of the event editor window.
+//
+global proc PEupdateWindow ( )
+{
+	int $i, $j;
+
+	// First, put all particles in the scene into the
+	// object selection list.
+	//
+	PEbuildObjectList(false);
+
+	// Second, find the selected particle, or choose the first
+	// particle in the scene, and make it selected in the object
+	// selection list.
+	//
+	PEsetSelectedObject();
+
+	//  Third, if the selected object has any events, put them in the
+	//  events list and select the first one in the list.
+	//    
+	PEbuildEventList();
+
+}	// PEupdateWindow
+
+
+//  ================ eventEdWin ================
+//
+//  SYNOPSIS
+//      The entry point to the event editor window.
+//
+global proc eventEdWin ()
+{
+	if( `licenseCheck -type complete` == 0 )
+	{
+		warning (uiRes("m_eventEdWin.kLicenseWarning"));
+		return;
+	}
+
+	$win = "eventEditorWin";
+	if (!`window -exists $win`)
+	{
+		PEcreateWindow $win;
+	}
+
+	PEupdateWindow();
+	showWindow $win;
+
+}
+
+
+

@@ -1,0 +1,154 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+global proc normalizeCurve (string $curveName)
+{
+	if (!`objExists $curveName`)
+	{
+		return;
+	}
+
+	if (!isAnimCurve($curveName) || `reference -isNodeReferenced $curveName`)
+	{
+		return;
+	}
+
+	string $normalizerType = "curveNormalizerLinear";
+
+	if (`nodeType $curveName` == "animCurveTA")
+	{
+		if (`getAttr ($curveName + ".rotationInterpolation")` == 3)
+		{
+			// We don't deal with quaternions well, so bail here
+			warning ( (uiRes("m_normalizeCurve.kCurveNormalization")) );
+			return;
+		}
+
+		$normalizerType = "curveNormalizerAngle";
+	}
+
+	int $keyCount = `getAttr -size ($curveName+".ktv")`;
+	if ($keyCount < 2) {
+		// not enough keys to normalize
+		//
+		return;
+	}
+	
+	float $minTime = 1000000000;
+	float $maxTime = -1000000000;
+
+	int $key;
+
+	for ($key = 0; $key < $keyCount; $key++)
+	{
+		float $timeVal = `getAttr ($curveName+".ktv["+$key+"].kt")`;
+		$minTime = min ($minTime, $timeVal);
+		$maxTime = max ($maxTime, $timeVal);
+	}
+	
+	for ($key = 0; $key < $keyCount; $key++)
+	{
+		float $timeVal = `getAttr ($curveName+".ktv["+$key+"].kt")`;
+		$minTime = min ($minTime, $timeVal);
+		$maxTime = max ($maxTime, $timeVal);
+	}
+
+	float $evalTime;
+
+	float $maxValue = 0.0;
+
+	for ($evalTime = $minTime; $evalTime <= $maxTime; $evalTime++)
+	{
+		float $timeVals[] = `keyframe -absolute -time $evalTime -query -eval $curveName`;
+		$maxValue = max(abs($maxValue), abs($timeVals[0]));
+	}
+
+	if (equivalent ($maxValue, 0.0))
+	{
+		// don't normalize curves that are 0 everywhere.
+		return;
+	}
+	
+	string $destNodes[] = `listConnections -source false -plugs false ($curveName+".output")`;
+
+	string $destNode = "";
+
+	if (size ($destNodes) > 0)
+	{
+		$destNode = $destNodes[0];
+	}
+
+	string $selection[] = `ls -selection`;
+
+	string $destNode = $destNodes[0];
+
+	if (($destNode != "") && (`nodeType $destNode` == $normalizerType))
+	{
+		float $currentNormFactor = `getAttr ($destNode+".scalar")`;
+
+		setAttr ($destNode+".scalar") ($currentNormFactor*$maxValue);
+	}
+	else
+	{
+		string $curveDests[] = `listConnections -source false -plugs true ($curveName+".output")`;
+		
+		string $curveDest = "";
+
+		if (size($curveDests) > 0)
+		{
+			$curveDest = $curveDests[0];
+		}
+
+		if (($curveDest != "") && (`connectionInfo -isLocked $curveDest`))
+		{
+			return;
+		}
+
+		string $multNode = `createNode -name ($curveName + "_Normalizer") $normalizerType`;
+		setAttr ($multNode+".isHistoricallyInteresting") 0;
+
+		setAttr ($multNode+".scalar") $maxValue;
+
+		if ($curveDest != "")
+		{
+			disconnectAttr ($curveName+".output") $curveDest;
+		}
+
+		connectAttr ($curveName+".output") ($multNode+".animInput");
+
+		if ($curveDest != "")
+		{
+			connectAttr ($multNode+".output") $curveDest;
+		}
+	}
+
+	scaleKey -valueScale (1.0/$maxValue) $curveName;
+	if (`bufferCurve -exists $curveName`)
+	{
+		bufferCurve -swap $curveName;
+		scaleKey -valueScale (1.0/$maxValue) $curveName;
+		bufferCurve -swap $curveName;
+	}
+
+	select -replace $selection;
+}
+
+

@@ -1,0 +1,1298 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Nov. 18, 2010
+//
+//  Description:
+//      Project Create/Setup window.
+//
+//  Input Arguments:
+//		None
+// 
+//  Return Value:
+//		None
+//
+
+global string $gCustomDataLocationList[];           //store the list of customDataLocation
+global string $gTranslatorDataLocationList[];       //store the list of translatorDataLocation, because the translator can be loaded and reloaded dynamically.
+global string $gProjectLocationControl;
+global string $gProjectNameControl;
+global int    $gBoIsEditMode;             //record if project window is in edit mode.
+  
+
+global proc string np_getProjectNameControl()
+//
+//  Description:
+//          return the name of ProjectNameControl.
+//
+{
+    global string $gProjectNameControl;
+    
+    return $gProjectNameControl;
+}
+
+global proc string np_getProjectLocationControl()
+//
+//  Description:
+//          return the name of ProjectLocationControl.
+//
+{
+    global string $gProjectLocationControl;
+    
+    return $gProjectLocationControl;
+}
+
+
+global proc int np_isEditModeForProjectWindow()
+//
+//  Description:
+//          return the status of project window.
+//
+{
+    global int    $gBoIsEditMode;
+    
+    return $gBoIsEditMode;
+}
+
+global proc np_newButtonCallback()
+//
+//  Description:
+//          the text field of the current project and the browse button of the location will be enabled.
+//          reset all the UI. and disable the new button
+//
+{   
+    global string $gProjectLocationControl;
+    global string $gProjectNameControl;
+
+    if(`textFieldButtonGrp -ex $gProjectNameControl`)
+    {       
+        textFieldButtonGrp -e -editable true -text (uiRes("m_projectWindow.kNewProject")) $gProjectNameControl;
+    }
+    
+    string $currentDir = "";
+	// Check for environment variable first
+	$currentDir = getenv("MAYA_PROJECTS_DIR");
+	if(size($currentDir) == 0) {
+		// Environment var is not set, so check for option var now
+		if(`optionVar -ex "ProjectsDir"`) {
+			$currentDir = `optionVar -q "ProjectsDir"`;
+		}
+		if(size($currentDir) == 0) {
+			// Option var is not set too. Get the root directory of the current workspace
+			$currentDir = dirname( `workspace -q -rd` );
+		}
+	}
+	
+	textFieldGrp -e -editable true -text $currentDir $gProjectLocationControl;
+           
+    symbolButton -e -enable true workspaceLocationButton; 
+    
+    //reset settings for new project and clean up the items in the customDataLocation
+    np_resetAllFileRulesTextFields();
+    
+    global string $gCustomDataLocationList[];
+    
+    int $listSize = size($gCustomDataLocationList);
+    for($i = 0; $i < $listSize; $i++)
+    {
+        string $layoutName = formValidObjectName("np_rowLayout" + $gCustomDataLocationList[$i]);   
+        deleteUI $layoutName;
+    }
+    
+    $gCustomDataLocationList = {};   
+    
+     //disable the new button
+    textFieldButtonGrp -e -enableButton false $gProjectNameControl;   
+    
+    //change the command of accept button    
+    button -e -c "np_createNewProjectCallback" acceptButton; 
+    
+    //now is create mode, change global var to false;
+    $gBoIsEditMode = false;
+}
+
+global proc np_fileBrowserForWorkspaceLocation(string $controlName)
+//
+//  Description:
+//          use the fileDialog2 to get the directory,then update the text field of location.          
+//
+{
+    if(`textFieldGrp -ex $controlName`)
+    {        
+        string $startDirectory = `workspace -q -rootDirectory`; //the starting directory is the root directory of the current project
+        string $captionName = (uiRes("m_projectWindow.kSelectLocationForWorkspaceLocation"));
+        string $okCaption = (uiRes("m_projectWindow.kSetForWorkSpaceLocation"));
+        
+        string $dir[] = `fileDialog2 -caption $captionName -dir $startDirectory -fileMode 3 -okCaption $okCaption -setProjectBtnEnabled off`;
+        
+        if (0 < size($dir) && "" != $dir[0])
+		{
+			string $dirPath = fromNativePath($dir[0]);
+			textFieldGrp -e -text $dirPath $controlName;
+		}                
+    }
+}
+
+global proc np_fileBrowserForFileRulesLocation(string $controlName)
+//
+//  Description:
+//          use the fileDialog2 to get the directory,then update the text field of file rules location.          
+//
+{
+    if(`textFieldGrp -ex $controlName`)
+    {        
+        string $startDirectory = `workspace -q -rootDirectory`; //the starting directory is the root directory of the current project
+        string $captionName = (uiRes("m_projectWindow.kSelectLocationForFileRules"));
+        string $okCaption = (uiRes("m_projectWindow.kSetForFileRules"));
+        
+        string $dir[] = `fileDialog2 -caption $captionName -dir $startDirectory -fileMode 3 -okCaption $okCaption -setProjectBtnEnabled off`;
+        
+        if (0 < size($dir) && "" != $dir[0])
+		{
+			string $dirPath = fromNativePath($dir[0]);
+			
+			//if the directory is under the root directory, it should only show the relative path to the root directory.
+			string $rootDirectory = fromNativePath(`workspace -q -rootDirectory`);			
+            if(gmatch($dirPath + "/", $rootDirectory + "*"))
+            {
+                $dirPath = endString($dirPath, size($dirPath) - size($rootDirectory)); 
+            }
+			
+			textFieldGrp -e -text $dirPath $controlName;
+		}                
+    }
+}
+
+global proc np_fileBrowserForTranslatorData(string $controlName)
+//
+//  Description:
+//          use the fileDialog2 to get the directory,whilst to update the text field of file rules in the translator data location.          
+//
+{
+    if(`textFieldGrp -ex $controlName`)
+    {        
+        string $startDirectory = `workspace -q -rootDirectory`; //the starting directory is the root directory of the current project
+        string $captionName = (uiRes("m_projectWindow.kSelectLocationForTranslator"));
+        string $okCaption = (uiRes("m_projectWindow.kSetForTranslator"));
+        
+        string $dir[] = `fileDialog2 -caption $captionName -dir $startDirectory -fileMode 3 -okCaption $okCaption -setProjectBtnEnabled off`;
+        
+        if (0 < size($dir) && "" != $dir[0])
+		{
+			string $dirPath = fromNativePath($dir[0]);
+			
+			//if the directory is under the root directory, it should only show the relative path to the root directory.
+			string $rootDirectory = fromNativePath(`workspace -q -rootDirectory`);			
+            if(gmatch($dirPath + "/", $rootDirectory + "*"))
+            {
+                $dirPath = endString($dirPath, size($dirPath) - size($rootDirectory)); 
+            }
+			
+			textFieldGrp -e -text $dirPath $controlName;										
+		}                
+    }
+}
+
+global proc np_useDefaultForSecondaryProjectLocations()
+//
+//  Description:
+//          update the text fields of secondary project location by the default file rules.
+//
+{
+    string $secondaryFileRules[] = np_getSecondaryProjectFileRules(true);
+    
+    int $listSize = size($secondaryFileRules);
+    for($i = 0; $i < $listSize; $i += 3)
+    {
+        string $name = formValidObjectName("np_secondaryLocation" + $secondaryFileRules[$i + 1]);
+        string $browseButtonName = formValidObjectName("np_symbolButton" + $secondaryFileRules[$i + 1]);  
+        
+        textFieldGrp -e -text $secondaryFileRules[$i + 2] -editable false $name;
+        symbolButton -e -enable false $browseButtonName;
+    }
+}
+
+global proc np_editCallbackForSecondaryProjectLocations()
+//
+//  Description:
+//          enable all the browse button of secondary project locations.
+//
+{
+    string $secondaryFileRules[] = np_getSecondaryProjectFileRules(true);
+    
+    int $listSize = size($secondaryFileRules);
+    for($i = 0; $i < $listSize; $i += 3)
+    {
+        string $name = formValidObjectName("np_secondaryLocation" + $secondaryFileRules[$i + 1]);
+        string $browseButtonName = formValidObjectName("np_symbolButton" + $secondaryFileRules[$i + 1]);  
+        
+        textFieldGrp -e -editable true $name;
+        symbolButton -e -enable true $browseButtonName;
+    }
+}
+
+global proc np_addNewFileRule()
+//
+//  Description:
+//          this callback is for the button in the custom Data location that is to add new file rule by user.
+//
+{       
+    string $text;
+    string $ok = (uiRes("m_projectWindow.kOkForNewFileRule"));
+    string $add = (uiRes("m_projectWindow.kAddForNewFileRule"));
+    string $cancel = (uiRes("m_projectWindow.kCancelForNewFileRule"));
+    string $result = `promptDialog
+        -title (uiRes("m_projectWindow.kEnterNewFileRule"))
+        -message (uiRes("m_projectWindow.kEnterNewFileRuleMsg"))
+        -button $add -button $cancel
+        -defaultButton $add -cancelButton $cancel
+        -dismissString $cancel`;
+
+    //if the result is equal to "Add", then add one textFieldButtonGrp for this new file rule
+    if ($result == $add) 
+    {
+        $text = `promptDialog -query -text`;
+        
+        //check if this item existed. if existed, pop up a confirm dialog then return.        
+        if(np_checkIfFileRuleEntryExist($text))
+        {
+            string $msg = (uiRes("m_projectWindow.kFileRuleExisted"));
+            $msg = `format -s $text $msg`;
+            
+            confirmDialog -message $msg 
+                -button $ok 
+                -defaultButton $ok -cancelButton $ok -dismissString $ok;
+            return;
+        } 
+        
+        np_addNewFileRuleEntry($text);    
+    }    
+}
+
+global proc int np_checkIfFileRuleEntryExist(string $fileRuleName)
+//
+//  Description:
+//      Check if file rule name exist in the current workspace.
+//
+//  Input:
+//      string: file rule name
+//
+//  Output:
+//      int: true, false
+//
+{
+    //check if this file rule name is contained in the primary project location
+    string $primaryFileRuleList[] = np_getPrimaryProjectFileRules(true);
+    
+    int $listSize = size($primaryFileRuleList);
+    for($i = 0; $i < $listSize; $i+=3)
+    {
+        if($fileRuleName == $primaryFileRuleList[$i+1])
+            return true;
+    }
+    
+    //check if this file rule name is contained in the secondary project location
+    string $secondaryFileRuleList[] = np_getSecondaryProjectFileRules(true);
+    $listSize = size($secondaryFileRuleList);
+    for($i = 0; $i < $listSize; $i+=3)
+    {
+        if($fileRuleName == $secondaryFileRuleList[$i+1])
+            return true;
+    }
+
+    //check if this file rule name is contained in the translator data location
+    global string $gTranslatorDataLocationList[];
+    $listSize = size($gTranslatorDataLocationList);
+    for($i = 0; $i < $listSize; $i++)
+    {
+        if($fileRuleName == $gTranslatorDataLocationList[$i])
+            return true;
+    }
+    
+    //check if this file rule name is contained in the custom data location
+    global string $gCustomDataLocationList[];
+    $listSize = size($gCustomDataLocationList);
+    for($i = 0; $i < $listSize; $i++)
+    {
+        if($fileRuleName == $gCustomDataLocationList[$i])
+            return true;
+    }    
+    
+    return false;       //can not find related file rule name
+}
+
+global proc int np_validateFileRuleAndVariableName(string $name)
+// 
+//  Description:
+//      validate the name of file rule and variable.The convention is
+//  that the name cannot contains multiple byte characters.
+//  
+{
+
+    if(containsMultibyte($name))
+    {
+        return false;     
+    }
+       
+    return true;
+}
+
+global proc np_addNewFileRuleEntry(string $fileRuleName)
+//
+//      Description:
+//          add one file rule entry in the custom data location
+//
+{  
+    //check if the string of file rule name is multibyte, if so, then print error    
+    if(!np_validateFileRuleAndVariableName($fileRuleName))
+    {
+        string $errorMsg = (uiRes("m_projectWindow.kFileRuleNameInvalid"));        
+        error $errorMsg;    
+        return; //do not create related entry, to quit this routine.
+    }    
+
+    global string $gCustomDataLocationList[];    
+    $gCustomDataLocationList[size($gCustomDataLocationList)] = $fileRuleName;  //fill in the list
+    
+    setParent customDataLocationsColumn;
+    
+    string $layoutName = formValidObjectName("np_rowLayout" + $fileRuleName);        
+    string $name = formValidObjectName("np_customLocation" + $fileRuleName);
+    string $browseCmd = "np_fileBrowserForFileRulesLocation " + $name;     
+    string $encodedStr = `encodeString $fileRuleName`;    
+    string $removeCmd = "np_removeCustomFileRule \"" + $encodedStr + "\"";    
+    rowLayout -numberOfColumns 3 -adjustableColumn 1 $layoutName;     
+        textFieldGrp -label $fileRuleName
+			-editable true
+			-text ""
+			-adjustableColumn 2             //enable textField autosize with size change of project window
+			$name;  
+		symbolButton -image "navButtonBrowse.png" -c $browseCmd;
+		button -label (uiRes("m_projectWindow.kRemoveForNewFileRule")) -c $removeCmd;      
+}
+
+global proc np_removeCustomFileRule(string $fileRuleName)
+//
+//  Description:
+//          this callback is for the remove button in the custom Data location that is to remove the file rule created by user.
+//
+{
+    
+    string $message = (uiRes("m_projectWindow.kRemoveMessage"));
+    $message = `format -s $fileRuleName $message`;
+    string $proceed = (uiRes("m_projectWindow.kProceedForCustomFileRule"));
+    string $cancel = (uiRes("m_projectWindow.kCancelForCustomFileRule"));
+    string $result = `confirmDialog
+        -title (uiRes("m_projectWindow.kRemoveFileRule"))
+        -message $message
+        -button $proceed -button $cancel
+        -defaultButton $proceed -cancelButton $cancel
+        -dismissString $cancel`;
+
+    //if the result is "Proceed", then remove this line
+    if ($result == $proceed) 
+    {
+        np_removeFileRuleEntry($fileRuleName);              
+    }  
+}
+
+global proc np_removeFileRuleEntry(string $fileRuleName)
+//
+//  Description:
+//          remove specified file rule entry in the custom data location
+//
+{
+    string $layoutName = formValidObjectName("np_rowLayout" + $fileRuleName);  
+    deleteUI $layoutName;                  
+    
+    global string $gCustomDataLocationList[];
+    
+    int $listSize = size($gCustomDataLocationList);
+    for($i = 0; $i < $listSize; $i++)
+    {
+        if($gCustomDataLocationList[$i] == $fileRuleName)
+        {
+            stringArrayRemoveAtIndex($i, $gCustomDataLocationList);  //remove from the list
+            break;
+        }
+    }         
+}
+
+proc buildPrimaryProjectLocations(string $parent)
+{
+    setParent $parent;
+    
+    columnLayout -adjustableColumn true primaryProjectLocationsColumn;
+    
+    string $primaryFileRules[] = np_getPrimaryProjectFileRules(false);
+    
+    int $listSize = size($primaryFileRules);
+    for($i = 0; $i < $listSize; $i += 3)
+    {
+        string $layoutName = formValidObjectName("np_rowLayout" + $primaryFileRules[$i + 1]);   
+        string $name = formValidObjectName("np_primaryLocation" + $primaryFileRules[$i + 1]);
+        string $cmd = "np_fileBrowserForFileRulesLocation " + $name;     
+        rowLayout -numberOfColumns 2 -adjustableColumn 1 $layoutName;     
+            textFieldGrp -label $primaryFileRules[$i]
+				-editable true
+				-text $primaryFileRules[$i + 2]
+				-adjustableColumn 2         //enable textField autosize with size change of project window
+				$name;
+			symbolButton -image "navButtonBrowse.png" -c $cmd;
+		setParent ..;
+    }   
+    
+    setParent $parent;
+}
+
+proc buildSecondaryProjectLocations(string $parent)
+{
+    setParent $parent;
+    
+    columnLayout -adjustableColumn true secondaryProjectLocationsColumn;
+    
+    //build radio boxes of "Use Defaults" and "Edit" by the radioButtonGrp command
+    radioButtonGrp -numberOfRadioButtons 2
+        -label (uiRes("m_projectWindow.kSetUpByForSecondary")) 
+        -labelArray2 (uiRes("m_projectWindow.kUseDefaultsForSecondary")) 
+        (uiRes("m_projectWindow.kEditForSecondary")) 
+        -select 2 -on1 np_useDefaultForSecondaryProjectLocations -on2 np_editCallbackForSecondaryProjectLocations
+        SecondaryProjectLocationsRadioButtonGrp;
+
+    //build the column of the secondary file rules
+    string $secondaryFileRules[] = np_getSecondaryProjectFileRules(false);    
+    int $listSize = size($secondaryFileRules);
+    for($i = 0; $i < $listSize; $i += 3)
+    {
+        string $layoutName = formValidObjectName("np_rowLayout" + $secondaryFileRules[$i + 1]);   
+        string $browseButtonName = formValidObjectName("np_symbolButton" + $secondaryFileRules[$i + 1]);  
+        string $name = formValidObjectName("np_secondaryLocation" + $secondaryFileRules[$i + 1]);
+        string $cmd = "np_fileBrowserForFileRulesLocation " + $name;
+        rowLayout -numberOfColumns 2 -adjustableColumn 1 $layoutName;
+            textFieldGrp -label $secondaryFileRules[$i]
+				-editable true
+				-text $secondaryFileRules[$i + 2]
+				-adjustableColumn 2         //enable textField autosize with size change of project window
+				$name;
+			symbolButton -image "navButtonBrowse.png" -c $cmd -enable true $browseButtonName;
+		setParent ..;
+    }
+
+    setParent $parent;
+}
+
+global proc np_updateTranslatorDataLocations()
+//
+//  Description:
+//      Considering this situation that user will loadPlugin and UnloadPlugin when project window is opened,
+//      this routine is to update the UI of translator data locations.
+//      
+//  algorithm:
+//          when some translator is loaded by user. check the list of custorm data location, if this translator existed, 
+//      then move it to translator data locations. otherwise only to add entry for this translator in the translator 
+//      data location
+//          when some translator is unloaded by user. move it from the translator data locations to custom data locations.
+//
+//
+{
+    global string $gTranslatorDataLocationList[];  
+    global string $gCustomDataLocationList[];         
+    
+    string $layoutName;
+    string $name;
+    string $browseButtonName;
+    string $text;
+    string $cmd;
+    string $removeCmd;
+           
+    int $isEditable = `radioButtonGrp -q -select TranslatorDataLocationsRadioButtonGrp` == 2;
+                
+    int $listSize = size($gTranslatorDataLocationList);
+    for($i = 0; $i < $listSize; $i++)
+    {                   
+        //when some translator is unloaded by user. move it from the translator data locations to custom data locations.
+        if(!`translator -q -ld $gTranslatorDataLocationList[$i]`)
+        {     			      		        
+            $layoutName = formValidObjectName("np_rowLayout" + $gTranslatorDataLocationList[$i]);       			      		        
+            $name = formValidObjectName("np_translatorLocation" + $gTranslatorDataLocationList[$i]);
+            $text = `textFieldGrp -q -text $name`;
+                           
+	        deleteUI $layoutName;   //delete related entry in the translator data location		                        
+            
+            $name = formValidObjectName("np_customLocation" + $gTranslatorDataLocationList[$i]);                 
+            $browseButtonName = formValidObjectName("np_symbolButton" + $gTranslatorDataLocationList[$i]);                  
+            $cmd = "np_fileBrowserForFileRulesLocation " + $name;
+            $removeCmd = "np_removeCustomFileRule " + $gTranslatorDataLocationList[$i];
+            setParent customDataLocationsColumn;
+            rowLayout -numberOfColumns 3 -adjustableColumn 1 $layoutName;
+                textFieldGrp -label $gTranslatorDataLocationList[$i]
+			        -editable true
+			        -text $text
+			        -adjustableColumn 2     //enable textField autosize with size change of project window
+			        $name;
+		        symbolButton -image "navButtonBrowse.png" -c $cmd -enable true $browseButtonName;
+		        button -label (uiRes("m_projectWindow.kUpdateRemoveForCustom")) -c $removeCmd;                                       
+			   
+		    $gCustomDataLocationList[size($gCustomDataLocationList)] = $gTranslatorDataLocationList[$i];           
+		}
+    }
+
+    //add the new entry loaded by user
+    string $tempForGlobal[];        //store the current list of translator file rule name
+    string $currentTranslatorList[] = np_getTranslatorDataFileRules(true);
+    string $existingList[];  //store the existed list that is created by user in the custom data location
+    int $existingListSize = 0;
+    
+    int $listSize = size($currentTranslatorList);
+    for($i = 0; $i < $listSize; $i+=2)
+    {   
+        $tempForGlobal[$i / 2] = $currentTranslatorList[$i];           		                
+       
+        if(! stringArrayContains($currentTranslatorList[$i], $gTranslatorDataLocationList) )
+        {
+            $layoutName = formValidObjectName("np_rowLayout" + $currentTranslatorList[$i]);   
+            $text = $currentTranslatorList[$i + 1];
+        
+            //when some translator is loaded by user. check the list of custorm data location, if this entry existed, 
+            //then move it to translator data locations. otherwise only to add entry for this translator in the translator 
+            //data location
+            if(`rowLayout -ex $layoutName`)
+            {
+                $existingList[$existingListSize++] = $currentTranslatorList[$i];
+                $name = formValidObjectName("np_customLocation" + $currentTranslatorList[$i]);
+                $text = `textFieldGrp -q -text $name`;
+                deleteUI $layoutName;   //delete this entry in the custom data location                
+            }
+            
+            $browseButtonName = formValidObjectName("np_symbolButton" + $currentTranslatorList[$i]);  
+            $name = formValidObjectName("np_translatorLocation" + $currentTranslatorList[$i]);
+            $cmd = "np_fileBrowserForFileRulesLocation " + $name;        
+            setParent TranslatorDataLocationColumn;
+            rowLayout -numberOfColumns 2 -adjustableColumn 1 $layoutName;
+                textFieldGrp -label $currentTranslatorList[$i]
+				    -editable $isEditable
+				    -text $text
+				    -adjustableColumn 2     //enable autosize of textField with size change of project window
+				    $name;
+			    symbolButton -image "navButtonBrowse.png" -c $cmd -enable $isEditable $browseButtonName;	
+        } 		
+    }
+    
+    $gTranslatorDataLocationList = $tempForGlobal;   //update the list
+    $gCustomDataLocationList = stringArrayRemove($existingList ,$gCustomDataLocationList);  //remove the existing list from custom data location list.
+}
+
+global proc np_useDefaultForTranslatorDataLocations()
+//
+//      Description:
+//          reset the translator data locations by default file rules of translators            
+//
+//
+{
+    global string $gTranslatorDataLocationList[];        
+                
+    int $listSize = size($gTranslatorDataLocationList);
+    for($i = 0; $i < $listSize; $i++)
+    {                        			      
+        string $browseButtonName = formValidObjectName("np_symbolButton" + $gTranslatorDataLocationList[$i]);  
+        string $name = formValidObjectName("np_translatorLocation" + $gTranslatorDataLocationList[$i]);    
+        //check if the translator has been unloaded
+        if(`translator -q -ld $gTranslatorDataLocationList[$i]`)
+        {
+            textFieldGrp -e -text `translator -q -dfr $gTranslatorDataLocationList[$i]` -editable false $name;
+		    symbolButton -e -enable false $browseButtonName;			
+		}
+    }
+    
+    np_updateTranslatorDataLocations();
+}
+
+global proc np_editCallbackForTranslatorDataLocations()
+//
+//      Description:
+//            make all translator entries be editable          
+//
+//
+{
+    global string $gTranslatorDataLocationList[];           
+             
+    int $listSize = size($gTranslatorDataLocationList);    
+    for($i = 0; $i < $listSize; $i++)
+    {                  
+        string $browseButtonName = formValidObjectName("np_symbolButton" + $gTranslatorDataLocationList[$i]);  
+        string $name = formValidObjectName("np_translatorLocation" + $gTranslatorDataLocationList[$i]);    
+        //check if the translator has been unloaded
+        if(`translator -q -ld $gTranslatorDataLocationList[$i]`)
+        {
+            textFieldGrp -e -editable true $name;
+		    symbolButton -e -enable true $browseButtonName;			
+		}
+    }
+    
+    np_updateTranslatorDataLocations();
+}
+
+proc buildTranslatorDataLocations(string $parent)
+{    
+    setParent $parent;
+    
+    columnLayout -adjustableColumn true TranslatorDataLocationColumn;  
+    
+    //build radio boxes of "Use Defaults" and "Edit" by the radioButtonGrp command
+    radioButtonGrp -numberOfRadioButtons 2
+        -label (uiRes("m_projectWindow.kSetUpByForTranslator")) 
+        -labelArray2 (uiRes("m_projectWindow.kUseDefaultsForTranslator")) 
+        (uiRes("m_projectWindow.kEditForTranslator")) 
+        -select 2 -on1 np_useDefaultForTranslatorDataLocations -on2 np_editCallbackForTranslatorDataLocations
+        TranslatorDataLocationsRadioButtonGrp; 
+
+    //build the column of the translators' file rules
+    string $translatorsFileRules[] = np_getTranslatorDataFileRules(false);
+    //clean up the translator list
+    global string $gTranslatorDataLocationList[]; 
+    $gTranslatorDataLocationList = {};        
+        
+    int $listSize = size($translatorsFileRules);
+    for($i = 0; $i < $listSize; $i+=2)
+    {   
+        $gTranslatorDataLocationList[$i / 2] = $translatorsFileRules[$i];           		
+        
+	    string $layoutName = formValidObjectName("np_rowLayout" + $translatorsFileRules[$i]);   
+        string $browseButtonName = formValidObjectName("np_symbolButton" + $translatorsFileRules[$i]);  
+        string $name = formValidObjectName("np_translatorLocation" + $translatorsFileRules[$i]);
+        string $cmd = "np_fileBrowserForTranslatorData " + $name;
+        rowLayout -numberOfColumns 2 -adjustableColumn 1 $layoutName;       
+            textFieldGrp -label $translatorsFileRules[$i]
+				-editable true
+				-text $translatorsFileRules[$i + 1]
+				-adjustableColumn 2             //make textField autosize with size change of project window
+				$name;
+			symbolButton -image "navButtonBrowse.png" -c $cmd -enable true $browseButtonName;	
+		setParent ..;
+    }
+
+    setParent $parent;
+}
+
+proc buildCustomDataLocations(string $parent)
+{
+    setParent $parent;
+    
+    columnLayout -adjustableColumn true customDataLocationsColumn;   
+    
+    //The reason for creating rowLayout is to disable autosizing of button
+    rowLayout;
+        button -label (uiRes("m_projectWindow.kAddNewFileRule")) -c "np_addNewFileRule";  
+    setParent ..;   
+
+    //build the column of the cumstom data file rules
+    string $customDataFileRules[] = np_getCustomDataFileRules();        
+    //clean up the custom data list.   
+    global string $gCustomDataLocationList[];
+    $gCustomDataLocationList = {};        
+    
+    int $listSize = size($customDataFileRules);
+    for($i = 0; $i < $listSize; $i += 2)
+    {
+        $gCustomDataLocationList[$i / 2] = $customDataFileRules[$i];  //fill in the list
+        
+        string $layoutName = formValidObjectName("np_rowLayout" + $customDataFileRules[$i]);   
+        string $browseButtonName = formValidObjectName("np_symbolButton" + $customDataFileRules[$i]);  
+        string $name = formValidObjectName("np_customLocation" + $customDataFileRules[$i]);
+        string $cmd = "np_fileBrowserForFileRulesLocation " + $name;
+        string $removeCmd = "np_removeCustomFileRule \"" + $customDataFileRules[$i] + "\"";
+        rowLayout -numberOfColumns 3 -adjustableColumn 1 $layoutName;
+            textFieldGrp -label $customDataFileRules[$i]
+				-editable true
+				-text $customDataFileRules[$i + 1]
+				-adjustableColumn 2         //enable autosize of textField with size change of project window
+				$name;
+			symbolButton -image "navButtonBrowse.png" -c $cmd -enable true $browseButtonName;
+			button -label (uiRes("m_projectWindow.kRemoveForCustom")) -c $removeCmd;    
+		setParent ..;		
+    }
+
+    setParent $parent;
+}
+
+proc string buildWorkspaceFileRulesInfoArea(string $parent)
+{
+    setParent $parent;
+    
+    scrollLayout -cr true workspaceFileRulesInfoArea;
+        frameLayout 
+			-collapsable true -collapse false 
+			-label (uiRes("m_projectWindow.kPrimaryProjectLocations"))
+			primaryProjectLocationsFrame;
+		    buildPrimaryProjectLocations("primaryProjectLocationsFrame");
+		       
+		setParent workspaceFileRulesInfoArea;
+		    
+        frameLayout 
+		    -collapsable true -collapse true 
+		    -label (uiRes("m_projectWindow.kSecondaryProjectLocations"))
+		    secondaryProjectLocationsFrame;
+	        buildSecondaryProjectLocations("secondaryProjectLocationsFrame");  
+		    
+		setParent workspaceFileRulesInfoArea;
+
+        frameLayout 
+            -collapsable true -collapse true 
+            -preCollapseCommand "np_updateTranslatorDataLocations"            
+            -preExpandCommand "np_updateTranslatorDataLocations"            
+            -label (uiRes("m_projectWindow.kTranslatorDataLocations"))
+            translatorDataLocationsFrame;
+            buildTranslatorDataLocations("translatorDataLocationsFrame");
+		    
+		setParent workspaceFileRulesInfoArea;
+		    
+        frameLayout 
+		    -collapsable true -collapse true 
+		    -preCollapseCommand "np_updateTranslatorDataLocations"            
+		    -preExpandCommand "np_updateTranslatorDataLocations"            
+		    -label (uiRes("m_projectWindow.kCustomDataLocations"))
+		    customDataLocationsFrame;	        
+	        buildCustomDataLocations("customDataLocationsFrame");
+    
+    setParent $parent;
+
+    return "workspaceFileRulesInfoArea";
+}
+
+proc string buildWorkspaceSetupInfo(string $parent)
+{
+    global string $gProjectLocationControl;
+    global string $gProjectNameControl;
+
+    setParent $parent;
+    
+    formLayout workspaceSetupInfo;
+        string $workspaceRootDirectory = `workspace -q -rootDirectory`;	// Get the root directory of the current workspace .
+		string $workspaceLocation = dirname( $workspaceRootDirectory );
+		string $workspaceName = basename( $workspaceRootDirectory, "" );
+		
+		string $newButtonCmd = "np_newButtonCallback";
+		string $browseCmd = "np_fileBrowserForWorkspaceLocation " + $gProjectLocationControl;
+        textFieldButtonGrp -label (uiRes("m_projectWindow.kCurrentProject"))
+				-editable false
+				-text $workspaceName
+				-buttonLabel (uiRes("m_projectWindow.kNewForCurrentProject")) -buttonCommand $newButtonCmd
+				-adjustableColumn 2             //enable autosize of textField with size change of project window
+				$gProjectNameControl;
+		rowLayout -numberOfColumns 2 -adjustableColumn 1 workspaceLocationLayout;
+		        textFieldGrp -label (uiRes("m_projectWindow.kLocation"))
+				    -editable false
+				    -text $workspaceLocation
+				    -adjustableColumn 2         //enable autosize of textField with size change of project window
+				    $gProjectLocationControl;
+				symbolButton -image "navButtonBrowse.png" -enable false -c $browseCmd workspaceLocationButton;
+             
+        string $fileRulesInfoArea = buildWorkspaceFileRulesInfoArea("workspaceSetupInfo");
+        
+        formLayout -e 
+            -af $gProjectNameControl left 0 
+			-af $gProjectNameControl right 0 
+			-af $gProjectNameControl top 5 
+			-an $gProjectNameControl bottom
+			-ac workspaceLocationLayout top 0 $gProjectNameControl
+			-af workspaceLocationLayout left 0 
+			-af workspaceLocationLayout right 0 
+			-an workspaceLocationLayout bottom
+			-ac $fileRulesInfoArea top 3 workspaceLocationLayout
+			-af $fileRulesInfoArea left 0 
+			-af $fileRulesInfoArea right 0 
+			-af $fileRulesInfoArea bottom 0 			
+		workspaceSetupInfo;
+    
+    setParent $parent;
+        
+    return "workspaceSetupInfo";
+
+}
+
+global proc np_createNewProjectCallback()
+//
+//	Description:
+//		Create a new workspace and generate all of the
+//		sub directories under it using the user defined defaults.
+//
+{       
+    global string $gProjectLocationControl;
+    global string $gProjectNameControl;
+    
+    string $projectName = `textFieldGrp -q -text $gProjectNameControl`;
+	string $projectLocation = `textFieldGrp -q -fileName $gProjectLocationControl`;
+	
+	int $locationSize = size($projectLocation);
+	string $ok = (uiRes("m_projectWindow.kOkForCreate"));
+	if ($projectName == "") {
+		confirmDialog -message (uiRes("m_projectWindow.kNoProjectNameGiven")) 
+			-button $ok -defaultButton $ok -parent projectWindow;
+		return;
+	}	
+	if ($locationSize <= 0) {
+		confirmDialog -message (uiRes("m_projectWindow.kNoProjectLocationGiven")) 
+			-button $ok -defaultButton $ok -parent projectWindow;
+		return;
+	}	
+    
+    string $project = "";
+	if (match("/$", $projectLocation) != "/") {
+		$project = $projectLocation + "/" + $projectName;
+	} else {
+		$project = $projectLocation + $projectName;
+	}
+
+	string $message;
+	string $displayMsg;
+	// Verify that it doesn't exist.
+	if (`file -q -ex ($project + "/workspace.mel")`) {
+		// Then the project exists.
+		$message = (uiRes("m_projectWindow.kProjectExists"));
+		$displayMsg =`format -s $project $message`;
+		confirmDialog -message $displayMsg 
+			-button $ok -defaultButton $ok -parent projectWindow;
+		return;
+	}
+
+	workspace -cr $project;
+
+	if (!(`file -q -ex $project`)) {
+		$message = (uiRes("m_projectWindow.kFailedToCreateProject"));
+		$displayMsg =`format -s $project $message`;
+		confirmDialog -message $displayMsg 
+			-button $ok -defaultButton $ok -parent projectWindow;
+		return;
+	}	
+
+	// Open the project
+	//
+	workspace -o $project;
+	
+	// Call the edit callback to set all the values and create
+	// necessary directories
+	//
+	np_editCurrentProjectCallback();
+	
+	// Reset the prefs for the browser with project specific stuff.
+	//
+	np_resetBrowserPrefs;
+	
+	addRecentProject( $project );
+}
+
+global proc np_editCurrentProjectCallback()
+//
+//  Description:
+//      Update the project setup using the user supplied information.
+//
+{
+    string $pathSep = ":";
+	if (`about -nt`) {
+		$pathSep = ";";
+	}
+    
+    // Make sure we go to the project root directory before
+	// creating any new directories.
+	//
+	string	$origDir = `workspace -q -dir`;
+	workspace -dir `workspace -q -rd`;
+	
+	string $locations[];    
+	
+	string $currentFileRuleNameList[];  //to record the list of current file rule name.
+	int $currentFileRuleNameListSize = 0;
+	
+	//update primary project locations
+    string $primaryFileRules[] = np_getPrimaryProjectFileRules(true);
+    
+    int $listSize = size($primaryFileRules);
+    for($i = 0; $i < $listSize; $i += 3)
+    {
+        string $name = formValidObjectName("np_primaryLocation" + $primaryFileRules[$i + 1]);        
+        
+        string $value = `textFieldGrp -q -fileName $name`;
+
+		workspace -fr $primaryFileRules[$i + 1] $value;
+		
+		$currentFileRuleNameList[$currentFileRuleNameListSize++] = $primaryFileRules[$i + 1];
+
+		if ($value != "")
+		{
+			if (tokenize($value, $pathSep, $locations) > 0)
+			{
+				workspace -cr $locations[0];
+			}
+		}
+    }       
+    
+    //update secondary project file rules.
+    string $secondaryFileRules[] = np_getSecondaryProjectFileRules(false);
+    
+    int $listSize = size($secondaryFileRules);
+    for($i = 0; $i < $listSize; $i += 3)
+    {
+        string $name = formValidObjectName("np_secondaryLocation" + $secondaryFileRules[$i + 1]);
+        
+        string $value = `textFieldGrp -q -fileName $name`;
+
+		workspace -fr $secondaryFileRules[$i + 1] $value;
+		
+		$currentFileRuleNameList[$currentFileRuleNameListSize++] = $secondaryFileRules[$i + 1];
+
+		if ($value != "")
+		{
+			if (tokenize($value, $pathSep, $locations) > 0)
+			{
+				workspace -cr $locations[0];
+			}
+		}
+    }               		               
+    
+    //update translators file rules.            
+    global string $gTranslatorDataLocationList[];     
+    
+    int $listSize = size($gTranslatorDataLocationList);
+    for($i = 0; $i < $listSize; $i++)
+    {
+        string $name = formValidObjectName("np_translatorLocation" + $gTranslatorDataLocationList[$i]);
+        
+        string $value = `textFieldGrp -q -fileName $name`;
+
+		workspace -fr $gTranslatorDataLocationList[$i] $value;
+		
+		$currentFileRuleNameList[$currentFileRuleNameListSize++] = $gTranslatorDataLocationList[$i];
+
+		if ($value != "")
+		{
+			if (tokenize($value, $pathSep, $locations) > 0)
+			{
+				workspace -cr $locations[0];
+			}
+		}
+    }       
+    
+    //update custom data file rules.         
+    global string $gCustomDataLocationList[];        
+    
+    int $listSize = size($gCustomDataLocationList);
+    for($i = 0; $i < $listSize; $i++)
+    {
+        string $name = formValidObjectName("np_customLocation" + $gCustomDataLocationList[$i]);;
+        
+        string $value = `textFieldGrp -q -fileName $name`;
+
+		workspace -fr $gCustomDataLocationList[$i] $value;
+		
+		$currentFileRuleNameList[$currentFileRuleNameListSize++] = $gCustomDataLocationList[$i];
+
+		if ($value != "")
+		{
+			if (tokenize($value, $pathSep, $locations) > 0)
+			{
+				workspace -cr $locations[0];
+			}
+		}
+    } 
+    
+    //get the list of file rules that are removed by user 
+    //and then remove this list from the current workspace.
+    string $fileRuleList[] = `workspace -q -frl`;
+    $fileRuleList = stringArrayRemove($currentFileRuleNameList, $fileRuleList);
+    
+    int $listSize = size($fileRuleList);
+    for($i = 0; $i < $listSize; $i++)
+    {
+        workspace -rfr $fileRuleList[$i];
+    }
+		
+	workspace -u;
+    workspace -s;              
+
+	// Restore the original directory
+	//
+	workspace -dir $origDir;
+	
+	deleteUI projectWindow;
+}
+
+proc buildProjectWindowMainForm(string $parent)
+{    
+    setParent $parent;
+    
+    formLayout projectWindowMainForm;
+        formLayout projectWindowButtonArea;
+            button -label (uiRes("m_projectWindow.kAcceptForProjectWindow")) 
+                -c "np_editCurrentProjectCallback"
+                acceptButton;
+            button -label (uiRes("m_projectWindow.kCancelForProjectWindow")) 
+                -c "deleteUI projectWindow;"
+                cancelButton;
+            
+            formLayout -e 
+				-af acceptButton "left" 5
+				-af acceptButton "bottom" 5
+				-an acceptButton "top"
+				-ap acceptButton "right" 3 50
+				-af cancelButton "bottom" 5
+				-af cancelButton "right" 5
+				-an cancelButton "top"
+				-ac cancelButton "left" 5 acceptButton
+				projectWindowButtonArea;
+			
+		setParent ..;
+		
+		string $workspaceSetupInfo = buildWorkspaceSetupInfo("projectWindowMainForm");
+		
+		formLayout -e 
+		    -af workspaceSetupInfo top 0 
+		    -af workspaceSetupInfo left 0
+		    -af workspaceSetupInfo right 0
+			-ac workspaceSetupInfo bottom 5 projectWindowButtonArea
+			-an projectWindowButtonArea top
+			-af projectWindowButtonArea left 0 
+			-af projectWindowButtonArea right 0
+			-af projectWindowButtonArea bottom 0
+		projectWindowMainForm;		
+		   
+    setParent $parent;
+}
+
+global proc np_callbackForView(int $mode)
+//
+//  Description:
+//      the callback for switching the view of data locations.
+//      The mode of view:
+//          1. View in Nice names
+//          2. View in File Rules
+//
+{
+    //labels of primary file rules.
+    string $primaryFileRules[] = np_getPrimaryProjectFileRules(false);
+    string $name = "";
+    string $labelName = "";
+    
+    int $listSize = size($primaryFileRules);
+    for($i = 0; $i < $listSize; $i += 3)
+    {
+        $name = formValidObjectName("np_primaryLocation" + $primaryFileRules[$i + 1]);  
+        
+        if($mode == 1)
+        {
+            $labelName = $primaryFileRules[$i];
+        }
+        else if($mode == 2)
+        {
+            $labelName = $primaryFileRules[$i + 1];
+        }
+        
+        textFieldGrp -e -label $labelName $name;
+    }       
+    
+    
+    //labels of secondary file rules.
+    string $secondaryFileRules[] = np_getSecondaryProjectFileRules(false);
+    
+    int $listSize = size($secondaryFileRules);
+    for($i = 0; $i < $listSize; $i += 3)
+    {
+        $name = formValidObjectName("np_secondaryLocation" + $secondaryFileRules[$i + 1]);
+        
+        if($mode == 1)
+        {
+            $labelName = $secondaryFileRules[$i];
+        }
+        else if($mode == 2)
+        {
+            $labelName = $secondaryFileRules[$i + 1];
+        }
+        
+        textFieldGrp -e -label $labelName $name;      
+    }
+}
+
+global proc np_blankAllFileRulesTextFields()
+//
+//  Description:
+//      The callback of the menuItem "Clear Settings", make all the text files blank
+//
+{
+    global string $gCustomDataLocationList[];
+    global string $gTranslatorDataLocationList[];        
+
+    //blank text fields of primary file rules.
+    string $primaryFileRules[] = np_getPrimaryProjectFileRules(false);
+    
+    int $listSize = size($primaryFileRules);
+    for($i = 0; $i < $listSize; $i += 3)
+    {
+        string $name = formValidObjectName("np_primaryLocation" + $primaryFileRules[$i + 1]);
+        
+        textFieldGrp -e -text "" $name;
+    }       
+    
+    //blank text fields of secondary file rules.
+    string $secondaryFileRules[] = np_getSecondaryProjectFileRules(false);
+    
+    int $listSize = size($secondaryFileRules);
+    for($i = 0; $i < $listSize; $i += 3)
+    {
+        string $name = formValidObjectName("np_secondaryLocation" + $secondaryFileRules[$i + 1]);
+        
+        textFieldGrp -e -text "" $name;
+    }   
+    
+    //change radio button to "edit"
+    if(`radioButtonGrp -q -select SecondaryProjectLocationsRadioButtonGrp` == 1)
+    {
+        radioButtonGrp -e -select 2 SecondaryProjectLocationsRadioButtonGrp;
+        np_editCallbackForSecondaryProjectLocations();        
+    }
+    
+    //blank text fields of translators file rules.
+    int $listSize = size($gTranslatorDataLocationList);            
+    for($i = 0; $i < $listSize; $i++)
+    {
+        string $name = formValidObjectName("np_translatorLocation" + $gTranslatorDataLocationList[$i]);
+        
+        textFieldGrp -e -text "" $name;
+    }   
+    
+    //change radio button to "edit"
+    if(`radioButtonGrp -q -select TranslatorDataLocationsRadioButtonGrp` == 1)
+    {
+        radioButtonGrp -e -select 2 TranslatorDataLocationsRadioButtonGrp;
+        np_editCallbackForTranslatorDataLocations();        
+    }
+    
+    //blank text fields of custom data file rules.            
+    int $listSize = size($gCustomDataLocationList);
+    for($i = 0; $i < $listSize; $i++)
+    {
+        string $name = formValidObjectName("np_customLocation" + $gCustomDataLocationList[$i]);;
+        
+        textFieldGrp -e -text "" $name;
+    } 
+}
+
+global proc np_resetAllFileRulesTextFields()
+//
+//  Description:
+//      The callback of the menuItem "Reset Settings", reverts the settings to the factory settings.
+//
+{               
+    //reset text fields of primary file rules.
+    string $primaryFileRules[] = np_getPrimaryProjectFileRules(true);
+    
+    int $listSize = size($primaryFileRules);
+    for($i = 0; $i < $listSize; $i += 3)
+    {
+        string $name = formValidObjectName("np_primaryLocation" + $primaryFileRules[$i + 1]);
+        
+        textFieldGrp -e -text $primaryFileRules[$i + 2] $name;
+    }    
+    
+    //reset text fields of secondary file rules. 
+    //change radio button to "Use Defaults"
+    if(`radioButtonGrp -q -select SecondaryProjectLocationsRadioButtonGrp` == 2)
+    {
+        radioButtonGrp -e -select 1 SecondaryProjectLocationsRadioButtonGrp;
+        np_useDefaultForSecondaryProjectLocations();        
+    }
+    
+    //reset text fields of translators file rules.
+    //change radio button to "edit"
+    if(`radioButtonGrp -q -select TranslatorDataLocationsRadioButtonGrp` == 2)
+    {
+        radioButtonGrp -e -select 1 TranslatorDataLocationsRadioButtonGrp;
+        np_useDefaultForTranslatorDataLocations();        
+    }
+}
+
+proc buildProjectWindowMenuBar(string $parent)
+{
+    setParent $parent;
+    
+    menuBarLayout projectWindowMenuBar;
+        menu -label (uiRes("m_projectWindow.kEditForMenu"));
+//deferred feature
+//          menuItem -label _L10N(kSaveSettings, "Save Settings");
+//          menuItem -label _L10N(kLoadSettings, "Load Settings");
+            menuItem -label (uiRes("m_projectWindow.kResetSettings")) -c np_resetAllFileRulesTextFields;
+            menuItem -label (uiRes("m_projectWindow.kClearSettings")) -c np_blankAllFileRulesTextFields;   
+            menuItem -divider true;
+            radioMenuItemCollection;
+                menuItem -label (uiRes("m_projectWindow.kViewInNiceNames")) -radioButton on -c "np_callbackForView 1";
+                menuItem -label (uiRes("m_projectWindow.kViewInFileRules")) -radioButton off -c "np_callbackForView 2";                
+        menu -label (uiRes("m_projectWindow.kHelpForMenu")) -helpMenu true;
+            menuItem -label (uiRes("m_projectWindow.kHelpOnProjectWindow"))
+                -enableCommandRepeat false
+                -command "showHelp \"ProjectWindow\"";
+    
+    setParent $parent;
+}
+
+proc intializeGlobalValueForProjectWindow()
+{
+    //initialize global value
+    global string $gCustomDataLocationList[];
+    global string $gTranslatorDataLocationList[];               
+    global string $gProjectLocationControl;
+    global string $gProjectNameControl;    
+    global int    $gBoIsEditMode;  
+    
+    $gCustomDataLocationList = {};    
+    $gTranslatorDataLocationList = {};                     
+    $gProjectLocationControl = "gProjectLocationControl";
+    $gProjectNameControl = "gProjectNameControl";    
+    $gBoIsEditMode = true;
+}
+
+global proc projectWindow( )
+{
+    if(`window -ex projectWindow`)
+    {
+        string $childList[] = `tabLayout -q -ca projectWindowLayout`;
+        int $listSize = size($childList);
+        for($i = 0; $i < $listSize; $i++)
+        {
+            deleteUI $childList[$i];
+        }
+        setParent projectWindowLayout;
+    }   
+    else
+    {
+        window -title (uiRes("m_projectWindow.kProjectWindow")) 
+            -iconName (uiRes("m_projectWindow.kProject"))
+            -restoreCommand "np_updateTranslatorDataLocations" 
+            -width 550 -height 500 projectWindow;
+            buildProjectWindowMenuBar("projectWindow");
+            tabLayout -tv false projectWindowLayout;
+    }     
+    
+    intializeGlobalValueForProjectWindow();    
+        
+    buildProjectWindowMainForm("projectWindowLayout"); 
+      
+	showWindow projectWindow;
+}

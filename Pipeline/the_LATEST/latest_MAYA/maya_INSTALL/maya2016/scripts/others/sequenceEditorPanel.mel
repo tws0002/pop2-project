@@ -1,0 +1,1528 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Creation Date:  August 30, 2009
+//
+//  Description:
+//      This script a panel which has a sequence editor for managing shot timings.
+//	within it.
+//
+global int $gSeqEdUpdateScriptJob = -1;
+
+global proc buildSequenceContextHelpItems(string $nameRoot, string $menuParent)
+//
+//  Description:
+//		Build context sensitive menu items
+//		
+//  Input Arguments:
+//		$nameRoot - name to use as the root of all item names
+//		$menuParent - the name of the parent of this menu
+//
+//  Return Value:
+//      None
+//
+{
+	menuItem -label (uiRes("m_sequenceEditorPanel.kHelpSequence")) 
+		-annotation (uiRes("m_sequenceEditorPanel.kHelpSequenceAnnot"))
+		-enableCommandRepeat false
+		-command "showHelp SequenceEditor";
+}
+
+global proc createSequenceEditorPanel (string $whichPanel)
+//
+//  Description:
+//		Define the editors that are used in this panel.  No
+//		controls (widgets) are created at this point.
+//
+{
+	//  create unique names for editors based on panel name
+	//
+	string $sequenceEditor = sequenceEditorNameFromPanel($whichPanel);
+	string $highlightConnection = ($whichPanel + "HighlightConnection");
+
+	// WARNING: Changes here must also be made in buildNewSceneUI.mel
+	//
+    // Create the sequence editor.
+	selectionConnection $highlightConnection;
+
+	clipEditor
+		-unParent
+		-manageSequencer true
+		-mainListConnection sequenceEditorList
+ 		-highlightConnection $highlightConnection
+		$sequenceEditor;
+
+	selectionConnection -edit -parent $sequenceEditor $highlightConnection;
+
+    registerEditor $sequenceEditor sequenceEditorList;
+    
+	if (`exists sequenceEditorRegisterActions`) 
+		sequenceEditorRegisterActions $sequenceEditor;	
+
+	//	Add support for the Context Sensitive Help Menu.
+	//
+	addContextHelpProc $whichPanel "buildSequenceContextHelpItems";
+
+}
+
+// Swaps two neighboring shots on the same track while
+// preserving gaps between them.
+//
+global proc swapShots(string $shot1, string $shot2)
+{
+	if(( $shot1 == "") || ($shot2 == ""))
+		return;
+
+	int $track = `getAttr ($shot1 + ".track")`;
+	int $shot1Start = `getAttr ($shot1 + ".sequenceStartFrame")`;
+	int $shot2Start = `getAttr ($shot2 + ".sequenceStartFrame")`;
+	string $shotA, $shotB;
+	int $duration, $shotAendFrame, $shotBendFrame, $newShotAStart, $shotBStart, $shotAStart;
+	
+	if($shot1Start < $shot2Start)
+	{
+		$shotA = $shot1;
+		$shotB = $shot2;
+		$shotAStart = $shot1Start;
+		$shotBStart = $shot2Start;
+	}else{
+		$shotA = $shot2;
+		$shotB = $shot1;
+		$shotAStart = $shot2Start;
+		$shotBStart = $shot1Start;
+	}
+		
+	$shotBendFrame = `getAttr ($shotB + ".sequenceEndFrame")`;
+	$shotAendFrame = `getAttr ($shotA + ".sequenceEndFrame")`;
+	$duration = $shotBendFrame - $shotBStart + 1;
+	$gapDuration = $shotBStart - $shotAendFrame;
+	$newShotAStart = $shotAStart + $gapDuration + $duration - 1;
+
+	// These two setAttrs are here to force undo to work properly.
+	setAttr ($shotB + ".track") $track;
+	setAttr ($shotA + ".track") $track;
+	// Switch the actual starting positions
+	setAttr ($shotB + ".sequenceStartFrame") $shotAStart;
+	setAttr ($shotA + ".sequenceStartFrame") $newShotAStart;
+	// Set both shots back to the initial track.
+	setAttr ($shotB + ".track") $track;
+	setAttr ($shotA + ".track") $track;
+}
+
+// Swaps shot with its immediately left neighbor
+// on the same track
+// If no shot is passed-in, uses the first 
+// selected shot
+global proc swapShotLeft(string $shot)
+{
+	if ($shot == ""){
+		string $selectedShots[] = `ls -sl -type shot`;
+		$shot = $selectedShots[0];
+		if($shot == "")
+			// no shot selected or passed-in.  Do nothing
+			return;
+	}
+	int $track = `getAttr ($shot + ".track")`;
+	int $time = `getAttr ($shot + ".sequenceStartFrame")`;
+	string $shots[] = getShotsOnTrack($track);
+	$shots = getShotsBeforeSeqTime($shots, $time, $track);
+	int $shotListSize = size($shots);
+	if($shotListSize > 0){
+		sortShotlist($shots);
+		string $swapShot = $shots[size($shots)-1];
+		swapShots($shot,$swapShot);
+	}	
+}
+
+// Swaps shot with its immediately right neighbor
+// on the same track.
+// If no shot is passed-in, uses the first 
+// selected shot
+global proc swapShotRight(string $shot)
+{
+	if ($shot == ""){
+		string $selectedShots[] = `ls -sl -type shot`;
+		$shot = $selectedShots[0];
+		if($shot == "")
+			// no shot selected or passed-in.  Do nothing
+			return;
+	}
+	int $track = `getAttr ($shot + ".track")`;
+	int $time = `getAttr ($shot + ".sequenceEndFrame")`;
+	string $shots[] = getShotsOnTrack($track);
+	$shots = getShotsAfterSeqTime($shots, $time, $track);
+	sortShotlist($shots);
+	string $swapShot = $shots[0];
+	swapShots($shot,$swapShot);
+}
+
+global proc string[] getShotsOnTrack(int $inTrack)
+{
+	string $shots[] = `ls -type shot`;
+	string $retShots[];
+	string $shot, $thisTrack;
+	for ($shot in $shots)
+	{
+		$thisTrack = `getAttr ($shot + ".track")`;
+		if ($thisTrack == $inTrack)
+		{
+			$retShots[size($retShots)] = $shot;
+		}
+	}
+	return $retShots;
+}
+
+global proc string getSequencerNode()
+{
+	// Get the writable sequencer node from the sequence manager.
+	string $seqNode = `sequenceManager -q -writableSequencer`;
+
+	return $seqNode;
+}
+
+global proc string getSequencerViewCamera()
+{
+//
+//  Get the camera currently viewing the scene in which the sequencer is displayed.
+//
+	string $cam = "";
+
+	// Get the panel type for the panel in which the sequencer is drawing.
+	string $editor = `sequenceManager -q -modelPanel`;
+	string $panel  = `editor -q -panel $editor`;
+
+	// Attempt to find a modelEditor contained within the current panel
+	//
+	string $editors[]=`lsUI -ed`;
+	for ($editor in $editors)
+	{
+		if ( 0!= `modelEditor -q -ex $editor` )
+		{
+			string $parentControl=`editor -q -p $editor`;
+
+			if ( $parentControl != "" )
+			{
+				string $tokens[];
+				int $numTokens=`tokenize $parentControl "|" $tokens`;
+				while ( 0 < $numTokens )
+				{
+					$parentControl=$tokens[$numTokens-1];
+
+					if ( $parentControl == $panel )
+					{
+						// This panel contains a modelEditor - return its camera
+						//
+						$cam=`modelEditor -q -camera $editor`;
+						break;
+					}
+					$numTokens--;
+				}
+			}
+		}
+	}
+
+	// Did the panel have a modelEditor that revealed a camera? If not, revert to previous behaviour.
+	//
+	if (""==$cam)
+	{
+		string $panelType = `getPanel -typeOf $panel`;
+
+		// If it is a modelPanel, return its camera.
+		if ($panelType == "modelPanel")
+			$cam = `modelPanel -q -camera $panel`;
+		else if ($panelType == "scriptedPanel")
+		{
+			string $scriptedType = `scriptedPanel -q -type $panel`;
+
+			// If it is a Stereo panel, return either the cameraSet or the camera rig.
+			if ($scriptedType == "Stereo")
+			{
+				$cam = `stereoCameraView -q -cameraSet $editor`;
+				if ($cam == "")
+					$cam = `stereoCameraView -q -rigRoot $editor`;
+			}
+		}
+	}
+
+	return $cam;
+}
+
+// 
+global proc sequencerControllingPlayback( int $mode )
+{
+	setAttr ( getSequenceManager() + ".enabled") $mode;
+}
+
+// 
+global proc int isSequencerControllingPlayback()
+{
+	return `getAttr ( getSequenceManager() + ".enabled")`;
+}
+
+
+//
+// Update the icons and playback state as needed, then call Maya's main playback function
+// 0 for sequence playback
+// 1 for sequence playback skipping gaps
+//
+global proc sequencerPlayForward()
+{
+	global string $seqPlayBackwardsButton;
+	global string $seqPlayButton;	
+
+	int $isOscillate = (`playbackOptions -q -loop` == "oscillate");
+	if(( `play -query -state` == 1 ) && (( `play -query -forward` == 1 ) || $isOscillate ))
+	{
+		sequencerPlayStop();
+	}
+	else 
+	{
+		// We do this here since the callback that sets up the
+		// images on the buttons won't get called if we're already
+		// playing back (forward) and hit the "backward" button;
+		// The "playingBack" condition will not have been changed!
+		//
+		sequencerControllingPlayback( true );
+		
+		int $skipGaps = `optionVar -q ignoreGapsDuringPlayback`;
+		if($skipGaps)
+		{
+			setAttr (getSequenceManager() + ".skipGaps") 1;
+		}
+		else
+		{
+			setAttr (getSequenceManager() + ".skipGaps") 0;
+		}
+		
+		symbolButton -edit
+			-image "timestop.png"
+			$seqPlayButton;
+		
+		
+
+		symbolButton -edit
+			-image "timerev.png"
+			$seqPlayBackwardsButton;
+
+			play -forward on -playSound `optionVar -q "sequenceSoundsEnabled"`;
+	}
+}
+
+global proc int seqPlayStoppedUpdateCallback() {
+	sequencerControllingPlayback( false );
+	setAttr (getSequenceManager() + ".skipGaps") 0;
+	sequencerPlaybackStateChanged();
+	return 1;
+}
+
+//
+// Update the icons and playback state as needed
+//
+global proc sequencerPlayStop()
+{
+	play -state off;
+	seqPlayStoppedUpdateCallback();
+}
+
+
+//
+// Update the icons and playback state as needed, then call Maya's main playback function
+//
+global proc sequencerPlayBackward()
+{
+	global string $seqPlayBackwardsButton;
+        global string $seqPlayButton;        
+
+	int $isOscillate = (`playbackOptions -q -loop` == "oscillate");
+	if(( `play -query -state` == 1 ) &&(( `play -query -forward` == 0 ) || $isOscillate ))
+        {
+		sequencerPlayStop();
+        }
+        else 
+	{
+                // We do this here since the callback that sets up the
+                // images on the buttons won't get called if we're already
+                // playing back (forward) and hit the "backward" button;
+                // The "playingBack" condition will not have been changed!
+                //
+
+		sequencerControllingPlayback( true );
+                symbolButton -edit
+                        -image "timestop.png"
+                        $seqPlayBackwardsButton;
+		symbolButton -edit
+			-image "timeplay.png"
+			$seqPlayButton;		
+
+		playButtonBackward;
+        }
+}
+
+global proc sequencerPlaybackStateChanged()
+{
+	global string $seqPlayBackwardsButton;
+	global string $seqPlayButton;	
+
+	if( isSequencerControllingPlayback() )
+	{
+		// Nothing to do
+	}
+	else
+	{
+		// No sure who started playback, so reset all icons
+		if (`symbolButton -exists $seqPlayBackwardsButton`) {
+			symbolButton -edit
+				-image "timerev.png"
+				$seqPlayBackwardsButton;
+			symbolButton -edit
+				-image "timeplay.png"
+				$seqPlayButton;
+		}
+	}
+}
+
+
+global proc sequencerGotoEnd() 
+{
+	string $seq = getSequencerNode();
+	if( $seq != "" )
+	{
+		float $max = `getAttr ($seq + ".maxFrame")`;
+		sequenceManager -currentTime $max;
+	}
+	else
+	{
+		currentTime -edit `playbackOptions -query -max`;
+	}
+}
+
+global proc sequencerGotoStart() 
+{
+	string $seq = getSequencerNode();
+	if( $seq != "" )
+	{
+		float $min = `getAttr ($seq + ".minFrame")`;
+		sequenceManager -currentTime $min;
+	}
+	else
+	{
+		currentTime -edit `playbackOptions -query -min`;
+	}
+}
+
+global proc sequencerStepOneFrame( int $step ) 
+{
+	string $seq = getSequencerNode();
+	if( $seq != "" )
+	{
+		float $seqTime = getSequenceTime();
+		$seqTime += $step;	// No looping
+		sequenceManager -currentTime $seqTime;
+	}
+}
+
+
+global proc sequencerGotoShot( int $direction ) 
+{
+	int $track = -1;
+	string $seq = getSequencerNode();
+	if( $seq != "" )
+	{
+		string $shots[] = `ls -type shot`;
+		sortShotlist($shots);
+		float $time = `sequenceManager -q -ct`;
+		string $movingShots[];
+		if ( $direction == 1 )
+		{
+			$movingShots = getShotsAfterSeqTime($shots, $time, $track);
+			if (size ($movingShots) > 0 )
+			{
+				sequenceManager -currentTime `getAttr ( $movingShots[0] + ".sequenceStartFrame" )`;
+			}
+		}
+		else // if ( $direction == -11 )
+		{
+			$movingShots = getShotsBeforeSeqTime($shots, $time, $track);
+			int $len = size ($movingShots);
+			if( $len > 0 )
+			{
+				sequenceManager -currentTime `getAttr ( $movingShots[$len-1] + ".sequenceStartFrame" )`;
+			}
+		}
+		
+	}
+}
+
+global proc sequencerTimeChanged() 
+{
+	sequenceManager -currentTime `floatField -q -v sequencerCurrentTime`;
+}
+
+global proc shotCustomizations( int $state )
+{
+        string $selected[] = getSelectedShots();
+	if (size($selected) != 1 )
+	{
+		error((uiRes("m_sequenceEditorPanel.kShotMustBeSelectedError")));		
+		return;
+	}
+
+	shot -e -makeEditable $state $selected[0];
+}
+
+global proc shotSnap( int $currentTrackOnly, int $next )
+{
+        string $selected[] = getSelectedShots();
+	if (size($selected) != 1 )
+	{
+		error((uiRes("m_sequenceEditorPanel.kShotMustBeSelectedForSnap")));		
+		return;
+	}
+
+        string $selectedShot = $selected[0];
+        
+        int $selectedTrack = `getAttr ($selectedShot + ".track")`;
+        string $allShots[] = `ls -type shot`;
+	string $shots[] = stringArrayRemove($selected, $allShots);
+
+	// nothing to do?
+	if (size($shots) == 0 )
+	{
+		return;
+	}
+
+	// Cull anything not on the current track
+	if( $currentTrackOnly )
+	{
+		int $lastShotIdx = size($shots)-1;
+		for ($i = $lastShotIdx; $i >= 0; $i-- )
+		{
+        		int $shotTrack = `getAttr ($shots[$i] + ".track")`;
+			if( $shotTrack != $selectedTrack )
+			{
+				stringArrayRemoveAtIndex($i, $shots);
+			}
+		}
+	}
+
+	// recheck, nothing to do?
+	if (size($shots) == 0 )
+	{
+		return;
+	}
+
+	if( $next )	
+	{
+		int $selectedLastFrame = `getAttr ($selectedShot + ".sequenceEndFrame")`;
+		int $nextShot = -1;
+		int $minDelta = 999999;
+		for ($i = 0; $i < size($shots); $i++ )
+		{
+			int $shotStartFrame = `getAttr ($shots[$i] + ".sequenceStartFrame")`;
+			int $delta = $shotStartFrame - $selectedLastFrame -1;
+			if( $delta >= 0 && $delta < $minDelta )
+			{
+				$minDelta = $delta;
+				$nextShot = $i;
+			}
+		}
+
+		if( $nextShot != -1 && $minDelta != 0)
+		{
+		
+			moveShot($selectedShot, $minDelta); 
+		}
+	}
+	else
+	{
+		int $selectedFirstFrame = `getAttr ($selectedShot + ".sequenceStartFrame")`;
+		int $nextShot = -1;
+		int $maxDelta = -999999;
+		for ($i = 0; $i < size($shots); $i++ )
+		{
+			int $shotEndFrame = `getAttr ($shots[$i] + ".sequenceEndFrame")`;
+			int $delta = $shotEndFrame - $selectedFirstFrame + 1;
+			if( $delta <= 0 && $delta > $maxDelta )
+			{
+				$maxDelta = $delta;
+				$nextShot = $i;
+			}
+		}
+
+		if( $nextShot != -1 && $maxDelta != 0)
+		{
+			moveShot($selectedShot, $maxDelta); 
+		}
+	}
+}
+
+
+global proc moveShot(string $shot, int $delta) 
+{
+	int $sequenceStartFrame = `getAttr ($shot + ".sequenceStartFrame")`;
+	int $sequenceEndFrame = `getAttr ($shot + ".sequenceEndFrame")`;
+
+	$sequenceStartFrame += $delta;
+	$sequenceEndFrame += $delta;
+
+	int $track = `getAttr ($shot + ".track")`;
+	setAttr ($shot + ".track") $track;
+	setAttr ($shot + ".sequenceStartFrame") $sequenceStartFrame;
+	setAttr ($shot + ".sequenceEndFrame") $sequenceEndFrame;
+}
+
+//
+// Create a shot using the current time range
+//
+global proc sequencerCreateShot()
+{
+	string $seq = getSequencerNode();
+	if ($seq == "")
+		return;
+
+	float $startTime = `playbackOptions -q -minTime`;
+	float $stopTime = `playbackOptions -q -maxTime`;
+	float $seqTime = getSequenceTime();
+	float $seqEnd = $seqTime + $stopTime - $startTime;
+	
+	string $shotArgs[10];
+	$shotArgs[0] = "shot";
+	$shotArgs[1] = ($startTime);
+	$shotArgs[2] = ($stopTime);
+	$shotArgs[3] = $seqTime;
+	$shotArgs[4] = $seqEnd;
+
+	float $seqMin = `getAttr ($seq + ".minFrame")`;
+	float $seqMax = `getAttr ($seq + ".maxFrame")`;
+	if ($seqTime < $seqMin)
+		setAttr ($seq + ".minFrame") $seqTime;
+	if ($seqEnd > $seqMax)
+		setAttr ($seq + ".maxFrame") $seqEnd;
+
+	$shotArgs[5] = getSequencerViewCamera();
+	$shotArgs[6] = "";	// no image used
+	$shotArgs[7] = 1.0;
+	if (`optionVar -exists createShotOpacity`) {
+		$shotArgs[7] = `optionVar -q createShotOpacity`;
+	}
+	int $wRes = 1024;
+	if (`optionVar -exists createShotWResolution`) {
+		$wRes = `optionVar -query createShotWResolution`;
+	}
+	int $hRes = 778;
+	if (`optionVar -exists createShotHResolution`) {
+		$hRes = `optionVar -query createShotHResolution`;
+	}
+	$shotArgs[8] = $wRes;
+	$shotArgs[9] = $hRes;
+	
+	doCreateShotArgList "1" $shotArgs;
+}
+
+global proc frameSequenceRange (string $editor)
+{
+        string $nodes[] = `ls -type sequencer`;
+
+        if( size($nodes) == 1 )
+        {
+		float $start, $end;
+
+                $start = `getAttr ($nodes[0] + ".minFrame")`;
+                $end = `getAttr ($nodes[0] + ".maxFrame")`;
+
+		clipEditor -edit -frameRange $start $end $editor;
+        }
+}
+
+// Select the subset of the string list of shots passed in 
+// that are:
+//  1) on track $track  (note: $track < 0 implies accepting all tracks)
+//  2) beginning at time $time
+//  3) not named $exclude
+//
+global proc string[] getShotsAtSeqTime(string $shots[], int $time, int $track, string $exclude)
+{
+	string $ret[];
+	string $shot;
+	int $seqStartTime;
+	int $tmpTrack;
+	if ($track < 0)
+	{
+		for($shot in $shots)
+		{
+			$seqStartTime = getAttr($shot+".sequenceStartFrame");
+			if( ($seqStartTime == $time) && ($shot != $exclude) )
+			{
+				$ret[size($ret)] = $shot;
+			}
+		}	
+	}else{
+		for($shot in $shots)
+		{
+			$seqStartTime = getAttr($shot+".sequenceStartFrame");
+			$tmpTrack = getAttr($shot + ".track");
+
+			if(($tmpTrack == $track) && ( $seqStartTime == $time) && ($shot != $exclude ))
+			{
+				$ret[size($ret)] = $shot;
+			}
+		}	
+	}
+	return $ret;	
+}
+
+// Select the subset of the string list of shots passed in 
+// that are:
+//  1) on track $track  (note: $track < 0 implies accepting all tracks)
+//  2) beginning after time $time
+//
+global proc string[] getShotsAfterSeqTime(string $shots[], int $time, int $track)
+{
+	string $ret[];
+	string $shot;
+	int $seqStartTime;
+	int $tmpTrack;
+	if ($track < 0)
+	{
+		for($shot in $shots)
+		{
+			$seqStartTime = getAttr($shot+".sequenceStartFrame");
+			if($seqStartTime > $time)
+			{
+				$ret[size($ret)] = $shot;
+			}
+		}	
+	}else{
+		for($shot in $shots)
+		{
+			$seqStartTime = getAttr($shot+".sequenceStartFrame");
+			$tmpTrack = getAttr($shot + ".track");
+
+			if(($tmpTrack == $track) && ( $seqStartTime > $time))
+			{
+				$ret[size($ret)] = $shot;
+			}
+		}	
+	}
+	return $ret;	
+}
+
+// Select the subset of the string list of shots passed in 
+// that are:
+//  1) on track $track  (note: $track < 0 implies accepting all tracks)
+//  2) beginning before time $time
+//
+global proc string[] getShotsBeforeSeqTime(string $shots[], int $time, int $track)
+{
+	string $ret[];
+	string $shot;
+	int $seqStartTime;
+	int $tmpTrack;
+	if ($track < 0)
+	{
+		for($shot in $shots)
+		{
+			$seqStartTime = getAttr($shot+".sequenceStartFrame");
+			if($seqStartTime < $time)
+			{
+				$ret[size($ret)] = $shot;
+			}
+		}	
+	}else{
+		for($shot in $shots)
+		{
+			$seqStartTime = getAttr($shot+".sequenceStartFrame");
+			$tmpTrack = getAttr($shot + ".track");
+
+			if(($tmpTrack == $track) && ( $seqStartTime < $time))
+			{
+				$ret[size($ret)] = $shot;
+			}
+		}	
+	}
+	return $ret;	
+}
+
+// For each shot node in the passed-in string array, move it in sequence
+// time a distance $delta later in time.
+// $delta can be negative.
+global proc moveShotsBySequenceTime(string $shots[], int $delta)
+{
+	string $shot;
+	for($shot in $shots)
+	{
+		moveShot($shot,$delta);
+	}
+}
+
+// Convenience method for shotCompress and shotExpand
+//
+// Builds a list of shots corresponding to one of three
+// modes.
+//
+// Modes:
+//	1) Shots on selected Track.
+//	2) Selected -- shots that are selected
+//	3) All shots -- all unlocked shots
+//
+global proc buildShotList(string $shots[], int $mode, int $track){
+
+	if (($mode < 1) || ($mode > 3)){
+		error((uiRes("m_sequenceEditorPanel.kBuildShotlistModeError")) );
+	}
+
+    string $selectedShots[] = getSelectedShots();
+    string $allShots[] = `ls -type shot`;
+    string $shot;
+    int $tmpTrack, $locked;
+
+	if (size($selectedShots) <=0)
+		if ($mode == 2){
+			error( (uiRes("m_sequenceEditorPanel.kBuildShotlistShotError")) );
+		}
+	
+	if ($mode == 1){
+		// shots on selected track
+		//$track = getAttr($selectedShots[0]+".track");
+		// find a shot on this track
+		for ($shot in $allShots)
+		{
+			$tmpTrack = `getAttr ($shot + ".track")`;
+			if ($tmpTrack == $track)
+			{
+				$locked = `shotTrack -q -l $shot`;
+				break;
+			}	
+		}
+		// check if that track is locked.
+		if ($locked){
+			error( (uiRes("m_sequenceEditorPanel.kBuildShotlistTrackLockedError")) );
+		}
+		
+		// only add the shots on this track
+		clear($shots);
+		for ($shot in $allShots){
+			$tmpTrack = getAttr($shot+".track");
+			if( (isShotActive($shot)) && ($tmpTrack == $track) ){
+				$shots[size($shots)] = $shot;
+			}
+		}
+	}else if($mode == 2){
+		// selected shots
+		// only add shots from tracks that are not locked
+		int $locked;
+		for ($shot in $selectedShots){
+			$locked = `shotTrack -q -l $shot`;
+			if ( (isShotActive($shot)) && ($locked == 0) ){
+				$shots[size($shots)] = $shot;
+			}
+		}
+	}else{ // $mode == 3
+		// only add shots from tracks that are not locked
+		int $locked;
+		for ($shot in $allShots){
+			$locked = `shotTrack -q -l $shot`;
+			if ( (isShotActive($shot)) && ($locked == 0) ){
+				$shots[size($shots)] = $shot;
+			}
+		}
+	}
+	return;
+}
+
+
+// Work in one of threee ways to 'compress' shots in the sequencer
+// After being compressed, no shots should have gaps between them and
+// their previous or subsequent neighbors.
+//
+// Modes:
+//	1) Shots on selected Track.
+//	2) Selected -- compress shots that are selected
+//	3) All shots -- compress all unlocked shots
+//
+global proc shotCompress(int $mode, int $track)
+{
+	string $shots[];
+	buildShotList($shots, $mode, $track);
+
+	// Having built the list of shots to compress, process them
+
+	sortShotlist($shots);	
+	int $numShots = size($shots);
+	// For each shot (skip the first), move it earlier in sequence time to 
+	// line up gaplessly with its prior neighboring shot
+	//
+	for($i = 1; $i < $numShots; $i++)
+	{
+		int $seqStartFrame = getAttr($shots[$i]+".sequenceStartFrame");
+		int $prevShotSeqEndFrame = getAttr($shots[$i-1]+".sequenceEndFrame");
+		int $delta = $seqStartFrame - $prevShotSeqEndFrame - 1;
+
+		string $movingShots[];
+		// move all subsequent frames forward by this amount.	
+		if($mode == 1){
+			// only compress this track
+			$movingShots = getShotsAfterSeqTime($shots, $prevShotSeqEndFrame, $track);
+		}else{
+			// compress all tracks
+			$movingShots = getShotsAfterSeqTime($shots, $prevShotSeqEndFrame, -1);
+		}
+		moveShotsBySequenceTime($movingShots, -$delta);
+	}
+}
+
+// Work in one of threee ways to 'expand' shots in the sequencer
+// After being expanded, no expanded shots should overlap in
+// the sequencer timeline.  Actual Gaps between shots are maintaned,
+// but the shots are expanded later in time to eliminate
+// overlaps.
+//
+// [shot1]----[shot2]
+// --[shot3]---------
+//
+// Becomes:
+// [shot1]---------[shot2]
+// -------[shot3]---------
+//
+// Modes:
+//	1) Shots on selected Track.
+//	2) Selected -- expand shots that are selected
+//	3) All shots -- expand all unlocked shots
+//
+global proc shotExpand(int $mode, int $track)
+{
+	string $shots[];
+	buildShotList($shots, $mode, $track);
+
+	// Having built the list of shots to expand, process them
+
+	sortShotlist($shots);	
+	int $numShots = size($shots);
+	// For each shot (skip the first), move it earlier in sequence time to 
+	// line up gaplessly with its prior neighboring shot
+	//
+	for($i = 1; $i < $numShots; $i++)
+	{
+		int $seqStartFrame = getAttr($shots[$i]+".sequenceStartFrame");
+		int $prevShotSeqEndFrame = getAttr($shots[$i-1]+".sequenceEndFrame");
+		int $prevShotSeqStartFrame = getAttr($shots[$i-1]+".sequenceStartFrame");
+		int $delta = $seqStartFrame - $prevShotSeqEndFrame - 1;
+		if ($delta > 0)
+			$delta = 0;
+
+		string $movingShots[];
+		// move all subsequent frames forward by this amount.	
+		if($mode == 1){
+			// only expand this track
+			$movingShots = getShotsAfterSeqTime($shots, $prevShotSeqStartFrame, $track);
+			$movingShotsAt = getShotsAtSeqTime($shots, $prevShotSeqStartFrame, $track, $shots[$i-1]);
+			$movingShots = stringArrayCatenate($movingShots,$movingShotsAt);
+		}else{
+			// expand all tracks
+			$movingShots = getShotsAfterSeqTime($shots, $prevShotSeqStartFrame, -1);
+			$movingShotsAt = getShotsAtSeqTime($shots, $prevShotSeqStartFrame, -1, $shots[$i-1]);
+			$movingShots = stringArrayCatenate($movingShots,$movingShotsAt);
+		}
+		moveShotsBySequenceTime($movingShots, -$delta);
+	}
+}
+
+// Work in one of threee ways to 'expand and compress' shots in the sequencer
+// After being expanded and compressed, no shots should have gaps between and 
+// none of them should overlap.
+//
+// Modes:
+//	1) Shots on selected Track.
+//	2) Selected -- expand shots that are selected
+//	3) All shots -- expand all unlocked shots
+//
+global proc shotExpandAndCompress(int $mode, int $track)
+{
+	string $shots[];
+	buildShotList($shots, $mode, $track);
+
+	// Having built the list of shots to expand, process them
+
+	sortShotlist($shots);	
+	int $numShots = size($shots);
+	// For each shot (skip the first), move it earlier in sequence time to 
+	// line up gaplessly with its prior neighboring shot
+	//
+	for($i = 1; $i < $numShots; $i++)
+	{
+		int $seqStartFrame = getAttr($shots[$i]+".sequenceStartFrame");
+		int $prevShotSeqEndFrame = getAttr($shots[$i-1]+".sequenceEndFrame");
+		int $prevShotSeqStartFrame = getAttr($shots[$i-1]+".sequenceStartFrame");
+		int $delta = $seqStartFrame - $prevShotSeqEndFrame - 1;
+
+		string $movingShots[];
+		// move all subsequent frames forward by this amount.	
+		if($mode == 1){
+			// only modify this track
+			$movingShots = getShotsAfterSeqTime($shots, $prevShotSeqStartFrame, $track);
+			$movingShotsAt = getShotsAtSeqTime($shots, $prevShotSeqStartFrame, $track, $shots[$i-1]);
+			$movingShots = stringArrayCatenate($movingShots,$movingShotsAt);
+		}else{
+			// modify all tracks
+			$movingShots = getShotsAfterSeqTime($shots, $prevShotSeqStartFrame, -1);
+			$movingShotsAt = getShotsAtSeqTime($shots, $prevShotSeqStartFrame, -1, $shots[$i-1]);
+			$movingShots = stringArrayCatenate($movingShots,$movingShotsAt);
+		}
+		moveShotsBySequenceTime($movingShots, -$delta);
+	}
+}
+
+global proc addSequenceEditorPanel (string $whichPanel)
+//
+//  Description:
+//		Add the panel to a layout.
+//		Parent the editors to that layout and create any other
+//		controls (widgets) required.
+//
+{
+	string $sequenceEditor = sequenceEditorNameFromPanel($whichPanel);
+
+	string $baseForm = `formLayout sequenceBaseForm`;
+
+	string $toolbarFrame = `frameLayout
+                -visible true
+                -labelVisible false
+                -collapsable true
+                -collapse false
+                sequenceToolbarFrame`;
+	buildSequenceEditorToolbar( $toolbarFrame, $sequenceEditor );
+
+	setParent $baseForm;
+	
+	// Define container widget to hold the sequence editor
+	$containerWidget = `formLayout -visible true`;
+	$scrollWidget = `intScrollBar -horizontal false -visible true -width 16`;
+	setParent $containerWidget;
+
+    // Put the sequence editor into the container.
+	clipEditor -edit -parent $containerWidget $sequenceEditor;
+	string $sequenceEditorControl = `clipEditor -query -control $sequenceEditor`;
+	int $scrollPosition = 0;
+	int $leftScrollPosition = -16;
+
+	formLayout -edit
+		-attachForm $sequenceEditorControl top 0
+		-attachForm $sequenceEditorControl left 0
+		-attachForm $sequenceEditorControl bottom 0
+		-attachControl $sequenceEditorControl right 0 $scrollWidget
+		-attachForm $scrollWidget top 0
+		-attachForm $scrollWidget bottom 0
+		-attachOppositeForm $scrollWidget left $leftScrollPosition
+		-attachForm $scrollWidget right $scrollPosition
+		$containerWidget;
+
+	//
+	setParent $baseForm;
+
+	string $vtrFrame = `frameLayout
+                -visible true
+                -labelVisible false
+                -collapsable true
+                -collapse false
+                vtrFrame`;
+	buildSequenceEditorVTRToolbar( $vtrFrame, $sequenceEditor );
+
+	// attach the the container widget to the edges of the base form
+	// and the bottom of the toolbar
+	//
+        formLayout -edit
+                -attachForm $toolbarFrame top 0
+                -attachForm $toolbarFrame left 0 
+                -attachForm $toolbarFrame right 0
+                -attachOppositeForm $toolbarFrame bottom -25
+                -attachForm $containerWidget top 25
+                -attachForm $containerWidget left 0
+                -attachForm $containerWidget right 0
+                -attachForm $containerWidget bottom 30
+              -attachForm $vtrFrame left 0
+                -attachForm $vtrFrame right 0
+                -attachForm $vtrFrame bottom 0
+                -attachOppositeForm $vtrFrame top -30
+               $baseForm;
+
+	setParent `scriptedPanel -query -control $whichPanel`;
+
+	setParent -top;
+
+		// IS THIS NEEDED???
+	int $autoLoad = 0;
+	if (`optionVar -exists sequenceAutoLoadSel`) {
+		$autoLoad = `optionVar -q sequenceAutoLoadSel`;
+	}
+	
+	if ($autoLoad) {
+		clipEditor -edit -unlockMainConnection	$sequenceEditor;
+	} else {
+		clipEditor -edit -lockMainConnection	$sequenceEditor;
+	}
+
+	global int $gSeqEdUpdateScriptJob;
+	if ($gSeqEdUpdateScriptJob < 0) {
+		// Make sure the play controls are in synch with playback
+		//
+		$gSeqEdUpdateScriptJob = `scriptJob -conditionChange playingBack seqPlayStoppedUpdateCallback`;
+	}
+}
+
+global proc removeSequenceEditorPanel (string $whichPanel)
+//
+//  Description:
+//		Remove the panel from a layout.
+//		Delete controls.
+//
+{
+	string $sequenceEditor = sequenceEditorNameFromPanel($whichPanel);
+
+	if (`clipEditor -exists $sequenceEditor`) {
+		clipEditor -edit -unParent $sequenceEditor;
+	}
+}
+
+global proc deleteSequenceEditorPanel (string $whichPanel)
+//
+//  Description:
+//		This proc will delete the contents of the panel, but not
+//		the panel itself.
+//
+//  Note:
+//		We only need to delete editors here.  Other UI will be taken care of
+//		by the remove proc.
+//
+{
+	string $sequenceEditor = sequenceEditorNameFromPanel($whichPanel);
+
+	if (`clipEditor -exists $sequenceEditor`) {
+		deleteUI -editor $sequenceEditor;
+	}
+}
+
+global proc string saveStateSequenceEditorPanel (string $whichPanel)
+//
+//  Description:
+//		This proc returns a string that when executed will restore the
+//		current state of the panel elements.
+//
+{
+	string $indent = "\n\t\t\t";
+	string $sequenceEditor = sequenceEditorNameFromPanel($whichPanel);
+
+	return (
+			$indent + "$editorName = sequenceEditorNameFromPanel($panelName);\n" +
+			`clipEditor -query -stateString $sequenceEditor`
+	);
+}
+
+
+//
+//  Forces the loading of this MEL file
+//
+global proc sequenceEditorPanel (string $panelName)
+{
+}
+
+/// TOOLBAR CODE
+proc setUITemplates()
+{
+	if (`uiTemplate -exists ModelPanelIconBarUITemplate`) {
+		deleteUI -uiTemplate ModelPanelIconBarUITemplate;
+	}
+	uiTemplate ModelPanelIconBarUITemplate;
+
+	iconTextButton -defineTemplate ModelPanelIconBarUITemplate -width 20 -height 20;
+	iconTextCheckBox -defineTemplate ModelPanelIconBarUITemplate -width 20 -height 20;
+
+	setUITemplate -pushTemplate ModelPanelIconBarUITemplate;
+}
+
+proc addPopupMenuForButton(string $parent, string $editor, string $postCmd)
+{
+	string $fullName = `popupMenu -parent $parent -postMenuCommand $postCmd`;
+	string $cmd = ($postCmd + " " + $fullName + " " + $editor);
+	popupMenu -e -postMenuCommand $cmd $fullName;	
+}
+
+proc string addAnIconButton(string $editor, string $parent, string $btnName, string $icon, string $ann, string $cmd)
+{
+	string $callbackCmd = ($cmd + "(\"" + $btnName + "\", \"" + $editor + "\", \"" + $parent + "\")");
+	return `iconTextButton -image $icon -command ($callbackCmd) -annotation $ann $btnName`;
+}
+
+proc string addAnIconCheckBoxButton(string $editor, string $parent, string $btnName, string $icon, string $ann, string $cmd)
+{
+	string $callbackCmd = ($cmd + "(\"" + $btnName + "\", \"" + $editor + "\", \"" + $parent + "\"); restoreLastPanelWithFocus();");
+	return `iconTextCheckBox -image $icon -changeCommand ($callbackCmd) -annotation $ann $btnName`;
+}
+
+proc string[] createSection1(string $editor, string $parent)
+{
+	string $groups[2];
+
+	string $csAnn = (uiRes("m_sequenceEditorPanel.kCreateShotIconAnnot"));
+	string $faAnn = (uiRes("m_sequenceEditorPanel.kFrameAllIconAnnot"));
+
+	$groups[0] = addAnIconButton($editor, $parent, "CreateBtn", "traxCreateClip.png", $csAnn, "sequencerPanelBarSection1Callback");
+	$groups[1] = addAnIconButton($editor, $parent, "FrameAllBtn", "traxFrameAll.png", $faAnn, "sequencerPanelBarSection1Callback");
+	
+	return $groups;
+}
+
+proc string[] createSection2(string $editor, string $parent)
+{
+	string $groups[3];
+
+	string $tbAnn = (uiRes("m_sequenceEditorPanel.kTrimShotBeforeIconAnnot"));
+	string $taAnn = (uiRes("m_sequenceEditorPanel.kTrimShotAfterIconAnnot"));
+	string $sAnn = (uiRes("m_sequenceEditorPanel.kSplitShotIconAnnot"));
+
+	$groups[0] = addAnIconButton($editor, $parent, "TrimBeforeBtn", "trimBefore.png", $tbAnn, "sequencerPanelBarSection2Callback");
+	$groups[1] = addAnIconButton($editor, $parent, "TrimAfterBtn", "trimAfter.png", $taAnn, "sequencerPanelBarSection2Callback");
+	$groups[2] = addAnIconButton($editor, $parent, "SplitBtn", "split.png", $sAnn, "sequencerPanelBarSection2Callback");
+	
+	return $groups;
+}
+
+proc string[] createSection3(string $editor, string $parent)
+{
+	string $groups[5];
+
+	string $reAnn = (uiRes("m_sequenceEditorPanel.kRippleEdit"));
+	string $cAnn = (uiRes("m_sequenceEditorPanel.kRemoveGaps"));
+	string $eAnn = (uiRes("m_sequenceEditorPanel.kRemoveOverlaps"));
+	string $aAnn = (uiRes("m_sequenceEditorPanel.kRemoveGapsAndOverlaps"));
+	string $smlAnn = (uiRes("m_sequenceEditorPanel.kSMLShots"));
+
+	$groups[0] = addAnIconCheckBoxButton($editor, $parent, "RippleBtn", "trackRipple.xpm", $reAnn, "sequencerPanelBarSection3Callback");
+	$groups[1] = addAnIconButton($editor, $parent, "CompressBtn", "sequenceCompress.png", $cAnn, "sequencerPanelBarSection3Callback");
+	$groups[2] = addAnIconButton($editor, $parent, "ExpandBtn", "sequenceExpand.png", $eAnn, "sequencerPanelBarSection3Callback");
+	$groups[3] = addAnIconButton($editor, $parent, "AlignBtn", "sequenceAlign.png", $aAnn, "sequencerPanelBarSection3Callback");
+
+	// use option var to set initial icon -- LATER
+	$groups[4] = addAnIconButton($editor, $parent, "SMLBtn", "smlMed.png", $smlAnn, "sequencerPanelBarSection3Callback");
+	
+	//addPopupMenuForButton($groups[2], $editor, "modelPanelBarCreateBookmarkPopup");
+
+	return $groups;
+}
+
+global proc sequenceEditorIgnoreGapsCheckBoxCallback()
+{
+	int $ignoreGaps = `symbolCheckBox -q -value sequenceEditorIgnoreGapsCheckBox`;
+	optionVar -intValue ignoreGapsDuringPlayback $ignoreGaps;
+}
+
+proc string[] createSection4(string $editor, string $parent)
+{
+	string $groups[3];
+
+	string $sLft = (uiRes("m_sequenceEditorPanel.kSwapShotLeft"));
+	string $sRgt = (uiRes("m_sequenceEditorPanel.kSwapShotRight"));
+
+	$groups[0] = addAnIconButton($editor, $parent, "SwapShotLeftBtn", "shotSwapLeft.png", $sLft, "sequencerPanelBarSection4Callback");
+	$groups[1] = addAnIconButton($editor, $parent, "SwapShotRightBtn", "shotSwapRight.png", $sRgt, "sequencerPanelBarSection4Callback");
+	
+	if(!`optionVar -exists "ignoreGapsDuringPlayback"`)
+	{
+		optionVar -intValue ignoreGapsDuringPlayback 1;
+	}
+	
+	int $ignoreGaps = `optionVar -q ignoreGapsDuringPlayback`;	
+	
+	symbolCheckBox -offImage "ignoreGapsOff.png" -onImage "ignoreGapsOn.png" -value $ignoreGaps
+                -annotation (uiRes("m_sequenceEditorPanel.kSkippingGapState")) 
+                -cc "sequenceEditorIgnoreGapsCheckBoxCallback()" sequenceEditorIgnoreGapsCheckBox;                
+                                
+    $groups[2] = "sequenceEditorIgnoreGapsCheckBox";
+
+	return $groups;
+}
+
+proc attachGroup(string $form, string $groups[])
+{
+	int $i;
+	int $numGroups = `size($groups)`;
+
+	if ($numGroups > 0)
+	{
+		formLayout -edit
+			-attachForm $groups[0] "top" 0
+			-attachNone $groups[0] "bottom"
+			-attachForm $groups[0] "left" 1
+			-attachNone $groups[0] "right"
+			$form;
+	}
+
+	for ($i=1; $i<$numGroups; $i++)
+	{
+		formLayout -edit
+				-attachForm		$groups[$i] "top" 0
+				-attachNone		$groups[$i] "bottom"
+				-attachControl	$groups[$i] "left" 1 $groups[$i-1]
+				-attachNone		$groups[$i] "right"
+			$form;
+	}
+}
+
+proc string createToggleIcon(string $parent, int $index)
+{
+	string $cmd = ("modelPanelBarToggleButtonCallback(\"" + $parent + "\", " + $index + ")");
+	string $toggleIcon = `iconTextButton -width 9 -command $cmd -i1 ShortOpenBar.xpm`;
+	
+	return $toggleIcon;
+}
+
+
+global proc buildSequenceEditorToolbar(string $parent, string $editor)
+{
+	if (`frameLayout -q -exists $parent`)
+	{
+		string $currentParent = `setParent -query`;
+		setParent $parent;
+
+		string $formLayout = `flowLayout`, $grpFormLayout;
+		int $i, $numGroups = 0;
+		string $mainGroups[], $subGroups[];
+
+		setUITemplates();
+
+		// 
+		$mainGroups[$numGroups] = createToggleIcon($formLayout, $numGroups);
+		$numGroups++;
+		$mainGroups[$numGroups] = `formLayout`;
+			$subGroups = createSection1($editor, $parent);
+			attachGroup($mainGroups[$numGroups], $subGroups);
+			clear $subGroups;
+		setParent ..;
+		$numGroups++;
+
+		// 
+		$mainGroups[$numGroups] = createToggleIcon($formLayout, $numGroups);
+		$numGroups++;
+		$mainGroups[$numGroups] = `formLayout`;
+			$subGroups = createSection2($editor, $parent);
+			attachGroup($mainGroups[$numGroups], $subGroups);
+			clear $subGroups;
+		setParent ..;
+		$numGroups++;
+
+		// 
+		$mainGroups[$numGroups] = createToggleIcon($formLayout, $numGroups);
+		$numGroups++;
+		$mainGroups[$numGroups] = `formLayout`;
+			$subGroups = createSection3($editor, $parent);
+			attachGroup($mainGroups[$numGroups], $subGroups);
+			clear $subGroups;
+		setParent ..;
+		$numGroups++;
+ 
+		//
+		$mainGroups[$numGroups] = createToggleIcon($formLayout, $numGroups);
+		$numGroups++;
+		$mainGroups[$numGroups] = `formLayout`;
+			$subGroups = createSection4($editor, $parent);
+			attachGroup($mainGroups[$numGroups], $subGroups);
+			clear $subGroups;
+		setParent ..;
+		$numGroups++;
+
+		// Note, we do not collapse the toolbar based on the main preference
+		// (collapseIconBarsInPanels) since several items in the toolbar
+		// do not have any menu equivalent.
+		//
+		int $collapse = false;
+		frameLayout -e -collapse $collapse $parent;
+		if(`about -linux`) {
+			if(!$collapse) frameLayout -e -height 20 $parent;
+		}
+
+		setUITemplate -popTemplate;
+
+		setParent $currentParent;
+	}
+
+	updateSequenceEditorPanelBar( $editor );
+}
+
+global proc sequencerTimeRangeChanged( string $sequenceEditor)
+{
+        float $min = `floatField -q -v sequencerTimelineMin`;
+        float $max = `floatField -q -v sequencerTimelineMax`;
+        clipEditor -e -fr $min $max $sequenceEditor;
+}
+
+
+global proc buildSequenceEditorVTRToolbar(string $parent, string $sequenceEditor)
+{
+	global string $seqPlayBackwardsButton;
+	global string $seqPlayButton;	
+
+	// Make toolbar
+	//
+	setParent $parent;
+
+	string $vtrForm = `flowLayout -columnSpacing 10 vtrForm`;
+
+	formLayout -visible true left;
+        floatField 
+		-w 70 
+		-precision 0
+		-step 1.0 
+		-cc ( "sequencerTimeRangeChanged " + $sequenceEditor ) 
+	sequencerTimelineMin;
+	formLayout -edit
+		-attachForm sequencerTimelineMin    "left" 96
+		left;
+
+	//      Create a grid layout for the play back buttons.
+        //
+	setParent $vtrForm;	
+        gridLayout
+               -width               270
+               -numberOfRowsColumns 1 9
+               -cellWidthHeight     30 30;
+
+	int $iconsize = 30;
+
+        symbolButton
+                -w $iconsize -h $iconsize
+                -image       "timerewSequencer.png"
+                -annotation (uiRes("m_sequenceEditorPanel.kStartSequenceRangeAnnot"))
+                -command     "sequencerGotoStart"
+		seqStartButton;
+
+	symbolButton
+                -w $iconsize -h $iconsize
+                -image       "timeendSequencer.png"
+                -annotation (uiRes("m_sequenceEditorPanel.kStepBackFrameAnnot"))
+                -command     "sequencerStepOneFrame -1"
+		seqStepBackButton;
+
+	symbolButton
+                -w $iconsize -h $iconsize
+                -image       "timeprevSequencer.png"
+                -annotation (uiRes("m_sequenceEditorPanel.kPrevShotFrameAnnot"))
+                -command     "sequencerGotoShot -1"
+		seqPrevShotButton;
+
+        $seqPlayBackwardsButton = `symbolButton
+                -w $iconsize -h $iconsize
+                -image       "timerevSequencer.png"
+                -annotation  (uiRes("m_sequenceEditorPanel.kPlaySequenceBackwards"))
+                -command     "sequencerPlayBackward"`;
+
+        $seqPlayButton = `symbolButton
+                -w $iconsize -h $iconsize
+                -image       "timeplaySequencer.png"
+                -annotation  (uiRes("m_sequenceEditorPanel.kPlaySequence"))
+                -command     "sequencerPlayForward()"`;	
+
+	symbolButton
+                -w $iconsize -h $iconsize
+                -image       "timenextSequencer.png"
+                -annotation (uiRes("m_sequenceEditorPanel.kNextShotFrameAnnot"))
+                -command     "sequencerGotoShot 1"
+		seqNextShotButton;
+
+	symbolButton
+                -w $iconsize -h $iconsize
+                -image       "timestartSequencer.png"
+                -annotation (uiRes("m_sequenceEditorPanel.kStepForwardFrameAnnot"))
+                -command     "sequencerStepOneFrame 1"
+                seqStepForwardButton;
+
+        symbolButton
+                -w $iconsize -h $iconsize
+                -image       "timefwdSequencer.png"
+                -annotation (uiRes("m_sequenceEditorPanel.kEndSequenceRangeAnnot"))
+                -command     "sequencerGotoEnd"
+		seqEndButton;
+
+	setParent $vtrForm;
+	formLayout -visible true  -w 250 right;
+        floatField 
+		-w 70 
+		-precision 0 
+		-step 1.0 
+		-cc ( "sequencerTimeRangeChanged " + $sequenceEditor ) 
+	sequencerTimelineMax;
+	separator -horizontal false -style single separator1;
+	floatField 
+		-v `getSequenceTime` 
+		-w 70 
+		-precision 0 
+		-step 1.0 
+		-cc sequencerTimeChanged 
+	sequencerCurrentTime;
+
+	formLayout -edit
+                -attachForm sequencerTimelineMax      "left"  0 
+                -attachControl separator1      "left"  0 sequencerTimelineMax
+                -attachForm separator1      "top"  1 
+                -attachForm separator1      "bottom"  1 
+                -attachControl sequencerCurrentTime      "left"  0 separator1
+		right;
+
+        int $timeChangedSJ = `scriptJob -parent $vtrForm -protected -event timeChanged ("sequencerTimeChangedCB " + $vtrForm)`;
+        int $rangeChangedSJ = `scriptJob -parent $vtrForm -protected -event rangeSliderUIChanged ("sequencerRangeChangedCB " + $vtrForm + " " + $sequenceEditor)`;
+}
+
+global proc sequencerRangeChangedCB(string $parent, string $sequenceEditor )
+{
+	// Callback may fire when panel is not visible
+	string $currParent = `setParent -q`;
+	setParent $parent;
+	int $exists =`floatField -q -ex sequencerTimelineMin`;
+	if ( $exists )
+	{
+		float $limits[2] = `clipEditor -q -fr $sequenceEditor`;
+
+		// Display whole frames, it's neater	
+		float $min = trunc($limits[0]);
+		float $max = trunc($limits[1]);
+
+		floatField -e -v $min sequencerTimelineMin;
+		floatField -e -v $max sequencerTimelineMax;
+	}
+	if($currParent != "NONE") {
+		setParent $currParent;
+	}
+}
+
+global proc sequencerTimeChangedCB(string $parent)
+{
+	// Callback may fire when panel is not visible
+	string $currParent = `setParent -q`;
+	setParent $parent;
+	int $exists =`floatField -q -ex sequencerCurrentTime`;
+	if ( $exists )
+        {
+                float $newTime = getSequenceTime();
+                floatField -e -v $newTime sequencerCurrentTime;
+        }
+	if($currParent != "NONE") {
+		setParent $currParent;
+	}
+}

@@ -1,0 +1,577 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//  Procedure Name:
+//      referenceEditsWindowPrint
+//
+//  Description:
+//		Print the edit selected in the referenceEditsWindow.
+//      Called by the iconTextScrollList doubleClickCommand.
+//
+//  Input Arguments:
+//		string $textScrollList: name of the iconTextScrollList to check selection
+//
+//  Return Value:
+//      None.
+//
+
+
+global proc referenceEditsWindowPrint(string $textScrollList){
+
+	string $edit[] = `iconTextScrollList -q -si $textScrollList`;
+	print (uiRes("m_referenceEditsWindow.kReferenceEdit"));
+	print $edit;
+
+}
+
+
+//  Procedure Name:
+//      referenceEditsWindowRemoveSelectedEdits
+//
+//  Description:
+//      Removes selected edits from the Reference Edits Window.
+//
+//  Input Arguments:
+//		string $referenceFile: reference file
+//      string $referenceNode: reference node to remove edits from
+//		string $textScrollList: name of the iconTextScrollList containing selected edits
+//		string $editQueryCmds: if the path/namespace was hidden, use this command
+//							   to get a corresponding list of fully qualified edits
+//
+//  Return Value:
+//      None.
+//
+
+global proc referenceEditsWindowRemoveSelectedEdits( string $referenceFile,
+													 string $referenceNode,
+													 string $textScrollList,
+													 string $editQueryCmds[],
+													 int	$unknownEdits )
+{
+	int $referenceUnloaded = `file -q -dr $referenceFile`;
+	int $isEditsFile = `referenceQuery -isExportEdits $referenceFile`;
+	if ($isEditsFile) {
+		error((uiRes("m_referenceEditsWindow.kOfflineEditsNotRemovable")));
+	}
+
+	string $selectedEdits[] = `iconTextScrollList -q -selectItem $textScrollList`;
+	int $refreshWindow = 0;
+	
+	// If we are hiding paths/namespaces, we can't use the edit string as specified
+	// in the textScrollList, so build a corresponding list with fully specified
+	// edits strings, and use that instead
+	//
+	string $fullEditList[] = {};
+	int $useFullList = size($editQueryCmds) > 0;
+	if( $useFullList ) {
+		for( $cmd in $editQueryCmds )
+			$fullEditList = stringArrayCatenate( $fullEditList, eval($cmd) );
+	}
+	
+	int $i = 0;
+	int $len = size($selectedEdits);
+	for ($i = 0; $i < $len; $i++) 
+	{
+		string $edit;
+		if( $useFullList )
+			$edit = $fullEditList[$i];
+		else
+			$edit = $selectedEdits[$i];
+
+		string $buffer[];
+		int $numTokens = `tokenize $edit " " $buffer`;
+		
+		//	check for separator info and ignore
+		//	i.e. -------- is only 1 token
+		if (!`gmatch $buffer[0] "--------"` && 
+			!`gmatch $buffer[0] "----------------------------------------"`){ 
+
+			string $cmd = "referenceEdit -failedEdits true ";
+			$cmd += "-successfulEdits true -editCommand ";
+
+			// check if it is locking or unlocking operations
+			if($buffer[0] == "setAttr" && $buffer[2] == "-lock")
+			{
+				if($buffer[3] == "on")
+				{
+					$cmd += "lock";
+				}
+				else if($buffer[3] == "off")
+				{
+					$cmd += "unlock";
+				}
+			}
+			else
+			{
+				$cmd += $buffer[0];
+			}
+			$cmd += " -removeEdits ";
+
+			switch( $buffer[0] ) {
+				case "addAttr":
+					// This must match TaddAttrEdit::buildCmd, therefore node
+					// is the last argument.
+					//
+					$cmd += $buffer[$numTokens-1];
+					$cmd += ".";
+					$cmd += $buffer[2];
+					break;
+				case "deleteAttr":
+					$cmd += $buffer[1];
+					break;
+				case "connectAttr":
+					$cmd += $buffer[1];
+					break;
+				case "disconnectAttr":
+					if ($referenceUnloaded) {
+					// This must match TdisconnectAttrEdit::buildCmd, therefore
+					// the source plug is the next to last argument.
+					//
+					$cmd += $buffer[$numTokens-2];
+					} else {
+						$cmd += $buffer[$numTokens-1];
+					}
+					break;
+				case "setAttr":
+					$cmd += $buffer[1];
+					break;
+				// buffer[1] is type, buffer[2] is the node name
+				case "relationship":
+					$cmd += $buffer[2];
+					break;	
+				case "parent":
+					// This must match TparentEdit::buildCmd
+					//
+					if( $buffer[$numTokens-2] == "-w" ){
+						// Parent is world, so childName is last argument.
+						//
+						$cmd += $buffer[$numTokens-1];
+					} else {
+						// childName is next to last argument.
+						//
+						$cmd += $buffer[$numTokens-2];
+					}
+					break;
+			}
+
+			evalEcho($cmd);
+			$refreshWindow = 1;
+			
+		}
+	}//end for
+
+
+	//	refresh window
+	//
+	if ($refreshWindow)
+		referenceEditsWindow $referenceFile $unknownEdits;
+
+}
+
+
+
+//  Procedure Name:
+//      referenceEditsWindowBuildList
+//
+//  Description:
+//      Adds edits to the Reference Edits Window.
+//
+//  Input Arguments:
+//      string $reference: reference node to list edits for
+//		string $edit: type of edit to add 
+//			setAttr, deleteAttr, addAttr, connectAttr, disconnectAttr, parent
+//		string $textScrollList: name of the iconTextScrollList to add edits to
+//
+//		The following strings are needed to build a list of edits that use full
+//		paths and namespaces. If we're hiding anything, we won't be able to
+//		remove edits with the string in the iconTextScrollList, so we need to
+//		look up the real edit string in this coresponding list instead.
+//		TODO: find a more efficient way to do this! In fact, this whole window
+//		needs to be re-visited.
+//
+//		string $editQueryCmds[]: commands used to query edits. We'll just append 
+//							  	 to this array, since we need to make sure we
+//								 re-create the list in the same order
+//
+//  Return Value:
+//      None.
+//
+
+global proc referenceEditsWindowBuildList(string $reference, 
+										  string $edit,
+										  string $textScrollList,
+										  string $unknownRefNode,
+										  int $unknownEdits,
+										  string $editQueryCmds[],
+										  string $filterWidget)
+{
+	int $showPath = `optionVar -q refEditsShowPath`;
+	int $showNS = `optionVar -q refEditsShowNamespaces`;
+
+	string $refFile = `referenceQuery -filename $reference`;
+	int $referenceUnloaded = `file -q -dr $refFile`;
+	int $isEditsFile = `referenceQuery -isExportEdits $refFile`;
+	
+	//	query successful and failed edits separately
+	//
+	string $firstEdits[];
+	string $secondEdits[];
+	string $secondText;
+	if(!$unknownEdits)
+	{
+		// only fill in the query cmds if the edit strings are not fully qualified
+		if( !$showPath || !$showNS ) {
+			$editQueryCmds[size($editQueryCmds)] = ("referenceQuery -fld 0 -scs 1 -ec " + 
+														$edit + " -es " + $reference);
+			$editQueryCmds[size($editQueryCmds)] = ("referenceQuery -fld 1 -scs 0 -ec " + 
+														$edit + " -es " + $reference);
+		}
+
+		// We want the failed & succeeded edits listed separately
+		//
+		if (! $referenceUnloaded && $edit == "parent") {
+			// Reference is loaded: Query the live edit database so that the
+			// actual node names are used rather than the unloaded node names
+			//
+			$firstEdits = `referenceQuery 
+							-fld 0 -scs 1 -liveEdits
+							-sdp $showPath -sns $showNS 
+							-ec $edit -es $reference`;
+		} else {
+			string $cmd = ("referenceQuery -fld 0 -scs 1 -sdp "+$showPath);
+			if ($isEditsFile) {
+				$cmd += " -liveEdits ";
+			}
+			$cmd += ("-sns "+$showNS+" -ec "+$edit+" -es "+$reference);
+			$firstEdits = `eval $cmd`;
+		}
+		$secondEdits = `referenceQuery 
+							-fld 1 -scs 0 
+							-sdp $showPath -sns $showNS 
+							-ec $edit -es $reference`;
+		$secondText = " failed_";
+	} else {
+	    if($unknownRefNode != "")
+		{
+					// only fill in the query cmds if the edit strings are not fully qualified
+			if( !$showPath || !$showNS ) {
+				$editQueryCmds[size($editQueryCmds)] = ("referenceQuery -fld 0 -scs 1 -ec " + $edit 
+					+ " -es -onReferenceNode " + $reference + " " + $unknownRefNode);
+				$editQueryCmds[size($editQueryCmds)] = ("referenceQuery -fld 1 -scs 0 -ec " + $edit 
+					+ " -es -onReferenceNode " + $reference + " " + $unknownRefNode);
+			}
+			
+			// We want the unknown edits (the ones that live on $reference but for
+			// which we don't know which reference they apply to ), and the truly
+			// unknown edits (the ones for which we don't even know which reference
+			// they should live on, so they live on $unknownRefNode for now.
+			//
+			$firstEdits = `referenceQuery
+								-fld 0 -scs 1 
+								-sdp $showPath -sns $showNS 
+								-ec $edit -es -onReferenceNode $reference $unknownRefNode`;
+			$secondEdits = `referenceQuery 
+								-fld 1 -scs 0 
+								-sdp $showPath -sns $showNS 
+								-ec $edit -es -onReferenceNode $unknownRefNode`;
+			$secondText = " truly_unknown_";
+		}
+	}
+	
+	// filtering
+	string $filter = `textFieldGrp -query -text $filterWidget`;	
+		
+	int $count = 0;	
+	string $matches[];
+	for ($editItem in $firstEdits){
+		int $match = `gmatch $editItem ("*" + $filter + "*")`;
+		if ($match){
+			$matches[$count] = $editItem;
+			$count ++;
+		}
+	}
+	
+	$firstEdits = $matches;
+	
+	$count = 0;	
+	clear $matches;
+	for ($editItem in $secondEdits){
+		int $match = `gmatch $editItem ("*" + $filter + "*")`;
+		if ($match){
+			$matches[$count] = $editItem;
+			$count ++;
+		}
+	}
+	$secondEdits = $matches;
+
+	if (`size ($firstEdits)`){
+
+		//	add separator and title
+		iconTextScrollList -edit
+			-append "----------------------------------------"
+			$textScrollList;
+
+		iconTextScrollList -edit
+			-append ("-------- " + $edit + " --------")
+			$textScrollList;
+
+		iconTextScrollList -edit
+			-append "----------------------------------------"
+			$textScrollList;
+
+		//	add edits
+		for ($refEdit in $firstEdits){
+
+			iconTextScrollList -edit
+				-append $refEdit
+				$textScrollList;
+
+		}
+	}
+
+	if (`size ($secondEdits)`){
+
+		//	add separator and title
+		iconTextScrollList -edit
+			-append "----------------------------------------"
+			$textScrollList;
+
+		iconTextScrollList -edit
+			-append ("--------" + $secondText + $edit + " --------")
+			$textScrollList;
+
+		iconTextScrollList -edit
+			-append "----------------------------------------"
+			$textScrollList;
+
+		//	add edits
+		for ($refEdit in $secondEdits){
+
+			iconTextScrollList -edit
+				-append $refEdit
+				$textScrollList;
+
+		}
+	}
+
+}
+
+global proc referenceEditsWindowBuildListCmd( string $referenceNode,
+												string $textScrollList,
+												string $unknownRefNode,
+												int $unknownEdits,
+												string $filterWidget){
+		string $editQueryCmds[] = {};
+						
+		iconTextScrollList -edit -removeAll $textScrollList;
+									
+		referenceEditsWindowBuildList( $referenceNode, "setAttr", $textScrollList,
+										$unknownRefNode, $unknownEdits, $editQueryCmds, $filterWidget );
+		referenceEditsWindowBuildList( $referenceNode, "connectAttr", $textScrollList,
+										$unknownRefNode, $unknownEdits, $editQueryCmds, $filterWidget );
+		referenceEditsWindowBuildList( $referenceNode, "disconnectAttr", $textScrollList,
+										$unknownRefNode, $unknownEdits, $editQueryCmds, $filterWidget );
+		referenceEditsWindowBuildList( $referenceNode, "addAttr", $textScrollList,
+										$unknownRefNode, $unknownEdits, $editQueryCmds, $filterWidget );
+		referenceEditsWindowBuildList( $referenceNode, "deleteAttr", $textScrollList,
+										$unknownRefNode, $unknownEdits, $editQueryCmds, $filterWidget );
+		referenceEditsWindowBuildList( $referenceNode, "parent", $textScrollList,
+										$unknownRefNode, $unknownEdits, $editQueryCmds, $filterWidget );
+		referenceEditsWindowBuildList( $referenceNode, "relationship", $textScrollList,
+										$unknownRefNode, $unknownEdits, $editQueryCmds, $filterWidget );
+		referenceEditsWindowBuildList( $referenceNode, "breakRelationship", $textScrollList,
+										$unknownRefNode, $unknownEdits, $editQueryCmds, $filterWidget );	
+		referenceEditsWindowBuildList( $referenceNode, "lock", $textScrollList,
+										$unknownRefNode, $unknownEdits, $editQueryCmds, $filterWidget );								
+		referenceEditsWindowBuildList( $referenceNode, "unlock", $textScrollList,
+										$unknownRefNode, $unknownEdits, $editQueryCmds, $filterWidget );										
+}
+										
+										
+//  Procedure Name:
+//      referenceEditsWindow
+//
+//  Description:
+//      Creates a window that lists edits for a specified reference file.
+//
+//  Input Arguments:
+//      string $referenceFile: reference file to list edits for
+//
+//  Return Value:
+//      None.
+//
+global proc referenceEditsWindow( string $referenceFile,
+						   int $unknownEdits)
+{
+	if ($referenceFile == "") {
+		error((uiRes("m_referenceEditsWindow.kMustSelectReferencedFile")));
+	}
+	string $referenceNode = `referenceQuery -referenceNode $referenceFile`;
+	string $unknownRefNode = "";
+	if( $unknownEdits ){
+		string $tmpNodes[] = `listConnections -source true -type reference ( $referenceNode + ".unknownReference" )`;
+		if( size($tmpNodes) == 1 ){
+			$unknownRefNode = $tmpNodes[0];
+		}
+	}
+	
+	string $convertedRefNodeName = `substitute ":" $referenceNode "_"`;
+	string $window = ("refEditsWin_" + $convertedRefNodeName);
+
+	if (`window -exists $window`) {
+		deleteUI -window $window;
+	}
+
+	
+	string $windowTitle = (uiRes("m_referenceEditsWindow.kRefEditsTitle"));
+	if( $unknownRefNode != "" ){
+		window -w 250 -h 580 -title `format -s $unknownRefNode $windowTitle` $window;
+	} else {
+		window -w 250 -h 580 -title `format -s $referenceNode $windowTitle` $window;
+	}
+	
+	string $mainForm = `formLayout -numberOfDivisions 100 ($window + "_formLayout")`;
+	
+	if( !`optionVar -exists refEditsShowPath`)
+		optionVar -iv "refEditsShowPath" 1;
+	if( !`optionVar -exists refEditsShowNamespaces`)
+		optionVar -iv "refEditsShowNamespaces" 1;
+		
+	string $showPathCheckBox = `checkBox -label (uiRes("m_referenceEditsWindow.kShowDagPath"))`;
+	string $showNamespacesCheckBox = `checkBox -label (uiRes("m_referenceEditsWindow.kShowNamespaces"))`;
+	
+	string $textScrollList = `iconTextScrollList ($window + "_textScrollList")`;
+    iconTextScrollList -edit
+		-allowMultiSelection true
+		-doubleClickCommand ("referenceEditsWindowPrint " + $textScrollList)
+		$textScrollList;
+
+	string $filterWidget = `textFieldGrp -label (uiRes("m_referenceEditsWindow.kFilter")) ($window + "_filterWidget")`;
+
+	string $unknownEditsString;
+	if($unknownEdits)
+	{
+	    $unknownEditsString = "1";
+	}
+	else
+	{
+	    $unknownEditsString = "0";
+	}
+	string $windowRefreshCmd = ("referenceEditsWindowBuildListCmd \"" + 
+									$referenceNode + "\" \"" + 
+									$textScrollList + "\" \"" + 
+									$unknownRefNode + "\" " + 
+									$unknownEditsString + " \"" + 
+									$filterWidget + "\";" );
+	checkBox -e 
+		-value `optionVar -q refEditsShowPath`
+		-changeCommand ("{ optionVar -iv \"refEditsShowPath\" `checkBox -q -v " + $showPathCheckBox + "`; " + $windowRefreshCmd + "}")
+		$showPathCheckBox;
+	checkBox -e 
+		-value `optionVar -q refEditsShowNamespaces`
+		-cc ("{optionVar -iv \"refEditsShowNamespaces\" `checkBox -q -v " + $showNamespacesCheckBox + "`; " + $windowRefreshCmd + "}")
+		$showNamespacesCheckBox;
+
+	textFieldGrp -edit -changeCommand ($windowRefreshCmd) $filterWidget;
+
+	//	populate scroll list with edits
+	//
+	string $editQueryCmds[] = {};
+	if( $unknownEdits == 0 || $unknownRefNode != "" ) {
+		
+		referenceEditsWindowBuildListCmd($referenceNode, $textScrollList,
+										$unknownRefNode, $unknownEdits, $filterWidget );
+
+	}
+
+	// Convert the editQueryCmds array into a string so it can be passed
+	// to the button command
+	//
+	int $i = 0;
+	int $len = size($editQueryCmds);
+	string $queryCmdString = "{";
+	for($i = 0; $i < $len; $i++) {
+		if( $i > 0 ) {
+			$queryCmdString += ", ";
+		}
+		$queryCmdString += ("\"" + $editQueryCmds[$i] + "\"");
+	}
+	$queryCmdString += "}";
+
+	string $buttonForm = `formLayout -numberOfDivisions 100`;
+
+		string $refreshButton = `button -label (uiRes("m_referenceEditsWindow.kRefreshEdit")) ($window + "_refreshButton")`;
+
+		string $removeButton = `button -label (uiRes("m_referenceEditsWindow.kRemoveEdit")) ($window + "_removeButton")`;
+
+		button -edit -command ($windowRefreshCmd) $refreshButton;
+
+		button -edit
+			-command ("referenceEditsWindowRemoveSelectedEdits \"" +
+				($referenceFile) + "\" " + ($referenceNode) + " " + ($textScrollList) + 
+				" " + ($queryCmdString) + " " + ($unknownEdits) )
+			$removeButton;
+
+		formLayout -edit
+			-attachForm		$refreshButton     "top"		0
+			-attachForm		$refreshButton     "left"		0
+			-attachForm		$refreshButton     "bottom"		0
+			-attachPosition $refreshButton     "right"		0 50
+
+			-attachForm		$removeButton		"top"		0
+			-attachPosition $removeButton		"left"		0 50
+			-attachForm     $removeButton		"bottom"	0
+			-attachForm     $removeButton		"right"		0
+
+			$buttonForm;
+
+		setParent $mainForm;
+
+	formLayout -edit
+		-attachForm		$showPathCheckBox		"top"	5
+		-attachForm		$showPathCheckBox		"left"	5
+		-attachForm		$showNamespacesCheckBox	"top"	5
+		-attachControl	$showNamespacesCheckBox	"left"	5	$showPathCheckBox
+
+		-attachForm     $filterWidget		"top"		5 
+		-attachControl  $filterWidget		"left"		5 	$showNamespacesCheckBox
+		-attachForm		$filterWidget		"right"		5 
+		-attachNone		$filterWidget		"bottom"
+
+		-attachControl  $textScrollList     "top"		5	$showPathCheckBox
+		-attachForm     $textScrollList     "left"		5
+		-attachForm		$textScrollList     "bottom"	35
+		-attachForm		$textScrollList     "right"		5 
+
+		-attachControl	$buttonForm		    "top"		5	$textScrollList
+		-attachForm     $buttonForm			"left"		5
+		-attachForm     $buttonForm			"bottom"	5
+		-attachForm     $buttonForm			"right"		5
+
+		$mainForm;
+
+	// If the reference is locked, disable the remove button
+	int $isLocked = `getAttr ($referenceNode + ".locked")`;
+	if( $isLocked ) { button -edit -enable false $removeButton; }
+	
+	showWindow $window;
+
+}

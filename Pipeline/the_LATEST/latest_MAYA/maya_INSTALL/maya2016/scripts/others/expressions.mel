@@ -1,0 +1,647 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  ==================== expressions.mel ==========
+//
+//  SYNOPSIS
+//      Create and show a text dialog for creating and editing
+//		expressions
+//
+//  CONTENTS
+//		(The procs are in the file in the order listed here.)
+//
+//	Expression Editor Procedures:
+//
+//	EEisExpression			Check if a node is an expression node.
+//	EEdisplayExpression		Display an expression.
+//	EEexpressionCmd			Print the expression command just issued.
+//	EEapplyExpression		Create or edit the expression
+//	EErestoreExpression		Restore the current expression from the node.
+//  EEobjectListChanged		User selected a non-particle obj in the node list.
+//  EEexpressionListChanged	User selected a new non-particle expression in the
+//							node list.
+//  EEonlyLaunchEditor		Launch a text editor for a regular expression.
+//
+
+
+// ******************************************************************
+//
+//					PROCEDURES FOR REGULAR EXPRESSIONS
+//
+// ******************************************************************
+
+//  ================ EEisExpression ================
+//
+//  SYNOPSIS
+//      Return whether the object is an expression node
+//
+global proc int EEisExpression(string $nodeName)
+{
+	string $expressions[] = `ls -type expression`;
+	int $i;
+	for ($i = 0; $i < size($expressions); $i++)
+	{
+		if ($nodeName == $expressions[$i])
+			return 1;
+	}
+	return 0;
+
+}	// EEisExpression
+
+
+//  ================ EEresetExpressionName ================
+//
+//  SYNOPSIS
+//		Reset the expression name textfield. If in object
+//		mode, and the old name is not a particle node,
+//		unregister the old name for name changed messages; if the
+//		new name is not a particle node, register the new
+//		name for name changed messages.  
+//		(Don't register/unregister in expression mode, because the 
+//		selected expression is in the node list, and is already
+//		registered and shouldn't be unregistered.  Don't change
+//		particles, because the expression name is the node name,
+//		so it too is always in the node list, and is handled from
+//		there.
+//
+global proc EEresetExpressionName(string $name)
+{
+	global string $EEnodeMode;
+
+	if ($EEnodeMode == "object")
+	{
+		// If in object mode, and there is a non-particle
+		// expression name in the expression name textfield,
+		// unregister it for name change messages.
+		//
+		string $oldExpressionName = `textField -q -tx EEexprNameT`;
+		if (size($oldExpressionName) && 
+			!EEisParticle($oldExpressionName))
+		{
+			expressionEditorListen -sln $oldExpressionName;
+		}
+	}
+	textField -e -tx $name EEexprNameT;
+	if(size($name) && $EEnodeMode == "object" && !EEisParticle($name))
+	{
+		expressionEditorListen -ln $name;
+	}
+}
+
+
+//  ================ EEdisplayExpression ================
+//
+//  SYNOPSIS
+//      Display the expression connected to the current
+//      object.attribute in the scrolled textfield, and
+//		put the name in the expression name textfield.
+//		And register it for node name changes, if in object
+//		mode (if it is selected in "Expression" mode, it will
+//		be registered already.  If there is already a non-particle
+//		expression in the textfield, and not in "Expression" mode,
+//		unregister it.
+//
+//
+global proc EEdisplayExpression(string $exprName)
+{
+	global int $EEdoLaunchTextEd;
+	global int $EEcurrentEditor;
+	global int $EEpExpressionInEditor;
+	global int $EEexpressionInEditor;
+	global string $EEorigExpressionName;
+	global string $EEcurrExpressionName;
+	global string $EEnodeMode;
+
+	string $expressionName;
+	string $buffer[];
+
+	tokenize($exprName, ".", $buffer);
+	$expressionName = $buffer[0];
+
+	string $expression  = `expression -q -s $expressionName`;
+	string $defaultObj  = `expression -q -o $expressionName`;
+	int    $animatedVal = `expression -q -ae $expressionName`;
+	string $conversionPref = `expression -q -uc $expressionName`;
+
+	// Set the data into the editor controls.
+	//
+	text -e -enable true EEexprNameLabel;
+	EEresetExpressionName($expressionName);
+	textField -e -enable true EEexprNameT;
+
+	// The new expression name must be registered for getting
+	// name changed messages.
+	//
+	textFieldGrp -e -enable true EEdefNameT;
+
+	// Set the name of the object.attribute connected to the expression
+	// in the "Selected Obj/Attr" field
+	//
+	string $objAttr[] = 
+		`listConnections -source false -d true -shapes true -plugs true  -scn true  $expressionName`;
+
+	if (size($objAttr) > 0)
+		textFieldGrp -e -tx $objAttr[0] EEselNameT;
+	else
+		textFieldGrp -e -tx "" EEselNameT;
+
+	scrollField -e -tx $expression EEmultiText;
+
+	int $exprInEditor = EEexpressionIsInTextEditor($expressionName, 0);
+
+	if ($EEcurrentEditor != 1 && $EEdoLaunchTextEd && $exprInEditor == -1)
+	{
+		if (size($objAttr) > 0)
+			EElaunchEditor($objAttr[0], $expression, $expressionName);
+		else
+			EElaunchEditor("", $expression, $expressionName);
+		scrollField -e -enable false EEmultiText;
+	}
+	else
+	{
+		if ($exprInEditor == -1)
+		{
+			$EEexpressionInEditor = -1;
+			scrollField -e -enable true EEmultiText;
+		}
+		else
+		{
+			$EEexpressionInEditor = $exprInEditor;
+			scrollField -e -enable false EEmultiText;
+		}
+	}
+	$EEpExpressionInEditor = -1;
+	$EEdoLaunchTextEd = 0;
+
+	int $menuVal = $animatedVal+1;
+	optionMenu -e -sl $menuVal EEanimTypeOM;
+
+	if ($conversionPref == "none")
+		radioButtonGrp -e -sl 2 EEunitsRBG;
+	else if ($conversionPref == "angularOnly")
+		radioButtonGrp -e -sl 3 EEunitsRBG;
+	else
+		radioButtonGrp -e -sl 1 EEunitsRBG;
+
+	// If there's a default object, set the textfield, otherwise clear it.
+	//
+	if (size($defaultObj) > 0)
+		textFieldGrp -e -tx $defaultObj EEdefNameT;
+	else
+		textFieldGrp -e -tx "" EEdefNameT;
+
+	
+	$EEcurrExpressionName = $expressionName;
+	$EEorigExpressionName = $expressionName;
+
+	EEsetEditMode("Editing Expression");
+
+}	// EEdisplayExpression
+
+
+//  ================ EEexpressionCmd ================
+//
+//  SYNOPSIS
+//      Build the optional command args for the expression command
+//
+//
+global proc string EEexpressionCmd( int $isCreate,
+								string $theText,
+								int $anValue,
+								int $unitConvPref,
+								string $defaultObj,
+                                string $newName)
+{
+	global string $EEorigExpressionName;
+	global int $EEeditedInEditor;
+
+    string $theCommand;
+
+//	The encodeString action was created by Rob T on Aug 19 to call
+//	Tstring::encodeEscapeSequences( true ) on the passed string
+//	variable.  This will allow quotes and other escapable characters
+//	to flow through evalEcho() smoothly.
+//
+	if ($isCreate)
+	{
+		$theCommand = ("expression -s \""+encodeString($theText)+"\" ");
+	}
+	else
+	{
+		$EEeditedInEditor = 1;
+		$theCommand = ("expression -e -s \""+encodeString($theText)+"\" ");
+	}
+
+    if (size($defaultObj) > 0)
+        $theCommand = ($theCommand+" -o "+$defaultObj);
+	else
+		$theCommand = ($theCommand+" -o \"\"");
+
+    if (size($newName) > 0)
+        $theCommand = ($theCommand+" -n \""+$newName+"\"");
+
+	int $cmdValue = $anValue-1;	
+	$theCommand = ($theCommand+" -ae "+$cmdValue);
+
+	if ($unitConvPref == 3)
+		$theCommand = ($theCommand+" -uc angularOnly");
+	else if ($unitConvPref == 2)
+		$theCommand = ($theCommand+" -uc none");
+	else
+		$theCommand = ($theCommand+" -uc all ");
+
+	if (!$isCreate)
+		$theCommand = ($theCommand+" "+$EEorigExpressionName);
+
+	string $newExprName =  evalEcho($theCommand);
+
+	$theCommand = ($theCommand+"\n");
+			 
+	return $newExprName;
+    
+}	// EEexpressionCmd
+
+
+
+
+//  ================ EEapplyExpression ================
+//
+//  SYNOPSIS
+//      Create the expression in the editor and connect it to
+//		to the current selected attribute or
+//		replace its current expression with the newly edited one.
+//
+//
+global proc string EEapplyExpression(string $expression)
+{
+	global string $EEnodeMode;
+	global int $EEcreateMode;
+	global string $EEcurrExpressionName;
+	global string $EEorigExpressionName;
+
+	string $newExprName, $currExprName;
+	string $selectedDefault, $defaultObj;
+
+    // Get the current default object.attribute, expression
+	// node name, unit conversion preference, and animated value.
+    //
+    $defaultObj = `textFieldGrp -q -tx EEdefNameT`;
+
+	$currExprName = `textField -q -tx EEexprNameT`;
+
+
+	int $anFlagVal = `optionMenu -q -sl EEanimTypeOM`;
+
+	int $unitConvPref = `radioButtonGrp -q -sl EEunitsRBG`;
+
+	if (size($defaultObj) == 0)
+		$defaultObj = "";
+
+	// If $currExprName != $currExpressionName, it means 
+	// the new name has not yet been processed or validated.
+	// (This can happen if the user does not press carriage
+	// return, and then selects "Apply", because there is
+	// no focus-out callback available in ELF.)
+	//
+	int $exprNameValid;
+	if (size($currExprName) > 0 && 
+	    $currExprName != $EEcurrExpressionName)
+	{
+		if ($exprNameValid = EEcheckValidExprName($currExprName))
+			$EEcurrExpressionName = $currExprName;
+	}
+
+	string $testExpr = ("\""+$expression+"\"");
+	if ($EEcreateMode)
+	{
+		// Create the new expression node.
+		//
+		if (size($currExprName) == 0 && 
+			size($EEcurrExpressionName) == 0)
+		{
+			$newExprName = 
+				EEexpressionCmd(1, $expression, 
+								$anFlagVal, $unitConvPref, 
+								$defaultObj, "");
+		}
+		else
+		{
+			$newExprName = 
+				EEexpressionCmd(1, $expression, 
+								$anFlagVal, $unitConvPref,
+								$defaultObj, $EEcurrExpressionName);
+		}
+
+		// If error, error messages will have been sent from the
+		// command, so just do nothing, otherwise adjust controls.
+		//
+		if ($newExprName != "NULL")
+		{
+			if ($EEnodeMode == 1)
+				textFieldGrp -e -enable true EEselNameT;
+			EEresetExpressionName($newExprName);
+
+			EEsetEditMode("Editing Expression");
+
+			$EEcurrExpressionName = $newExprName;
+			$EEorigExpressionName = $newExprName;
+
+			// If in select-by-expression mode, update the list  of
+			// expressions.
+			//
+   			if ($EEnodeMode == "expression")
+			{
+				textScrollList -e -da EEnodeList;
+				//
+				// Commented out by Rob T. Since the name already gets
+				// added by the NodeAdded callback.  Was getting added
+				// twice.
+				// EEaddNodeToList($EEcurrExpressionName);
+				// Select the node.
+				//
+				EEselectNodeInList($EEcurrExpressionName);
+			}
+		}
+	}
+	else
+	{
+		// In edit mode; edit the expression
+		// If the expression name textfield is empty, print an
+		// error and do nothing
+		//
+		if (size($currExprName) == 0)
+		{
+			warning (uiRes("m_expressions.kExpressionNameMissing"));
+			return "";
+		}
+	
+		// Edit the existing expression node.  Use $EEorigExpressionName,
+		// in case the user changed the name, since the edit has to be
+		// for the original name of the expression.
+		//
+		if ($EEcurrExpressionName == $EEorigExpressionName)
+		{
+			$newExprName =
+				EEexpressionCmd(0, $expression, 
+								$anFlagVal,  $unitConvPref,
+								$defaultObj, "");
+		}
+		else
+		{
+			$newExprName =
+				EEexpressionCmd(0, $expression, 
+								$anFlagVal, $unitConvPref,
+								$defaultObj, $EEcurrExpressionName);
+
+			// If the user has changed the expression name, and is in
+			// select-by-expression mode, update the list with the new
+			// name.
+			//
+			if ($EEorigExpressionName != $EEcurrExpressionName)
+			{
+   				if ($EEnodeMode == "expression")
+				{
+					EEremoveNodeFromList($EEorigExpressionName, 0);
+
+					EEaddNodeToList($EEcurrExpressionName);
+					// Select the node.
+					//
+					EEselectNodeInList($EEcurrExpressionName);
+
+				}
+				$EEorigExpressionName = $EEcurrExpressionName;
+			}
+		}
+	}
+	return $newExprName;
+
+}	// EEapplyExpression
+
+
+
+//  ================ EErestoreExpression ================
+//
+//  SYNOPSIS
+//      Restore the current expression to the editor 
+//
+//
+global proc EErestoreExpression()
+{
+	global string $EEorigExpressionName;
+	global string $EEcurrExpressionName;
+
+	// Get the expression, put it in the scrolled textfield
+	// and get its default obj and attr if there is one, and put in 
+	// the Default textfield
+	//
+	string $currDefObj, $currDefAttr;
+	string $currDefObjAttr, $expression;
+	string $defaultObj;
+
+	$expression = `expression -q -s $EEorigExpressionName`;
+	scrollField -e -tx $expression EEmultiText;
+
+	// Get the current and original default object and attribute
+	// of the expression.
+	//
+    $currDefObj = `textFieldGrp -q -tx EEdefNameT`;
+
+	$defaultObj = `expression -q -o $EEorigExpressionName`;
+
+	if($defaultObj != $currDefObj)
+	{
+		// If the defaultObj is not the same as the current one, 
+		// reset the textfield.
+		//
+		if (size($defaultObj) > 0)
+		{
+   			textFieldGrp -e -tx $defaultObj EEdefNameT;
+		}
+		else
+		{
+			// There's no default object, so clear the textfield
+			//
+			textFieldGrp -e -tx "" EEdefNameT;
+		}
+	}
+
+}	// EErestoreExpression
+
+
+
+
+
+
+//  ================ EEobjectListChanged ================
+//
+//  SYNOPSIS
+//     A non-particle node in the scrolled text list of nodes is selected.
+//
+global proc EEobjectListChanged(string $nodeName)
+{
+	global string $EEcurrSelectedNode;
+	global int $EEcurrentEditor;
+	global int $EEdoLaunchTextEd;
+
+	string $objAttrName;
+
+	// Here and below have to take into account that the user may
+	// have clicked (esp. double-clicked) on the node that is 
+	// currently already in the editor.  In that case, the only
+	// thing that needs to be done is launch a text editor, if the
+	// the user double-clicked.
+	//
+	if ($nodeName != $EEcurrSelectedNode)
+	{
+		// Object/attribute mode; user is selecting an object:
+
+		// Clear all the controls in the editor, if a new node has
+		// been selected, and display the attrs of the new one.
+		//
+		EEclearAllControls();
+		EEresetNodeControls($nodeName);
+	}
+
+	// If the user has double-clicked on the node, launch an editor.
+	//
+	if ($EEdoLaunchTextEd && $EEcurrentEditor != 1)
+	{
+		string $expression, $expressionName[];
+
+		string $selectedAttr[] = `textScrollList -q -si EEattrList`;
+		string $objAttrName;
+		
+		if (size($selectedAttr) > 0)
+			$objAttrName = $nodeName + "." + $selectedAttr[0];
+		else
+			$objAttrName = $nodeName;
+
+		$expressionName = 
+			`listConnections -s true -d false -t "expression"  -scn true  $objAttrName`;
+		int $exprInEditor = EEexpressionIsInTextEditor($expressionName[0], 0);
+
+		if ($exprInEditor == -1)
+		{
+			if (size($selectedAttr) > 0 )
+			{
+				$expression  = `expression -q -s $expressionName[0]`;
+				EElaunchEditor($objAttrName, $expression, $expressionName[0]);
+			}
+			else
+			{
+				EElaunchEditor($objAttrName, "", "");
+			}
+
+			scrollField -e -enable false EEmultiText;
+		}
+	}
+
+}	// EEobjectListChanged
+
+
+//  ================ EEexpressionListChanged ================
+//
+//  SYNOPSIS
+//     User has selected a new non-particle expression in the node list. 
+//
+global proc EEexpressionListChanged(string $expressionName)
+{
+	global string $EEcurrSelectedNode;
+	global int $EEcurrentEditor;
+	global int $EEdoLaunchTextEd;
+
+	// Here and below have to take into account that the user may
+	// have clicked (esp. double-clicked) on the node that is 
+	// currently already in the editor.  In that case, the only
+	// thing that needs to be done is launch a text editor, if the
+	// the user double-clicked.
+	//
+	if ($expressionName != $EEcurrSelectedNode)
+	{
+		// Close the particles rules form.
+		//
+		EEswitchRulesForm(0);
+		EEdisplayExpression($expressionName);
+	}
+
+	// If the user has double-clicked on the node, launch an editor.
+	//
+	int	$exprInEditor = EEexpressionIsInTextEditor($expressionName, 0);
+
+	if ($EEdoLaunchTextEd && $EEcurrentEditor != 1 && $exprInEditor == -1)
+	{
+		string $expression;
+
+		string $objAttr[] = `listConnections -source false -d true -shapes true -plugs true  -scn true  $expressionName`;
+		$expression  = `expression -q -s $expressionName`;
+		EElaunchEditor($objAttr[0], $expression, $expressionName);
+
+		scrollField -e -enable false EEmultiText;
+	}
+
+}	// EEexpressionListChanged
+
+
+//  ================ EEonlyLaunchEditor ================
+//
+//  SYNOPSIS
+//      Don't create and show the expression editor window; just
+//		launch a text editor.
+//
+global proc EEonlyLaunchEditor(string $nodeName, string $attrName)
+{
+	global string $EEcurrFiles[];
+	global string $EEcurrFileDefObj[];
+
+	string $objAttrName;
+	
+	if (size($attrName) > 0)
+		$objAttrName = $nodeName + "." + $attrName;
+	else
+		$objAttrName = $nodeName;
+
+	// Find the expression, if there is one that this node.attr is
+	// connected to.
+	//
+	string $exprName[] =
+		`listConnections -s true -d false -t "expression"  -scn true  $objAttrName`;
+
+	// Set up default object here where we still have the object name,
+	// so the user doesn't have to type the node name.
+	//
+	int $fileNum = size($EEcurrFiles);
+	$EEcurrFileDefObj[$fileNum] = $nodeName;
+
+	if (size($exprName[0]) == 0)
+	{
+		EElaunchEditor($objAttrName, "", "");
+	}
+	else
+	{
+		string $expression = `expression -q -s $exprName[0]`;
+		EElaunchEditor($objAttrName, $expression, $exprName[0]);
+	}
+
+}	// EEonlyLaunchEditor
+
+

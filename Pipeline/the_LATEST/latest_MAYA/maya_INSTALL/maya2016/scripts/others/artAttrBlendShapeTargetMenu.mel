@@ -1,0 +1,146 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//////////////////////////////////////////////////////////////////////////////
+//	This file contains the MEL script to create the Blend shape targets Menu
+//////////////////////////////////////////////////////////////////////////////
+
+
+///////////////////////////////////////////////////////////////////
+// Main procedure - creates a listing of all targets for the blend shape.
+///////////////////////////////////////////////////////////////////
+
+global proc artAttrBlendShapeTargetMenu(
+	string 	$parent,
+	string 	$artCommand
+)
+//
+//	Description:
+// 		Creates a menu that shows all the BlendShape Targets.
+// 
+{
+	global string $artBlendShapeCurrentTarget;
+	// Find the base object
+	string $sel[]=`ls -sl`;
+	int $cnt = size($sel);
+	if ($cnt == 0)
+	{
+		// Clean up the existing list
+		textScrollList -e -ra blendShapeTargetList;
+		warning((uiRes("m_artAttrBlendShapeTargetMenu.kSelectPaintable")));
+		return;
+	}
+	string $bsn=$sel[$cnt-1];
+
+	
+	if ( !`textScrollList -q -ex blendShapeTargetList`)
+		return ;
+
+	// Clean up the existing list
+	textScrollList -e -ra blendShapeTargetList;
+	// select all the target for the blendshape node
+	string $tgts[] ;
+
+	// get the blend shape name
+	// the attrSelected value is in the form "nodeType.nodeName.attributeName"
+	string $cmd = "artAttrCtx -q -attrSelected " + `currentCtx` ;
+	string $attrSelected = eval($cmd);
+	
+	string $tokens[] ;
+	if( tokenize( $attrSelected, ".",  $tokens) == 3)
+	{
+		// if nodeName is parallelBlender then we need to traverse backward
+		// to find blendShape nodes into the parallel blender
+		string $bsNodes[] ;
+		int $par = 0 ;
+		$par = `getAttr ($tokens[1]+".pb")`;
+		if ($par){
+			$bsNodes = `listConnections -s true -d false -t blendShape $tokens[1]`;
+		}
+		else {
+			$bsNodes[0] = $tokens[1] ;
+		}
+
+		for($count =0 ;$count < size($bsNodes) ; $count++)
+		{
+			// add a 'target' for the base weights
+			$tgts[size($tgts)] = $bsNodes[0];
+			
+			// add normalization group targets
+			int $normGroups[] = `blendShape -q -ng $tokens[1]`;
+			for ( $ng in $normGroups ) {
+				$tgts[size($tgts)] = ( "norm" + $ng );
+			}
+			
+			string $bsTargets[] = `blendShape -q -target $tokens[1]`;
+			string $aliasNames[] = `listAttr -m ($bsNodes[$count]+".w")` ;
+			if (size($bsTargets) == size($aliasNames)) {
+				for ($bst in $bsTargets) {
+					$tgts[size($tgts)] = $bst;
+				}
+			} else {
+				// some of the targets are deleted, so use the weight
+				// alias names
+				for( $alias in $aliasNames) {
+					$tgts[size($tgts)] = $alias;
+				}
+			}
+		}
+	}
+
+	int $numTgts = size($tgts);
+	int $ii;
+	for ($ii = 0; $ii < $numTgts; $ii++) {
+		string $tgtName = $tgts[$ii];
+		textScrollList -e -append $tgtName blendShapeTargetList;
+	}
+	textScrollList -e -sc ("artBlendShapeSelectTarget "+$artCommand+" \"\" ") blendShapeTargetList;	
+	
+	// =================================
+	// Set the selection 
+	// =================================
+
+	// check if the previously selected target 
+	// object is valid for the selected surfaces and 
+	// if that's the case, select it again. 
+	for ($ii = 0; $ii < $numTgts; $ii++) {
+		string	$tgt 	= $tgts[$ii];
+		if ( ( $tgt == $artBlendShapeCurrentTarget ) ||
+			( $tgts[$ii] == $artBlendShapeCurrentTarget ) )
+		{
+			// Make the connection bewteen the target 
+			// object and the corresponding blend Shape.
+			artBlendShapeSelectTarget( $artCommand, $tgt );
+			return;
+		}
+	}
+
+	// Set the selection in the list to the first one.
+	string $tgt;
+	if ($numTgts > 0) {
+		$tgt = $tgts[0];
+
+		// Make the connection bewteen the target 
+		// object and the corresponding Blend Shape.
+		artBlendShapeSelectTarget( $artCommand, $tgt);
+	}
+	return;
+}

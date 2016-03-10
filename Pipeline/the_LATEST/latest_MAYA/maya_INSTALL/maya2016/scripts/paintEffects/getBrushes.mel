@@ -1,0 +1,112 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date: Jan 99
+//
+//
+//  Description:
+//      This finds all brushes in the selection list,
+//        0 - only return brushes which are picked directly
+//        1 - return brushes which are picked directly, or
+//            indirectly though their strokes
+//        2 - return brushes which are picked directly,
+//            indirectly though their strokes, or indirectly
+//            through their curves
+//        3 - return brushes which are picked directly,
+//            indirectly though their strokes, or indirectly
+//            through their curves, or indirectly through
+//            surfaces with COS's.
+//
+//  Returns:
+//        $string[] - a list of all brushes selected.
+//        If a brush is selected more than once it will
+//        only appear once in the list.
+//
+global proc string[] getBrushes( int $filter )
+{
+	string $brushes[];
+	int    $idx = 0;
+
+	if ($filter > 0) {
+		int $val = $filter - 1;
+		string $strokes[] = getStrokes( $val );
+		string $pfxStrokes[] = `ls -sl -dag -type pfxHair`;
+		$strokes = stringArrayCatenate( $strokes, $pfxStrokes );
+		$pfxStrokes = `ls -sl -dag -type pfxToon`;
+		$strokes = stringArrayCatenate( $strokes, $pfxStrokes );
+		// Walk through all strokes returned and add their associated brushes to our list.
+		string $stroke;
+		for ($stroke in $strokes) {
+			if ($stroke != "") {
+				string $attr = $stroke + ".brush";
+				string $result = `connectionInfo -sfd $attr`;
+				string $buffer[];
+				int $num = `tokenize $result "." $buffer`;
+				$brushes[ $idx ] = $buffer[0];
+				++$idx;
+			}
+		}
+	}
+
+	// Now add any brushes which are on the pick list directly.
+	string $selectionList[] = `ls -sl -l`;
+	string $selection;
+	for ($selection in $selectionList) {
+		if (`nodeType $selection` == "brush") {
+				$brushes[$idx] = $selection;
+				++$idx;
+		}
+	}
+
+	// Now filter any duplicates out of the brush list.
+	string $returnBrushes[];
+	int    $brushesSize = size( $brushes );
+	if ( $brushesSize != 0) {
+		string $sortedBrushes[] = `sort $brushes`;
+		int $i;
+		int $idx = 0;
+		$returnBrushes[ $idx ] = $sortedBrushes[ 0 ];
+		for ($i = 1; $i < $brushesSize; ++$i) {
+			if ($sortedBrushes[ $i ] != $returnBrushes[ $idx ]) {
+				// It is a unique entry.
+				++$idx;
+				$returnBrushes[ $idx ] = $sortedBrushes[ $i ];
+			}
+		}
+		if ( $sortedBrushes[0] != $brushes[0] ) {
+			// We have changed the lead brush
+			for ($i = 1; $i < $brushesSize; ++$i) {
+				// Find the lead brush in the unique array.
+				if ( $sortedBrushes[ $i ] == $brushes[0] ) {
+					// Found it.
+					$brushes[0]          = $sortedBrushes[ 0 ];
+					$sortedBrushes[ 0 ]  = $sortedBrushes[ $i ];
+					$sortedBrushes[ $i ] = $brushes[0];
+					$i = $brushesSize; // break out of the loop
+				}
+			}
+		}
+	}
+		
+	return ( $returnBrushes );
+}

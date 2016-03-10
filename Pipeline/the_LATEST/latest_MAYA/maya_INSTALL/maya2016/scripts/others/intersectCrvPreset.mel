@@ -1,0 +1,165 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  June 25, 1998
+//
+//  Description:
+//      The intersectCrvPreset() procedure executes an intersect curve 
+//		operation on a pair of curves based on the intersect option vars. 
+//		In general if you have n curves selected, (n-1) curve intersect 
+//		operations would be carried out: each of the 1..n-1 curves is
+//		intersected with the nth curve.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+global proc intersectCrvPreset(
+int $history,
+float $tol,
+int $useDirection,		// 0 - off, 1 - on, 2 - use current view direction
+						// 3 - x axis, 4 - y axis, 5 - z axis
+						// 6 - smart mode: use view vector in ortho view
+						// but NO direction in persp view.
+float $dirX,
+float $dirY,
+float $dirZ,
+int $intersectAllCurveOrWithLast )	// 1 - intersect all curves with all curves.
+								// 2 - intersect all curves with last curve only
+//
+//  Description:
+// 		This proc takes the two selected curves and adds a marker 
+//		(i.e. locator) on the first curve whenever it intersects the second
+//		and selects all the new markers.
+//
+{
+	// Get the list of nurbs curves selected
+	//
+	global int $gSelectNurbsCurvesBit;
+	global int $gSelectCurvesOnSurfacesBit;
+	string $curveList[] = `filterExpand -ex true -sm $gSelectNurbsCurvesBit -sm $gSelectCurvesOnSurfacesBit`;
+	int $numSelected = size($curveList);
+	if ( $numSelected < 2 )
+	{
+		string $msg = (uiRes("m_intersectCrvPreset.kAtLeastTwoError"));
+	   	error($msg); 
+		return;
+	}
+
+	// If we're to use the "current view direction", then find out what it is.
+	//
+	float $dir[3] ;
+	$dir[0] = $dirX;
+	$dir[1] = $dirY;
+	$dir[2] = $dirZ;
+	int $useDir = $useDirection;
+	if( $useDirection == 2 ) {
+		$dir = nurbsViewDirectionVector(0) ;
+		$useDir = 1;
+	} else if( ($useDirection == 3) || 
+			   ($useDirection == 4) || 
+			   ($useDirection == 5)) {
+		// Using x axis, or y axis, or z axis.  So set 
+		// the $useDir argument
+		//
+		$useDir = 1;
+	} else if( ($useDirection == 6) ) {
+		$dir = nurbsViewDirectionVector(0) ;
+		$useDir = 2;	
+	}
+	if( $useDir == 2 ) {
+		// If persp view, then $useDir = 0;
+		// If ortho view, then $useDir = 1;
+		string $currentCamera = `lookThru -q`;
+		if( `camera -q -o $currentCamera` )  {
+			$useDir = 1;
+		} else {
+			$useDir = 0;
+		}
+	}
+
+	// Find all intersections with ALL CURVES or with LAST CURVE only
+	//
+	string $resultLocators[];
+	string $parms[];
+	string $intersectNodes[];
+	if( $intersectAllCurveOrWithLast == 1 )  {
+		$parms = findAllIntersections( $curveList, 
+				$numSelected,	// this means all curves
+				$useDir, $dir[0], $dir[1], $dir[2], $tol, 0, // 0 means unsorted
+				$history, $intersectNodes );
+	} else {
+		$parms = findAllIntersections( $curveList, 
+				1,	// 1 means last curve
+				$useDir, $dir[0], $dir[1], $dir[2], $tol, 0, // 0 means unsorted
+				$history, $intersectNodes );
+	}
+
+	// For each intersection, create a locator
+	//
+	int $c, $p;
+	int $numParms;
+	for( $c = 0; $c < $numSelected; $c ++ ) {
+
+		// Parse the parms string into a list of parameter values
+		string $tok[];
+		float $floatParms[];
+		int $numTok = `tokenize $parms[$c] " " $tok`;
+		if( $numTok == 0 )  continue; 
+		for( $j = 0; $j < $numTok; $j ++ ) {
+			if( size($tok[$j]) > 0 ) {
+				$floatParms[$j] = $tok[$j];
+			}
+		}
+		$numParms = size($floatParms);
+		if( $numParms == 0 )  continue; 
+
+		// Parse out the intersect node string, if there is one
+		//
+		string $nodes[];
+		int $numNodes = `tokenize $intersectNodes[$c] " " $nodes`;
+
+		// For each parameter value in $floatParms, create a locator and
+		// add it to the resultLocators list
+		//
+		for( $p = 0; $p < $numParms; $p ++ ) {
+			$locator = eval("paramLocator " +  $curveList[$c] + ".u[" 
+								+ $floatParms[$p] + "]");
+			$resultLocators[size($resultLocators)] = $locator;
+
+			// if history is on then connect the crv/crv intersect node 
+			// parameter value to a locator
+			//
+			if( ($history == 1) && ($numNodes > 0)) {
+				connectAttr $nodes[$p] ($locator + ".localPositionX");
+			}
+		}
+		clear($floatParms);
+	}
+
+	// Select all the new markers
+	//
+	if ( size($resultLocators) > 0 ) select -r $resultLocators;
+}

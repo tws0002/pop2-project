@@ -1,0 +1,705 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Creation Date:  25 January 2001
+//  Based on performPolyProjectionArgList.mel
+//
+//  Procedure Name:
+//      performSubdProjection
+//
+//  Description:
+//        adds a planar, cylindric or spheric projection to the selected subd facets
+//         
+//  Input Arguments:
+//        $option : Whether to set the options to default values.
+//  Return Value:
+//        command string iff $option==2
+//
+// NOTE: create UV map is not implemented for the time being. This file has
+//	places where it would be implemented appearing as comments.
+//
+
+proc string argArrayAsString (string $args[])
+{
+	string $result = "{";
+	string $cast = "(string)";
+	for ($arg in $args) {
+		$result += ($cast + "\"" + $arg + "\"");
+		$cast = ", ";
+	}
+	return ($result + "}");
+}
+
+proc setOptionVars (string $primitive, int $forceFactorySettings)
+{
+     // -icx/-imageCenterX  -icy/-imageCenterY 
+	if ($forceFactorySettings || !`optionVar -exists ("subdProjectionImageCenter" + $primitive)`)
+		optionVar -floatValue ("subdProjectionImageCenter" + $primitive) 0.5
+			-floatValueAppend ("subdProjectionImageCenter" + $primitive) 0.5;
+     
+	// -pcx/-projectionCenterX	 -pcy/-projectionCenterY	-pcz/-projectionCenterZ
+	if ($forceFactorySettings || !`optionVar -exists ("subdProjectionCenter" + $primitive)`)
+		optionVar -floatValue ("subdProjectionCenter" + $primitive) 0.
+			-floatValueAppend ("subdProjectionCenter" + $primitive) 0.
+			-floatValueAppend ("subdProjectionCenter" + $primitive) 0.;
+
+	// -rx/-rotateX  -ry/-rotateY  -rz/-rotateZ 
+	if ($forceFactorySettings || !`optionVar -exists ("subdProjectionRotate" + $primitive)`)
+		optionVar -floatValue ("subdProjectionRotate" + $primitive) 0.
+			-floatValueAppend ("subdProjectionRotate" + $primitive) 0.
+			-floatValueAppend ("subdProjectionRotate" + $primitive) 0.;
+
+     // -pw/-projectionScaleU  -ph/-projectionScaleV 
+	if ($primitive != "Planar") {
+		float $fval1=180.;
+		float $fval2=90.0;
+		if ($primitive == "Cylindrical") $fval2=1.0;
+		if ($forceFactorySettings || !`optionVar -exists ("subdProjectionScaleU" + $primitive)`) 
+			optionVar   -floatValue ("subdProjectionScaleU" + $primitive) $fval1;
+		if ($forceFactorySettings || !`optionVar -exists ("subdProjectionScaleV" + $primitive)`) 
+			optionVar   -floatValue ("subdProjectionScaleV" + $primitive) $fval2;
+	} else {
+		if ($forceFactorySettings || !`optionVar -exists ("subdProjectionScale" + $primitive)`) {
+			optionVar -floatValue ("subdProjectionScale" + $primitive) 1.
+				-floatValueAppend ("subdProjectionScale" + $primitive) 1.;
+		}
+	}
+
+	if ($forceFactorySettings || !`optionVar -exists ("subdProjectionSmartFit" + $primitive)`) {
+		optionVar -intValue ("subdProjectionSmartFit" + $primitive) 1;
+	}
+
+	if ($forceFactorySettings || !`optionVar -exists ("subdProjectionFitToBoxOrPlane" + $primitive)`) {
+		optionVar -intValue ("subdProjectionFitToBoxOrPlane" + $primitive) 2;
+	}
+
+	if ($forceFactorySettings || !`optionVar -exists ("subdProjectionMappingDirection" + $primitive)`) {
+		optionVar -intValue ("subdProjectionMappingDirection" + $primitive) 3;
+	}
+
+	if ($forceFactorySettings || !`optionVar -exists ("subdProjectionInsertionPoint" + $primitive)`) {
+		optionVar -intValue ("subdProjectionInsertionPoint" + $primitive) 1;
+	}
+
+    // -isu/-imageScaleU  -isv/-imageScaleV 
+	if ($forceFactorySettings || !`optionVar -exists ("subdProjectionImageScale" + $primitive)`)
+		optionVar -floatValue ("subdProjectionImageScale" + $primitive) 1.
+			-floatValueAppend ("subdProjectionImageScale" + $primitive) 1.;
+
+    //  -ra/-rotationAngle 
+    if ($forceFactorySettings || !`optionVar -exists ("subdProjectionRotationAngle" + $primitive)`)
+		optionVar -floatValue ("subdProjectionRotationAngle" + $primitive) 0.;
+
+    if ($primitive == "Planar")
+		if ($forceFactorySettings || !`optionVar -exists ("subdProjectionSquareImage" + $primitive)`)
+			optionVar -intValue ("subdProjectionSquareImage" + $primitive) 0;
+
+/*
+createMap omitted for now
+
+	// -cm/-createMap
+	if ($forceFactorySettings || !`optionVar -exists ("subdProjectionCreateMap" + $primitive)`)
+		optionVar -intValue ("subdProjectionCreateMap" + $primitive) 0;		
+	// -uvs/-uvSetName
+	if ($forceFactorySettings || !`optionVar -exists ("subdProjectionUvSetName" + $primitive)`)
+		optionVar -stringValue ("subdProjectionUvSetName" + $primitive) "uvSet1";		
+*/
+}
+
+global proc performSubdProjectionSetup (string $primitive, string $parent, int $forceFactorySettings)
+{
+	setOptionVars($primitive, $forceFactorySettings);
+	setParent $parent;
+	float $vals[];
+	float $val;
+
+	$vals = `optionVar -query ("subdProjectionImageCenter" + $primitive)`;
+     floatFieldGrp -edit -value1 $vals[0] -value2 $vals[1] subdProjectionImageCenter;
+
+	$vals = `optionVar -query ("subdProjectionRotate" + $primitive)`;
+     floatFieldGrp -edit -value1 $vals[0] -value2 $vals[1] -value3 $vals[2] subdProjectionRotate;
+
+	$vals = `optionVar -query ("subdProjectionCenter" + $primitive)`;
+     floatFieldGrp -edit -value1 $vals[0] -value2 $vals[1] -value3 $vals[2] subdProjectionCenter;
+
+		$val = `optionVar -query ("subdProjectionScaleU" + $primitive)`;
+		 floatSliderGrp -edit -value $val subdProjectionScaleU;
+		$val = `optionVar -query ("subdProjectionScaleV" + $primitive)`;
+		 floatSliderGrp -edit -value $val subdProjectionScaleV;
+
+	checkBoxGrp -edit -value1
+		`optionVar -q ("subdProjectionSmartFit" + $primitive)`
+			subdProjectionSmartFit;
+	
+	checkBoxGrp -edit -value1
+		`optionVar -q ("subdProjectionInsertionPoint" + $primitive)`
+			subdProjectionInsertionPoint;
+	
+	if ($primitive == "Planar") {
+		radioButtonGrp -edit -select
+			`optionVar -q ("subdProjectionFitToBoxOrPlane" + $primitive)`
+			subdProjectionFitToBoxOrPlane;
+	
+		radioButtonGrp -edit -select 
+			`optionVar -q ("subdProjectionMappingDirection" + $primitive)`
+			subdProjectionMappingDirection;
+	}
+	
+	if (`checkBoxGrp -query -value1 subdProjectionSmartFit`) 
+			subdEnableSmartFit $primitive;	
+	else 	subdDisableSmartFit $primitive;
+
+	$vals = `optionVar -query ("subdProjectionImageScale" + $primitive)`;
+     floatFieldGrp -edit -value1 $vals[0] -value2 $vals[1] subdProjectionImageScale;
+
+	$val=`optionVar -query ("subdProjectionRotationAngle" + $primitive)`;
+	 floatSliderGrp -edit -value $val subdProjectionRotationAngle;
+	
+	if ($primitive == "Planar")
+		checkBoxGrp -edit -value1 
+			`optionVar -q ("subdProjectionSquareImage" + $primitive)`
+				subdProjectionSquareImage;
+
+/*
+createMap omitted for now
+
+	$val = `optionVar -q ("subdProjectionCreateMap" + $primitive)`;
+	checkBoxGrp -edit -value1 $val subdProjectionCreateMap;
+	if ($val == 1)
+		disable -v false subdProjectionUvSetName;
+	else
+		disable -v true subdProjectionUvSetName;
+	textFieldGrp -edit -tx 
+		`optionVar -q ("subdProjectionUvSetName" + $primitive)`		
+		subdProjectionUvSetName;
+*/
+}
+
+global proc performSubdProjectionCallback (string $primitive, string $args[], string $uvSetName, string $parent, int $doIt)
+{
+	setParent $parent;
+	
+	optionVar -floatValue ("subdProjectionImageCenter" + $primitive)
+		`floatFieldGrp -query -value1 subdProjectionImageCenter`
+		-floatValueAppend ("subdProjectionImageCenter" + $primitive)
+		`floatFieldGrp -query -value2 subdProjectionImageCenter`;
+	
+	optionVar -floatValue ("subdProjectionCenter" + $primitive)
+		`floatFieldGrp -query -value1 subdProjectionCenter`
+		-floatValueAppend ("subdProjectionCenter" + $primitive)
+		`floatFieldGrp -query -value2 subdProjectionCenter`
+		-floatValueAppend ("subdProjectionCenter" + $primitive)
+		`floatFieldGrp -query -value3 subdProjectionCenter`;
+		
+	optionVar -floatValue ("subdProjectionRotate" + $primitive)
+		`floatFieldGrp -query -value1 subdProjectionRotate`
+		-floatValueAppend ("subdProjectionRotate" + $primitive)
+		`floatFieldGrp -query -value2 subdProjectionRotate`
+		-floatValueAppend ("subdProjectionRotate" + $primitive)
+		`floatFieldGrp -query -value3 subdProjectionRotate`;
+		
+		optionVar -floatValue ("subdProjectionScaleU" + $primitive)
+			`floatSliderGrp -query -value subdProjectionScaleU`;
+		optionVar -floatValue ("subdProjectionScaleV" + $primitive)
+			`floatSliderGrp -query -value subdProjectionScaleV`;
+	
+	optionVar -intValue ("subdProjectionSmartFit" + $primitive)
+		`checkBoxGrp -query -value1 subdProjectionSmartFit`;
+
+	if (`checkBoxGrp -query -value1 subdProjectionSmartFit`) 
+			subdEnableSmartFit $primitive;	
+	else 	subdDisableSmartFit $primitive;
+
+	if ($primitive == "Planar") {
+		optionVar -intValue ("subdProjectionFitToBoxOrPlane" + $primitive)
+			`radioButtonGrp -query -select subdProjectionFitToBoxOrPlane`;
+
+		optionVar -intValue ("subdProjectionMappingDirection" + $primitive)
+			`radioButtonGrp -query -select subdProjectionMappingDirection`;
+	}
+
+	optionVar -intValue ("subdProjectionInsertionPoint" + $primitive)
+		`checkBoxGrp -query -value1 subdProjectionInsertionPoint`;
+
+	optionVar -floatValue ("subdProjectionImageScale" + $primitive)
+		`floatFieldGrp -query -value1 subdProjectionImageScale`
+		-floatValueAppend ("subdProjectionImageScale" + $primitive)
+		`floatFieldGrp -query -value2 subdProjectionImageScale`;
+	
+	optionVar -floatValue ("subdProjectionRotationAngle" + $primitive)
+		`floatSliderGrp -query -value subdProjectionRotationAngle`;
+		
+	if ($primitive == "Planar")
+		optionVar -intValue ("subdProjectionSquareImage" + $primitive)
+			`checkBoxGrp -query -value1 subdProjectionSquareImage`;
+
+//createMap omitted for now
+
+//	optionVar -intValue ("subdProjectionCreateMap" + $primitive)
+//		 `checkBoxGrp -query -value1 subdProjectionCreateMap`;
+//	optionVar -stringValue ("subdProjectionUvSetName" + $primitive)
+//		 `textFieldGrp -query -tx subdProjectionUvSetName`;
+
+	if ($doIt) {
+		$args[0] = "0";
+		performSubdProjectionArgList 1 $args $uvSetName;
+		string $tmpCmd = "performSubdProjection \"" + $primitive + "\" 0";
+		string $tmpCmdLabel = "subdProjection";
+		if ($primitive == "Planar") $tmpCmdLabel = "subdPlanarProjection";
+		else if ($primitive == "Cylindrical") $tmpCmdLabel = "subdCylindricalProjection";
+		else if ($primitive == "Spherical") $tmpCmdLabel = "subdSphericalProjection";
+		addToRecentCommandQueue $tmpCmd $tmpCmdLabel;
+	}
+}
+
+global proc subdDisableSmartFit(string $primitive)
+{
+	subdEnableProjectionTransformation($primitive);
+	if ($primitive == "Planar")	 {	
+		disable subdProjectionMappingDirection;
+		disable subdProjectionFitToBoxOrPlane;
+		disable subdProjectionSquareImage;
+	}
+}
+
+global proc subdEnableSmartFit(string $primitive)
+{
+	subdDisableProjectionTransformation($primitive);
+	if ($primitive == "Planar")	{
+		disable -v false subdProjectionFitToBoxOrPlane;
+		disable -v false subdProjectionSquareImage;
+	}
+
+	if ($primitive != "Planar")	return;
+
+	int $res = `radioButtonGrp -query -select subdProjectionFitToBoxOrPlane`;
+	if ($res == 2)
+			disable -v false subdProjectionMappingDirection;
+	else 	disable subdProjectionMappingDirection;
+}
+
+global proc subdDisableProjectionTransformation(string $primitive)
+{
+	disable subdProjectionCenter;
+	disable subdProjectionRotate;
+	disable subdProjectionScaleU;
+	disable subdProjectionScaleV;
+	return;
+}
+
+global proc subdEnableProjectionTransformation(string $primitive)
+{
+    disable -v false subdProjectionCenter;
+    disable -v false subdProjectionRotate;
+	disable -v false subdProjectionScaleU;
+	disable -v false subdProjectionScaleV;
+    return;
+}
+
+global proc subdEnableMappingDirection()
+{
+	disable -v false subdProjectionMappingDirection;
+}
+
+global proc subdEnableFitToBoxOrPlane()
+{
+	disable -v false subdProjectionFitToBoxOrPlane;
+}
+
+proc subdProjectionOptions (string $primitive, string $args[], string $uvSetName)
+{
+	string $layout = getOptionBox();
+	setParent $layout;
+	setUITemplate -pushTemplate DefaultTemplate;
+	waitCursor -state 1;
+	tabLayout -scr true -tv false;
+	
+	string $parent = `columnLayout -adjustableColumn 1`;
+
+	string $commandName = "performSubdProjection";
+	string $callback = ($commandName + "Callback " + $primitive + " " + argArrayAsString ($args) + " \"" + $uvSetName + "\" " + $parent + " ");
+	string $setup = ($commandName + "Setup " + $primitive + " " + $parent + " ");
+	
+	floatFieldGrp -label (uiRes("m_performSubdProjectionArgList.kProjectionCenter"))  -numberOfFields 3 subdProjectionCenter;
+	floatFieldGrp -label (uiRes("m_performSubdProjectionArgList.kProjectionRotation"))  -numberOfFields 3 subdProjectionRotate;
+
+	string $projectionHeight	 = (uiRes("m_performSubdProjectionArgList.kProjectionHeight"));
+	string $horizontalProjection = (uiRes("m_performSubdProjectionArgList.kProjectionHorSweep"));
+	if ($primitive == "Planar") {
+		floatSliderGrp -label (uiRes("m_performSubdProjectionArgList.kProjectionWidth"))  -min 0.0 -max 100.0 
+							subdProjectionScaleU;
+		floatSliderGrp -label $projectionHeight  -min 0.0 -max 100.0 
+							subdProjectionScaleV;
+	} else if ($primitive == "Cylindrical") {
+		floatSliderGrp -label $horizontalProjection  -min 0.0 -max 360.0 
+							subdProjectionScaleU;
+		floatSliderGrp -label $projectionHeight  subdProjectionScaleV;
+	} else {
+		// spherical
+		floatSliderGrp -label $horizontalProjection  -min 0.0 -max 360.0 
+							subdProjectionScaleU;
+		floatSliderGrp -label (uiRes("m_performSubdProjectionArgList.kProjectionVertSweep"))  -min 0.0 -max 180.0 
+							subdProjectionScaleV;
+	}
+
+	separator;
+
+	checkBoxGrp	-label (uiRes("m_performSubdProjectionArgList.kSmartFit"))  
+	            -label1 (uiRes("m_performSubdProjectionArgList.kAutomaticallyFit")) 
+				-onc ("subdEnableSmartFit " + $primitive)
+				-ofc ("subdDisableSmartFit " + $primitive)
+				subdProjectionSmartFit;
+
+	if ($primitive == "Planar") {
+		radioButtonGrp -nrb 2 -label1 (uiRes("m_performSubdProjectionArgList.kFitToBestPlane"))
+                    -cw 2   132
+                    -cw 3   153
+		            -label2 (uiRes("m_performSubdProjectionArgList.kFitToBoundingBox"))
+					-on1 ("disable subdProjectionMappingDirection")
+					-of1 ("subdEnableMappingDirection")
+					subdProjectionFitToBoxOrPlane;
+
+		radioButtonGrp -nrb 4 -label (uiRes("m_performSubdProjectionArgList.kMappingDirection"))
+                        -cw 2 65 
+                        -cw 3 65
+                        -cw 4 65
+                        -cw 5 65 
+						-label1 (uiRes("m_performSubdProjectionArgList.kXAxis"))  
+						-label2 (uiRes("m_performSubdProjectionArgList.kYAxis")) 
+						-label3 (uiRes("m_performSubdProjectionArgList.kZAxis")) 
+						-label4 (uiRes("m_performSubdProjectionArgList.kCamera")) 
+						subdProjectionMappingDirection;
+	}
+
+	checkBoxGrp -label1 (uiRes("m_performSubdProjectionArgList.kInsertBeforeDeformers"))  subdProjectionInsertionPoint;
+
+	separator;
+
+	floatFieldGrp -label (uiRes("m_performSubdProjectionArgList.kImageCenter"))  -numberOfFields 2 subdProjectionImageCenter;
+	floatSliderGrp -label (uiRes("m_performSubdProjectionArgList.kImageRotation"))  -min 0.0 -max 360.0 subdProjectionRotationAngle;	
+	floatFieldGrp -label (uiRes("m_performSubdProjectionArgList.kImageScale"))  -numberOfFields 2 subdProjectionImageScale;
+
+	if ($primitive == "Planar")		
+		checkBoxGrp -label1 (uiRes("m_performSubdProjectionArgList.kKeepImageRatio"))  subdProjectionSquareImage;
+
+	separator;
+/*
+//createMap omitted for now
+
+	checkBoxGrp -label1 (uiRes("m_performSubdProjectionArgList.kCreateNewUVSet")) 
+		-on1 ("disable -v false subdProjectionUvSetName")
+		-of1 ("disable -v true subdProjectionUvSetName")
+		subdProjectionCreateMap;
+	textFieldGrp -label (uiRes("m_performSubdProjectionArgList.kUVSetName"))  subdProjectionUvSetName;
+*/
+	waitCursor -state 0;
+	setUITemplate -popTemplate;
+	   
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit -label (uiRes("m_performSubdProjectionArgList.kProject")) 
+	       -command ($callback + 1)
+		$applyBtn;
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + 0 + "; hideOptionBox")
+		$saveBtn;
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + 1)
+		$resetBtn;
+	
+	if($primitive == "Planar")
+	{
+		setOptionBoxTitle (uiRes("m_performSubdProjectionArgList.kSubdivPlanarTitle"));
+	}
+	else if($primitive == "Cylindrical")
+	{
+		setOptionBoxTitle (uiRes("m_performSubdProjectionArgList.kSubdivCylindricalTitle"));
+	}
+	else if($primitive == "Spherical")
+	{
+		setOptionBoxTitle (uiRes("m_performSubdProjectionArgList.kSubdivSphericalTitle"));
+	}
+
+	setOptionBoxHelpTag( "SubdivPlanarMapping" );
+
+	eval (($setup + 0));
+	showOptionBox();
+}
+
+/*
+//createMap omitted for now
+
+proc string setCurrentCmd(string $primitive, int $forceCreate, string $uvSetName)
+{
+	int $createNewMap =	`optionVar -q ("subdProjectionCreateMap" + $primitive)`;
+	string $setCurrent = "";
+	if ($createNewMap || $forceCreate)
+		$setCurrent = "subdUVSet -luv";
+	return $setCurrent;
+}
+*/
+
+//proc string assembleCmd(string $primitive, int $forceCreate, string $uvSetName)
+proc string assembleCmd(string $primitive)
+{
+	setOptionVars ($primitive, false);
+
+	int $doHistory = `constructionHistory -q -toggle`;
+	float $ic[]=`optionVar -query ("subdProjectionImageCenter" + $primitive)`;
+	float $ir=`optionVar -query ("subdProjectionRotationAngle" + $primitive)`;
+	float $is[]=`optionVar -query ("subdProjectionImageScale" + $primitive)`;
+
+//	int $createNewMap =	`optionVar -q ("subdProjectionCreateMap" + $primitive)`;
+//	string $mapname = `optionVar -q ("subdProjectionUvSetName" + $primitive)`;
+
+
+//	string $cmd=("subd" + $primitive + "Projection" + " -ch " + $doHistory);
+	string $cmd=("subdPlanarProjection -ch " + $doHistory );
+	if (`optionVar -query ("subdProjectionInsertionPoint" + $primitive)`)
+		$cmd+=(" -ibd on");
+	else $cmd+=(" -ibd off");
+
+	$cmd+=(" -icx " + $ic[0] + " -icy " + $ic[1] +
+			" -ra " + $ir + 
+			" -isu " + $is[0] + " -isv " + $is[1]);
+
+/*
+// createMap omitted for now
+
+	if ($createNewMap || $forceCreate)
+	{
+		if ($forceCreate) $mapname = $uvSetName;
+		if (size($mapname))
+		{
+			$cmd = $cmd + (" -cm on -uvSetName " + $mapname);
+		}
+	}
+*/
+
+	int $fitToBoundingBox = 0, $fitToBestPlane = 0;
+
+	if (`optionVar -q ("subdProjectionSmartFit" + $primitive)`) {
+		if ($primitive == "Planar") {
+			if (`optionVar -query ("subdProjectionSquareImage" + $primitive)`)
+				$cmd+=(" -kir ");
+		} else {
+			$cmd+=(" -sf on ");
+			return $cmd;
+		}
+
+		int $result=`optionVar -q ("subdProjectionFitToBoxOrPlane" + $primitive)`;
+		if ($result == 1) return ($cmd + " -md b");		//Best Plane
+		else if ($result == 2) {			//Bounding Box with direction
+			int $mdir = `optionVar -q ("subdProjectionMappingDirection" + $primitive)`;
+			switch ($mdir) {
+				case 1: return ($cmd + " -md x ");
+				case 2: return ($cmd + " -md y ");
+				case 3: return ($cmd + " -md z ");
+			    case 4: return ($cmd + " -md c ");
+			}
+		}
+		//Should never reach this line
+	} else {
+		if ($primitive != "Planar") {
+			$cmd+=(" -sf off ");
+		}
+	}
+
+	// Well, No smart fittings here.  Just pass those values to the command
+
+	float $pc[]=`optionVar -query ("subdProjectionCenter" + $primitive)`;
+	float $pr[]=`optionVar -query ("subdProjectionRotate" + $primitive)`;
+
+	$cmd+=(" -pcx " + $pc[0] + " -pcy " + $pc[1] + " -pcz " + $pc[2] + 
+		   " -rx " + $pr[0] + " -ry  " + $pr[1] + " -rz  " + $pr[2]);
+
+	if ($primitive == "Planar") {
+//		float $vals[2];
+//		$vals = `optionVar -query ("subdProjectionScale" + $primitive)`;
+		float $valU=`optionVar -query ("subdProjectionScaleU" + $primitive)`;
+    	float $valV=`optionVar -query ("subdProjectionScaleV" + $primitive)`;
+		$cmd += (" -pw " + $valU + " -ph " + $valV);
+    } else { 	
+		float $valU=`optionVar -query ("subdProjectionScaleU" + $primitive)`;
+    	float $valV=`optionVar -query ("subdProjectionScaleV" + $primitive)`;
+		$cmd += (" -pw " + $valU + " -ph " + $valV);
+	}
+
+	return $cmd;	
+}
+
+/*
+// createMap omitted for now
+
+proc string createCurrentShader ()
+{
+	global string $subdTextureColorShader;
+	string $shader;
+	string $shaderType="lambert";
+	string $textureName="checker";
+	if (`optionVar -q subdCreateShaderWithMapping` == 0) 
+		return "";
+	string $shader=`evalEcho "sets -n texturedFacets -em -r true -nss true"`;
+	if ($shader != "") {
+		evalEcho ("partition -e -addSet renderPartition " + $shader);
+		string $shad[];
+		if ($subdTextureColorShader != "")
+			$shad=`ls -showType $subdTextureColorShader`;
+		if ($subdTextureColorShader == "" || size($shad) == 0) {
+			string $texture[]=`ls -showType defaultSubdTexture`;
+			if (size($texture) == 0)
+				$texture[0]=`evalEcho ("shadingNode -asTexture " 
+						+ $textureName + " -n defaultSubdTexture")`;			
+			$subdTextureColorShader=`evalEcho ("shadingNode -asShader " 
+						+ $shaderType + " -n defaultSubdShader")`;
+			evalEcho ("connectAttr " + $texture[0] + ".outColor " 
+					+ $subdTextureColorShader + ".color");
+			// creating a node selects it: we don't want that...
+			select -d $texture[0] $subdTextureColorShader;
+		}
+		$shad=`ls -showType $subdTextureColorShader`;
+		if ($subdTextureColorShader != "" && size($shad) != 0)
+			evalEcho ("connectAttr -f " + $subdTextureColorShader + ".outColor " 
+								+ $shader + ".surfaceShader");
+		else warning (uiRes("m_performSubdProjectionArgList.kShaderWarning"));
+	} else warning (uiRes("m_performSubdProjectionArgList.kCreationWarning"));
+	return $shader;
+}
+*/
+
+proc concatArray(string $res[], string $to_add[])
+{
+	for($i in $to_add)
+		$res[size($res)] = $i;
+}
+
+global proc string performSubdProjectionArgList 
+	(string $version, string $args[], string $uvSetName)
+//
+//	Input Arguments:
+//	$version: The version of this option box.  Used to know how to 
+//	interpret the $args array.
+//		"1" : $action, $primitive, $selectCmd
+//
+//	$args
+//	Version 1
+//	[0]		$action		0 : Execute the command.
+//						1 : Show the option box dialog.
+//						2 : Return the command.
+//	[1]		$primitive	The type of primitive to create
+//	[2]		$selectCmd	The command to issue to determine which objects
+//							to affect
+//
+//	$uvSetName: The requested name for a new uv set
+//
+//  Return Value:
+//      The string to execute for this option box.
+//
+{
+	int		$versionNum				= $version;
+
+	int		$action					= $args[0];
+	string	$primitive				= $args[1];
+	string	$selectCmd				= $args[2];
+//	int		$forceCreate			= $args[3];
+
+    string $cmd="";
+    string $lbl;
+    string $sel[], $preFilteredSel[];
+    switch ($action) {
+    case 0:
+		$preFilteredSel = `ls -sl`;
+        if (size($preFilteredSel) != 0) {
+            setOptionVars($primitive, false);
+            int $index=0;
+            string $oldnodes[]=`ls -sl -dep`;
+            if (size($oldnodes) > 0)
+                select -d $oldnodes;
+
+            string $totalSel[];
+
+            // what is selected ?
+            concatArray($totalSel, `ls -sl`);
+
+            // Do projections.
+
+//			string $cmd=`assembleCmd $primitive $forceCreate $uvSetName`;
+			string $cmd=`assembleCmd $primitive`;
+
+			for ($i = 0; $i < size($preFilteredSel); $i++)
+				$cmd += (" " + $preFilteredSel[$i]);
+
+            string $res[];
+            $res=`evalEcho $cmd`;
+            // append $res (nodes) to $totalSel
+            concatArray($totalSel, $res);
+/*
+// createMap omitted for now
+
+			// Set current
+			string $setCurrent = `setCurrentCmd $primitive $forceCreate $uvSetName`;
+			if (size($setCurrent))
+			{
+				for ($i = 0; $i < size($preFilteredSel); $i++)
+					$setCurrent += (" " + $preFilteredSel[$i]);
+				evalEcho $setCurrent;
+			}
+*/
+//            string $shader=`createCurrentShader`;
+/*
+            // Update shader's set.
+            if( $shader != "") {
+                $cmd=("sets -e -fe " + $shader);
+				int $i;
+                for($i=0; $i < size($preFilteredSel); $i++)
+                    $cmd=($cmd + " " + $preFilteredSel[$i]);
+                evalEcho $cmd;
+            }
+*/
+            // Set selection
+            evalEcho `select -r $totalSel`;
+
+            // clear $sel;
+            global string $subdLastTool;
+            $subdLastTool="";
+            setToolTo ShowManips;
+
+        } else warning (uiRes("m_performSubdProjectionArgList.kProjectionWarning")); 
+		
+        break;
+
+    case 1: subdProjectionOptions $primitive $args $uvSetName; break;
+/*
+// createMap omitted for now
+
+    case 2: $cmd=`assembleCmd $primitive $forceCreate $uvSetName`;	
+	  string $setCurrent = `setCurrentCmd $primitive $forceCreate $uvSetName`;
+	  $cmd += ("; " + $setCurrent);
+	  break;
+*/
+    default:
+        // this is useless: setOptionVars(false);
+        $cmd = ("performSubdProjection " + $primitive + " 0");
+    }
+    return $cmd;
+}

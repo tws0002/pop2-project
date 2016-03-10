@@ -1,0 +1,156 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  2004
+//
+//<doc>
+//<name compactHairSystem>
+//
+//<synopsis>
+//      compactHairSystem 
+//
+//<returns>
+//      None.
+//
+//<description>
+// This mel procedure gets rid of gaps in follicle connections for selected
+// hair systems. Dependancy graph array attributes can be sparce, which means
+// that there can be elements in the middle of the array that are unused.
+// This routine closes up the gaps by reassigning the connected indices.
+// Typically hair system input connections will have gaps if one has
+// deleted some of the follicles at some point. In Maya 7.0 and later such
+// sparce connections should be harmless, although they had caused problems
+// in earlier versions. 
+//
+//<flags>
+//  None.
+//
+//<examples>
+//
+// compactHairSystem;
+//
+//</doc>
+
+proc int getMaxConnectedSize( string $attr ){
+	string $con[] = `listAttr -m $attr`;
+	int $numCon = size( $con );
+	if( $numCon > 0 ){
+		string $buffer[];
+		int $numTokens = `tokenize $con[($numCon-1)] "[]" $buffer`;
+		if( $numTokens == 2 ){
+			int $index = (int)$buffer[1];	
+			return( $index + 1 );
+		} else {
+			warning( (uiRes("m_compactHairSystem.kBadTokenNumberWrn")));
+			return( 0 );
+		}
+	} else {
+		return 0;
+	}
+}
+
+proc changeConstraintIndice( string $constraint, int $oldIndex, int $newIndex )
+{
+	string $indices = ($constraint + ".curveIndices");
+	float $values[] = `getAttr $indices`;	
+	int $i;
+	for( $i = 0; $i < size( $values ); $i++ ){
+		if( $oldIndex == (int)$values[$i] ){
+			setAttr ($indices + "[" + $i + "]") $newIndex;
+			break;
+		}
+	}
+}
+
+
+global proc compactHairSystem()
+{
+	string $hairSystems[] = getSelectedHairSystems();
+	if( size( $hairSystems ) == 0 ){
+		warning( (uiRes("m_compactHairSystem.kNoSystemSelectedWrn"))); 
+		return;
+	}
+	string $hsys;
+	int $i,$j;
+	for( $hsys in $hairSystems ){
+		int $numInputs = getMaxConnectedSize($hsys + ".inputHair");
+		int $numOutputs = getMaxConnectedSize($hsys + ".inputHair");
+		
+		int $doOutputs = false;
+		if( $numOutputs > 0 ){
+			$doOutputs = true;	
+			if( $numOutputs != $numInputs ){
+				// this could be OK if there are simply some missing outputs
+				warning( (uiRes("m_compactHairSystem.kMismatchConnectionsWrn")));
+			}
+		}
+		string $constraints[] = `listConnections ($hsys + ".inputHairPin")`;
+		int $numConstraints = size( $constraints );
+		int $hasGap = false;
+		int $gapIndex;
+		int $wasCompacted = false;
+		for( $i = 0; $i < $numInputs; $i++ ){
+			string $inputEntry = ($hsys+".inputHair["+$i+"]");
+			string $outputEntry = ($hsys+".outputHair["+$i+"]");
+			string $con = `connectionInfo -sfd $inputEntry`;
+			int $hasCon = size( $con ) > 0;
+			if($hasGap){
+				if($hasCon){
+					string $gapEntry = ($hsys+".inputHair["+$gapIndex+"]");
+					string $outCon = "";
+					if( $doOutputs ){
+						string $outCons[] = `connectionInfo -dfs $outputEntry`;
+						if( size( $outCons ) > 0 ){
+							$outCon = $outCons[0];
+							disconnectAttr $outputEntry $outCon;
+						}
+					}
+					disconnectAttr $con $inputEntry;
+					connectAttr $con $gapEntry;
+					if( $outCon != "" ){
+						string $outGapEntry = ($hsys+".outputHair["+$gapIndex+"]");
+						connectAttr $outGapEntry $outCon;
+					}
+					for( $j = 0; $j < $numConstraints; $j++ ){
+						changeConstraintIndice( $constraints[$j], $i, $gapIndex );
+					}
+					$gapIndex++;	
+					$wasCompacted = true;
+				}
+			} else if( !$hasCon ){
+				$hasGap = true;
+				$gapIndex = $i;
+			}
+		}
+		if( $wasCompacted ){
+			string $cacheCon[] = `listConnections ($hsys + ".diskCache" )`;
+			if( size( $cacheCon ) > 0 ){
+				string $fmt = (uiRes("m_compactHairSystem.kDeleteCacheWrn"));
+				warning(`format -s $hsys $fmt`);
+			}
+		} else {
+			string $fmt = (uiRes("m_compactHairSystem.kAlreadyCompactedWrn"));
+			print(`format -s $hsys $fmt`);
+		}
+	}
+}

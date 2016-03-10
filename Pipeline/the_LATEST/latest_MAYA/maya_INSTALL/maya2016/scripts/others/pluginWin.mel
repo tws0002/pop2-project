@@ -1,0 +1,1342 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:   29 July 1996
+//
+//  Description:
+//      This implements the plugin-manager utility window
+//
+//  Procedures:
+//     pluginWin, updatePluginWin, browsePlugin, displayPluginInfo,
+//     loadPluginCallback
+//
+
+global int $pluginListSize = 0;
+global string $defaultPluginBrowseDir = "";
+global string $pluginWindowName = "pluginManagerWindow";
+global int $ignoreUpdateCallback = false;
+global int $pluginRefreshNeeded = false;
+global string $winLyt ="windowLyt";
+
+
+
+/////////////////////////////////////////////////////////////////
+// Helper Functions: these are not exported to the application //
+/////////////////////////////////////////////////////////////////
+
+proc string getDir( string $path )
+//
+//  Procedure Name:
+//      getDir
+//
+//  Description:
+//      strips the file name off of a path
+//
+//  Return Value:
+//      the directory name
+//
+{
+	string $dir = match( "^.*/", $path );
+
+	int $sz = size( $dir );
+	// Strip off trailing '/'
+	//
+	if ( ( $sz > 1 ) && ( substring( $dir, $sz, $sz ) == "/" ) ) {
+		$dir = substring( $dir, 1, ($sz - 1) );
+	}
+	return $dir;
+}
+
+proc string getFile( string $path )
+//
+//  Procedure Name:
+//      getFile
+//
+//  Description:
+//      returns the final file name in a path, including the extension.
+//
+//  Return Value:
+//      the file name
+//
+{
+	string $file = match( "[^/]*$", $path );
+	return $file;
+}
+
+/////////////////////////////////////////////////////////////
+// Plugin List code.  Maintain a list of plugin info using //
+// the available single dimensional arrays in MEL          //
+/////////////////////////////////////////////////////////////
+
+//
+//  Procedure Name:
+//      pluginListEntry
+//
+//  Description:
+//      gets info about the plugin at the given index
+//
+//  Return Value:
+//      the contents of the given field
+//
+proc string pluginListEntry( int $index, string $field )
+{
+	global string $pluginManagerList[];
+	int $numElements = 4;
+
+	if ( $field == "path" ) {
+		$name = $pluginManagerList[$numElements * $index];
+		return $name;
+	} else if ( $field == "fileName" ) {
+		$path = $pluginManagerList[$numElements * $index];
+		$name = getFile( $path );
+		return $name;
+	} else if ( $field == "loadedWidget" ) {
+		$name = $pluginManagerList[($numElements * $index) + 1];
+		return $name;
+	} else if ( $field == "autoloadWidget" ) {
+		$name = $pluginManagerList[($numElements * $index) + 2];
+		return $name;
+	} else if ( $field == "infoWidget" ) {
+		$name = $pluginManagerList[($numElements * $index) + 3];
+		return $name;
+	}
+	return "";
+}
+
+
+proc setPluginListEntry( int $index, string $path, string $loadedWiget,
+						 string $autoWidget, string $infoWidget )
+//
+//  Procedure Name:
+//      setPluginListEntry
+//
+//  Description:
+//      Set information about the plugin at the given index
+//
+//  Return Value:
+//      none
+//
+{
+	global int $pluginListMaxSize;
+	global string $pluginManagerList[];
+	int $numElements = 4;
+
+	$pluginManagerList[$numElements * $index] = $path;
+	$pluginManagerList[($numElements * $index) + 1] = $loadedWiget;
+	$pluginManagerList[($numElements * $index) + 2] = $autoWidget;
+	$pluginManagerList[($numElements * $index) + 3] = $infoWidget;
+
+    // Ensure that custom plugins are found properly for isPluginInUI
+    if($index > $pluginListMaxSize){
+        $pluginListMaxSize = $index;
+    }
+}
+
+proc int removePluginListEntries (string $path)
+//
+//  Procedure Name:
+//      removePluginListEntries
+//
+//  Description:
+//      Remove all entries associated in the directory given by $path
+//
+{
+	global string $pluginManagerList[];
+	global int $pluginListSize;
+	int $numElements = 4;
+
+	int $i, $j;
+	int $numRemoved = 0;
+
+	for ($i = 0; $i < $pluginListSize; $i++)
+		if (getDir (pluginListEntry ($i, "path")) == $path)
+			$numRemoved++;
+		else if ($numRemoved != 0)
+			for ($j = 0; $j < $numElements; $j++)
+				$pluginManagerList[($i - $numRemoved) * $numElements + $j] =
+					$pluginManagerList[$i * $numElements + $j];
+	$pluginListSize -= $numRemoved ;
+	return $numRemoved;
+}
+
+proc int isPathInSearchPath( string $path )
+//
+//  Procedure Name:
+//      isPathInSearchPath
+//
+//  Description:
+//      determines if the given path is in our plugin search path
+//
+//  Return Value:
+//      whether it is in the path
+//
+{
+	global string $verifiedPluginPath[];
+
+	return stringArrayCount( $path, $verifiedPluginPath ) > 0;
+}
+
+proc int isPluginInUI( string $path )
+//
+//  Procedure Name:
+//      isPluginInUI
+//
+//  Description:
+//      determines if the given plugin is listed in our UI already
+//
+//  Return Value:
+//      whether it is in the UI
+//
+{
+	global int $showOnlyLoadedPlugins;
+	global int $pluginListMaxSize;
+	global int $pluginListSize;
+	global int $customPluginListSize;
+	if( $showOnlyLoadedPlugins ){
+		for ($i = 0; $i <= $pluginListMaxSize; ++$i)
+		{
+			if ( pluginListEntry ($i, "path") == $path )
+			{
+				return true;
+			}
+		}
+	}else{
+		for ($i = 0; $i < $pluginListSize+$customPluginListSize; ++$i)
+		{
+			if ( pluginListEntry ($i, "path") == $path )
+			{
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+proc addSinglePlugin( string $path, string $parent )
+//
+//  Procedure Name:
+//      addSinglePlugin
+//
+//  Description:
+//      adds a single plugin, creating the widgets
+//
+{
+	global int $pluginListMaxSize;
+	global int $pluginListSize;
+	global int $ignoreUpdateCallback;
+	// We need to maintain  custom plugins count seperately
+	// because the updatePluginDirectories() does not work
+	// for custom polygon path.So on refreshing the plugin Window
+	// the $pluginListSize does not takes custom plugin & so causes a refresh problem.
+	//
+	global string $pluginWinSingleParent;
+	global int $customPluginListSize;
+	global int $showOnlyLoadedPlugins;
+
+	if($parent != $pluginWinSingleParent)
+		if($showOnlyLoadedPlugins)
+			if(!`pluginInfo -q -loaded $path`)
+				return;
+
+	// Make sure the path is using forward slashes regardless of the platform
+	$path = convert($path);
+	setParent $parent;
+	string $name = getFile( $path );
+	// Skip unsupported plug-ins
+	if (isPluginDisabled( $name ) )
+	{
+		return;
+	}
+	text -align "left" -l $name ("PlugNameTxt" + (string)($pluginListSize + $customPluginListSize) );
+	string $loadedCheck = `checkBox -label (uiRes("m_pluginWin.kLoaded")) ("plugLoadedChk" + (string)$pluginListSize)`;
+	string $autoBox = `checkBox -label (uiRes("m_pluginWin.kAutoLoad")) ("plugAutoLoadChk" + (string)$pluginListSize)`;
+	string $symButt = `symbolButton -image "info.png" ("plugInfoBtn" + (string)$pluginListSize)`;
+
+	// Store the widget name so that we can update this widget later
+	//
+	setPluginListEntry( $pluginListSize, $path, $loadedCheck, $autoBox, $symButt );
+	// For the custom plugins
+	if($parent == $pluginWinSingleParent)
+        $customPluginListSize++ ;
+
+	// Add callbacks to controls
+	//
+	checkBox -edit -onCommand (
+		"waitCursor -state on;						\
+		$ignoreUpdateCallback = true;				\
+		catch(`loadPlugin \"" + $path + "\"`);		\
+		updatePluginUI( \"" + $pluginListSize + "\" );		\
+		$ignoreUpdateCallback = false;				\
+		waitCursor -state off;"  )
+		-offCommand  ( "unloadPluginWithCheck( \"" + $path + "\" );" ) $loadedCheck;
+
+	checkBox -edit -onCommand ("pluginInfo -edit -autoload true \""
+		+ $path + "\";" ) -offCommand
+		("pluginInfo -edit -autoload false \"" + $path + "\";" ) $autoBox;
+	symbolButton -edit -command ("displayPluginInfo \"" + $path + "\";" ) $symButt;
+
+	// Move to the next list item
+    $pluginListSize++;
+}
+
+global proc pluginWinLoadAllInDir( string $parent, string $cbAll )
+{
+	int $load = `checkBoxGrp -q -v1 $cbAll`;
+	string $children[] = `rowColumnLayout -q -childArray $parent`;
+	int $num = size( $children )/4;
+	int $i;
+	for ( $i=0; $i<$num; $i++ )
+	{
+		string $cb = $children[ 4*$i + 1 ];
+		if ( `checkBox -q -v $cb` != $load )
+		{
+			string $cmd;
+			if ( $load )
+				$cmd = `checkBox -q -onc $cb`;
+			else
+				$cmd = `checkBox -q -ofc $cb`;
+			catch( `eval( $cmd )` );
+		}
+	}
+}
+
+global proc pluginWinAutoLoadAllInDir( string $parent, string $cbAll )
+{
+	int $load = `checkBoxGrp -q -v2 $cbAll`;
+	string $children[] = `rowColumnLayout -q -childArray $parent`;
+	int $num = size( $children )/4;
+	int $i;
+	for ( $i=0; $i<$num; $i++ )
+	{
+		string $cb = $children[ 4*$i + 2 ];
+		if ( `checkBox -q -v $cb` != $load )
+		{
+			if ( $load )
+				eval( `checkBox -q -onc $cb` );
+			else
+				eval( `checkBox -q -ofc $cb` );
+			checkBox -e -v $load $cb;
+		}
+	}
+}
+
+global proc saveCollapseStatus () {
+    if ( `optionVar -exists "PluginManagerState"` ) {
+        optionVar -clearArray "PluginManagerState";
+    }
+    int $index =1;
+    string $st ="";
+	while ( true ) {
+	    string $rowColName = "PluginFrameLyt" + (string)$index;
+		if ( `frameLayout -exists $rowColName` ) {
+    		$st =`frameLayout -query -label $rowColName`;
+    		optionVar -stringValueAppend "PluginManagerState" $st ;
+    		$st =(string)`frameLayout -query -collapse $rowColName` ;
+    		optionVar -stringValueAppend "PluginManagerState" $st ;
+    		$index++ ;
+	    } else {
+            break ;
+        }
+	}
+}
+
+proc addDirectory( string $dirName, string $parent, int $index )
+//
+//  Procedure Name:
+//      addDirectory
+//
+//  Description:
+//      adds a new directory, creating the layout widget
+//
+{
+	global string $pluginWinParentWidget;
+	string $tempString[];
+
+	// Create a new layout widget
+	//
+	setParent $parent;
+	string $dir = getFile( getDir( $dirName ) );
+
+	string $frameName = "PluginFrameLyt" + (string)$index;
+	string $par;
+	if (`frameLayout -exists $frameName`) {
+		setParent $frameName;
+	} else {
+		string $labelStr;
+		$labelStr = $dirName;
+		$collapsed =false ;
+		if ( `optionVar -exists "PluginManagerState"` ) {
+			$stateMgr =`optionVar -q "PluginManagerState"` ;
+			$index =stringArrayFind( $labelStr, 0, $stateMgr ) ;
+			if ( $index != -1 && $stateMgr [$index + 1] == "1" ) {
+				$collapsed =true ;
+			}
+		}
+		frameLayout
+			-mw 10 -mh 10
+			-collapse $collapsed -collapsable true -collapseCommand saveCollapseStatus -expandCommand saveCollapseStatus
+		    -label $labelStr -labelVisible true $frameName;
+		if ( `frameLayout -exists PluginFrameLytMisc` ) {
+			frameLayout -edit -parent "pluginManagerWindow" "PluginFrameLytMisc";
+			frameLayout -edit -parent $pluginWinParentWidget "PluginFrameLytMisc";
+		}
+	}
+	
+	string $formName = "PluginFormLyt" + (string)$index;
+	string $form = `formLayout $formName`;
+
+	string $kLoaded = uiRes("m_pluginWin.kLoaded");
+	string $kAutoLoad = uiRes("m_pluginWin.kAutoLoad");
+	string $cb = `checkBoxGrp -numberOfCheckBoxes 2 
+							  -l (uiRes("m_pluginWin.kApplyToAll"))
+							  -cal 1 "left"
+							  -la2 $kLoaded $kAutoLoad`;
+	
+	string $rowColName = "PluginRowColLyt" + (string)$index;
+	if(`about -mac`)
+	{
+		$par = `rowColumnLayout -cal 1 "left" -columnWidth 1 270
+			-columnWidth 2 80
+			-columnWidth 3 90 -columnWidth 4 20 -nc 4 $rowColName`;
+		checkBoxGrp -e -cw 1 268 -cw 2 78 -cw 3 90 $cb;
+	} else {
+		$par = `rowColumnLayout -cal 1 "left" -columnWidth 1 220
+			-columnWidth 2 70
+			-columnWidth 3 80 -columnWidth 4 20 -nc 4 $rowColName`;
+		checkBoxGrp -e -cw 1 218 -cw 2 68 -cw 3 80 $cb;
+	}
+	
+	checkBoxGrp -e 
+				-cc1 ( "pluginWinLoadAllInDir( \"" + $par + "\", \"" + $cb + "\" )" )
+				-cc2 ( "pluginWinAutoLoadAllInDir( \"" + $par + "\", \"" + $cb + "\" )" )
+				$cb;
+	
+	formLayout -edit
+		-af $cb "top" 0
+		-af $cb "left" 0
+		-ac $par "top" 5 $cb
+		-af $par "bottom" 0
+		-af $par "left" 0
+		-af $par "right" 0
+		$form;
+
+	// Read the directory, looking for the plugin type for the
+	// current platform and retain a file count
+	//
+	string $patterns[];
+
+	$patterns[0] = "*.py";
+
+	if ( `about -windows` ) {
+		$patterns[1] = "*.mll";
+		$patterns[2] = "*.nll.dll";		//	.NET plugin
+	} else if( `about -mac` ) {
+		$patterns[1] = "*.bundle";
+	} else {
+ 		$patterns[1] = "*.so";
+	}
+
+	string $pattern;
+	string $plugins[];
+	string $dirList[];
+
+	for ($pattern in $patterns) {
+		if( `about -mac` ){
+			catch( $dirList = `getFileList -folder $dirName -filespec $pattern` );
+		}else {
+			catch( $dirList = `getFileList -folder ( $dirName + "/" ) -filespec $pattern` );
+		}
+
+		appendStringArray($plugins, $dirList, size($dirList));
+	}
+
+	// Now look for any compiled python scripts that aren't already
+	// listed.
+	$pattern = "*.pyc";
+
+	if( `about -mac` ){
+		catch( $dirList = `getFileList -folder $dirName -filespec $pattern` );
+	}else {
+		catch( $dirList = `getFileList -folder ( $dirName + "/" ) -filespec $pattern` );
+	}
+
+	for ( $compiledPythonFile in $dirList ) {
+		int $len = `size $compiledPythonFile` - 1;
+		// Make sure that there isn't a .py file of the same name.
+		string $pyFilename = substring($compiledPythonFile, 1, $len);
+		string $pyFilePath = $dirName + "/" + $pyFilename;
+
+		if (0 == `filetest -r $pyFilePath`) {
+			$plugins[size($plugins)] = $compiledPythonFile;
+		}
+	}
+
+	//	Sort the plugins and add them to the UI.
+	if (size($plugins) > 1) {
+		$plugins = `sortCaseInsensitive $plugins`;
+	}
+
+	for ( $fileName in $plugins ) {
+		string $path = $dirName + "/" + $fileName;
+		addSinglePlugin( $path, $par );
+	}
+	
+	if ( size($plugins) < 2 ) {
+		checkBoxGrp -e -vis 0 $cb;
+		formLayout -edit
+			-af $par "top" 0
+			$form;
+	}
+}
+
+proc addMiscDirectory () {
+	global string $pluginWinParentWidget;
+	global string $pluginWinSingleParent;
+	
+	// Put in the misc section
+	//
+	setParent $pluginWinParentWidget;
+	frameLayout
+		-collapse false -collapsable true
+		-label (uiRes("m_pluginWin.kOtherRegisteredPlugins")) -labelVisible true
+		-mw 10 -mh 10
+		"PluginFrameLytMisc";
+	if(`about -mac`) {
+		$pluginWinSingleParent = `rowColumnLayout  -cal 1 "left" -columnWidth 1 270
+			-columnWidth 2 80 -columnWidth 3 90 -columnWidth 4 20 -nc 4
+			PluginRowColLytMisc`;
+	} else {
+		$pluginWinSingleParent = `rowColumnLayout -cal 1 "left" -columnWidth 1 220
+			-columnWidth 2 70 -columnWidth 3 80 -columnWidth 4 20 -nc 4
+			PluginRowColLytMisc`;
+	}
+}
+
+proc rescanDirectory( string $dirName, string $parent, int $index)
+//
+//  Procedure Name:
+//      rescanDirectory
+//
+//  Description:
+//      rescans a directory, creating layout widgets for any new plug-ins and
+//      removing layout widgets for removed plug-ins
+{
+	string $frame = "PluginFrameLyt" + (string) $index;
+	string $children[] = `frameLayout -q -childArray $frame`;
+
+	string $child;
+
+	for ($child in $children)
+		deleteUI $child;
+	removePluginListEntries ($dirName);
+	addDirectory ($dirName, $parent, $index);
+}
+
+proc string[] pluginPaths () {
+	string $verifiedPluginPath[];
+	// We will read the environment variable and check to see that all paths
+	// are valid
+	//
+	string $pathEnvVar = getenv("MAYA_PLUG_IN_PATH");
+	string $pathArray[];
+	if (`about -nt`) {
+		tokenize( $pathEnvVar, ";", $pathArray );
+	}
+	else {
+		tokenize( $pathEnvVar, ":", $pathArray );
+	}
+
+	// Check that the paths are valid
+	//
+	int $index = 0;
+	for ($path in $pathArray) {
+		string $oldPath = `pwd`;
+		// Expand the environment variables in the path
+		//
+		string $expandedPath;
+		if (`about -nt` || `about -mac`) {
+			$expandedPath = $path;
+		}
+		else {
+			$expandedPath = system( "echo " + $path );
+			// Strip the newline
+			$expandedPath = strip ($expandedPath);
+		}
+
+		if ( 0 == `chdir $expandedPath` ) {
+			// Avoid addind duplicate paths to the search list
+			if ( stringArrayCount( $expandedPath, $verifiedPluginPath ) == 0 ) {
+				$verifiedPluginPath[$index] = $expandedPath;
+				++$index;
+			}
+			chdir $oldPath;
+		}
+	}
+	return ($verifiedPluginPath) ;
+}
+
+//////////////////////
+// Global Functions //
+//////////////////////
+
+global proc updatePluginWin()
+//
+//  Procedure Name:
+//      updatePluginWin
+//
+//  Description:
+//      refreshes the values in the plugin window
+//
+//  Return Value:
+//      None
+//
+{
+	global string $verifiedPluginPath[];
+	global int    $isPluginPathVerified;
+	global string $pluginWinParentWidget;
+	global string $pluginWinSingleParent;
+	global string $pluginWindowName;
+	global int    $pluginRefreshNeeded;
+
+	// Make sure the window exists
+	//
+	if (!`window -exists $pluginWindowName`) {
+		return;
+	}
+
+	if(`window -q -visible $pluginWindowName` )
+	{
+		return;
+	}
+
+	// Make sure that our path array is set up
+	//
+	if ( !$isPluginPathVerified )
+	{
+		$verifiedPluginPath =pluginPaths() ;
+
+		// The UI hasn't been built yet
+		//
+		waitCursor -state on;
+
+		int $index = 1;
+		for ( $path in $verifiedPluginPath ) {
+			addDirectory( $path, $pluginWinParentWidget, $index );
+			$index++;
+		}
+		// Put in the misc section
+		//
+		addMiscDirectory () ;
+
+		$isPluginPathVerified = true;
+		$pluginRefreshNeeded = true;
+
+		waitCursor -state off;
+	}
+
+	if( $pluginRefreshNeeded )
+	{
+		updatePluginList();
+	}
+}
+
+global proc updatePluginCallback()
+{
+	global int $ignoreUpdateCallback;
+	global int $pluginRefreshNeeded;
+	global string $pluginWindowName;
+
+	// The window may have been hidden or deleted before the CB is
+	// called
+	int $visible = 0;
+	if (`window -exists $pluginWindowName` &&
+		`window -q -visible $pluginWindowName`)
+		$visible = 1;
+
+	if( $visible )
+	{
+ 		if( !$ignoreUpdateCallback )
+		{
+			updatePluginList();
+		}
+	}
+	else
+	{
+		$pluginRefreshNeeded = true;
+	}
+}
+
+global proc updatePluginList()
+{
+	global string $pluginWinSingleParent;
+	global int    $pluginListSize;
+	global string $pluginWindowName;
+	global int	  $ignoreUpdateCallback;
+	global int	  $pluginRefreshNeeded;
+
+	// Make sure that all registered (i.e loaded)  plugins appear in UI
+	//
+	string $knownPlugins[] = `pluginInfo -q -listPluginsPath`;
+
+	string $dir;
+	for ( $plugin in $knownPlugins )
+	{
+		$path = `pluginInfo -query -path $plugin`;
+		$dir = getDir( $path );
+		if ( !isPathInSearchPath( $dir ) ) {
+			// We don't know this path, so this is a singleton plugin
+			//
+			 if ( !isPluginInUI( $plugin ) ) {
+				addSinglePlugin( $path, $pluginWinSingleParent );
+			}
+		}
+	}
+
+	// Now, we need to make sure that the check boxes in the UI reflect the current
+	// state
+	//
+
+	for ($i=0; $i < $pluginListSize; ++$i)
+	{
+		updatePluginUI( $i );
+	}
+
+	$pluginRefreshNeeded = false;
+}
+
+global proc updatePluginUI( int $i )
+{
+	string $path = pluginListEntry( $i, "path" );
+	string $loadedWidgName = pluginListEntry( $i, "loadedWidget" );
+	string $autoWidgName = pluginListEntry( $i, "autoloadWidget" );
+	string $infoWidgName = pluginListEntry( $i, "infoWidget" );
+
+	int $details[] = `pluginInfo -query -settings $path`;
+	int $isLoaded = $details[0];
+	int $auto = $details[1];
+	int $registered = $details[2];
+
+	if ( $isLoaded != ( `checkBox -query -value $loadedWidgName` ) )
+	{
+		checkBox -edit -value $isLoaded $loadedWidgName;
+	}
+
+	// Check autoload status
+	//
+	checkBox -edit -value $auto $autoWidgName;
+
+		if ( $registered )
+	{
+		// We have valid info for the plugin
+		//
+		symbolButton -edit -enable 1 $infoWidgName;
+	}
+	else
+	{
+		// We don't have information about the given plugin in our database
+		// as it has never been loaded.  Therefore, we will dim the info button
+		//
+		symbolButton -edit -enable 0 $infoWidgName;
+	}
+}
+
+global proc int loadPluginCallback( string $theFile, string $fileType )
+//
+//  Procedure Name:
+//      loadPluginCallback
+//
+//  Description:
+//      this is used by the file browser for actually loading the plugin, and
+//      also remembers the last directory from which a plug-in was loaded.
+//
+//  Return Value:
+//      None
+//
+{
+	global string $defaultPluginBrowseDir;
+	$defaultPluginBrowseDir = `getDir $theFile`;
+	// Set the file rule - this makes sure that future calls to browse
+	// start from the same place
+	if ( catch( `loadPlugin $theFile` ) ) {
+ 		string $warningMsg = (uiRes("m_pluginWin.kCouldNotLoadPlugin"));
+ 		$warningMsg =`format -s $theFile $warningMsg`;
+ 		warning ( $warningMsg );
+ 		return false;
+ 	}
+	return true;
+}
+
+global proc browsePlugin()
+//
+//  Procedure Name:
+//      browsePlugin
+//
+//  Description:
+//      this is a UI equivalent to loadPlugin.  It puts up a file requestor.
+//      It keeps track of the directory it used last and maintains it
+//      separately from the workspace directory. It starts in the user's home
+//      directory.
+//
+//  Return Value:
+//      None
+//
+{
+	global string $defaultPluginBrowseDir;
+	// Note: every time Maya is restarted, the file rule is reset. This is
+	// intentional - the default location is Maya's starting point. Change
+	// this if the default changes.
+	if ($defaultPluginBrowseDir == "")
+	{
+		global string $verifiedPluginPath[];
+		if (size ($verifiedPluginPath) > 0)
+			$defaultPluginBrowseDir =  $verifiedPluginPath[0];
+		else
+			$defaultPluginBrowseDir =  pwd();
+	}
+
+	string $filter = buildPlugInFileFilterList();
+	string $caption = (uiRes("m_pluginWin.kLoadPlugin"));
+
+	string $fileCmd = ("fileDialog2 -caption \"" + $caption + "\" -fileMode 1");
+	$fileCmd += (" -fileFilter \"" + $filter + "\"");
+	$fileCmd += (" -startingDirectory \"" + $defaultPluginBrowseDir + "\"");
+
+	string $file[] = `eval $fileCmd`;
+	if (0 < size($file) && "" != $file[0])
+	{
+		string $path = fromNativePath($file[0]);
+		string $cmd = ("loadPluginCallback \"" + $path + "\" \"\"");
+		eval $cmd;
+	}
+}
+
+proc addToFeatureString( string $name, string $queryFlag, string $label )
+//
+//  Procedure Name:
+//      addToFeatureString
+//
+//  Description:
+//      appends to the feature string built by displayPluginInfo() below
+//
+//  Return Value:
+//      None
+//
+{
+	global string $gPluginWinFeatureStr;
+	global int $gPluginWinNumHtCount;
+	
+	string $tools[] = `pluginInfo -query $queryFlag $name`;
+	if ( size( $tools ) > 0 ) {
+		if ( $gPluginWinFeatureStr != "" ) {
+			$gPluginWinFeatureStr = $gPluginWinFeatureStr + "\n\n";
+			$gPluginWinNumHtCount += 2;
+		}
+		$gPluginWinFeatureStr = $gPluginWinFeatureStr + $label + "\n";
+		$gPluginWinNumHtCount += 1;
+		$gPluginWinNumHtCount += size( $tools );
+		for ( $tool in $tools ) {
+			$gPluginWinFeatureStr = ( $gPluginWinFeatureStr + "      " + $tool );
+			if ( $tool != $tools[ size( $tools ) - 1 ] ) {
+				$gPluginWinFeatureStr = $gPluginWinFeatureStr + "\n";
+			}
+		}
+	}
+}
+
+global proc displayPluginInfo( string $path )
+//
+//  Procedure Name:
+//      displayPluginInfo
+//
+//  Description:
+//      opens a window and displays information about the given plugin
+//
+//  Return Value:
+//      None
+//
+{
+	global string $pluginInfoWinName;
+	global string $pluginInfoWinPath;
+	global string $pluginInfoWinVendor;
+	global string $pluginInfoWinAutoLoad;
+	global string $pluginInfoWinLoaded;
+	global string $pluginInfoWinAPIVerson;
+	global string $pluginInfoWinVerson;
+	global string $pluginInfoWinFeatures;
+
+	string $name = `pluginInfo -query -name $path`;
+	if ( catch( $path = `pluginInfo -query -path $name` ) ) {
+		warning (uiRes("m_pluginWin.kPluginNotInDatabase"));
+	}
+
+	string $winName = "PluginInfoWin";
+
+	if (!`window -exists $winName`) {
+		window -title (uiRes("m_pluginWin.kPluginInformation")) -wh 340 280 $winName;
+		formLayout windowLyt;
+			scrollLayout -cr true scrollLayout;
+				formLayout scrollWindowLyt;
+					columnLayout -adjustableColumn true infoLyt;
+						rowLayout -nc 2 -cw2 100 340 -adjustableColumn 2;
+						text -label (uiRes("m_pluginWin.kName")) -align "left" nameTxt;
+						$pluginInfoWinName = `text -align "left" nameValTxt`;
+						setParent ..;
+
+						rowLayout -nc 2 -cw2 100 340 -adjustableColumn 2;
+						text -label (uiRes("m_pluginWin.kPath")) -align "left" pathTxt;
+						$pluginInfoWinPath = `text -align "left" pathValTxt`;
+						setParent ..;
+
+						rowLayout -nc 2 -cw2 100 340 -adjustableColumn 2;
+						text -label (uiRes("m_pluginWin.kVendor"))-align "left" vendTxt;
+						$pluginInfoWinVendor = `text -align "left" vendValTxt`;
+						setParent ..;
+
+						rowLayout -nc 2 -cw2 100 340 -adjustableColumn 2;
+						text -label (uiRes("m_pluginWin.kVersion")) -align "left" versionTxt;
+						$pluginInfoWinVerson = `text -align "left" versValTxt`;
+						setParent ..;
+
+						rowLayout -nc 2 -cw2 100 340 -adjustableColumn 2;
+						text -label (uiRes("m_pluginWin.kAPIVersion")) -align "left" apiVersionTxt;
+						$pluginInfoWinAPIVerson = `text -align "left" apiVersValTxt`;
+						setParent ..;
+
+						rowLayout -nc 2 -cw2 100 340 -adjustableColumn 2;
+						text -label (uiRes("m_pluginWin.kPluginAutoLoad")) -align "left" autoTxt;
+						$pluginInfoWinAutoLoad = `text -align "left" autoValTxt`;
+						setParent ..;
+
+						rowLayout -nc 2 -cw2 100 340 -adjustableColumn 2;
+						text -label (uiRes("m_pluginWin.kIsLoaded")) -align "left" isLoadedTxt;
+						$pluginInfoWinLoaded = `text -align "left" isLoadedValTxt`;
+						setParent ..;
+					setParent ..;
+
+					frameLayout 
+						-collapsable false -label (uiRes("m_pluginWin.kPluginFeatures"))
+						-labelVisible true pluginFeaturesLyt;
+						$pluginInfoWinFeatures = `text -align "left" featuresTxt`;
+					setParent ..;
+
+				formLayout -e	-af infoLyt "left" 0
+								-af infoLyt "right" 0
+								-af infoLyt "top" 0
+								scrollWindowLyt;
+
+				formLayout -e	-af pluginFeaturesLyt "left" 0
+								-af pluginFeaturesLyt "right" 0
+								-af pluginFeaturesLyt "bottom" 0
+								-ac infoLyt "bottom" 0 pluginFeaturesLyt
+								scrollWindowLyt;
+				setParent ..;
+			setParent ..;
+
+		$closeInfoBtn = `button -label (uiRes("m_pluginWin.kPluginInfoClose")) closeInfoBtn`;
+
+		formLayout -e -af $closeInfoBtn "left" 5
+					  -af $closeInfoBtn "right" 5
+					  -af $closeInfoBtn "bottom" 5
+					  -an $closeInfoBtn "top"
+					  windowLyt;
+
+		formLayout -e -af scrollLayout "top" 0
+					  -af scrollLayout "left" 0
+					  -af scrollLayout "right" 0
+					  -ac scrollLayout "bottom" 5 $closeInfoBtn
+					  windowLyt;
+
+		button -edit -command "deleteUI PluginInfoWin" $closeInfoBtn;
+
+		setParent ..; // close the formLayout
+	}
+
+	// Update all of the fields
+	//
+	text -edit -label $name $pluginInfoWinName;
+	text -edit -label $path $pluginInfoWinPath;
+	text -edit -label `pluginInfo -query -vendor $name` $pluginInfoWinVendor;
+	text -edit -label `pluginInfo -query -version $name` $pluginInfoWinVerson;
+	text -edit -label `pluginInfo -query -apiVersion $name` $pluginInfoWinAPIVerson;
+	string $yes = (uiRes("m_pluginWin.kYes"));
+	string $no  = (uiRes("m_pluginWin.kNo"));
+	if ( `pluginInfo -query -autoload $name` ) {
+		text -edit -label $yes $pluginInfoWinAutoLoad;
+	} else {
+		text -edit -label $no $pluginInfoWinAutoLoad;
+	}
+	if ( `pluginInfo -query -loaded $name` ) {
+		text -edit -label $yes $pluginInfoWinLoaded;
+	} else {
+		text -edit -label $no $pluginInfoWinLoaded;
+	}
+
+	// Build list of plugin features starting with commands
+	//
+	global string $gPluginWinFeatureStr;
+	global int $gPluginWinNumHtCount;
+	$gPluginWinFeatureStr = "";
+	$gPluginWinNumHtCount = 1;
+	
+	addToFeatureString( $name, "-command", (uiRes("m_pluginWin.kCommands")) );
+
+	// Build list of context commands
+	//
+	addToFeatureString( $name, "-tool", (uiRes("m_pluginWin.kTools")) );
+
+	// Build list of model editor commands
+	//
+	addToFeatureString( $name, "-modelEditorCommand", (uiRes("m_pluginWin.kModelEditorCommands")) );
+
+	// Build list of control commands
+	//
+	addToFeatureString( $name, "-controlCommand", (uiRes("m_pluginWin.kControlCommands")) );
+
+	// Build list of constraint commands
+	//
+	addToFeatureString( $name, "-constraintCommand", (uiRes("m_pluginWin.kConstraintCommands")) );
+
+	// Build list of dependency nodes
+	//
+	addToFeatureString( $name, "-dependNode", (uiRes("m_pluginWin.kDependencyNodes")) );
+
+	// Build list of dependency graph data types
+	//
+	addToFeatureString( $name, "-data", (uiRes("m_pluginWin.kDependencyGraph")) );
+
+	// Build list of file translators
+	//
+	addToFeatureString( $name, "-translator", (uiRes("m_pluginWin.kFileTranslators")) );
+
+	// Build list of ik solvers
+	//
+	addToFeatureString( $name, "-iksolver", (uiRes("m_pluginWin.kIkSolvers")) );
+
+	// Build list of input devices
+	//
+	addToFeatureString( $name, "-device", (uiRes("m_pluginWin.kInputDevices")) );
+
+	// Build list of drag and drop behaviors
+	//
+	addToFeatureString( $name, "-dragAndDropBehavior", (uiRes("m_pluginWin.kDragDropBehaviors")) );
+
+	// Build list of animation curve interpolators.
+	//
+	addToFeatureString( $name, "-animCurveInterp", (uiRes("m_pluginWin.kAnimCurveInterpolators")) );
+
+	$gPluginWinNumHtCount += 1;
+
+
+	if(`about -mac`) {
+		int	$totalHeight = $gPluginWinNumHtCount * 15;
+        text -edit -label $gPluginWinFeatureStr  $pluginInfoWinFeatures;
+		text -edit  -h $totalHeight  $pluginInfoWinFeatures;
+	} else {
+		text -edit -label $gPluginWinFeatureStr $pluginInfoWinFeatures;
+	}
+
+	showWindow $winName;
+}
+
+global proc updatePluginDirectories()
+//
+//  Procedure Name:
+//      updatePluginDirectories
+//
+//  Description:
+//      rescans the plugin directory.
+//
+//  Return Value:
+//      None
+//
+{
+	global string $verifiedPluginPath[];
+	global string $pluginWinParentWidget;
+	global int $pluginListSize;
+	global string $winLyt;
+
+	$pluginListSize = 0;
+
+	waitCursor -state on;
+	formLayout -e -vis 0 $winLyt;
+
+	int $index = 1;
+	for ( $path in $verifiedPluginPath ) {
+		rescanDirectory( $path, $pluginWinParentWidget, $index );
+		$index++;
+	}
+	// Detect if there was any new plug-in folder added
+	$testNewPaths =pluginPaths () ;
+	for ( $path in $testNewPaths ) {
+		if ( stringArrayCount ($path, $verifiedPluginPath) == 0 ) {
+			$verifiedPluginPath [$index - 1] =$path ;
+			addDirectory ($path, $pluginWinParentWidget, $index) ;
+			$index++ ;
+		}
+	}
+	for ($i=0; $i < $pluginListSize; ++$i)
+	{
+		updatePluginUI( $i );
+	}
+	updatePluginList();
+
+	formLayout -e -vis 1 $winLyt;
+	waitCursor -state off;
+}
+
+global proc updatePluginModule () {
+	updatePluginDirectories () ;
+}
+
+global proc closeAllDirectoryGroups(int $collapse){
+    global string $pluginWinParentWidget;
+
+    string $childArray[] = `layout -q -childArray $pluginWinParentWidget`;
+    string $frameLayt, $child;
+    for ($child in $childArray)
+    {
+        $frameLayt = ($pluginWinParentWidget + "|" + $child);
+        frameLayout -e -collapse $collapse $frameLayt;
+    }
+}
+
+global proc showOnlyLoaded(int $onlyLoaded){
+    global string $pluginWindowName;
+    global int $showOnlyLoadedPlugins;
+    $showOnlyLoadedPlugins = $onlyLoaded;
+
+    // update the window title to alert the user that the filter is on
+    string $title = uiRes("m_pluginWin.kPluginManager");
+    if($showOnlyLoadedPlugins){
+        window -e -title ($title + " ( " + (uiRes("m_pluginWin.kPluginManagerFilterOn")) + " )") $pluginWindowName;
+    }else{
+        window -e -title ($title) $pluginWindowName;
+    }
+    updatePluginDirectories;
+}
+
+global proc pluginWin()
+//
+//  Procedure Name:
+//      pluginWin
+//
+//  Description:
+//      opens up a window which allows the user to load/unload plugins.
+//
+//  Return Value:
+//      None
+//
+{
+	global string $verifiedPluginPath[];
+	global string $pluginManagerList[];
+	global int    $isPluginPathVerified;
+	global int	  $pluginWinCallbackInstalled = false;
+	global string $pluginWindowName;
+	global string $pluginWinParentWidget;
+	global int $customPluginListSize;
+	global int $pluginListSize;
+
+	if (!`window -exists $pluginWindowName`) {
+		// We have to build the window from scratch, so we will rescan
+		// the directories
+		//
+
+		clear $verifiedPluginPath;
+		$isPluginPathVerified = false;
+		$pluginListSize = 0;
+		$customPluginListSize = 0 ;
+		clear $pluginManagerList;
+
+
+		// Create the UI
+		//
+		string $pluginManager = (uiRes("m_pluginWin.kPluginManager"));
+		string $plugins       = (uiRes("m_pluginWin.kPlugins"));
+		if(`about -mac`) {
+			window -title $pluginManager -iconName $plugins
+			-menuBar true
+			-retain -wh 550 411 $pluginWindowName;
+		} else {
+		window -title $pluginManager -iconName $plugins
+			-menuBar true
+			-retain -wh 450 411 $pluginWindowName;
+		}
+        menu -label (uiRes("m_pluginWin.kFilter")) -tearOff true;
+            menuItem -label (uiRes("m_pluginWin.kFilterCloseAll")) -command "closeAllDirectoryGroups 1";
+            menuItem -label (uiRes("m_pluginWin.kFilterOpenAll")) -command "closeAllDirectoryGroups 0";
+            menuItem -label (uiRes("m_pluginWin.kFilterShowLoaded")) -command "showOnlyLoaded 1";
+            menuItem -label (uiRes("m_pluginWin.kFilterShowAll")) -command "showOnlyLoaded 0";
+		menu -label (uiRes("m_pluginWin.kHelp")) -helpMenu true;
+			menuItem -label (uiRes("m_pluginWin.kHelpPluginManager"))
+				-enableCommandRepeat false
+				-command "showHelp PluginWindow";
+
+		// This form layout becomes the default layout for the window
+		//
+		formLayout windowLyt;
+			tabLayout -cr true -scr true -tv false scrollLyt;
+		        // The following layout will get deleted a rebuilt if new
+		        // paths or plugins are loaded
+		        //
+				$pluginWinParentWidget = `columnLayout -adj true parentLyt`;
+		        setParent ..;
+			setParent ..;
+		    $browseBtn = `button -label (uiRes("m_pluginWin.kBrowse")) browseBtn`;
+		    $refreshBtn = `button -label (uiRes("m_pluginWin.kRefresh")) refreshBtn`;
+		    $closeBtn = `button -label (uiRes("m_pluginWin.kClose")) closeBtn`;
+
+		// Arrange controls in the form
+		//
+		// Attach button
+		formLayout -e
+            -af $browseBtn "left" 5
+			-ap $browseBtn "right" 3 33
+			-af $browseBtn "bottom" 5
+			-an $browseBtn "top"
+
+            -ac $refreshBtn "left" 1 $browseBtn
+			-ap $refreshBtn "right" 1 63
+			-af $refreshBtn "bottom" 5
+			-an $refreshBtn "top"
+
+			-ac $closeBtn "left" 2 $refreshBtn
+			-af $closeBtn "right" 5
+			-af $closeBtn "bottom" 5
+			-an $closeBtn "top"
+			windowLyt;
+
+		// Attach scroll layout
+		formLayout -e
+			-af scrollLyt "top" 0
+			-af scrollLyt "left" 0
+            -af scrollLyt "right" 0
+			-ac scrollLyt "bottom" 5 $browseBtn
+			windowLyt;
+
+		button -edit -command "browsePlugin" $browseBtn;
+		button -edit -command "updatePluginDirectories" $refreshBtn;
+		button -edit -command "window -e -vis 0 pluginManagerWindow" $closeBtn;
+
+		setParent ..;
+
+		// Tell updatePluginWin the check path and build UI
+		//
+		$isPluginPathVerified = false;
+
+		// Add a callback to the plugin database so that the window gets
+		// updated
+		//
+		if ( !$pluginWinCallbackInstalled ) {
+			pluginInfo -changedCommand "updatePluginCallback();";
+			$pluginWinCallbackInstalled = true;
+		}
+	}
+
+	// Now build and show the contents
+	updatePluginWin();
+	showWindow $pluginWindowName;
+}
+
+global proc unloadPluginWithCheck( string $path )
+//
+//  Description:
+//      unload the plugin, or warn if it is being used
+//
+{
+	global string $pluginWindowName;
+
+	if ( `pluginInfo -query -unloadOk $path` ) {
+		waitCursor -state on;
+		unloadPlugin `pluginInfo -query -name $path`;
+		waitCursor -state off;
+	} else {
+		string $serviceList[] = `pluginInfo -query -serviceDescriptions $path`;
+		string $services = "";
+		for ( $service in $serviceList  ){
+			$services = ( $services + "- " + $service + "\n" );
+		}
+		string $pluginName = `pluginInfo -query -name $path`;
+		int $isUnlimitedPlugin = false;
+		string $result;
+		string $force  = (uiRes("m_pluginWin.kForce"));
+		string $cancel = (uiRes("m_pluginWin.kCancel"));
+		string $pluginWarningTitle = (uiRes("m_pluginWin.kPluginWarningTitle"));
+		if(!strcmp($pluginName,"Fur") || !strcmp($pluginName,"CpClothPlugin") || !strcmp($pluginName,"stereoCamera"))
+		{
+			$isUnlimitedPlugin = true;
+			string $dialogMsg;
+			if (`about -linux`)
+			{
+			   $dialogMsg = (uiRes("m_pluginWin.kPluginNoSaveScene"));
+			}
+			else
+			{
+			   $dialogMsg = (uiRes("m_pluginWin.kPluginSavesScene"));
+			}
+			$dialogMsg = `format -s $services $dialogMsg`;
+			$result = `confirmDialog -ma left -title $pluginWarningTitle
+			-message $dialogMsg
+			-button $force -button $cancel -defaultButton $cancel
+			-cancelButton $cancel -dismissString $cancel
+			-parent $pluginWindowName`;
+		}
+		else
+		{
+			string $dialogMsg = (uiRes("m_pluginWin.kUnloadingPluginMayCauseProblems"));
+			
+			$dialogMsg = `format -s $services $dialogMsg`;
+			$result = `confirmDialog -ma left -title $pluginWarningTitle
+				-message $dialogMsg
+				-button $force -button $cancel -defaultButton $cancel
+				-cancelButton $cancel -dismissString $cancel
+				-parent $pluginWindowName`;
+		}
+		if ( $result == $force ) {
+			if( $isUnlimitedPlugin == true)
+			{
+				// The save as dialog on Linux is NOT modal (this is a known bug), so you
+				// end up saving an empty scene ! Do not allow this on Linux.
+				if (!`about -linux`)
+		            SaveSceneAs;
+                waitCursor -state on;
+				file -f -new;
+                unloadPlugin -force `pluginInfo -query -name $path`;
+                waitCursor -state off;
+			}
+			else
+			{
+				waitCursor -state on;
+                if ( !strcmp($pluginName,"stereoCamera") ) {
+					file -f -new;
+                }
+				unloadPlugin -force `pluginInfo -query -name $path`;
+				waitCursor -state off;
+			}
+		}
+		else {
+			// This will turn the check box back on
+			updatePluginList();
+		}
+	}
+}

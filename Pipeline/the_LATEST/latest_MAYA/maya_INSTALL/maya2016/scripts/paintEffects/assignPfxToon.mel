@@ -1,0 +1,405 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  2005
+//
+// Description: assign a pfxToon outline to selected objects 
+//	
+
+proc int getNextFreeSurfaceMultiIndex( string $attr, int $start )
+{
+	// We find the next unconnected multi index starting at
+	// the passed in index.
+	int $i;
+	// assume a max of 10 million follicles
+	for( $i = $start; $i < 10000000; $i++ ){
+		string $con = `connectionInfo -sfd ($attr + "["+$i+"].surface")`;
+		if( size( $con ) == 0){
+			$con = `connectionInfo -sfd ($attr + "["+$i+"].inputWorldMatrix")`;
+			if( size( $con ) == 0){
+				return( $i );
+			}
+		}
+	}
+	return(0);
+}
+
+proc string makeSubdRenderTessellation( string $subd )
+{
+	string $tess = `createNode subdivToPoly`; 
+	connectAttr ($subd + ".format") ($tess + ".format");	
+	connectAttr ($subd + ".depth") ($tess + ".depth");	
+	connectAttr ($subd + ".sampleCount") ($tess + ".sampleCount");	
+
+	connectAttr ($subd + ".outSubdiv") ($tess + ".inSubdiv");	
+	return( $tess + ".outMesh");
+}
+
+proc string makeNurbsRenderTessellation( string $nurbs )
+{
+	string $tess = `createNode nurbsTessellate`; 
+	setAttr ($tess + ".polygonType") 0;
+	setAttr ($tess + ".format") 2;
+
+	setAttr ($tess + ".caching") 1; // needed for correct updates.. not sure why(DB)
+
+	connectAttr ($nurbs + ".explicitTessellationAttributes") ($tess + ".explicitTessellationAttributes");	
+	connectAttr ($nurbs + ".curvatureTolerance") ($tess + ".curvatureTolerance");
+	connectAttr ($nurbs + ".uDivisionsFactor") ($tess + ".uDivisionsFactor");	
+	connectAttr ($nurbs + ".vDivisionsFactor") ($tess + ".vDivisionsFactor");	
+	connectAttr ($nurbs + ".modeU") ($tess + ".uType");	
+	connectAttr ($nurbs + ".modeV") ($tess + ".vType");	
+	connectAttr ($nurbs + ".numberU") ($tess + ".uNumber");	
+	connectAttr ($nurbs + ".numberV") ($tess + ".vNumber");	
+	connectAttr ($nurbs + ".useChordHeight") ($tess + ".useChordHeight");	
+	connectAttr ($nurbs + ".chordHeight") ($tess + ".chordHeight");	
+	connectAttr ($nurbs + ".useChordHeightRatio") ($tess + ".useChordHeightRatio");	
+	connectAttr ($nurbs + ".chordHeightRatio") ($tess + ".chordHeightRatio");	
+	connectAttr ($nurbs + ".smoothEdge") ($tess + ".smoothEdge");	
+	connectAttr ($nurbs + ".smoothEdgeRatio") ($tess + ".smoothEdgeRatio");	
+	connectAttr ($nurbs + ".edgeSwap") ($tess + ".edgeSwap");	
+
+	connectAttr ($nurbs + ".local") ($tess + ".inputSurface");
+	
+	return ($tess + ".outputPolygon");
+}
+
+proc matchNurbsRenderTessellation( string $nurbs, string $tess )
+{
+	// We attempt to match the nurbs render tessellation settings
+	// for the nurbs to poly node. This is only approximate and
+	// does not attempt to match any of the screenspace settings.
+	// With the lasted additions to the nurbsTessellate node, we
+	// no longer need or use this routine, although it is kept in case
+	// we need to match tessellation attributes some day.DB
+
+	int $advancedTess = getAttr($nurbs + ".explicitTessellationAttributes");
+	float $ufac = 1.0;
+	float $vfac = 1.0;
+	setAttr ( $tess + ".format") 2; // general
+	if( $advancedTess ){
+		// 1 surfIso3d, 2 surfIso, 3 perSpan, 4 screen
+		int $modeU = getAttr( $nurbs + ".modeU");
+		int $modeV = getAttr( $nurbs + ".modeV");
+		int $numU = getAttr( $nurbs + ".numberU");
+		int $numV = getAttr( $nurbs + ".numberV");
+		int $useChordHeight = getAttr( $nurbs + ".useChordHeight");
+		int $useChordHeightRat = getAttr( $nurbs + ".useChordHeightRatio");
+		float $chordHeight = getAttr( $nurbs + ".chordHeight");
+		float $chordHeightRat = getAttr( $nurbs + ".chordHeightRatio");
+		if( $modeU < 4 ){
+			setAttr( $tess + ".uType", $modeU );
+		}
+		if( $modeV < 4 ){
+			setAttr( $tess + ".vType", $modeV );
+		}
+		setAttr( $tess + ".uNumber", $numU);
+		setAttr( $tess + ".vNumber", $numV);
+		setAttr( $tess + ".useChordHeight", $useChordHeight);
+		setAttr( $tess + ".chordHeight", $chordHeight);
+		setAttr( $tess + ".useChordHeightRatio", $useChordHeightRat);
+		setAttr( $tess + ".chordHeightRatio", $chordHeightRat);
+	} else {
+		$ufac = getAttr( $nurbs + ".uDivisionsFactor" );
+		$vfac = getAttr( $nurbs + ".vDivisionsFactor" );
+
+		setAttr( $tess + ".uType", 3 );
+		setAttr( $tess + ".vType", 3 );
+		setAttr( $tess + ".uNumber", (int)($ufac + 0.5));
+		setAttr( $tess + ".vNumber", (int)($vfac + 0.5));
+
+		setAttr ($tess + ".useChordHeight") 0;
+		// 4 is off 0 is high
+		int $curveTol = getAttr( $nurbs + ".curvatureTolerance" );
+		if( $curveTol == 4 ){
+			setAttr ($tess + ".useChordHeightRatio") 0;
+		} else{
+			setAttr ($tess + ".useChordHeightRatio") 1;
+			// this is just a ballpark attempt to match
+			// the curvature tolerance presets on the nurbs
+			if( $curveTol == 0 ){
+				setAttr ($tess + ".chordHeightRatio") 0.995;
+			} else if( $curveTol == 1 ){
+				setAttr ($tess + ".chordHeightRatio") 0.991;
+			} else if( $curveTol == 2 ){
+				setAttr ($tess + ".chordHeightRatio") 0.988;
+			} else if( $curveTol == 3 ){
+				setAttr ($tess + ".chordHeightRatio") 0.984;
+			}
+		}
+	}
+	
+}
+
+proc string findConversionMeshCon( string $obj )
+// return the nurbs to poly or subdiv to poly mesh, if exists
+{
+	string $nodeType = nodeType( $obj );
+	if( $nodeType == "nurbsSurface" ){
+		string $con[] = `listConnections -d 1 -type nurbsTessellate ($obj + ".local")`;
+		if( size($con) > 0){
+			return ($con[0] + ".outputPolygon");
+		}
+	} else if ($nodeType == "subdiv" ){
+		string $con[] = `listConnections -d 1 -type subDivToPoly ($obj + ".outSubdiv")`;
+		if( size($con) > 0){
+			return ($con[0] + ".outMesh");
+		}
+	}
+	return "";
+}
+
+proc string convertToonMesh( string $obj )
+// create nurbs to poly or subdiv to poly mesh for toon
+{
+	string $nodeType = nodeType( $obj );
+	// string $convertNodes[];
+	// string $tess;
+	if( $nodeType == "nurbsSurface" ){
+		// $convertNodes = `nurbsToPoly -ch 1 $obj`;	
+		// setAttr ($convertNodes[1] + ".polygonType") 1;	
+		return( makeNurbsRenderTessellation( $obj ));
+	} else if ($nodeType == "subdiv" ){
+		// $convertNodes = `subdToPoly -ch 1 $obj`;	
+		return( makeSubdRenderTessellation( $obj ));
+	}
+ 
+	return "";
+}
+
+proc attachPerspCameraToPfxObj( string $pfxObj )
+{
+	string $camAttr = ($pfxObj + ".cameraPoint");
+	string $cons[] = `listConnections -s 1 $camAttr`;
+	if( size( $cons ) > 0 ){
+		return; // already connected
+	}
+	string $perspCameras[] = `listCameras -p`;
+	for($cameraList = 0; $cameraList < size($perspCameras); $cameraList++)
+	{
+		string $transStr = $perspCameras[$cameraList] + ".translate";
+		if(`objExists $transStr`)
+		{
+			connectAttr -f $transStr $camAttr;
+			break;
+		}
+	}
+
+}
+
+proc string[] getPaintEffectsMeshCons( string $pfxObj )
+{
+	string $ret[];
+	$ret[0] = ($pfxObj + ".outMainMesh");
+	// find brush if any
+	string $result = `connectionInfo -sfd ($pfxObj + ".brush")`;
+	if( size( $result ) > 0 ){
+		string $buffer[];
+		int $num = `tokenize $result "." $buffer`;
+		string $brush = $buffer[0];
+		// check if has output leaves or flowers
+		int $tubes = getAttr( $brush + ".tubes");
+		if( $tubes ){
+			int $index = 1;
+			if( getAttr( $brush + ".leaves")){
+				$ret[$index] = ($pfxObj + ".outLeafMesh");
+				$index++;
+			}
+			if( getAttr( $brush + ".flowers")){
+				$ret[$index] = ($pfxObj + ".outFlowerMesh");
+			}
+		}
+	}
+	if( nodeType( $pfxObj ) == "pfxToon"){
+		attachPerspCameraToPfxObj( $pfxObj );
+	}
+	setAttr ($pfxObj + ".caching") 1;
+	return $ret;
+}
+
+proc deleteToonOffsetProfile( string $inCon )
+// delete the offset profile matching the input connection
+{
+	// Get the index from the connection
+	string $buffer[];
+	int $numTokens = `tokenize $inCon ".[]" $buffer`;
+	if( $numTokens != 4 ){
+		return;
+	}
+	int $index = (int)$buffer[2];
+
+	// find the object at the output connection, if any
+	string $outputConnection = 
+			($buffer[0] + ".outProfileMesh["+$index+"]");
+	string $outCons[] = `listConnections $outputConnection`;
+	if( size($outCons) > 0 ){
+		delete $outCons[0];
+	}
+}
+
+global proc assignPfxToon( string $pfxToon, int $toonOnToon )
+{
+	string $objects[];
+	if( $toonOnToon ){
+		$objects = `ls -sl -dag -ni -type pfxToon`;
+	} else {	
+		$objects = `ls -sl -dag -ni -type mesh -type nurbsSurface -type subdiv -type stroke -type pfxHair`;
+	}
+	if( $pfxToon == "breakCurrentToonConnection" ){
+		if( size( $objects ) > 0 ){
+			string $obj;
+			int $multiIndex = 0;
+			for( $obj in $objects ){
+				string $nodeType = nodeType( $obj );
+				string $meshCons[];
+				if( $nodeType == "mesh" ){
+					$meshCons[0] = ($obj + ".outMesh");
+				} else if( $nodeType == "stroke" || $nodeType == "pfxHair" || $nodeType == "pfxToon") {
+					$meshCons[0] = ($obj + ".outMainMesh");
+					$meshCons[1] = ($obj + ".outLeafMesh");
+					$meshCons[2] = ($obj + ".outFlowerMesh");
+				} else {
+					$meshCons[0] = findConversionMeshCon( $obj );
+					if( $meshCons[0] == "" ){
+						continue;
+					}
+				}
+				string $meshCon;
+				for( $meshCon in $meshCons ){
+					string $cons[] = `connectionInfo -dfs $meshCon`;
+					string $con;
+					for( $con in $cons ){
+						if( nodeType( $con ) == "pfxToon" ){
+							deleteToonOffsetProfile( $con );
+							disconnectAttr $meshCon $con; 
+						}	
+					}
+				}
+				$meshCon = ($obj + ".worldMatrix[0]");
+				$cons = `connectionInfo -dfs $meshCon`;
+				for( $con in $cons ){
+					if( nodeType( $con ) == "pfxToon" ){
+						disconnectAttr $meshCon $con; 
+					}	
+				}
+			}
+		}
+		return;
+	}
+
+	if( $pfxToon != "" ){
+		if( !objExists( $pfxToon ) ){
+			string $warn = (uiRes("m_assignPfxToon.kNoOutline"));
+			warning( `format -s $pfxToon $warn` );
+			return;
+		}
+		if( nodeType( $pfxToon ) != "pfxToon" ){
+			string $shape[] = `ls -dag -shapes $pfxToon`;
+			if( size( $shape ) > 0 ){
+				$pfxToon = $shape[0];
+			}
+			if( nodeType( $pfxToon ) != "pfxToon" ){
+				string $warn = (uiRes("m_assignPfxToon.kNotAnOutline"));
+				warning( `format -s $pfxToon $warn` );
+				return;
+			}
+		}
+	}
+	if( size( $objects ) > 0 ){
+		int $isNew = false;
+		int $doProfileMesh = false;
+		int $connectedMesh = false;
+		if( $pfxToon == "" ){
+			$pfxToon = `createNode pfxToon`;
+			setAttr ($pfxToon + ".displayPercent") 100;
+			$isNew = true;
+		} else {
+			int $profileLines = getAttr( $pfxToon + ".profileLines" );
+			if( $profileLines == 2 ){
+				$doProfileMesh = true;
+			}
+		}
+		string $obj;
+		int $multiIndex = 0;
+		string $inputSurface = ($pfxToon + ".inputSurface");
+		int $didConvertToMesh = false;
+		for( $obj in $objects ){
+			string $nodeType = nodeType( $obj );
+			string $meshCons[];
+			if( $nodeType == "mesh" ){
+				$meshCons[0] = $obj + (".outMesh");
+			} else if( $nodeType == "stroke" || $nodeType == "pfxHair" || $nodeType == "pfxToon") {
+				if( $obj == $pfxToon ){	
+					continue; // don't apply to self
+				}
+				$meshCons = getPaintEffectsMeshCons( $obj );
+			} else {
+				$meshCons[0] = findConversionMeshCon( $obj );
+				if( $meshCons[0] == "" ){
+					$meshCons[0] = convertToonMesh( $obj );
+					if( $meshCons[0] == "" ){
+						continue;
+					}
+					$didConvertToMesh = true;
+				}
+			} 
+			string $meshCon;
+			for( $meshCon in $meshCons ){
+				if( $meshCon == "" ){
+					continue;
+				}
+				string $con[] = `listConnections -s 1 -sh 1 $meshCon`;
+				string $outCon;
+				int $alreadyConnected = false;
+				for( $outCon in $con ){
+					if( $outCon == $pfxToon ){
+						$alreadyConnected = true;
+						break;
+					} 
+				}
+				if( $alreadyConnected ){
+					continue;
+				}
+				if( !$isNew ){
+					$multiIndex = getNextFreeSurfaceMultiIndex( $inputSurface, $multiIndex );	
+				}
+				string $inSurf =  ($inputSurface + "["+$multiIndex+"]");
+	
+				connectAttr $meshCon ($inSurf + ".surface"); 
+				connectAttr ($obj + ".worldMatrix[0]") ($inSurf + ".inputWorldMatrix"); 
+				$connectedMesh = true;
+				$multiIndex++;
+			}
+		}
+		if( $doProfileMesh && $connectedMesh ){
+			setupPfxToonOffsetMesh( $pfxToon );
+		}
+		if( $didConvertToMesh ){
+			print( (uiRes("m_assignPfxToon.kCreatedMesh")) );
+		}
+		select -r $pfxToon;
+	} else {
+		warning( (uiRes("m_assignPfxToon.kNoValidObjs")) );
+	}
+}
+

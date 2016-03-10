@@ -1,0 +1,239 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Dec. 18, 1996
+//
+//  Description:
+//      Untrim.
+//
+//  Input Arguments:
+//      The string.
+//
+//  Return Value:
+//      None.
+//
+
+proc int untrimNoTrimWhatOfCurves( string $object )
+// Description:
+//     Return true if we need to create CoS, otherwise false.
+{
+	int $genCos = true;
+	int $i, $n, $m, $j;
+	string $one[];
+	int $flag;
+
+	string $shape;
+	$one = `listRelatives -s $object`;
+	if( size($one) > 0 ) {
+		$shape = $one[0];
+	}
+	else {
+		$shape = $object;
+	}
+
+	string $uw[] = `listRelatives -f -c $shape`;
+	$n = size($uw);
+
+	for( $i=0; $i<$n; $i+=1 ) {
+		$one = `listRelatives -f -c $uw[$i]`;
+		$m = size($one);
+		for( $j=0; $j<$m; $j+=1 ) {
+			$flag = `getAttr ($one[$j] + ".v")`;
+			if( ! $flag ) {
+				$genCos = false;
+				setAttr ($one[$j] + ".v") true;
+			}
+		}
+	}
+
+	if( ! $genCos ) {
+		warning( (uiRes("m_untrimPreset.kWarningAssumingInvisible")) );
+	}
+
+	return $genCos;
+}
+
+proc transferShadingGroup( string $src, string $dst )
+//	Description:
+//		Transfer the shading group association from src to dst.
+//		Per-patch shader assignment is ignored.
+{
+	// Find all the shading groups assigned to src
+	string $renderingSets[] = `listSets -type 1 -object $src`;
+	for ($i = 0; $i < size($renderingSets); $i++) {
+		string $renderingSet = $renderingSets[$i];
+
+		// Make sure the shading group is assigned to the whole surface
+		if (`objExists $renderingSet` && 
+				`objectType -isa shadingEngine $renderingSet` && 
+				`sets -isMember $renderingSet $src`) {
+
+			// Assign the shading group to dst
+			sets -forceElement $renderingSet $dst;
+			break;
+		}
+	}
+}
+
+proc untrimHasTrimNodeSingle( string $object, string $trim )
+{
+	string $aTrimInCrv = $trim + ".ic";
+	string $aTrimInSrf = $trim + ".is";
+	string $aTrimOutSrf = $trim + ".os";
+
+	string $tic[] = `listConnections -shapes false $aTrimInCrv`;
+	string $tis[] = `listConnections -plugs true $aTrimInSrf`;
+	string $tos[] = `listConnections -plugs true $aTrimOutSrf`;
+
+	// Untrim it all:
+	if( (size($tis) > 0) && (size($tos) > 0) ) {
+
+		// Make all the curves "visible"
+		$n = size($tic);
+		for( $i=0; $i<$n; $i+=1 ) {
+			setAttr ($tic[$i] + ".v") true;
+			setAttr ($tic[$i] + ".io") false;
+		}
+
+		// Delete trim node...
+
+		evalEcho( "delete " + $trim );
+
+		// Now, see if the other side is intermediate object
+		// and if nothing else is connected to the resulting
+		// object at which point we can delete it as well:
+					
+		string $otherConn[] = `listConnections $object`;
+		string $tmp[];
+
+		// If there are other connections, just leave it be.  If
+		// the other side is not a nurbs surface shape, leave it be.
+		int $killIt = false;
+		string $otherShape = "";
+		if( size($otherConn) <= 2 ) {
+			tokenize( $tis[0], ".", $tmp );
+			if( size($tmp) > 0 ) {
+				$otherShape = $tmp[0];
+				if( "nurbsSurface" == `nodeType $otherShape` ) {
+					if( 1 == `getAttr ($otherShape + ".io")` ) {
+						$killIt = true;
+					}
+				}
+			}
+		}
+
+		if( $killIt ) {
+			int $killInternal = true;
+			int $killVisible = false;
+			$tmp = `listRelatives -c $object`;
+			if( size($tmp) < 1 ) {
+				$tmp = `listRelatives -c $otherShape`;
+				if( size($tmp) > 0 ) {
+					$killInternal = false;
+					$killVisible = true;
+				}
+			}
+
+			$tmp = `listConnections -s true -d true $object`;
+			if( size($tmp) > 2 ) {
+				$killVisible = false;
+			}
+
+			$otherConn = `listConnections -s true -d true $otherShape`;
+			string $otherIn[] = `listHistory -lv 1 -lf true $otherShape`;
+
+			int $sizeOther = size($otherConn);
+			int $sizeIn = size($otherIn);
+
+			if( ($sizeIn > 1) && ($sizeOther > 1) &&
+				((2 != $sizeIn) || (($sizeOther != $sizeIn))) ) {
+				$killInternal = false;
+			}
+
+			if( $killInternal ) {
+				getAttr -size ($object + ".tf");
+				evalEcho( "delete " + $otherShape );
+			}
+			else if( $killVisible ) {
+				setAttr ($otherShape + ".io") false;
+				untrimNoTrimWhatOfCurves( $otherShape );
+				transferShadingGroup( $object, $otherShape );
+				evalEcho( "delete " + $object );
+			}
+		}
+	}
+}
+
+proc untrimPresetOne( int $dohistory, int $replaceOrig,
+					  int $doChanges, int $doAsScript,
+					  string $object )
+{
+	int $i, $n;
+	int $genCos = true;
+
+	if( $replaceOrig ) {
+		string $nodes[] = `listHistory -lv 1 -lf true $object`;
+
+		if( size($nodes) > 1 ) {
+			$object = $nodes[0];
+			string $trim = $nodes[1];
+
+			if( "trim" == `nodeType $trim` ) {
+				$doAsScript = true;
+				untrimHasTrimNodeSingle( $object, $trim );
+			}
+		}
+		else {
+			// No history on trim; see if there are curves there?
+			$genCos = untrimNoTrimWhatOfCurves( $object );
+		}
+	}
+
+	if( !$doAsScript ) {
+		string $cmd = ( "untrim -ch " + $dohistory +
+						" -cos " + $genCos +
+						" -rpo " + $replaceOrig +
+						" -all " + $doChanges + " " + $object );
+		evalEcho( $cmd );
+	}
+}
+
+global proc untrimPreset(int $doHistory, int $replaceOrig,
+						 int $doChanges, int $doAsScript)
+{
+	global int $gSelectNurbsSurfacesBit;
+	string $objects[] = `filterExpand -ex true -sm $gSelectNurbsSurfacesBit`;
+	int $n = size($objects);
+	int $i;
+
+	if( $n > 0 ) {
+		for( $i=0; $i<$n; $i+=1 ) {
+			 untrimPresetOne( $doHistory, $replaceOrig, $doChanges,
+							  $doAsScript, $objects[$i] );
+		}
+	}
+	else {
+		error (uiRes("m_untrimPreset.kUntrimSurfacesInvalSelection"));
+	}
+}
+

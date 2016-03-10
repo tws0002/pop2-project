@@ -1,0 +1,54 @@
+News - |project_long_name|
+**************************
+For all things related to distributing information and pushing updates to the
+user, this module was created. Application-specific modules (such as, for
+example, a node in Maya/Nuke/Houdini that stores metadata about the current
+scene) will be placed in their respective folders but application-independent
+information will be documented here.
+
+The changelog page is located here :doc:`changelog`
+
+.. Considerations::
+ Right now, there are two versions of the changelog. One that uses this
+ documentation (Sphinx + Read The Docs + Napoleon) to get changelog information
+ and the other simply takes changelog information from a text file. The two
+ were made entirely in isolation. If there's time, the two should be rewritten
+ with ducktyping and implement the same methods, to avoid confusion in the
+ future.
+
+Changelog - HTML Parser
+=======================
+The most automatic version of the changelog. Right now it's simply written
+procedurally simply as a result of time-crunch.
+
+.. automethod:: news.controller.htmlparser.get_html
+ :members:
+
+.. automethod:: news.controller.htmlparser.get_changelog
+ :members:
+
+Changelog - Local File Version
+==============================
+Note, this module has been deprecated in favor of the HTML Parser, because
+keeping a changelog separate from our documentation page makes little to no
+sense.
+
+.. autoclass:: news.changelog.Changelog
+ :members:
+
+Admin Tools
+===========
+.. autofunction:: new.changelog.reset_all_users
+ :members:
+
+Interface
+=========
+.. autoclass:: news.changelog.Window
+ :members:
+
+.. autoclass:: news.changelog.OKWindow
+ :members:
+
+.. autofunction:: new.changelog.show_gui
+ :members:
+

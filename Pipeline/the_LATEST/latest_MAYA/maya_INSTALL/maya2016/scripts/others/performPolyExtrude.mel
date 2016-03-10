@@ -1,0 +1,823 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  3 March 2006
+//
+//  Procedure Name:
+//      performPolyExtrude
+//
+//  Description:
+//        Extrude the selected vertices, faces, or edges
+//
+//  Input Arguments:
+//        $option :
+//  Return Value:
+//
+//
+
+global proc int getExtrudeElementsOperation()
+{
+	// return: 	0 for vertex
+	//			2 for face (default)
+	//			4 for edge
+	//			8 for object
+	//		   -1 for wrong selection
+	// **This is to retain the same encoding as that in performPolyChipOff.mel
+
+	string $elems[] =`ls -selection`;
+
+	int $returnType = -1;
+
+	if( size($elems) > 0 )
+	{
+		// Check for faces first...
+		if (0 != size(`filterExpand -expand false -selectionMask 34`))
+		{
+			$returnType = 2;
+		}
+		// then try edges...
+		else if (0 != size(`filterExpand -expand false -selectionMask 32`))
+		{
+			$returnType = 4;
+		}
+		// then try verts...
+		else if (0 != size(`filterExpand -expand false -selectionMask 31`))
+		{
+			$returnType = 0;
+		}
+		// finally try objects...
+		else if (0 != size(`ls -sl -tr`))
+		{
+			$returnType = 8;
+		}
+	}
+
+	return $returnType;
+}
+
+proc setOptionVars ( int $forceFactorySettings, int $operation )
+{
+
+	switch ($operation) {
+		
+		case 0:	// Extrude Vertex
+
+			if ($forceFactorySettings || !`optionVar -exists polyExtrudeVertexWidth`)
+				optionVar -floatValue polyExtrudeVertexWidth 0.5;
+
+			if ($forceFactorySettings || !`optionVar -exists polyExtrudeVertexLength`)
+				optionVar -floatValue polyExtrudeVertexLength 1.0;
+
+			if ($forceFactorySettings || !`optionVar -exists "polyExtrudeVertexDivisions"`)
+				optionVar -intValue polyExtrudeVertexDivisions 1;
+
+			break;
+			
+		case 2:	// Extrude Face
+
+			if ($forceFactorySettings || !`optionVar -exists "polyExtrudeFaceDivisions"`)
+				optionVar -intValue polyExtrudeFaceDivisions 1;
+
+			if ($forceFactorySettings || !`optionVar -exists "polyExtrudeFaceSmoothingAngle"`)
+				optionVar -floatValue polyExtrudeFaceSmoothingAngle 30.0;
+
+			if ($forceFactorySettings || !`optionVar -exists "polyExtrudeFaceOffset"`)
+				optionVar -floatValue polyExtrudeFaceOffset 0.0;
+
+			if ($forceFactorySettings || !`optionVar -exists "polyExtrudeFaceThickness"`)
+				optionVar -floatValue polyExtrudeFaceThickness 0.0;
+
+			if ($forceFactorySettings || !`optionVar -exists "polyExtrudeFaceUseCurve"`)
+				optionVar -intValue polyExtrudeFaceUseCurve 1;
+
+			if ($forceFactorySettings || !`optionVar -exists "polyExtrudeFaceTaper"`)
+				optionVar -floatValue polyExtrudeFaceTaper 1;
+
+			if ($forceFactorySettings || !`optionVar -exists "polyExtrudeFaceTwist"`)
+				optionVar -floatValue polyExtrudeFaceTwist 0;
+				
+			break;
+			
+		case 4:	// Extrude Edge
+
+			if ($forceFactorySettings || !`optionVar -exists "polyExtrudeEdgeDivisions"`)
+				optionVar -intValue polyExtrudeEdgeDivisions 1;
+
+			if ($forceFactorySettings || !`optionVar -exists "polyExtrudeEdgeSmoothingAngle"`)
+				optionVar -floatValue polyExtrudeEdgeSmoothingAngle 30.0;
+
+			if ($forceFactorySettings || !`optionVar -exists "polyExtrudeEdgeUseCurve"`)
+				optionVar -intValue polyExtrudeEdgeUseCurve 1;
+
+			if ($forceFactorySettings || !`optionVar -exists "polyExtrudeEdgeTaper"`)
+				optionVar -floatValue polyExtrudeEdgeTaper 1;
+
+			if ($forceFactorySettings || !`optionVar -exists "polyExtrudeEdgeTwist"`)
+				optionVar -floatValue polyExtrudeEdgeTwist 0;
+
+			if ($forceFactorySettings || !`optionVar -exists "polyExtrudeEdgeOffset"`)
+				optionVar -floatValue polyExtrudeEdgeOffset 0.0;
+
+			if ($forceFactorySettings || !`optionVar -exists "polyExtrudeEdgeThickness"`)
+				optionVar -floatValue polyExtrudeEdgeThickness 0.0;
+
+			break;
+			
+	}
+}
+
+global proc polyExtrudeOptionsSetup(int $forceFactorySettings)
+{
+	float $vals[], $fval;
+	int $ival;
+	
+	setParent polyExtrudeOptionsLayout;
+
+	if( `control -exists polyExtrudeVertexWidth`)
+	{
+		setOptionVars($forceFactorySettings, 0);
+		
+		$fval = `optionVar -query polyExtrudeVertexWidth`;	
+		floatSliderGrp -edit -value $fval polyExtrudeVertexWidth;
+
+		$fval = `optionVar -query polyExtrudeVertexLength`;	
+		floatSliderGrp -edit -value $fval polyExtrudeVertexLength;
+
+		$ival=`optionVar -query polyExtrudeVertexDivisions`;
+		intSliderGrp -edit -value $ival polyExtrudeVertexDivisions;
+	}
+	else if( `control -exists polyChipOffFaceOffset`)
+	{
+		setOptionVars($forceFactorySettings, 2);
+		
+		$ival = `optionVar -query polyExtrudeFaceDivisions`;
+		intSliderGrp -edit -value $ival polyChipOffDivisions;
+
+		$fval = `optionVar -query polyExtrudeFaceSmoothingAngle`;
+		floatSliderGrp -edit -value $fval polyChipOffSmoothingAngle;
+
+		$fval = `optionVar -query polyExtrudeFaceOffset`;
+		floatSliderGrp -edit -value $fval polyChipOffFaceOffset;
+
+		$fval = `optionVar -query polyExtrudeFaceThickness`;
+		floatSliderGrp -edit -value $fval polyChipOffThickness;
+
+		int $useCurve = `optionVar -query polyExtrudeFaceUseCurve`;
+		radioButtonGrp -edit -select ($useCurve+1) polyChipOffUseCurve;
+
+		$fval = `optionVar -query polyExtrudeFaceTaper`;
+		floatSliderGrp -edit -value $fval -enable (0 != $useCurve) polyChipOffTaper;
+
+		$fval = `optionVar -query polyExtrudeFaceTwist`;
+		floatSliderGrp -edit -value $fval -enable (0 != $useCurve) polyChipOffTwist;
+	}
+	else if( `control -exists polyChipOffEdgeOffset`)
+	{
+		setOptionVars($forceFactorySettings, 4);
+		
+		$ival = `optionVar -query polyExtrudeEdgeDivisions`;
+		intSliderGrp -edit -value $ival polyChipOffDivisions;
+
+		$fval = `optionVar -query polyExtrudeEdgeSmoothingAngle`;
+		floatSliderGrp -edit -value $fval polyChipOffSmoothingAngle;
+
+		int $useCurve = `optionVar -query polyExtrudeEdgeUseCurve`;
+		radioButtonGrp -edit -select ($useCurve+1) polyChipOffUseCurve;
+
+		$fval = `optionVar -query polyExtrudeEdgeTaper`;
+		floatSliderGrp -edit -value $fval -enable (0 != $useCurve) polyChipOffTaper;
+
+		$fval = `optionVar -query polyExtrudeEdgeTwist`;
+		floatSliderGrp -edit -value $fval -enable (0 != $useCurve) polyChipOffTwist;
+
+		$fval = `optionVar -query polyExtrudeEdgeOffset`;
+		floatSliderGrp -edit -value $fval polyChipOffEdgeOffset;
+
+		$fval = `optionVar -query polyExtrudeEdgeThickness`;
+		floatSliderGrp -edit -value $fval polyChipOffThickness;
+	}
+}
+
+global proc polyExtrudeOptionsCallback(int $doIt, int $operation)
+{
+	setParent polyExtrudeOptionsLayout;
+	
+	switch ($operation) {
+		
+		case 0:	// Extrude Vertex
+
+			optionVar -floatValue polyExtrudeVertexWidth
+				`floatSliderGrp -query -value polyExtrudeVertexWidth`;
+
+			optionVar -floatValue polyExtrudeVertexLength
+				`floatSliderGrp -query -value polyExtrudeVertexLength`;
+
+			optionVar -intValue polyExtrudeVertexDivisions
+					`intSliderGrp -query -value polyExtrudeVertexDivisions`;
+
+			if ($doIt) 
+			{
+				performPolyExtrudeVertex 0;
+				addToRecentCommandQueue "performPolyExtrudeVertex 0" "PolyExtrudeVertex";
+			}
+			
+			break;
+			
+		case 2:	// Extrude Face
+	
+			optionVar -intValue polyExtrudeFaceDivisions 
+				`intSliderGrp -query -value polyChipOffDivisions`;
+
+			optionVar -floatValue polyExtrudeFaceSmoothingAngle
+				`floatSliderGrp -query -value polyChipOffSmoothingAngle`;
+
+			optionVar -floatValue polyExtrudeFaceOffset
+				`floatSliderGrp -query -value polyChipOffFaceOffset`;
+
+			optionVar -floatValue polyExtrudeFaceThickness
+				`floatSliderGrp -query -value polyChipOffThickness`;
+
+			optionVar -intValue polyExtrudeFaceUseCurve
+				(`radioButtonGrp -query -select polyChipOffUseCurve` - 1);
+
+			optionVar -floatValue polyExtrudeFaceTaper
+				`floatSliderGrp -query -value polyChipOffTaper`;
+
+			optionVar -floatValue polyExtrudeFaceTwist
+				`floatSliderGrp -query -value polyChipOffTwist`;
+				
+			if ($doIt) {
+				performPolyExtrude 0;
+				string $tmpCmd = "performPolyExtrude 0 ";
+				string $tmpLabel = "poly Extrude Face";
+				addToRecentCommandQueue $tmpCmd $tmpLabel;
+			}
+			
+			break;
+			
+		case 4:	// Extrude Edge
+		
+			optionVar -intValue polyExtrudeEdgeDivisions
+				`intSliderGrp -query -value polyChipOffDivisions`;
+
+			optionVar -floatValue polyExtrudeEdgeSmoothingAngle
+				`floatSliderGrp -query -value polyChipOffSmoothingAngle`;
+
+			optionVar -intValue polyExtrudeEdgeUseCurve
+				(`radioButtonGrp -query -select polyChipOffUseCurve` - 1);
+
+			optionVar -floatValue polyExtrudeEdgeTaper
+				`floatSliderGrp -query -value polyChipOffTaper`;
+
+			optionVar -floatValue polyExtrudeEdgeTwist
+				`floatSliderGrp -query -value polyChipOffTwist`;
+				
+			optionVar -floatValue polyExtrudeEdgeOffset
+				`floatSliderGrp -query -value polyChipOffEdgeOffset`;
+
+			optionVar -floatValue polyExtrudeEdgeThickness
+				`floatSliderGrp -query -value polyChipOffThickness`;
+
+			if ($doIt) {
+				performPolyExtrude 0;
+				string $tmpCmd = "performPolyExtrude 0 ";
+				string $tmpLabel = "poly Extrude Edge";
+				addToRecentCommandQueue $tmpCmd $tmpLabel;
+			}
+				
+			break;
+	}
+}
+
+proc string assembleCmd(int $operation, float $centerX, float $centerY, float $centerZ)
+{
+	string $res="";
+
+	// history flag
+	int $doHistory = `constructionHistory -query -toggle`;
+
+
+	switch ($operation) {
+		
+		case 0:	// Extrude Vertex
+
+			setOptionVars (false, $operation);
+			$res=("polyExtrudeVertex -constructionHistory " + $doHistory);
+
+			float $fval;
+			$fval = `optionVar -query polyExtrudeVertexWidth`;
+			$res = ($res + " -width " + $fval);
+
+			$fval = `optionVar -query polyExtrudeVertexLength`;
+			$res = ($res + " -length " + $fval);
+
+			int $divisions = `optionVar -query polyExtrudeVertexDivisions`;
+			$res = ($res + " -divisions " + $divisions);
+			
+			break;
+			
+		case 2:	// Extrude Face
+
+			$res=("polyExtrudeFacet -constructionHistory " + $doHistory +
+				  " -keepFacesTogether " + `optionVar -query polyKeepFacetsGrouped` ); 
+
+			int $divisions = `optionVar -query polyExtrudeFaceDivisions`;
+
+			float $twist = 0, $taper = 1;
+			$taper = `optionVar -query polyExtrudeFaceTaper`;
+			$twist = `optionVar -query polyExtrudeFaceTwist`;
+
+			float $smoothingAngle = `optionVar -query polyExtrudeFaceSmoothingAngle`;
+			float $offset = `optionVar -query polyExtrudeFaceOffset`;
+			float $thickness = `optionVar -query polyExtrudeFaceThickness`;
+
+			$res=($res
+					+ " -pvx " + $centerX + " -pvy " + $centerY + " -pvz " + $centerZ
+					+ " -divisions " +  $divisions
+					+ " -twist " +  $twist
+					+ " -taper " +  $taper
+					+ " -off " +  $offset
+					+ " -thickness " +  $thickness
+					+ " -smoothingAngle "  +  $smoothingAngle
+			);
+			
+			break;
+
+		case 4:	// Extrude Edge
+
+			$res=("polyExtrudeEdge -constructionHistory " + $doHistory +
+				  " -keepFacesTogether " + `optionVar -query polyKeepFacetsGrouped` ); 
+
+			int $divisions = `optionVar -query polyExtrudeEdgeDivisions`;
+
+			float $twist = 0, $taper = 1;
+			$taper = `optionVar -query polyExtrudeEdgeTaper`;
+			$twist = `optionVar -query polyExtrudeEdgeTwist`;
+			float $offset = `optionVar -query polyExtrudeEdgeOffset`;
+			float $thickness = `optionVar -query polyExtrudeEdgeThickness`;
+			float $smoothingAngle = `optionVar -query polyExtrudeEdgeSmoothingAngle`;
+
+			$res=($res
+					+ " -pvx " + $centerX + " -pvy " + $centerY + " -pvz " + $centerZ
+					+ " -divisions " +  $divisions
+					+ " -twist " +  $twist
+					+ " -taper " +  $taper
+					+ " -offset " +  $offset
+					+ " -thickness " +  $thickness
+					+ " -smoothingAngle "  +  $smoothingAngle
+			);
+				
+			break;
+	}
+	
+	return $res;
+}
+
+global proc updatePolyExtrudeOptions()
+// This function is called via a script job parented by drawPolyExtrudeOptionsUI. 
+// A UI update should NOT cause the options dialog to get focus (see bug #251930).
+{
+	// This function can sometimes inadvertantly be called by the script job, 
+	// when Enable is pressed, for example.
+	int $operation = getExtrudeElementsOperation();
+	polyExtrudeOptions($operation);
+}
+
+global proc updatePolyExtrudeWithCurveOptions()
+{
+	int $sel = `radioButtonGrp -q -select polyChipOffUseCurve`;
+
+	disable -value (1 == $sel) polyChipOffTaper; 
+	disable -value (1 == $sel) polyChipOffTwist;
+}
+
+global proc drawPolyExtrudeOptions(int $operation, string $optionBox)
+{
+	// Global template variables for form spacing
+	global int $gOptionBoxTemplateFrameSpacing;
+	global int $gOptionBoxTemplateDescriptionMarginWidth;
+
+	string $cmdName = "polyExtrudeOptions";
+
+	string $callback = ($cmdName + "Callback");
+	string $setup = ($cmdName + "Setup");
+	
+	// Delete the old layout and replace it, based on the selection.
+	if(`formLayout -query -exists polyExtrudeOptionsLayout`){
+		deleteUI -layout polyExtrudeOptionsLayout;
+	}
+	setParent $optionBox;
+	setUITemplate -pushTemplate OptionBoxTemplate;
+	formLayout polyExtrudeOptionsLayout;	
+	waitCursor -state 1;
+
+
+		// Settings frame
+		string $settingsFrame = 
+		`frameLayout -label (uiRes("m_performPolyExtrude.kSettingsFrame"))`;
+
+				columnLayout;
+				
+				string $divisions = (uiRes("m_performPolyExtrude.kDivisions"));
+
+				switch ($operation) {
+				
+					case 0:	 // Extrude Vertices
+
+						floatSliderGrp -label (uiRes("m_performPolyExtrude.kWidth"))
+							-minValue 0.0
+							-maxValue 0.5
+							polyExtrudeVertexWidth;
+
+						floatSliderGrp -label (uiRes("m_performPolyExtrude.kLength"))
+							-minValue -10.0
+							-maxValue  10.0
+							-fieldMinValue -1000.0 
+							-fieldMaxValue  1000.0
+							polyExtrudeVertexLength;
+
+						intSliderGrp -label $divisions
+							-minValue 1 
+							-maxValue 10
+							-fieldMinValue 1
+							-fieldMaxValue 100
+							polyExtrudeVertexDivisions;
+							
+						break;
+						
+					case 2:	// Extrude Face
+					case 4: // Extrude Edge
+					
+						intSliderGrp 
+							-label $divisions 
+							-minValue 1 
+							polyChipOffDivisions;
+
+						floatSliderGrp 
+							-label (uiRes("m_performPolyExtrude.kSmoothAngle")) 
+							-minValue 0.0 
+							-maxValue 180.0 
+							polyChipOffSmoothingAngle;
+
+						string $offsetLabel = (uiRes("m_performPolyExtrude.kFaceOffset"));
+						if (2 == $operation)
+						{
+							floatSliderGrp 
+								-label $offsetLabel
+								-minValue -2.0 
+								-maxValue 2.0 
+								-fieldMinValue -100 
+								-fieldMaxValue 100 
+								polyChipOffFaceOffset;
+						}
+						else
+						{
+							floatSliderGrp 
+								-label $offsetLabel
+								-minValue -2.0 
+								-maxValue 2.0 
+								-fieldMinValue -100 
+								-fieldMaxValue 100 
+								polyChipOffEdgeOffset;
+						}
+
+						floatSliderGrp 
+							-label (uiRes("m_performPolyExtrude.kThickness")) 
+							-minValue -20.0 
+							-maxValue 20.0 
+							polyChipOffThickness;
+
+						string $curveLabel = (uiRes("m_performPolyExtrude.kCurveLabel"));
+						frameLayout -label $curveLabel;
+						columnLayout;
+							string $curve = (uiRes("m_performPolyExtrude.kCurve"));
+							string $none = (uiRes("m_performPolyExtrude.kNoCurve"));
+							string $selected = (uiRes("m_performPolyExtrude.kSelectedCurve"));
+							string $generated = (uiRes("m_performPolyExtrude.kGeneratedCurve"));
+
+							radioButtonGrp -numberOfRadioButtons 3 -label $curve
+									-labelArray3 $none $selected $generated 
+									-onCommand "updatePolyExtrudeWithCurveOptions" polyChipOffUseCurve;
+
+							floatSliderGrp 
+								-label (uiRes("m_performPolyExtrude.kTaper")) 
+								-minValue  0.0 
+								-maxValue 15.0 
+								polyChipOffTaper;
+
+							floatSliderGrp 
+								-label (uiRes("m_performPolyExtrude.kTwist")) 
+								-minValue -180.0 
+								-maxValue 180.0 
+								polyChipOffTwist;
+							
+						setParent ..;
+						break;
+				}
+					
+		setParent polyExtrudeOptionsLayout; // frameLayout
+
+	setParent ..; // formLayout
+	
+	// Attach frames to form layout
+	formLayout -edit
+	
+		-attachForm $settingsFrame "top" $gOptionBoxTemplateFrameSpacing
+		-attachForm $settingsFrame "left" $gOptionBoxTemplateFrameSpacing
+		-attachForm $settingsFrame "right" $gOptionBoxTemplateFrameSpacing
+		-attachNone $settingsFrame "bottom"
+
+	polyExtrudeOptionsLayout;
+
+	waitCursor -state 0;
+	setUITemplate -popTemplate;
+
+	string $applyAndCloseBtn = getOptionBoxApplyAndCloseBtn();
+	button -edit 
+	       -label (uiRes("m_performPolyExtrude.kExtrudeButton"))
+	       -command ($callback + " " + 1 + " " + $operation + "; evalDeferred \"hideOptionBox\"")
+		$applyAndCloseBtn;
+
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit
+	       -command ($callback + " " + 1 + " " + $operation)
+		$applyBtn;
+
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + " " + 1)
+		$resetBtn;
+			 
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + 0 + " " + $operation)
+		$saveBtn;
+
+	string $optionsTitle;
+	string $optionsHelpTag;
+
+	switch ($operation) {
+		case 0:	
+			$optionsTitle = (uiRes("m_performPolyExtrude.kExtrudeVertexOptions"));
+			$optionsHelpTag = "ExtrudeVertices";
+			break;
+		case 2:	
+			$optionsTitle = (uiRes("m_performPolyExtrude.kExtrudeFaceOptions"));
+			$optionsHelpTag = "EditPolygonsExtrudeFace";
+			break;
+		case 4:	
+			$optionsTitle = (uiRes("m_performPolyExtrude.kExtrudeEdgeOptions"));
+			$optionsHelpTag = "ExtrudeEdge";
+			break;
+	}
+			 
+	setOptionBoxTitle( $optionsTitle );
+	setOptionBoxHelpTag( $optionsHelpTag );
+	
+	eval (($setup + " " + 0));     
+	
+	// The script job needs to be restarted whenever the parent is recreated.
+	scriptJob -protected
+		-parent polyExtrudeOptionsLayout 
+		-event "SelectionChanged" ("evalDeferred \"updatePolyExtrudeOptions\"");
+}
+
+global proc polyExtrudeOptions(int $operation)
+{
+	if ($operation < 0 || $operation == 8)
+		$operation = 2;
+
+	string $optionBox = getOptionBox();
+	drawPolyExtrudeOptions($operation,$optionBox);
+	showOptionBox();
+}
+
+global proc string performPolyExtrude(int $option)
+// 
+// $option:
+//   0: perform the extrude.  Check for faces, then edges then vertices.
+//   1: display option box.  Check for faces, then edges then vertices.
+//   2: return the string for option 0.
+//   3/4/5: maps to 0/1/2 but specifically for vertex components.
+//   6/7/8: maps to 0/1/2 but specifically for edge components.
+//   9/10/11: maps to 0/1/2 but specifically for face components.
+//
+{
+	string $cmd="";
+	string $sel[];
+
+	int $operation;
+	
+	switch ($option) {
+	case 0:
+	case 1:
+	case 2:
+		$operation = getExtrudeElementsOperation();
+		break;
+	case 3:
+	case 4:
+	case 5:
+		$operation = 0;
+		$option -= 3;
+		break;
+	case 6:
+	case 7:
+	case 8:
+		$operation = 4;
+		$option -= 6;
+		break;
+	case 9:
+	case 10:
+	case 11:
+	default:
+		$operation = 2;
+		$option -= 9;
+		break;
+	}
+
+	switch ($option) {
+	case 0:
+		if ($operation < 0)
+		{
+			warning( (uiRes("m_performPolyExtrude.kWarningNothingSelected")) );
+			return "";
+		}
+
+		switch ($operation) {
+
+			case 0:	// Extrude Vertex
+				// Vertex doesn't have a "pivot" flag so just passing
+				// in 0 0 0 and it will be ignored.
+				string $vtxcmd=`assembleCmd $operation 0.0 0.0 0.0`;
+				select -r `polyListComponentConversion -ff -fe -fuv -fv -tv`;
+
+				string $res[];
+				$res=`evalEcho $vtxcmd`;
+				if (size($res) > 0) {
+					select -add $res;
+				}
+				setToolTo ShowManips;
+
+				break;
+
+			case 8: // Extrude object (convert to faces)
+				ConvertSelectionToFaces;
+				$operation = 2;
+
+			case 2:	// Extrude Face
+			case 4: // Extrude Edge
+
+				// Majority of this code is replicated from performPolyChipOff.mel
+
+				string $lbl;
+				string $sel[];
+				string $ft;
+
+				global int $gSelectNurbsCurvesBit;
+				string $curveList[] = `filterExpand -ex true -sm $gSelectNurbsCurvesBit`;
+
+				if($operation == 2)
+				{
+					$lbl="polyExtrudeFacet";
+					$ft="f";
+					select -r `polyListComponentConversion -ff -fe -fv -fuv -tf`;
+				}
+				else if($operation == 4)
+				{
+					$lbl="polyExtrudeEdge";
+					$ft="e";
+					select -r `polyListComponentConversion -ff -fe -fv -fuv -te`;
+				}
+
+				// history flag
+				int $doHistory = `constructionHistory -query -toggle`;
+
+				waitCursor -state on;
+
+				$sel=`polyCheckSelection $lbl $ft 0`;
+				if (size($sel) == 0) {
+					waitCursor -state off;
+					break;
+				}
+				select -replace $sel;
+				string $oldnodes[]=`ls -selection -dependencyNodes`; 
+				if (size($oldnodes) > 0)
+					select -deselect $oldnodes;		
+
+				string $tmp[];
+				if($operation == 2)
+				{
+					$tmp = `polyListComponentConversion -ff -fe -fv -fuv -tf`;
+				}
+				else if($operation == 4)
+				{
+					$tmp = `polyListComponentConversion -ff -fe -fv -fuv -te`;
+				}
+
+				$sel = $tmp;
+				if (size($sel) != 0) {
+					float $bbox[6] = `polyEvaluate -bc`;
+					float $pivot[3];
+					$pivot[0] = ($bbox[1] + $bbox[0]) / 2.0;
+					$pivot[1] = ($bbox[3] + $bbox[2]) / 2.0;
+					$pivot[2] = ($bbox[5] + $bbox[4]) / 2.0;
+					setOptionVars(false, $operation);
+					int $index=0;
+					while (size($sel) > $index) {
+						string $cursel[];
+						string $res[];
+						$index=`polyNextSelectionBatch $sel $cursel $index`;		
+						$cmd=`assembleCmd $operation $pivot[0] $pivot[1] $pivot[2]`;
+
+						int $curveOption = 0;
+						if($operation == 2)
+							$curveOption = `optionVar -query polyExtrudeFaceUseCurve`;
+						else if($operation == 4)
+							$curveOption = `optionVar -query polyExtrudeEdgeUseCurve`;
+
+						if (1 == $curveOption)
+						{
+							if (0 < size($curveList) && "" != $curveList[0]) 
+							{
+								$cmd=($cmd + " -inputCurve " +  $curveList[0] + " ");
+							}
+						}
+						else if (2 == $curveOption)
+						{
+							$cmd=($cmd + " -createCurve ");
+						}
+
+						for ($i=0; $i<size($cursel); $i++)
+							$cmd=($cmd + " " + $cursel[$i]);
+						if ($doHistory && (size($cursel) > 0)) {
+							select -deselect $cursel;
+						}
+						
+						$res=`evalEcho $cmd`;
+						
+						
+						if (size($res) > 0) {
+							select -add $res;
+						}
+						//
+						// The first command returned the polyChipOff node;
+						// by selecting that now we connect the manipulator.
+						//
+						if (size($res) > 0) {
+							select -add $res;
+						}
+					}
+
+					clear $sel;
+					setToolTo ShowManips;	
+				}
+				
+				waitCursor -state off;
+				
+				break;				
+		} 
+		
+		string $tmpCmd = "performPolyExtrude 0 ";
+		string $tmpLabel = "Poly Extrude";
+		addToRecentCommandQueue $tmpCmd $tmpLabel;
+
+		break;
+
+	case 1: 
+	//Option box case
+	
+		polyExtrudeOptions $operation; 
+		break;
+
+	case 2:
+	//Want a command for a shelf button
+	//shelf button command will not be instance specific but rather will reference the
+	//option vars at the time of pressing it
+	
+		$cmd = "performPolyExtrude 0";
+		break;
+	}
+	
+	return $cmd;
+	
+}

@@ -1,0 +1,558 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  2005
+//
+// Description: apply values of a 2D texture to follicle color 
+//	
+
+proc string hsysParent( string $hsys ){
+	string $type = nodeType( $hsys );
+	if( $type == "transform" ){
+		return $hsys;
+	} else if(  $type == "hairSystem" ){
+		string $tforms[] = `listTransforms $hsys`;
+		return( $tforms[0] );
+	} else {
+		string $fmt = (uiRes("m_transplantHair.kNotAHairSystem"));
+		warning( `format -s $hsys $fmt`);
+		return( "" );
+	}
+}
+
+proc float convertToCmFactor()
+{
+	string $unit = `currentUnit -q -linear`;
+	if( $unit == "mm" ){
+		return( 0.1 );
+	} else if( $unit == "cm" ){
+		return( 1.0 );
+	} else if( $unit == "m" ){
+		return( 100.0 );
+	} else if( $unit == "in" ){
+		return( 2.54 );
+	} else if( $unit == "ft" ){
+		return( 30.48 );
+	} else if( $unit == "yd" ){
+		return( 91.44 );
+	} else {
+		return( 1.0 );
+	}
+}
+
+proc string copyHairSystem(string $hsys)
+{
+	// NOTE: this is mostly from assignHairSystem.. this could be merged in its own file and shared
+	string $hsysDag = hsysParent( $hsys );
+	string $dup[] = `duplicate -n ($hsysDag + "_tp") $hsysDag`;
+	$dup = `ls -shapes -dag $dup[0]`;
+	string $newHsys = $dup[0];
+
+	string $outputPfx[] = `listConnections ($hsys + ".outputRenderHairs")`;
+	if( size( $outputPfx ) > 0 ){
+		string $pfxHair = `createNode pfxHair`;
+		setAttr ( $pfxHair + ".displayPercent") 100;
+		setAttr ( $pfxHair + ".drawAsMesh") false;
+		connectAttr ($newHsys + ".outputRenderHairs") ($pfxHair + ".renderHairs");
+	}
+	return $newHsys;
+}
+
+proc string copyFollicle(string $follicle, string $hsys, string $follicleHsys, string $hsysGroup, 
+	string $hsysOutHairGroup, int $endHairSystemIndex[]) 
+// copy follicle and its input/output curve connections
+{
+	string $surf = $follicle +".inputSurface";
+	string $imesh = $follicle +".inputMesh";
+	string $mat  = $follicle +".inputWorldMatrix";
+	string $pos  = $follicle +".currentPosition";
+	string $inputSurf = `connectionInfo -sfd $surf`;
+	string $inputMesh = `connectionInfo -sfd $imesh`;
+	string $inputMat  = `connectionInfo -sfd $mat`;
+	string $inputPos  = `connectionInfo -sfd $pos`;
+	int $simMethod = getAttr( $follicle + ".simulationMethod");
+	// disconnect input surface so it is not copied
+	if( $inputSurf != "" ){
+		disconnectAttr $inputSurf $surf;
+	}
+	if( $inputMesh != "" ){
+		disconnectAttr $inputMesh $imesh;
+	}
+	if( $inputMat != "" ){
+		disconnectAttr $inputMat $mat;
+	}
+	if( $inputPos != "" ){
+		disconnectAttr $inputPos $pos;
+	}
+	string $dupObjs[] = `duplicate -un -rc $follicle`;
+	string $newFollicle = "";
+
+	string $newObj;
+	for( $newObj in $dupObjs ){
+		string $shapes[] = `ls -leaf -dag $newObj`;
+		string $ntype = nodeType( $shapes[0] );
+		if( $ntype == "follicle" ){
+	
+			// $newFollicle = `rename $newObj $shapes[0]`;
+			
+			$newFollicle = $newObj;
+			if( $follicleHsys != $hsys ){
+				parent -relative $newFollicle $hsysGroup;
+			}
+		} 
+	}
+	if( $newFollicle == "" ){
+		string $fmt = (uiRes("m_transplantHair.kFailedDuplicate"));
+		warning( `format -s $follicle $fmt` );	
+		return( "" );
+	}
+	string $outCurves[] = `listConnections ($follicle + ".outCurve")`;
+	int $doOut = size( $outCurves ) > 0;
+
+	$endHairSystemIndex[0] = getNextFreeMultiIndex( ($hsys + ".inputHair"), 
+								$endHairSystemIndex[0] );	
+	int $hairIndex = $endHairSystemIndex[0];
+	$endHairSystemIndex[0] += 1; // avoid checking this index twice
+	connectAttr ($newFollicle + ".outHair") ($hsys + ".inputHair["+$hairIndex+"]");
+	if( $doOut ){
+		connectAttr ($hsys + ".outputHair["+$hairIndex+"]") ($newFollicle + ".currentPosition");
+		string $crv = `createNode nurbsCurve`;
+		connectAttr ($newFollicle + ".outCurve")  ($crv + ".create");
+		if( $simMethod == 1 ){
+			initHairCurveDisplay( $crv, "passive" );
+		} else {
+			initHairCurveDisplay( $crv, "current" );
+		}
+		if( $hsysOutHairGroup != "" ){
+			$tforms = `listTransforms $crv`;
+			parent -relative $tforms[0] $hsysOutHairGroup; 
+		}
+	}
+
+
+	if( $inputSurf != "" ){
+		connectAttr $inputSurf $surf;
+	}
+	if( $inputMesh != "" ){
+		connectAttr $inputMesh $imesh;
+	}
+	if( $inputMat != "" ){
+		connectAttr $inputMat $mat;
+	}
+	if( $inputPos != "" ){
+		connectAttr $inputPos $pos;
+	}
+	return $newFollicle;	
+	
+}
+
+proc int isConnectedToNucleus( string $hsys ){
+	string $shapes[] = `listRelatives -s -path $hsys`;	
+	for($node in $shapes){
+		if(nodeType($node)=="hairSystem" ){
+			if (`connectionInfo -isSource ($node+".currentState")`){
+				if(nodeType(`listConnections -s false -d true ($node+".currentState")`) == "nucleus"){
+					return 1;
+				}
+			}
+		}
+		else if(nodeType($node)=="pfxHair" ){
+			$hairSystem = `listConnections -s true -d false ($node+".renderHairs")` ;
+			if( size($hairSystem)>0){
+				if(nodeType(`listConnections -s false -d true ($hairSystem[0]+".currentState")`) == "nucleus"){
+					return 1;
+				}
+			}
+		}
+	}
+	return 0;
+}
+
+proc int doTransplant( string $follicles[], string $targetObject, int $doClosest, int $doCopy, string $destHairSystem, string $sourceHairSystem)
+{
+	int $useExistingSystem = ($destHairSystem != "");
+	string $hsys[];
+	string $newHsys[];
+	string $newGroup[];
+	string $newOutGroup[];
+	string $endIndex[];
+	int $numHsys = 0;
+
+	if( $targetObject == "" || !objExists( $targetObject ) ){
+		string $fmt = (uiRes("m_transplantHair.kTargetDoesntExist"));
+		warning( `format -s $targetObject $fmt` ); 	
+		return false;
+	}
+
+
+		
+	string $objShapes[] = `ls -dag -leaf $targetObject`;
+	string $objShape = $objShapes[0];
+	string $nodeType = nodeType( $objShape );	
+	if( $nodeType != "nurbsSurface" && $nodeType != "mesh" ){
+		warning((uiRes("m_transplantHair.kUseMeshOrNurbs"))); 	
+		return false;
+	}
+	string $tforms[] = listTransforms( $objShape );
+	if( size( $tforms ) < 1 ){
+		return false;
+	}
+	string $objTform = $tforms[0];
+	string $existingOutGroup, $existingGroup, $destDag;
+	int $existingIndex = 0;
+	if( $useExistingSystem ){
+		if( nodeType($destHairSystem) == "transform" ){
+			$destDag = $destHairSystem;
+			string $destShapes[] = `ls -leaf -dag $destHairSystem`;
+			$destHairSystem = $destShapes[0];	
+		} else {
+			$destDag = hsysParent( $destHairSystem );
+		}	
+
+		if( nodeType( $destHairSystem ) != "hairSystem" ){
+			warning `format -s $destHairSystem uiRes("m_transplantHair.kNotAHairSystem")`;
+			return false;
+		}
+		$existingGroup = ($destDag + "Follicles");
+		$existingOutGroup = ($destDag + "OutputCurves");
+		if( !objExists( $existingGroup ) ){
+			$existingGroup = `group -em -name $existingGroup`;
+		}
+		if( !objExists( $existingOutGroup ) ){
+			$existingOutGroup = `group -em -name $existingOutGroup`;
+		}
+	}	
+	string $clPos = "";
+	float $minU, $minV, $sizeU, $sizeV;
+	float $convertFac = 1.0;
+	if( $doClosest ){
+		if( $nodeType == "nurbsSurface" ){
+			$clPos = `createNode closestPointOnSurface`;	
+			connectAttr ($objShape + ".worldSpace[0]") ($clPos + ".inputSurface");
+
+			$minU = `getAttr ($objShape+".mnu")`;
+			float $maxU = `getAttr ($objShape+".mxu")`;
+			$sizeU = $maxU - $minU;
+			$minV = `getAttr ($objShape+".mnv")`;
+			float $maxV = `getAttr ($objShape+".mxv")`;
+			$sizeV = $maxV - $minV;
+		} else {
+			int $pomLoaded = `pluginInfo -query -l nearestPointOnMesh`;
+			if( !$pomLoaded ){
+				loadPlugin nearestPointOnMesh;
+				$pomLoaded = `pluginInfo -query -l nearestPointOnMesh`;
+				if( !$pomLoaded ){
+					warning( (uiRes("m_transplantHair.kMissingPlugin")) );
+					return false;
+				}
+			}
+			// The following is to overcome a units bug in the nearestPointOnMesh plugin
+			// If at some point it correctly handles units, then we need to take out the
+			// following conversion factor.	
+			$convertFac = convertToCmFactor();
+
+			$clPos = `createNode nearestPointOnMesh`;
+			connectAttr ($objShape + ".worldMesh") ($clPos + ".inMesh");
+		}
+	}
+	int $maxDensity = `optionVar -query createHairMaxDensity`;
+	string $newSel[];
+	int $newSelSize = 0;
+	string $follicle;
+	int $i;
+	for( $follicle in $follicles ){
+		string $newFollicle;
+		string $con[] = `connectionInfo -dfs ($follicle + ".outHair")`;
+		string $hairSys = "";
+		if( size($con) > 0 ){
+			string $buffer[];
+			int $numTokens = `tokenize $con[0] "." $buffer`;
+			if( $numTokens > 1 ){
+				string $nType = `nodeType $buffer[0]`;
+				if( $nType == "hairSystem"){
+					$hairSys = $buffer[0];
+				}
+			}
+		}
+		if( $hairSys == "" ){
+			string $fmt = (uiRes("m_transplantHair.kFollicleNotConnected"));
+			warning( `format -s $follicle $fmt` );
+			continue; 
+		}
+
+		int $hairSysIndex = -1;
+		for(  $i = 0; $i < $numHsys; $i++ ){
+			if( $hsys[$i] == $hairSys ){
+				$hairSysIndex = $i;
+				break;
+			}
+		}
+		if( $hairSysIndex == -1 ){
+			// new hair system, need to add to list
+			$hsys[ $numHsys ] = $hairSys;	
+			$endIndex[ $numHsys ] = 0;
+			if( $doCopy && !$useExistingSystem ){
+				string $hsysShape = `copyHairSystem $hairSys`;
+				string $hsysDag = hsysParent( $hsysShape );
+				$newHsys[$numHsys] = $hsysShape;
+				connectAttr time1.outTime ( $hsysShape + ".currentTime" );
+				string $hg = ($hsysDag + "Follicles");
+				$hg = `group -em -name $hg`;
+				$newGroup[ $numHsys ] = $hg;
+				$hg = ($hsysDag + "OutputCurves");
+				$hg = `group -em -name $hg`;
+				$newOutGroup[ $numHsys ] = $hg;
+			} 
+			$hairSysIndex = $numHsys;
+			$numHsys++;
+		}
+		float $closestU, $closestV;
+		float $follicleRotate[3];
+		if( $doClosest ){
+			// find closest uv on target at current follicle position
+			float $pos[3] = getAttr( $follicle + ".outTranslate" );
+			$follicleRotate = getAttr( $follicle + ".outRotate" );
+			setAttr ($clPos + ".inPosition") -type double3 
+				($pos[0]*$convertFac) 
+				($pos[1]*$convertFac)
+				($pos[2]*$convertFac);
+
+			$closestU = getAttr( $clPos + ".parameterU");
+			$closestV = getAttr( $clPos + ".parameterV");
+			if( $nodeType == "nurbsSurface" ){
+				$closestU = ($closestU + $minU)/$sizeU;
+				$closestV = ($closestV + $minV)/$sizeV;
+			}
+			// Zero transforms on curves, if they are not already identity.
+			// This requires that the curve not be set to intermediate mode
+			string $curveShapes[] = `listRelatives -ad -type nurbsCurve $follicle`;
+			string $crv;
+			for( $crv in $curveShapes ){
+				string $intermediate = ( $crv + ".intermediateObject");
+				string $tforms[] = listTransforms( $crv );
+				if( getAttr( $intermediate ) ){
+					setAttr $intermediate false; 
+					makeIdentity -apply true -t 1 -r 1 -s 1 -n 0 -jointOrient $tforms[0];
+					setAttr $intermediate true; 
+				} else {
+					makeIdentity -apply true -t 1 -r 1 -s 1 -n 0 -jointOrient $tforms[0];
+				}
+			}
+			
+			// print( "uv = "+$closestU+" "+$closestV+" pos = "+$pos[0]+","+$pos[1]+","+$pos[2]+"\n");
+		}
+		string $targetHsys;
+		string $targetFollicle;
+		if( $useExistingSystem ){
+			$targetHsys = $destHairSystem;
+		} else if( $doCopy ){
+			$targetHsys = $newHsys[$hairSysIndex];
+		} else {
+			$targetHsys = $hsys[ $hairSysIndex ];
+		}
+
+		if( $doCopy ){
+			int $endHairSystemIndex[1];
+			string $grp,$outGrp;
+			if( $useExistingSystem ){
+				$grp = $existingGroup;
+				$outGrp = $existingOutGroup;
+				$endHairSystemIndex[0] = $existingIndex;
+			} else {
+				$grp = $newGroup[$hairSysIndex];
+				$outGrp = $newOutGroup[$hairSysIndex];
+				$endHairSystemIndex[0] = $endIndex[$hairSysIndex];
+			}
+			$targetFollicle = copyFollicle($follicle, $targetHsys, $hairSys,
+							$grp,  $outGrp, $endHairSystemIndex );
+			if( $targetFollicle == "" ){
+				continue;
+			}
+			if( $useExistingSystem ){
+				$existingIndex = $endHairSystemIndex[0];
+			} else {
+				$endIndex[$hairSysIndex] = $endHairSystemIndex[0];
+			}
+		} else {
+			$targetFollicle = $follicle;
+
+			// break follicle input surface connections
+			string $surf = $follicle +".inputSurface";
+			string $imesh = $follicle +".inputMesh";
+			string $mat  = $follicle +".inputWorldMatrix";
+			string $inputMesh = `connectionInfo -sfd $imesh`;
+			string $inputSurf = `connectionInfo -sfd $surf`;
+			string $inputMat  = `connectionInfo -sfd $mat`;
+
+			if( $inputSurf != "" ){
+				disconnectAttr $inputSurf $surf;
+			}
+			if( $inputMesh != "" ){
+				disconnectAttr $inputMesh $imesh;
+			}
+			if( $inputMat != "" ){
+				disconnectAttr $inputMat $mat;
+			}
+
+			if( $useExistingSystem && ($hairSys != $targetHsys) ){
+				// find the next free hair index on new system
+				int $hairIndex = getNextFreeMultiIndex( ($targetHsys + ".inputHair"), 
+								$existingIndex );	
+				$existingIndex = $hairIndex + 1; // avoid checking this index twice
+
+				// break the old outhair connection and reconnect
+				string $outHair = ($follicle + ".outHair");
+				string $con[] = `connectionInfo -dfs $outHair`;
+				string $outHairCon;
+				for( $outHairCon in $con ){
+					disconnectAttr $outHair $outHairCon;
+				}
+				connectAttr $outHair ($targetHsys + ".inputHair["+$hairIndex+"]");
+
+				// break the old input hair connection and reconnect
+				string $curPos = ($follicle + ".currentPosition");
+				string $cpos = `connectionInfo -sfd $curPos`;
+				if( $cpos != "" ){
+					disconnectAttr $cpos $curPos;
+					connectAttr ($targetHsys + ".outputHair["+$hairIndex+"]") $curPos;
+					string $outCurves[] = `listConnections ($follicle + ".outCurve")`;
+					string $crv;
+					// reparent outCurves to new hair group
+					for( $crv in $outCurves ){
+						parent -relative $crv $existingOutGroup;
+					}
+				}
+				// reparent follicle to new hair group
+				parent -relative $follicle $existingGroup;
+			} 
+		}
+
+		if( $doClosest ){
+			setAttr ( $targetFollicle + ".parameterU" ) $closestU;
+			setAttr ( $targetFollicle + ".parameterV" ) $closestV;
+		} else {
+			$closestU = getAttr( $targetFollicle + ".parameterU" );
+			$closestV = getAttr( $targetFollicle + ".parameterV" );
+		}
+		// connect follicle to new surface
+		connectAttr ($objShape + ".worldMatrix[0]") ($targetFollicle + ".inputWorldMatrix");
+		if( "nurbsSurface" == $nodeType ){ 
+			connectAttr ($objShape + ".local") ($targetFollicle + ".inputSurface");
+		} else if( "mesh" == $nodeType ){
+			connectAttr ($objShape + ".outMesh") ($targetFollicle + ".inputMesh");
+			string $currentUVSet[] = `polyUVSet -q -currentUVSet $objShape`;
+			setAttr ($targetFollicle + ".mapSetName") -type "string" $currentUVSet[0];
+/*
+			int $isValidUv = getAttr( $targetFollicle + ".validUv" );
+			if( !$isValidUv ){
+				delete $hairDag;
+			}
+*/
+		} 
+		if( $doClosest ){
+			// rotate child curves(start and rest) to match old follicle rotation
+			string $curveShapes[] = `listRelatives -ad -type nurbsCurve $targetFollicle`;
+			string $crv;
+			for( $crv in $curveShapes ){
+				string $tforms[] = listTransforms( $crv );
+				string $crvTform = $tforms[0];
+				// remove the effect of new rotation by unparenting with -relative
+				parent -world -relative $crvTform;
+				// add the old rotation and parent 
+				setAttr ($crvTform + ".rotate") $follicleRotate[0] $follicleRotate[1] $follicleRotate[2];
+				parent  $crvTform $targetFollicle;
+				// translate to zero to place the curve at the correct spot on the follicle
+				setAttr ($crvTform + ".translate") 0 0 0;
+				// now freeze tranforms so the local rotate is zero 
+				string $intermediate = ( $crv + ".intermediateObject");
+				if( getAttr( $intermediate ) ){
+					setAttr $intermediate false; 
+					makeIdentity -apply true -t 1 -r 1 -s 1 -n 0 -jointOrient $crvTform;
+					setAttr $intermediate true; 
+				} else {
+					makeIdentity -apply true -t 1 -r 1 -s 1 -n 0 -jointOrient $crvTform;
+				}
+			}
+		}
+
+		string $hairCurveNamePrefix = ($objTform + "Follicle");
+		// The hairCurve is named based on the object and the UV index
+		// This allows the script hairCurvePaint to function on the resulting nodes.
+		int $namingIndex = $maxDensity * (int)($closestU * (float)($maxDensity-1) + 0.5)  
+									+ (int)($closestV * (float)($maxDensity-1) +0.5);
+		string $newName = $hairCurveNamePrefix + $namingIndex;
+		string $targetFollicle = `rename $targetFollicle $newName`;
+
+		$newSel[ $newSelSize] = $targetFollicle;
+		$newSelSize++;
+	}
+	if( $clPos != "" ){
+		delete $clPos;
+	}
+	if(isConnectedToNucleus($sourceHairSystem)){
+		select $targetObject;
+		makeCollideNCloth;
+	}
+		
+	select -r $newSel;
+	return true;
+}
+
+global proc transplantHair( int $method, int $doCopy )
+{
+	string $sel[] = `ls -sl`;
+
+	int $doClosest = ($method == 2);
+	int $selSize = size( $sel );
+	if( $selSize < 2 ){
+		warning((uiRes("m_transplantHair.kSelectHairFirst"))); 
+		return;
+	}
+	string $hairSystem = $sel[0];
+	string $target = $sel[($selSize-1)];
+	select -tgl $target;
+	convertHairSelection( "follicles" );
+	string $follicles[] = `ls -sl`;
+	if( size( $follicles ) == 0 ){
+		warning((uiRes("m_transplantHair.kNoHairSelected")) );
+		select -r $sel; // restore selection
+		return;
+	}
+	string $destHairSystem = "";
+	if(`optionMenuGrp -q -ex hstPlaceMenu`) {
+		$placeIn = `optionMenuGrp -q -select hstPlaceMenu`;
+		if ( $placeIn != 1 ) {
+			$destHairSystem = `optionMenuGrp -q -value hstPlaceMenu`;
+			if( !objExists( $destHairSystem )){
+				// hairSystem likely deleted since menu was set
+				string $fmt = (uiRes("m_transplantHair.kUseClone"));
+				warning(`format -s $destHairSystem $fmt` );
+				$destHairSystem = "";
+			}
+		}
+	}
+
+	if(!doTransplant( $follicles, $target, $doClosest, $doCopy, $destHairSystem, $hairSystem )){
+		select -r $sel; // restore selection
+	}
+}

@@ -1,0 +1,188 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+////////////////////////////////////////////////////////////////////////////////
+//
+//  Procedure Name:
+//      RNdeleteUnused
+//
+//  Description:
+// 		Delete unused reference nodes.  Called as part of the
+//		"Optimize Scene Size" function.
+//		
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+
+proc string[] getUsedReferenceNodes(string $sceneFile)
+//
+//	Description:
+//		Returns all of the reference nodes used by a scene and its 
+//		references.
+//
+{
+	int $index = 0;
+	string $referenceNodes[];
+
+	string $referenceFiles[];
+	if (size($sceneFile) == 0) {
+		//	Get all of the references from the top-level scene.
+		//  This will return their resolved paths with copy numbers appended.
+		//
+		$referenceFiles = `file -q -r`;
+	} else {
+		//	Get all of the references from the given scene.
+		//  This will return their resolved paths with copy numbers appended.
+		//
+		if( catch($referenceFiles = `file -q -r $sceneFile`) )
+		{
+			return {};
+		}
+	}
+
+	int $nRefs = `size($referenceFiles)`;
+	for ($i = 0; $i < $nRefs; $i++) {
+		//	Skip the untitled scene case.
+		//
+		if (size($referenceFiles[$i]) == 0) {
+			continue;
+		}
+
+		string $rn = `file -q -rfn $referenceFiles[$i]`;
+		if (size($rn) > 0) {
+			$referenceNodes[$index++] = $rn;
+		}
+
+		string $rnList[] = getUsedReferenceNodes($referenceFiles[$i]);
+		int $j;
+		int $nChildren = size($rnList);
+		for ($j = 0; $j < $nChildren; $j++) {
+			$referenceNodes[$index++] = $rnList[$j];
+		}
+	}
+
+	return $referenceNodes;
+}
+
+proc int deleteReferenceNode(string $refNode) 
+//
+//	Description:
+//		Delete the reference node if there are no connections made to it.
+//
+{
+	string $connectionList[] = `listConnections $refNode`;
+	int $numConnections = `size($connectionList)`;
+	if ($numConnections == 0) {
+		// reference nodes are locked by default, so unlock
+		lockNode -lock off $refNode;
+		string $cmd = ("delete " + $refNode);
+		evalEcho ($cmd);
+		return 1;
+	}
+	else
+	{
+		return 0;
+	}
+}
+
+global proc int RNdeleteUnused() 
+//
+//	Description:
+//		Deletes unused reference nodes.  
+//
+{
+	//	Are we being called during an Optimize Scene Size operation?
+	// 	If so, we need to display progress information.  This was done
+	//	as a global variable to avoid having to change the signature of
+	//	the proc, as that could break many scripts, both internal and
+	//	customer-written.
+	//
+	int $showProgress = cleanUp_ShouldReportProgress();
+
+	int $numDeleted = 0;
+	string $rnList[] = `ls -type reference`;
+	int $nRefs = size($rnList);
+	if ($nRefs == 0) {
+		//	There are no reference nodes to delete.
+		//
+		return 0;
+	}
+
+	// initialize the progress bar if required
+	//
+	if( $showProgress )
+	{
+		cleanUp_StartProgress( $nRefs, "Deleting unused reference nodes", 1 );
+	}
+
+	//	Get all of the reference nodes associated with a scene.
+	//
+	string $rnUsedList[] = getUsedReferenceNodes("");
+
+	int $i;
+	for ($i = 0; $i < $nRefs; $i++) 
+	{
+		// check for user interrupt if required
+		//
+		if( $showProgress )
+		{
+			if( cleanUp_SetProgress($i) ) break;
+		}
+
+		// Don't delete read-only nodes.
+		//
+		if (!size(`ls -readOnly $rnList[$i]`)) {
+
+			//	This may be an unused reference node.
+			//
+			int $found = false;
+			for ($nextRef in $rnUsedList) {
+				if ($nextRef == $rnList[$i]) {
+					$found = true;
+					break;
+				}
+			}
+
+			if ($found) {
+				//	This reference node is being used, so it should not be
+				//	deleted.
+				//
+				continue;
+			}
+
+			//	Delete the reference node.
+			//
+			$numDeleted += deleteReferenceNode($rnList[$i]);
+		}
+	}
+
+	// finalize progress bar if required
+	//
+	if( $showProgress )
+	{
+		cleanUp_EndProgress();
+	}
+
+	return $numDeleted;
+}

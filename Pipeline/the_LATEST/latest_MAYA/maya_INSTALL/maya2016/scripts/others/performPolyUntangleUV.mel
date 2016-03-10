@@ -1,0 +1,428 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Nov 1/99
+//
+//  Procedure Name:
+//      performPolyUntangleUV
+//
+//  Description:
+//		various ways of untangling polygon UV's
+//		- border mapping
+//		- UV relaxation
+//         
+
+proc setOptionVars (int $forceFactorySettings)
+{
+	// boundary mapping preferences
+	//			   
+	if ($forceFactorySettings || !`optionVar -exists polyMapBorderOp`)
+		optionVar -intValue polyMapBorderOp 1;
+	if ($forceFactorySettings || !`optionVar -exists polyMapBorderShapeDetail`)
+		optionVar -floatValue polyMapBorderShapeDetail 0.0;
+	if ($forceFactorySettings || !`optionVar -exists polyMapBorderAutoShapeDetail`)
+		optionVar -intValue polyMapBorderAutoShapeDetail 0;
+
+	// relax preferences
+	//
+	if ($forceFactorySettings || !`optionVar -exists polyRelaxAlgorithm`)
+		optionVar -intValue polyRelaxAlgorithm 1;
+	if ($forceFactorySettings || !`optionVar -exists polyRelaxPinBoundary`)
+		optionVar -intValue polyRelaxPinBoundary 1;
+	if ($forceFactorySettings || !`optionVar -exists polyRelaxPinSelected`)
+		optionVar -intValue polyRelaxPinSelected 0;
+	if ($forceFactorySettings || !`optionVar -exists polyRelaxPinUnselected`)
+		optionVar -intValue polyRelaxPinUnselected 0;
+	if ($forceFactorySettings || !`optionVar -exists polyRelaxUseMaxIterations`)
+		optionVar -intValue polyRelaxUseMaxIterations 0;
+	if ($forceFactorySettings || !`optionVar -exists polyRelaxMaxIterations`)
+		optionVar -intValue polyRelaxMaxIterations 5;
+
+	if ($forceFactorySettings || !`optionVar -exists polyRelaxPinUVs`)
+		optionVar -intValue polyRelaxPinUVs 0;
+
+}
+
+global proc performPolyMapBorderSetup (string $parent, int $forceFactorySettings)
+{
+	setOptionVars($forceFactorySettings);
+	setParent $parent;
+
+	int $ival = `optionVar -query polyMapBorderOp`;
+	radioButtonGrp -edit -sl $ival polyMapBorderOp;
+	int $asd = `optionVar -query polyMapBorderAutoShapeDetail`;
+	checkBoxGrp -edit -value1 $asd polyMapBorderAutoShapeDetail;
+	float $fval = `optionVar -query polyMapBorderShapeDetail`;
+	floatSliderGrp -edit -value $fval -enable (! $asd) polyMapBorderPreserveOriginalShape;
+}
+
+global proc performPolyMapBorderCallback (string $parent, int $doIt)
+{
+	setParent $parent;
+	
+	optionVar -intValue polyMapBorderOp
+		`radioButtonGrp -query -sl polyMapBorderOp`;
+	optionVar -floatValue polyMapBorderShapeDetail
+		(`floatSliderGrp -query -value polyMapBorderPreserveOriginalShape`); //Slider is NOT inverted
+	optionVar -intValue polyMapBorderAutoShapeDetail
+		`checkBoxGrp -query -value1 polyMapBorderAutoShapeDetail`;
+
+	if ($doIt) {
+		performPolyUntangleUV "map" 0;
+		addToRecentCommandQueue "performPolyUntangleUV \"map\" 0" "PolyMapUVBorder";
+	}
+}
+
+proc polyMapBorderOptions ()
+{
+	// Global template variables for form spacing
+	global int $gOptionBoxTemplateDescriptionMarginWidth;
+	global int $gOptionBoxTemplateFrameSpacing;
+	
+	string $commandName = "performPolyMapBorder";
+	string $callback = ($commandName + "Callback");
+	string $setup = ($commandName + "Setup");
+	   
+	string $layout = getOptionBox();
+	setParent $layout;
+	setUITemplate -pushTemplate OptionBoxTemplate;
+	waitCursor -state 1;
+	
+	// Form layout
+	string $parent = `formLayout polyUntangleUVOptions`;
+
+		// Settings frame
+		string $settingsFrame = 
+		`frameLayout -label (uiRes("m_performPolyUntangleUV.kSettingsFrame"))`;
+	
+			columnLayout;
+
+				radioButtonGrp 
+					-label (uiRes("m_performPolyUntangleUV.kBorderTargetShape"))
+					-nrb 2
+					-label1 (uiRes("m_performPolyUntangleUV.kSquare"))
+					-label2 (uiRes("m_performPolyUntangleUV.kCircle")) 
+					-vr 
+					polyMapBorderOp;
+				radioButtonGrp -e 
+					-sl 1 
+					polyMapBorderOp;
+
+				separator -style "none";
+
+				checkBoxGrp 
+					-label1 (uiRes("m_performPolyUntangleUV.kAutomatic"))
+					-cc ($callback + " " + $parent + " 0;" + $setup + " " + $parent + " 0" )
+					polyMapBorderAutoShapeDetail;
+
+				floatSliderGrp 
+					-label (uiRes("m_performPolyUntangleUV.kPreserveOriginalShape"))
+					-min 0 
+					-max 1 
+					-fmn -1000000 
+					-fmx 1000000 
+					polyMapBorderPreserveOriginalShape;
+					
+			setParent ..; // columnLayout
+
+		setParent $parent; // frameLayout
+		
+	setParent ..; // formLayout
+
+	// Attach frame to form layout
+	formLayout -e
+		-af $settingsFrame "top" $gOptionBoxTemplateFrameSpacing
+		-af $settingsFrame "left" $gOptionBoxTemplateFrameSpacing
+		-af $settingsFrame "right" $gOptionBoxTemplateFrameSpacing
+		-an $settingsFrame "bottom" 
+	$parent;
+
+	waitCursor -state 0;
+	setUITemplate -popTemplate;
+	   
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit -label (uiRes("m_performPolyUntangleUV.kMap"))
+	       -command ($callback + " " + $parent + " " + 1)
+		$applyBtn;
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + $parent + " " + 0 + "; hideOptionBox")
+		$saveBtn;
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + " " + $parent + " " + 1)
+		$resetBtn;
+
+	setOptionBoxTitle (uiRes("m_performPolyUntangleUV.kMapUVBorderOptions"));
+
+	setOptionBoxHelpTag( "MapUVBorder" );
+
+	eval (($setup + " " + $parent + " " + 0));      
+	showOptionBox();
+}
+
+global proc performPolyRelaxUVSetup (string $parent, int $forceFactorySettings)
+{
+	setOptionVars($forceFactorySettings);
+	setParent $parent;
+	
+	int $ival = `optionVar -query polyRelaxAlgorithm`;
+	radioButtonGrp -edit -sl $ival polyRelaxAlgorithm;
+
+	$ival = `optionVar -query polyRelaxPinBoundary`;
+	checkBoxGrp -edit -value1 $ival polyRelaxPinBoundary;
+
+	$ival = `optionVar -query polyRelaxPinUVs`;
+	if($ival == 1)
+	{
+		checkBoxGrp -edit -value1 $ival polyRelaxPinUVs;
+		radioButtonGrp -edit -enable 1 polyRelaxPinUVsOptions;
+
+		$ival = `optionVar -query polyRelaxPinSelected`;
+		if($ival)
+			radioButtonGrp -edit -sl 1 polyRelaxPinUVsOptions;
+
+		$ival = `optionVar -query polyRelaxPinUnselected`;
+		if($ival)
+			radioButtonGrp -edit -sl 2 polyRelaxPinUVsOptions;
+	}
+	else
+	{
+		radioButtonGrp -edit -enable 0 polyRelaxPinUVsOptions;
+	}
+
+	$ival = `optionVar -query polyRelaxMaxIterations`;
+	intSliderGrp -edit -value $ival polyRelaxMaxIterations;
+}
+
+global proc performPolyRelaxUVCallback (string $parent, int $doIt)
+{
+	setParent $parent;
+
+	optionVar -intValue polyRelaxAlgorithm
+		`radioButtonGrp -query -sl polyRelaxAlgorithm`;
+
+	optionVar -intValue polyRelaxPinBoundary
+		`checkBoxGrp -query -value1 polyRelaxPinBoundary`;
+
+	int $ival = `checkBoxGrp -query -value1 polyRelaxPinUVs`;
+	optionVar -intValue polyRelaxPinUVs $ival;
+	if($ival == 1)
+	{
+		int $ival2 = `radioButtonGrp -q -sl polyRelaxPinUVsOptions`;
+		if($ival2 == 1)
+		{
+			optionVar -intValue polyRelaxPinSelected 1;
+			optionVar -intValue polyRelaxPinUnselected 0;
+		}
+		else
+		{
+			optionVar -intValue polyRelaxPinSelected 0;
+			optionVar -intValue polyRelaxPinUnselected 1;
+		}
+	}
+	else
+	{
+		optionVar -intValue polyRelaxPinSelected 0;
+		optionVar -intValue polyRelaxPinUnselected 0;
+	}
+
+	optionVar -intValue polyRelaxMaxIterations
+		`intSliderGrp -query -value polyRelaxMaxIterations`;
+
+	if ($doIt) {
+		performPolyUntangleUV "relax" 0;
+		addToRecentCommandQueue "performPolyUntangleUV \"relax\" 0" "PolyRelaxUVShell";
+	}
+}
+
+proc polyRelaxUVOptions ()
+{
+	// Global template variables for form spacing
+	global int $gOptionBoxTemplateDescriptionMarginWidth;
+	global int $gOptionBoxTemplateFrameSpacing;
+	
+	string $commandName = "performPolyRelaxUV";
+	string $callback = ($commandName + "Callback");
+	string $setup = ($commandName + "Setup");
+	   
+	string $layout = getOptionBox();
+	setParent $layout;
+	setUITemplate -pushTemplate OptionBoxTemplate;
+	waitCursor -state 1;
+	
+	// Form layout
+	string $parent = `formLayout polyRelaxUVOptions`;
+
+		// Pinning frame
+		string $pinningFrame = 
+		`frameLayout -label (uiRes("m_performPolyUntangleUV.kPinningFrame"))`;
+	
+			columnLayout;
+	
+			checkBoxGrp -label1 (uiRes("m_performPolyUntangleUV.kPinUVBorder")) polyRelaxPinBoundary;
+
+			separator -style "none";
+
+			checkBoxGrp -label1 (uiRes("m_performPolyUntangleUV.kPinUVs")) 
+				-onc "radioButtonGrp -edit -en 1 polyRelaxPinUVsOptions"
+				-ofc "radioButtonGrp -edit -en 0 polyRelaxPinUVsOptions" polyRelaxPinUVs;
+
+			radioButtonGrp -label ""
+				-numberOfRadioButtons 2
+				-label1 (uiRes("m_performPolyUntangleUV.kPolyRelaxPinSel"))
+				-label2 (uiRes("m_performPolyUntangleUV.kPolyRelaxPinUnsel"))
+				-select 1 -vr -cat 2 "left" 20
+				polyRelaxPinUVsOptions;
+
+		setParent $parent;
+
+		// Other settings frame
+		string $otherSettingsFrame = 
+		`frameLayout -label (uiRes("m_performPolyUntangleUV.kOtherSettingsFrame"))`;
+
+			columnLayout;
+
+			radioButtonGrp -label (uiRes("m_performPolyUntangleUV.kEdgeWeights"))
+				-numberOfRadioButtons 2
+				-label1 (uiRes("m_performPolyUntangleUV.kPolyRelaxUform"))
+				-label2 (uiRes("m_performPolyUntangleUV.kPolyRelaxWorldSpace"))
+				-select 1 -vr 
+				polyRelaxAlgorithm;
+
+			intSliderGrp 
+				-label (uiRes("m_performPolyUntangleUV.kMaxIterations")) 
+				-min 1 
+				-max 10 
+				-fmn 1 
+				-fmx 1000000 
+				polyRelaxMaxIterations;
+
+		setParent $parent;	
+		
+	setParent ..;
+
+	// Attach frames to form layout
+	formLayout -e
+		-af $pinningFrame "top" $gOptionBoxTemplateFrameSpacing
+		-af $pinningFrame "left" $gOptionBoxTemplateFrameSpacing
+		-af $pinningFrame "right" $gOptionBoxTemplateFrameSpacing
+		-an $pinningFrame "bottom"
+
+		-ac $otherSettingsFrame "top" $gOptionBoxTemplateFrameSpacing $pinningFrame
+		-af $otherSettingsFrame "left" $gOptionBoxTemplateFrameSpacing
+		-af $otherSettingsFrame "right" $gOptionBoxTemplateFrameSpacing
+		-an $otherSettingsFrame "bottom" 
+
+	$parent;
+
+	waitCursor -state 0;
+	setUITemplate -popTemplate;
+	   
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit -label (uiRes("m_performPolyUntangleUV.kRelax"))
+	       -command ($callback + " " + $parent + " " + 1)
+		$applyBtn;
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + $parent + " " + 0 + "; hideOptionBox")
+		$saveBtn;
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + " " + $parent + " " + 1)
+		$resetBtn;
+
+	setOptionBoxTitle (uiRes("m_performPolyUntangleUV.kRelaxUVOptions"));
+
+	setOptionBoxHelpTag( "RelaxUVs" );
+
+	eval (($setup + " " + $parent + " " + 0));      
+	showOptionBox();
+}
+
+global proc string performPolyUntangleUV(
+	string	$op,
+	int		$option
+)
+{
+	string $cmd="";
+	
+	switch ($option) {
+	case 0:
+	default:
+		setOptionVars(false);
+		if ( $op == "map" ) {
+			int		$mt = `optionVar -query polyMapBorderOp`;
+			string	$mapType;
+			float	$sd = `optionVar -query polyMapBorderShapeDetail`;
+			string	$shapeDetail = "";
+			int		$asd = `optionVar -query polyMapBorderAutoShapeDetail`;
+
+			if ( $sd == 1 && ! $asd ) {
+				$mapType = "shape";
+			} else if ( $mt == 1 ) {
+				if ( $asd ) {
+					$mapType = "shape_square";
+				} else {
+					$mapType = "square";
+ 					$shapeDetail = " -sd " + $sd;
+				}
+			} else {
+				if ( $asd ) {
+					$mapType = "shape_circular";
+				} else {
+					$mapType = "circular";
+					$shapeDetail = " -sd " + $sd;
+				}
+			}
+			$cmd ="untangleUV -mb " + $mapType + $shapeDetail;
+		} else if ( $op == "relax" ) {
+			int		$ra = `optionVar -query polyRelaxAlgorithm`;
+			int		$pb = `optionVar -query polyRelaxPinBoundary`;
+			int		$ps = `optionVar -query polyRelaxPinSelected`;
+			int		$pu = `optionVar -query polyRelaxPinUnselected`;
+			float	$tol = 0.0;
+			string	$ras[] = { "uniform", "harmonic" };
+
+			$cmd = "untangleUV -r " + $ras[$ra-1] + " -pb " + $pb + " -ps " + $ps + " -pu " + $pu
+				 + " -rt " + $tol;
+			int	 $mri = `optionVar -query polyRelaxMaxIterations`;
+
+			$cmd += " -mri " + $mri;
+		}
+
+		if ( $option == 0 ) {
+			evalEcho( $cmd );
+		}
+		break;
+	case 1:
+		if ( $op == "map" ) {
+			polyMapBorderOptions;
+		} else if ( $op == "relax" ) {
+			polyRelaxUVOptions;
+		}
+		break;
+	}
+
+	return $cmd;
+}

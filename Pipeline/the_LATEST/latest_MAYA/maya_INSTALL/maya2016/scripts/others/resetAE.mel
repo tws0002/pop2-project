@@ -1,0 +1,194 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//	Creation Date:	June 24, 1997
+//	Revised By:			ajp (November 5, 1997)
+//
+//
+//<doc>
+//<name resetAE>
+//
+//<synopsis>
+//	resetAE
+//
+//<returns>
+//	None
+//
+//<description>
+//	Destroys and rebuilds the attribute editor.
+//	This is used mainly when a new file is read in.
+//
+//<flags>
+//	None
+//
+//<examples>
+//  resetAE;
+//
+//</doc>
+
+global proc resetAE()
+{
+	global string	$gAttributeEditorWindowName;
+	global int		$gAESelectionScriptJob;
+	global int		$gAEConstructionScriptJob;
+	// ADSK_CLR_MGT_BEGIN
+	global int		$gAEColorMgtEnableChangedScriptJob;
+	global int		$gAEColorMgtWorkingSpaceChangedScriptJob;
+	global int		$gAEColorMgtPrefsViewTransformChangedScriptJob;
+	global int		$gAEColorMgtConfigChangedScriptJob;
+	global int		$gAEColorMgtUserPrefsChangedScriptJob;
+	// ADSK_CLR_MGT_END
+	global string	$gAEFocusNode;
+	global string   $gAERootLayoutName;
+
+	if ( `window -exists $gAttributeEditorWindowName` ) {
+
+		// get the window's state
+		//
+		int $isVisible = `window -q -vis $gAttributeEditorWindowName`;
+		int $isIconified = `window -q -i $gAttributeEditorWindowName`;
+
+		int $state = 0;
+		if ($isVisible && !$isIconified)
+			$state = 1; // the AE is open and visible
+		else if ($isVisible && $isIconified)
+			$state = 2; // the AE is iconified
+		else if (!$isVisible && $isIconified)
+			$state = 3; // the AE is closed
+		else
+			$state = 0; // impossible state
+
+		// set up the auto-update variables
+		//
+		string $listType = "auto";
+		if ( `optionVar -exists "attrEdListType"` ) {
+			$listType = `optionVar -q "attrEdListType"`;
+		} else {
+			optionVar -sv "attrEdListType" $listType;
+		}
+
+		// explicitly kill scriptJobs associated with the attribute editor
+		//
+		if (`scriptJob -exists $gAESelectionScriptJob`)
+			scriptJob -force -kill $gAESelectionScriptJob;
+		if (`scriptJob -exists $gAEConstructionScriptJob`)
+			scriptJob -force -kill $gAEConstructionScriptJob;
+
+		// ADSK_CLR_MGT_BEGIN
+		if (`scriptJob -exists $gAEColorMgtEnableChangedScriptJob`)
+			scriptJob -force -kill $gAEColorMgtEnableChangedScriptJob;
+		if (`scriptJob -exists $gAEColorMgtWorkingSpaceChangedScriptJob`)
+			scriptJob -force -kill $gAEColorMgtWorkingSpaceChangedScriptJob;
+		if (`scriptJob -exists $gAEColorMgtPrefsViewTransformChangedScriptJob`)
+			scriptJob -force -kill $gAEColorMgtPrefsViewTransformChangedScriptJob;
+		if (`scriptJob -exists $gAEColorMgtConfigChangedScriptJob`)
+			scriptJob -force -kill $gAEColorMgtConfigChangedScriptJob;
+		if (`scriptJob -exists $gAEColorMgtUserPrefsChangedScriptJob`)
+			scriptJob -force -kill $gAEColorMgtUserPrefsChangedScriptJob;
+		// ADSK_CLR_MGT_END
+
+		// delete and rebuild the attribute editor (deferred)
+		//
+		// Even though we checked above for this window existing we need to
+		// add it here because since it gets deffered now it could dissapear
+		// before the actual UI call gets executed.
+		//
+		string $cmd = "if ( `window -exists $gAttributeEditorWindowName` ) {"
+						+ "deleteUI $gAttributeEditorWindowName; }"
+						+ "deferredResetAE \""
+						+ $gAEFocusNode + "\" "
+						+ $listType + " "
+						+ $state;
+
+		// Only post the command to the idle queue once.
+		string $idleTasks[] = `evalDeferred -list -low`;
+		if (size($idleTasks) == 0 || $idleTasks[size($idleTasks) - 1] != $cmd) {
+			evalDeferred -low $cmd;
+		}
+	} else if ( `layout -exists $gAERootLayoutName` ) {
+		// the attribute editor exists, and is in embedded in the
+		// main window.  Make sure it is updated.
+		//
+		string $cmd = "autoUpdateAttrEd";
+
+		// Only post the command to the idle queue once.
+		string $idleTasks[] = `evalDeferred -list -low`;
+		if (size($idleTasks) == 0 || $idleTasks[size($idleTasks) - 1] != $cmd) {
+			evalDeferred -low $cmd;
+		}
+	}
+
+	// reset any global variables related to the attribute editor
+	//
+	resetAEGlobalVariables();
+}
+
+
+global proc deferredResetAE(	string $deferredNode,
+								string $listType,
+								int $state )
+{
+	global string	$gAEFocusNode;
+	global string	$gAttributeEditorWindowName;
+
+	// find out if the node the attrEd still exists
+	// if it does, display it in the rebuilt attrEd
+	//
+	if (`objExists $deferredNode`) {
+		$gAEFocusNode = $deferredNode;
+	} else {
+		$gAEFocusNode = "";
+	}
+
+	switch ($state) {
+	  case 0:
+		// impossible state
+		break;
+	  case 1:
+		// the attribute editor is up
+		if ( $listType == "auto" ){
+			editSelected;
+		} else {
+			showEditor $gAEFocusNode;
+		}
+		break;
+	  case 2:
+		// the attribute editor is iconified
+		if ( $listType == "auto" ){
+			createAEWindow "" auto;
+			autoUpdateAttrEd;
+		} else {
+			createAEWindow $gAEFocusNode $listType;
+			updateAE $gAEFocusNode;
+		}
+		window -e -i true $gAttributeEditorWindowName;
+		showWindow $gAttributeEditorWindowName;
+		break;
+	  case 3:
+		// the attribute editor is closed
+		break;
+	  default:
+		break;
+	}
+}
+

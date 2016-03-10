@@ -1,0 +1,151 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+global proc mapMissingPlaceHolderNamespace(string $ns, string $list)
+{
+	string $sel[] = `textScrollList -q -si $list`;
+	string $refNode;
+	if( size(`match "(Root Namespace)" $sel[0]`) > 0 ) {
+		$refNode = ":";
+	}
+	else {
+		string $path = `match "   \((.+)\)" $sel[0]`;
+	
+		if( $path == "" || size($path) < 5 ) {
+			string $warn = (uiRes("m_missingPlaceHolderNamespaceDialog.kInvalidMapping"));
+			warning(`format -s $ns $warn`);
+			layoutDialog -dismiss "Skip";
+			return;
+		}
+		else {
+			$path = `substring $path 5 (size($path)-1)`;
+		}
+
+		$refNode = `referenceQuery -rfn $path`;
+	}
+
+	file -e -mns $ns $refNode;
+	layoutDialog -dismiss "Mapped";
+}
+
+global proc createMissingPlaceHolderNamespaceDialog( string $rootPlaceHolderNS, string $ns)
+{
+
+	// Get the layoutDialog's formLayout.
+    
+    string $form = `setParent -q`;
+
+	// Force the formLayout width since the layoutDialog
+    // is not resizable.
+    //
+    formLayout -e -width 410 $form;
+     	
+    string $msg = (uiRes("m_missingPlaceHolderNamespaceDialog.kMappingNotFound"));
+   	string $text = `format -s $ns $msg`;
+    string $label = `text -l $text`; 
+
+	string $existingLabel = `text -l (uiRes("m_missingPlaceHolderNamespaceDialog.kExistingMappings")) -w 150`;
+	string $existingMappingList = `textScrollList -en false -allowMultiSelection false -w 150`;
+
+	string $unmappedLabel = `text -l (uiRes("m_missingPlaceHolderNamespaceDialog.kUnmapped")) -w 150`;
+	string $unmappedList = `textScrollList -allowMultiSelection false -w 150`;
+
+    string $skipText = (uiRes("m_missingPlaceHolderNamespaceDialog.kSkip"));
+    string $skipButton = `button -l $skipText -c "layoutDialog -dismiss \"Skip\""`;
+
+    string $mapText = (uiRes("m_missingPlaceHolderNamespaceDialog.kMap"));
+ 	string $mapButton = `button -l $mapText -c ("mapMissingPlaceHolderNamespace (\"" + $ns + "\", \"" + $unmappedList + "\")")`;
+
+	string $refNodes[] = `ls -references`;	// only grab reference nodes associated with a file
+	for( $ref in $refNodes ) 
+	{
+		// Skip any other edit files since we can't apply edits to them anyway
+		if( `referenceQuery -isExportEdits $ref` ) {
+			continue;
+		}
+
+		string $phns = `getAttr ($ref + ".placeHolderNamespace")`;
+		string $refPath = `referenceQuery -filename $ref`;
+		string $refNS = `file -q -rpr $refPath`;
+		if( $phns == "" ) {
+			textScrollList -e -append ($refNS + "   (" + $refPath + ")") $unmappedList;
+		}
+		else {
+			textScrollList -e -append ($refNS + " -> " + $phns + " (" + $refPath + ")") $existingMappingList;
+		}
+	}
+	if( $rootPlaceHolderNS == "" ) {
+		textScrollList -e -append "Root Namespace" $unmappedList;
+		textScrollList -e -selectItem "Root Namespace" $unmappedList;
+	}
+	else {
+		textScrollList -e -append ("Root Namespace -> " + $rootPlaceHolderNS) $existingMappingList;
+	}
+
+	int $spacer = 5;
+    int $top = 5;
+    int $edge = 5;
+    
+    formLayout -edit
+    	-attachForm 	$label				"top"		$top
+		-attachForm 	$label				"left"		$edge
+		-attachNone		$label				"bottom"	
+		-attachForm		$label				"right" 	$spacer
+
+		-attachControl	$existingLabel		"top"		$top $label
+		-attachForm		$existingLabel		"left"		$edge
+		-attachNone		$existingLabel		"bottom"		
+		-attachPosition	$existingLabel		"right"		0 50
+
+		-attachControl	$unmappedLabel		"top"		$top $label
+		-attachPosition	$unmappedLabel		"left"		$spacer 50
+		-attachNone		$unmappedLabel		"bottom"
+		-attachForm		$unmappedLabel		"right"		$edge
+
+		-attachControl	$existingMappingList "top"		$top $existingLabel
+		-attachForm		$existingMappingList "left"		$edge
+		-attachControl	$existingMappingList "bottom"	$top $skipButton
+		-attachPosition	$existingMappingList "right"	0 50
+
+		-attachControl	$unmappedList 		 "top"		$top $existingLabel
+		-attachPosition	$unmappedList		"left"		$spacer 50
+		-attachControl	$unmappedList		"bottom"	$top $skipButton
+		-attachForm		$unmappedList		"right"		$edge
+
+     	-attachNone		$skipButton			"top"
+     	-attachForm 	$skipButton			"left"		$edge
+     	-attachForm		$skipButton			"bottom"	$top
+     	-attachNone		$skipButton 		"right"
+     
+     	-attachNone		$mapButton		"top"
+     	-attachControl	$mapButton		"left"		$spacer $existingMappingList
+     	-attachForm		$mapButton		"bottom"	$top
+     	-attachNone		$mapButton		"right"
+     $form;
+	
+}
+
+// $rootPlaceHolderNS - the place holder namespace assigned to the root namespace or "" if there isn't one
+// $ns 				  - the place holder namespace we're trying to find a mapping for
+global proc string missingPlaceHolderNamespaceDialog(string $rootPlaceHolderNS, string $ns)
+{
+	return `layoutDialog -title (uiRes("m_missingPlaceHolderNamespaceDialog.kRemapNS")) -ui ("createMissingPlaceHolderNamespaceDialog(\"" + $rootPlaceHolderNS+ "\",\"" + $ns + "\")")`;
+}

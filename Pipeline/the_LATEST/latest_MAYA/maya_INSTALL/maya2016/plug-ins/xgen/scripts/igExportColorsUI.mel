@@ -1,0 +1,342 @@
+
+//**************************************************************************/
+// Copyright (c) 2012 Autodesk, Inc.
+// All rights reserved.
+//
+// These coded instructions, statements, and computer programs contain
+// unpublished proprietary information written by Autodesk, Inc., and are
+// protected by Federal copyright law. They may not be disclosed to third
+// parties or copied or duplicated in any form, in whole or in part, without
+// the prior written consent of Autodesk, Inc.
+//**************************************************************************/
+
+
+/** Export ColorSet as ptex maps */
+global proc igExportColorsUI()
+{
+    global string $igNullDescriptionTag;
+
+    if (`window -exists igExportColorsWindow`)
+        deleteUI -window  igExportColorsWindow;
+
+    window -sizeable false -minimizeButton false -maximizeButton false
+	    -menuBar false -width 600 -height 230
+            -title (uiRes("m_igExportColorsUI.kIgroomExportMeshColorsetToPtex")) igExportColorsWindow;
+
+    columnLayout -adj on -rs 10;
+    {
+        formLayout igExportColorsDescLayout;
+        {
+            text -label (uiRes("m_igExportColorsUI.kDescription")) igExportColorsDescLabel;
+            igCreateIconPopup( "igExportColorsDescMenu",
+                               (uiRes("m_igExportColorsUI.kDescriptionToExportAnn")),
+                               (uiRes("m_igExportColorsUI.kAllDescriptionObjectsAnn")),
+                               "" );
+            string $descs[] = igAllDescriptions();
+            for ( $desc in $descs ) {
+                igAddDeepMenuItem( $desc, "igExportColorsDescMenu",
+                                   "igExportColorsDescMenuCB" );
+            }
+            string $cdesc = igCurrentDescription();
+            if ( $cdesc == "" ) 
+                $cdesc = $igNullDescriptionTag;
+            textField -edit -tx $cdesc igExportColorsDescMenuValue;
+                
+            setParent ..;
+        }
+        // Create a text field for the filename.
+        $browser = "igFileBrowser \"iGroom Export\" igExportColorsPathField 1";
+        textFieldButtonGrp -label (uiRes("m_igExportColorsUI.kMapPath"))
+            -bl (uiRes("m_igExportColorsUI.kBrowse")) -bc $browser -cal 1 right -adj 2
+            -ann (uiRes("m_igExportColorsUI.kBrowseAnn"))
+            igExportColorsPathField;
+
+		textFieldGrp -label (uiRes("m_igExportColorsUI.kColorset")) -adj 2
+            -ann (uiRes("m_igExportColorsUI.kColorsetNameToExportAnn"))
+            igColorSetField;
+
+		checkBoxGrp -label (uiRes("m_igExportColorsUI.kAutoExportWhilePainting")) -ncb 1 -l1 " " -v1 off
+            -ann (uiRes("m_igExportColorsUI.kFlagToActivateAnn"))
+            igAutoExportField;
+            
+        checkBoxGrp -label (uiRes("m_igExportColorsUI.kSyncToXgenPreviewColor")) -ncb 1 -l1 " " -v1 off
+            -cc igSyncButtonCB
+            -ann (uiRes("m_igExportColorsUI.kFlagToSetAnn"))
+            igXGenSyncField;
+
+        textFieldGrp -label (uiRes("m_igExportColorsUI.kXgenDescription")) -adj 2 -en false
+            -ann (uiRes("m_igExportColorsUI.kNameOfXgenDescrAnnot"))
+            igXGenDescriptionField;
+
+        rowLayout -numberOfColumns 3 -columnWidth3 130 130 130
+            -columnAlign3 "center" "center" "center"
+            -adjustableColumn3 1;
+        {
+            // Control over the dialog
+            text -label "";
+            button -label (uiRes("m_igExportColorsUI.kExport")) -w 130 
+				-ann (uiRes("m_igExportColorsUI.kExportColorsMapAnn"))
+                -c "igExportColors; deleteUI igExportColorsWindow";
+            button -label (uiRes("m_igExportColorsUI.kCancel")) -w 130 
+                -ann (uiRes("m_igExportColorsUI.kFinishExportingAndCloseAnn"))
+                -c "deleteUI igExportColorsWindow";
+            setParent ..;
+        }
+
+        // Attach the new layouts.
+        formLayout -edit
+            -attachForm igExportColorsDescLabel left 63
+            -attachForm igExportColorsDescLabel top 8
+            -attachNone igExportColorsDescLabel right
+            -attachNone igExportColorsDescLabel bottom
+            
+            -attachForm    igExportColorsDescMenuValue top 8
+            -attachControl igExportColorsDescMenuValue left 10 igExportColorsDescLabel
+            -attachNone    igExportColorsDescMenuValue right
+            -attachNone    igExportColorsDescMenuValue bottom
+            
+            -attachForm    igExportColorsDescMenuImage top 8
+            -attachControl igExportColorsDescMenuImage left 3 igExportColorsDescMenuValue
+            -attachNone    igExportColorsDescMenuImage right
+            -attachNone    igExportColorsDescMenuImage bottom
+
+            igExportColorsDescLayout;
+        
+        setParent ..;
+    }
+
+    igExportColorsFillFields;
+    showWindow igExportColorsWindow;
+
+    // Dont let the window pop-up the wrong size
+    window -e -width 600 igExportColorsWindow;
+    window -e -height 230 igExportColorsWindow;
+}
+
+
+global proc igExportColorsFillFields()
+{
+    global string $igBasepath;
+    string $path = "";
+    string $xdesc = "";
+    string $colorSet = "colorSet1";
+    
+    string $desc = `textField -q -tx igExportColorsDescMenuValue`;
+    if ( `attributeQuery -ex -node $desc "mapPath"` ) {
+        $path = `getAttr ($desc+".mapPath")`;
+        $path = strip($path);
+    }
+    if ( `attributeQuery -ex -node $desc "colorSet"` ) {
+        $colorSet = `getAttr ($desc+".colorSet")`;
+    }
+    if ( `attributeQuery -ex -node $desc "xgenDesc"` ) {
+        $xdesc = `getAttr ($desc+".xgenDesc")`;
+    }
+
+    // Get the base for the path from the descriptions path. We will always
+    // grab the first entry when multiples are present.
+    $igBasepath = igOutputDir( $desc );
+    if ( $path == "" ) {
+        $path = $igBasepath + "igroom";
+    }
+    
+    textFieldButtonGrp -e -tx $path igExportColorsPathField;
+    checkBoxGrp -e -v1 off igXGenSyncField;
+    checkBoxGrp -e -v1 off igAutoExportField;
+    textFieldGrp -e -en false -tx $xdesc igXGenDescriptionField;
+    textFieldGrp -e -tx $colorSet igColorSetField;
+}
+
+
+/** Allow editing multiple igDescriptions obejcts */ 
+global proc igExportColorsDescMenuCB( string $desc, string $menu )
+{
+    string $menuValue = $menu + "Value";
+    if (`textField -exists $menuValue`) {
+        textField -e -tx $desc $menuValue;
+    }
+    igExportColorsFillFields;
+}
+
+
+global proc igSyncButtonCB()
+{
+    int $state = `checkBoxGrp -q -v1 igXGenSyncField`;
+    if ( $state == on ) {
+        textFieldGrp -e -en true igXGenDescriptionField;
+    } else {
+        textFieldGrp -e -en false igXGenDescriptionField;
+    }
+}
+
+
+global proc igExportColors()
+{
+    global string $igBasepath;
+    global string $igNullDescriptionTag;
+
+    string $desc = `textField -q -tx igExportColorsDescMenuValue`;
+    string $path = `textFieldButtonGrp -q -tx igExportColorsPathField`;
+    string $xdesc = `textFieldGrp -q -tx igXGenDescriptionField`;
+    string $xpal = python("xg.palette(\""+$xdesc+"\")");
+    string $colorSet = `textFieldGrp -q -tx igColorSetField`;
+    
+    if ( $desc != $igNullDescriptionTag && $desc != "" && $colorSet!= "" ) {
+        waitCursor -state on;
+        
+        // Get the patch geometry
+        $mesh = `getAttr ($desc+".geom")`;
+
+		string $ptexPath = $path + "/" + $colorSet;
+		
+		string $bakeCmd = "ptexBake -inMesh \"" + $mesh + "\" -outPtex \"" + $ptexPath + "\" -bakeColorSet \"" + $colorSet + "\"" ;
+		evalEcho( $bakeCmd );
+        // iGroom -xr $path -tpu $tpu -d $desc;
+
+        // Get path to be relative to basepath
+        $path = strip($path);
+        if ( `startsWith $path "/"`){
+            if ( `startsWith $igBasepath "./"`){
+                string $pwd = `getenv "PWD"` + "/";
+                $igBasepath = $pwd + $igBasepath;
+                $igBasepath = `substitute "/./" $igBasepath "/"`;
+            }
+        }
+        if ( `startsWith $path $igBasepath` ) {
+            $path = `substitute $igBasepath $path ""`;
+        }
+
+        $path = igValidPath($path);
+
+        // Remember what was entered before via attributes on the description
+        if ( !`attributeQuery -ex -node $desc "mapPath"` ) {
+            addAttr -ln "mapPath" -sn "mapPath" -dt "string" $desc;
+        }
+        if ( !`attributeQuery -ex -node $desc "xgenDesc"` ) {
+            addAttr -ln "xgenDesc" -sn "xgenDesc" -dt "string" $desc;
+        }
+        if ( !`attributeQuery -ex -node $desc "colorSet"` ) {
+            addAttr -ln "colorSet" -sn "colorSet" -dt "string" $desc;
+        }
+        setAttr -type "string" ($desc+".mapPath") $path;
+        setAttr -type "string" ($desc+".xgenDesc") $xdesc;
+        setAttr -type "string" ($desc+".colorSet") $colorSet;
+
+        // If the sync option was active, copy everything over to the
+        // XGen description along with some error checking.
+        int $state = `checkBoxGrp -q -v1 igXGenSyncField`;        
+        if ( $state == on ) {
+            python("xg.setAttr(\"color\",\"vmap(\\\""+$ptexPath+"\\\")->clamp(0.01,1)\",\""+$xpal+"\",\""+$xdesc+"\",\""+"GLRenderer"+"\")");                                    
+            python("xgui.refreshDescriptionEditor()");
+        }
+        
+        $state = `checkBoxGrp -q -v1 igAutoExportField`;
+        if ( $state == off ) {
+        	ptexBakeColorsKillJobs();
+        }
+        else {
+        	ptexBakeColorsStartJobs( $desc );
+		}
+
+        waitCursor -state off;
+    }
+}
+
+//////////////////////////////////////////////////////////////////////////////
+// Following section is for running the ptexBake command after each paint stroke.
+//////////////////////////////////////////////////////////////////////////////
+global int $g_ptexBakeColorsStartJob = -1;
+global int $g_ptexBakeColorsStopJob = -1;
+
+global string $g_ptexBakeCurrentMesh = "";
+global string $g_ptexBakeCurrentColorSet = "";
+global string $g_ptexBakeFile = "";
+
+global proc int ptexBakeColorsValidate()
+{
+    global string $g_ptexBakeCurrentMesh;
+    global string $g_ptexBakeCurrentColorSet;
+    
+    string $selected[] = `ls -selection -type "transform"` ;
+    for( $xform in $selected )
+    {
+        if( $xform == $g_ptexBakeCurrentMesh )
+        {
+            string $shapes[] = `listRelatives -fullPath -shapes $xform`;
+            for( $shape in $shapes )
+            {
+                string $currentColorSetAttrName = $shape+".currentColorSet";
+                string $currentColorSet = `getAttr $currentColorSetAttrName` ;
+                if( $currentColorSet == $g_ptexBakeCurrentColorSet )
+                {
+                    return true;    
+                }
+                break;
+            } 
+            break;    
+        }   
+    }
+    return false;
+}
+global proc ptexBakeColorsStop()
+{
+    global string $g_ptexBakeCurrentMesh;
+    global string $g_ptexBakeCurrentColorSet;
+    global string $g_ptexBakeFile;
+    
+    if( ptexBakeColorsValidate() )
+    {
+        ptexBake -inMesh $g_ptexBakeCurrentMesh -outPtex $g_ptexBakeFile -bakeColorSet $g_ptexBakeCurrentColorSet ; 
+        python("xgui.createDescriptionEditor(False).preview(False)");
+    }
+}
+global proc ptexBakeColorsStart()
+{
+    if( ptexBakeColorsValidate() )
+    {
+        python("xgui.createDescriptionEditor(False).preview(True)");
+    }
+}
+
+
+global proc ptexBakeColorsStartJobs( string $ig_xform )
+{
+    global string $g_ptexBakeCurrentMesh;
+    global string $g_ptexBakeCurrentColorSet;
+    global string $g_ptexBakeFile;
+    global int $g_ptexBakeColorsStartJob;
+    global int $g_ptexBakeColorsStopJob;
+
+    ptexBakeColorsKillJobs();
+    
+    string $attrGeom = $ig_xform+"Shape.geom";
+    string $attrColorSet = $ig_xform+".colorSet";
+    string $attrFile = $ig_xform+".mapPath";
+    $g_ptexBakeCurrentMesh = `getAttr $attrGeom`;
+    $g_ptexBakeCurrentColorSet = `getAttr $attrColorSet`;
+    $g_ptexBakeFile = `getAttr $attrFile` + "/" + $g_ptexBakeCurrentColorSet;
+    
+    $g_ptexBakeColorsStartJob = `scriptJob -killWithScene -event "startColorPerVertexTool" "ptexBakeColorsStart()"`;
+    $g_ptexBakeColorsStopJob = `scriptJob -killWithScene -event "stopColorPerVertexTool" "ptexBakeColorsStop()"`;
+}
+
+
+global proc ptexBakeColorsKillJobs()
+{
+    global int $g_ptexBakeColorsStartJob;
+    global int $g_ptexBakeColorsStopJob;
+    
+    if( $g_ptexBakeColorsStartJob!=-1 )
+    {
+        scriptJob -kill $g_ptexBakeColorsStartJob;
+        $g_ptexBakeColorsStartJob = -1;
+    }
+    
+    if( $g_ptexBakeColorsStopJob!=-1 )
+    {
+        scriptJob -kill $g_ptexBakeColorsStopJob;
+        $g_ptexBakeColorsStopJob = -1;
+    }
+}
+
+//////////////////////////////////////////////////////////////////////////////

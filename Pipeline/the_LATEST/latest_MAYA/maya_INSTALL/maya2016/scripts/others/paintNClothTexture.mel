@@ -1,0 +1,127 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//     paintNClothTexture
+//
+// Description: paint the selected nCloth node attribute.
+//		If we're currently painting an nCloth output mesh, and we request to
+//	    paint a different channel, we'll paint it on the same nCloth.
+// Arguments:
+//  $attr: attribute where the texture will be connected
+//	$attrName:	attribute name displayed in 3dPaint tool.
+//  $attrType: 0 = nCloth only (not nBase)
+//           : 1 = nBase (nCloth and nRigid)
+//           : 2 = nComponent
+//  $optionBox: whether or not option box should be opened
+//  $useThisMesh: mesh to paint or "" if selection should be used
+//
+
+
+global proc paintNClothTexture( string $attr, string $attrName,
+								int $attrType, int $optionBox,
+								string $useThisMesh )
+{
+	// global variable which will contain the attribute name
+	// used by 3D paint scripts.
+	global string $g3dPaintAttrName ;
+	global string $gPaintAttrOnObjCleanupCmd;
+
+	// Find the outputShape
+	//
+	string $mesh;
+	string $cloth;
+	// The 0 to getNMeshToPaint means we do not accept component
+	// selections, the user must select an nCloth
+	//
+	string $meshAndCloth[] = getNMeshToPaint( $useThisMesh, 0 );
+	if( size($meshAndCloth) > 1 ){
+		$mesh = $meshAndCloth[0];
+		$cloth = $meshAndCloth[1];
+	}
+
+	if( $gPaintAttrOnObjCleanupCmd != "" ){
+		// If we're already painting on an nCloth object, it's likely that the
+		// mesh selected is a temporary mesh. We'll retrieve the name of the
+		// temporary mesh from the cleanup callback, and if it matches, we'll
+		// use the appropriate surface instead, which we can also retrieve
+		// from the callback.
+		//
+		string $args[];
+		tokenize $gPaintAttrOnObjCleanupCmd " " $args;
+		if( size($args) > 4 ){
+			if( $mesh == "" ){
+				// Reuse the last painted mesh
+				//
+				$mesh = $args[4];
+				$cloth = findTypeInHistory( $mesh, "nBase", 1,1 );	
+			} else {
+				// We want token 3, but with the double quotes stripped off.
+				//
+				string $tmpMesh = `substituteAllString $args[3] "\"" ""`;
+				string $tmpMeshes[] = `ls -dag -type mesh -visible -noIntermediate $tmpMesh`;
+				if( size($tmpMeshes) == 1 ){
+					if( $tmpMeshes[0] == $mesh ){
+						// Reuse the last painted mesh instead of the tmp mesh
+						//
+						$mesh = $args[4];
+					}
+				}
+			}
+		}
+	}
+	if( $mesh == "" ){
+		warning( (uiRes("m_paintNClothTexture.kNClothPaintNoMeshWarn")));
+		return;
+	} else if( $cloth == "" ){
+		warning( (uiRes("m_paintNClothTexture.kNClothPaintNoNPartWarn")));
+		return;
+	}
+	if( ($attrType != 1) && (nodeType($cloth ) == "nRigid") ){
+		warning( (uiRes("m_paintNClothTexture.kNClothPaintBadAttrWarn")));
+		return;
+	}
+
+	if ($attrType == 2) {
+		// 2 == an nComponent attribute
+		//
+		// The 0 to getNComponentToEdit means we do not accept component
+		// selections, the user must select an nCloth
+		//
+		string $comp = getNComponentToEdit(0);
+		if ("" != $comp) {
+			paintAttributeOnObject ($comp + "." + $attr) $mesh 0.6;
+		} else {
+			error( (uiRes("m_paintNClothTexture.kNClothNoComponent")));
+		}
+	} else {
+		paintAttributeOnObject ($cloth + "." + $attr) $mesh 0.6;
+	}
+
+	// set the global variable which is used by 3d Paint tool to display
+	// the attribute name
+	$g3dPaintAttrName = $attrName ;
+	
+	if( $optionBox ){
+		if(!isUIComponentVisible("Tool Settings") ){
+			toolPropertyWindow -inMainWindow true;
+		}
+	}
+}

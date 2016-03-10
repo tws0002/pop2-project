@@ -1,0 +1,1166 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//	Hardware Rendering Diagnostics.
+//
+//
+
+global string $gMayaHardwareRenderDiagnosticsHeader = "";
+global int $gMayaHardwareRenderDiagnosticsNewHeader = false;
+global int $gMayaHardwareRenderDiagnosticsCount = 0;
+
+proc diagnoseInit()
+{
+    global string $gMayaHardwareRenderDiagnosticsHeader;
+    global int $gMayaHardwareRenderDiagnosticsNewHeader;
+    global int $gMayaHardwareRenderDiagnosticsCount;
+
+    $gMayaHardwareRenderDiagnosticsHeader = "";
+    $gMayaHardwareRenderDiagnosticsNewHeader = false;
+    $gMayaHardwareRenderDiagnosticsCount = 0;
+}
+
+proc diagnoseHeader(string $message)
+{
+    global string $gMayaHardwareRenderDiagnosticsHeader;
+    global int $gMayaHardwareRenderDiagnosticsNewHeader;
+
+    $gMayaHardwareRenderDiagnosticsHeader = $message;
+    $gMayaHardwareRenderDiagnosticsNewHeader = true;
+}
+
+proc diagnose(string $message)
+{
+    global string $gMayaHardwareRenderDiagnosticsHeader;
+    global int $gMayaHardwareRenderDiagnosticsNewHeader;
+    global int $gMayaHardwareRenderDiagnosticsCount;
+
+    $gMayaHardwareRenderDiagnosticsCount += 1;
+    if ($gMayaHardwareRenderDiagnosticsNewHeader) {
+        print( " "+$gMayaHardwareRenderDiagnosticsHeader+"\n" );
+        $gMayaHardwareRenderDiagnosticsNewHeader = false;
+    }
+	print( "  - "+$message+"\n" );
+}
+
+// Find the value larger or equal to n which is also a power of two.
+proc int ceilPow2(int $num)
+{
+	int $pow2 = 1;
+
+    while ($pow2 < $num) {
+		$pow2 = $pow2 * 2;
+    }
+
+	return $pow2;
+}
+
+proc int isValidPlug( string $plug )
+{
+    int $isValid = true;
+
+    string $buffer[];
+    tokenize($plug, ".", $buffer);
+    string $node = $buffer[0];
+    string $attr = $buffer[1];
+
+    // Check that plug exists, has no parents, and is not a multi
+
+    if (!`attributeQuery -node $node -exists $attr` ||
+        size(`attributeQuery -node $node -listParent $attr`) != 0 ||
+        `attributeQuery -node $node -multi $attr`)
+    {
+        $isValid = false;
+    }
+
+    return $isValid;
+}
+
+proc int hasCgFragmentProgramability()
+{
+    return `openGLExtension -extension NV_fragment_program` != "";
+}
+
+proc diagnoseValidRange( string $plug, float $low, float $high )
+{
+    if (!isValidPlug($plug))
+        return;
+
+    int $isValid = true;
+
+    string $connections[] = `listConnections -source true -destination false $plug`;
+    if (size($connections) == 0) {
+        string $buffer[];
+        tokenize($plug, ".", $buffer);
+        string $node = $buffer[0];
+        string $attr = $buffer[1];
+
+        // Get all the scalar attributes below and including this plug,
+        // check to ensure they have a valid value.
+
+        string $scalars[] = `listAttr -scalar $plug`;
+        for ($scalar in $scalars) {
+            float $value = `getAttr ($node+"."+$scalar)`;
+            if ($value < $low || $value > $high) {
+                $isValid = false;
+                break;
+            }
+        }
+    }
+
+    if (!$isValid) {
+		string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdPlugRange1"));
+        diagnose (`format -s $plug -s $low -s $high $msg`);
+    }
+}
+
+proc diagnoseIsDefault( string $plug )
+{
+    if (!isValidPlug($plug))
+        return;
+
+    int $isDefault = true;
+
+    string $connections[] = `listConnections -source true -destination false $plug`;
+    if (size($connections) == 0) {
+        string $buffer[];
+        tokenize($plug, ".", $buffer);
+        string $node = $buffer[0];
+        string $attr = $buffer[1];
+
+        // Get all the scalar attributes below and including this plug,
+        // check whether they have default values.
+
+        string $scalars[] = `listAttr -scalar $plug`;
+        for ($scalar in $scalars) {
+            float $default[] = `attributeQuery -node $node -listDefault $scalar`;
+            float $value = `getAttr ($node+"."+$scalar)`;
+            if ($default[0] != $value) {
+                $isDefault = false;
+                break;
+            }
+        }
+    }
+    else {
+        $isDefault = false;
+    }
+
+    if (!$isDefault) {
+		string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdPlugNoSupport1"));
+        diagnose (`format -s $plug $msg`);
+    }
+}
+
+proc diagnoseIsOff( string $plug )
+{
+    int $isOff = true;
+
+    string $connections[] = `listConnections -source true -destination false $plug`;
+    if (size($connections) == 0) {
+        int $value = `getAttr $plug`;
+        if ($value) {
+            $isOff = false;
+        }
+    }
+    else {
+        $isOff = false;
+    }
+
+    if (!$isOff) {
+		string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdPlugNoSupport2"));
+        diagnose (`format -s $plug $msg`);
+    }
+}
+
+proc diagnoseIsOn( string $plug )
+{
+    int $isOn = true;
+
+    string $connections[] = `listConnections -source true -destination false $plug`;
+    if (size($connections) == 0) {
+        int $value = `getAttr $plug`;
+        if (!$value) {
+            $isOn = false;
+        }
+    }
+    else {
+        $isOn = false;
+    }
+
+    if (!$isOn) {
+		string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdPlugDisable1"));
+        diagnose (`format -s $plug $msg`);    
+    }
+}
+
+proc int min(int $lhs, int $rhs)
+{
+    if ($lhs < $rhs) {
+        return $lhs;
+    }
+
+    return $rhs;
+}
+
+proc int isPlacementSupported( string $placement )
+{
+    int $isSupported = 1;
+
+    float $coverage[] = `getAttr ($placement+".coverage")`;
+    float $repeat[] = `getAttr ($placement+".repeatUV")`;
+    float $rotateUV = `getAttr ($placement+".rotateUV")`;
+    float $offset[] = `getAttr ($placement+".offset")`;
+    int $wrapU = `getAttr ($placement+".wrapU")`;
+    int $wrapV = `getAttr ($placement+".wrapV")`;
+    float $noise[] = `getAttr ($placement+".noiseUV")`;
+    int $mirrorU = `getAttr ($placement+".mirrorU")`;
+    int $mirrorV = `getAttr ($placement+".mirrorV")`;
+
+    if (($coverage[0] < 1 || $coverage[1] < 1) ||
+        
+        (($repeat[0] < 1 || $repeat[1] < 1) && ($coverage[0] < 1 || $coverage[1] < 1)) ||
+
+        ($rotateUV != 0 && ($offset[0] != 0 || $offset[1] != 0)) ||
+
+        (!$wrapU || !$wrapV) ||
+
+        ($noise[0] != 0 || $noise[1] != 0) ||
+
+        ($mirrorU || $mirrorV) )
+    {
+        $isSupported = 0;
+    }
+
+    return $isSupported;
+}
+
+proc diagnosePerformance()
+//
+// # Outputting non-IFF images is less efficient.
+// # Use of 3D procedural textures is less efficient.
+// # Use render layers to reduce scene complexity and cull non-visible geometry.
+// # Pre-convert NURB surfaces to polygons to reduce memory usage and render time.
+// # All file textures should be resized to power of two (ie. 128, 256, 512, etc).
+// # Use IFF file textures to avoid image conversion time.
+// # High resolution file textures may not be handled efficiently.
+// # Use texture compression
+//
+{
+    diagnoseHeader( (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdPerformance")) );
+
+    int $imageFormat = `getAttr defaultRenderGlobals.imageFormat`;
+    if ($imageFormat != 5 && $imageFormat != 7 && $imageFormat != 10) {
+		string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdImageInefficient"));		
+        diagnose( $msg );
+    }
+
+    int $texture3dCount = 0;
+    string $textureTypes[] = `listNodeTypes "texture/3d"`;
+    for ($type in $textureTypes) {
+        $texture3dCount += size(`ls -type $type`);
+    }
+    if ($texture3dCount > 0) {
+		string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdConvertSolid"));
+        diagnose( $msg );
+    }
+
+    // TODO: determine whether the scene should use render layers
+
+    int $nurbCount = 0;
+    string $surfaces[] = `ls -type nurbsSurface`;
+    for ($surface in $surfaces) {
+        if (`getAttr ($surface+".visibility")`) {
+            $nurbCount += 1;
+        }
+    }
+    if ($nurbCount > 0) {
+		string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdNurbsToPoly"));
+        diagnose( $msg );
+    }
+
+    int $totalSize = 0;
+    string $fileTextures[] = `ls -type file`;
+    for ($file in $fileTextures) {
+        if (`getAttr ($file+".fileTextureName")` == "") {
+            // File texture name unspecified, no point getting resolution
+            continue;
+        }
+        float $size[] = `getAttr ($file+".outSize")`;
+        int $width = $size[0];
+        int $height = $size[1];
+        if ($width != ceilPow2($width) || $height != ceilPow2($height)) {
+
+			string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdNonPowerTwo"));
+			diagnose (`format -s $file $msg`);    
+        }
+
+        // TODO: query the hardware for the maximum texture size
+        if (ceilPow2($width) >= 2048 || ceilPow2($height) >= 2048) {
+
+			string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdResolution1"));
+            diagnose(`format -s $file -s $width -s $height $msg`);
+        }
+
+        $totalSize = $totalSize + min(ceilPow2($width), 2048) * min(ceilPow2($height), 2048);
+
+        // TODO: read the first 4 bytes to detect file format
+        string $filename = `getAttr ($file+".fileTextureName")`;
+        if (match(".*\\.iff$", $filename) == "" && match(".*\\.IFF$", $filename) == "" &&
+            match(".*\\.sgi$", $filename) == "" && match(".*\\.SGI$", $filename) == "" &&
+            match(".*\\.rgb$", $filename) == "" && match(".*\\.RGB$", $filename) == "")
+        {
+			string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdNonIFFSGI"));
+            diagnose(`format -s $file $msg`);
+        }
+
+        string $placements[] = `listConnections ($file+".uvCoord")`;
+        if (size($placements) > 0) {
+            string $placement = $placements[0];
+            if (!isPlacementSupported($placement)) {
+				string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdBadPlacement1"));
+				diagnose(`format -s $file -s $placement $msg`);
+            }
+        }
+    }
+
+    if (`getAttr "hardwareRenderGlobals.textureCompression"` == 0) {
+        int $Kb = 1024; int $Mb = $Kb * 1024;
+        if ($totalSize * 4 >= 32 * $Mb) {
+            // TODO: account for procedural texture memory usage
+            string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdTextureCompress"));
+            diagnose( $msg );
+        }
+    }
+}
+
+proc diagnoseMiscellaneous()
+//
+// * SubD surfaces are unsupported.
+// * Volume and fluid objects are unsupported.
+// * Paint strokes are unsupported.
+// * Automatic clipping planes are unsupported.
+// * Chord length mapping is unsupported.
+// * Image planes are unsupported.
+// * Displacement mapping is unsupported.
+// * Fur rendering is unsupported.
+//
+{
+    diagnoseHeader( (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdMisc")) );
+
+    int $subdCount = size(`ls -type subdiv`);
+    if ($subdCount > 0) {
+		string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdNoSubdivs"));
+        diagnose( $msg );
+    }
+
+    string $engines[] = `ls -type shadingEngine`;
+    for ($engine in $engines) {
+        string $surfaces[] = `listConnections ($engine+".surfaceShader")`;
+        string $volume[] = `listConnections ($engine+".volumeShader")`;
+        string $displacement[] = `listConnections ($engine+".displacementShader")`;
+
+        if (size($surfaces) == 0 && size($volume) > 0 && size($displacement) == 0) {
+			string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdNoVolumes1"));
+			diagnose(`format -s $volume[0] $msg`);
+        }
+    }
+
+    string $strokes[] = `ls -type stroke`;
+    if (size($strokes) > 0) {
+		string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdNoStrokes"));
+        diagnose($msg);
+    }
+
+    string $cameras[] = `ls -cameras`;
+    for ($camera in $cameras) {
+        if (`getAttr ($camera+".renderable")`) {
+            if (`getAttr ($camera+".bestFitClippingPlanes")`) {
+				string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdClipPlanes"));
+                diagnose( `format -s $camera $msg` );
+            }
+        }
+    }
+
+    string $nurbsSurfaces[] = `ls -type nurbsSurface`;
+    for ($nurbSurface in $nurbsSurfaces) {
+        if (`getAttr ($nurbSurface+".fixTextureWarp")`) {
+			string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdTextureWarp1"));
+			diagnose(`format -s $nurbSurface $msg`);
+        }
+    }
+
+    string $imagePlanes[] = `ls -type imagePlane`;
+    for ($imagePlane in $imagePlanes) {
+        int $mode = `getAttr ($imagePlane+".displayMode")`;
+        if ($mode != 0 && $mode != 1) {
+            string $cameras[] = `listConnections ($imagePlane+".message")`;
+            for ($camera in $cameras) {
+                if (`getAttr ($camera+".renderable")`) {
+
+					string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdImagePlane1"));
+					diagnose(`format -s $imagePlane $msg`);
+                    break;
+                }
+            }
+        }
+    }
+
+    int $displacementCount = size(`ls -type displacementShader`);
+    if ($displacementCount > 0) {
+		string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdNoDisplaceShader"));
+        diagnose( $msg );
+    }
+
+    string $furGlobals[] = `ls defaultFurGlobals`;
+    if (size($furGlobals) > 0) {
+        if (`getAttr ($furGlobals[0]+".renderFur")`) {
+			string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdNoFur"));
+            diagnose( $msg );
+        }
+    }
+}
+
+proc diagnoseTextures()
+//
+// * Sphere map placement is unsupported.
+// * Switch nodes are unsupported.
+// * Texture placement on file textures is limited compared to software rendering.
+// * Color and alpha offset must be have a valid range.
+//
+{
+    diagnoseHeader( (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdTextures")) );
+
+    int $envBallCount = size(`ls -type envBall`);
+    if ($envBallCount > 0) {
+		string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdNo3dPlace"));
+        diagnose( $msg );
+    }
+
+    int $switchCount = 0;
+    string $types[] = `listNodeTypes "utility/switch"`;
+    for ($type in $types) {
+        $switchCount += size(`ls -type $type`);
+    }
+    if ($switchCount > 0) {
+		string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdNoSwitch"));
+        diagnose( $msg );
+    }
+
+    string $fileTextures[] = `ls -type file`;
+    for ($file in $fileTextures) {
+        string $placements[] = `listConnections ($file+".uvCoord")`;
+        if (size($placements) > 0) {
+            string $placement = $placements[0];
+            if (isPlacementSupported($placement)) {
+                diagnoseIsOff($placement+".stagger");
+            }
+        }
+
+        diagnoseValidRange($file+".colorOffset", 0.0, 1.0);
+        diagnoseValidRange($file+".alphaOffset", 0.0, 1.0);
+    }
+}
+
+proc diagnoseDiffuseMap( string $diffusePlug )
+{
+    if (!isValidPlug($diffusePlug))
+        return;
+
+    string $connections[] = `listConnections $diffusePlug`;
+    if (size($connections) > 0) {
+        string $node = $connections[0];
+        if (!hasCgFragmentProgramability()) {
+
+			string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdNoDiffuseMap1"));
+			diagnose (`format -s $node $msg`);
+        }
+    }
+}
+
+proc diagnoseReflectionMap( string $reflectionPlug )
+{
+    string $connections[] = `listConnections $reflectionPlug`;
+    for ($node in $connections) {
+        string $type = `nodeType $node`;
+        string $classes[] = `getClassification $type`;
+        for ($class in $classes) {
+            if ($class == "texture/environment") {
+                if ($type != "envBall" && $type != "envCube") {
+                
+					string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdNoReflectMap1"));
+					diagnose (`format -s $node $msg`);                
+                    break;
+                }
+            }
+        }
+    }
+}
+
+proc diagnoseSamePlacement( string $rgbPlug, string $alphaPlug)
+{
+    int $samePlacement = true;
+
+    if (isValidPlug($rgbPlug) && isValidPlug($alphaPlug)) {
+        string $rgbTextures[] = `listConnections -source true -destination false $rgbPlug`;
+        string $alphaTextures[] = `listConnections -source true -destination false $alphaPlug`;
+
+        if (size($rgbTextures) > 0 && size($alphaTextures) > 0) {
+            // File textures mapped to both channels
+
+            string $rgbTextureType = `objectType $rgbTextures[0]`;
+            string $alphaTextureType = `objectType $alphaTextures[0]`;
+
+            if ($rgbTextureType == "file" && $alphaTextureType == "file") {
+                // Placement must match
+
+                string $rgbUvCoord = $rgbTextures[0] + ".uvCoord";
+                string $alphaUvCoord = $alphaTextures[0] + ".uvCoord";
+
+                string $rgbPlacements[] = `listConnections -source true -destination false $rgbUvCoord`;
+                string $alphaPlacements[] = `listConnections -source true -destination false $alphaUvCoord`;
+
+                if (size($rgbPlacements) > 0 && size($alphaPlacements) > 0) {
+                    string $rgbPlacement = $rgbPlacements[0];
+                    string $alphaPlacement = $alphaPlacements[0];
+            
+                    string $rgbAttrs[] = `listAttr -scalar -write -visible $rgbPlacement`;
+                    string $alphaAttrs[] = `listAttr -scalar -write -visible $alphaPlacement`;
+
+                    if (size($rgbAttrs) == size($alphaAttrs)) {
+                        for ($i = 0; $i < size($rgbAttrs); $i = $i + 1) {
+                            if ($rgbAttrs[$i] != $alphaAttrs[$i] ||
+                                `getAttr ($rgbPlacement+"."+$rgbAttrs[$i])` != `getAttr ($alphaPlacement+"."+$alphaAttrs[$i])`)
+                            {
+                                $samePlacement = false;
+                                break;
+                            }
+                        }
+                    }
+                    else {
+                        $samePlacement = false;
+                    }
+                }
+            }
+            else if ($rgbTextureType == "file" || $alphaTextureType == "file") {
+                // File texture mapped to at least one channel
+
+                string $file = "";
+                if ($rgbTextureType == "file")
+                    $file = $rgbTextures[0];
+                else
+                    $file = $alphaTextures[0];
+
+                // File placement must be default
+
+                string $fileUvCoord = $file + ".uvCoord";
+                string $filePlacements[] = `listConnections -source true -destination false $fileUvCoord`;
+                if (size($filePlacements) > 0) {
+                    string $placement = $filePlacements[0];
+                    string $attrs[] = `listAttr -scalar -write -visible $placement`;
+
+                    for ($attr in $attrs) {
+                        float $default[] = `attributeQuery -node $placement -listDefault $attr`;
+                        float $value = `getAttr ($placement+"."+$attr)`;
+                        if ($default[0] != $value) {
+                            $samePlacement = false;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (!$samePlacement) {
+
+		string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdNoDiffPlace1"));
+		diagnose (`format -s $rgbPlug -s $alphaPlug $msg`);                
+    }
+}
+
+proc diagnoseMaterials()
+//
+// # Material attribute settings are clamped to 0-1. Cosine power is limited to 32
+// # Notify user that PhongE, Blinn, and Ani-isotropic are translated to Phong.
+// # Layered shader will not render properally.
+// # Translucence, glow, and matte opacity are unsupported.
+// # File textures used for color and transparency or specular color and exponent should use the same texture placement.
+//
+{
+    diagnoseHeader( (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdMaterials")) );
+
+    string $materials[] = `ls -materials`;
+    for ($material in $materials) {
+
+        int $isSurfaceShader = false;
+        if (!`attributeQuery -node $material -exists outColor`) {
+            continue;
+        }
+        string $plugs[] = `listConnections -plugs true ($material+".outColor")`;
+        for ($plug in $plugs) {
+            string $buffer[];
+            tokenize($plug, ".", $buffer);
+            string $attr = $buffer[1];
+
+            if ($attr == "surfaceShader") {
+                $isSurfaceShader = true;
+                break;
+            }
+        }
+        if (!$isSurfaceShader) continue;
+
+        string $type = `nodeType $material`;
+        if ($type == "phong") {
+            // TODO: handle bump
+            
+            diagnoseValidRange($material+".color", 0.0, 1.0);
+            diagnoseValidRange($material+".transparency", 0.0, 1.0);
+            diagnoseValidRange($material+".diffuse", 0.0, 1.0);
+            diagnoseValidRange($material+".incandescence", 0.0, 1.0);
+            diagnoseValidRange($material+".cosinePower", 2.0, 128.0);
+            diagnoseValidRange($material+".specularColor", 0.0, 1.0);
+            diagnoseValidRange($material+".reflectedColor", 0.0, 1.0);
+            diagnoseValidRange($material+".reflectivity", 0.0, 1.0);
+            diagnoseValidRange($material+".ambientColor", 0.0, 1.0);
+
+            diagnoseDiffuseMap($material+".diffuse");
+            diagnoseReflectionMap($material+".reflectedColor");
+
+            diagnoseIsDefault($material+".translucence");
+            diagnoseIsDefault($material+".glowIntensity");
+            diagnoseIsDefault($material+".matteOpacityMode");
+            diagnoseIsDefault($material+".matteOpacity");
+            
+            diagnoseIsOff($material+".refractions");
+            diagnoseIsOff($material+".chromaticAberration");
+
+            diagnoseSamePlacement($material+".specularColor", $material+".cosinePower");
+        }
+        else if ($type == "phongE") {
+            // TODO: handle bump and roughness
+
+            diagnoseValidRange($material+".color", 0.0, 1.0);
+            diagnoseValidRange($material+".transparency", 0.0, 1.0);
+            diagnoseValidRange($material+".diffuse", 0.0, 1.0);
+            diagnoseValidRange($material+".incandescence", 0.0, 1.0);
+            diagnoseValidRange($material+".eccentricity", 0.0, 1.0);
+            diagnoseValidRange($material+".specularColor", 0.0, 1.0);
+            diagnoseValidRange($material+".reflectedColor", 0.0, 1.0);
+            diagnoseValidRange($material+".reflectivity", 0.0, 1.0);
+            diagnoseValidRange($material+".ambientColor", 0.0, 1.0);
+
+            diagnoseDiffuseMap($material+".diffuse");
+            diagnoseReflectionMap($material+".reflectedColor");
+
+            diagnoseIsDefault($material+".translucence");
+            diagnoseIsDefault($material+".highlightSize");
+            diagnoseIsDefault($material+".whiteness");
+            diagnoseIsDefault($material+".glowIntensity");
+            diagnoseIsDefault($material+".matteOpacityMode");
+            diagnoseIsDefault($material+".matteOpacity");
+            
+            diagnoseIsOff($material+".refractions");
+            diagnoseIsOff($material+".chromaticAberration");
+        
+            diagnoseSamePlacement($material+".specularColor", $material+".eccentricity");
+        }
+        else if ($type == "blinn") {
+            // TODO: handle bump
+
+            diagnoseValidRange($material+".color", 0.0, 1.0);
+            diagnoseValidRange($material+".transparency", 0.0, 1.0);
+            diagnoseValidRange($material+".diffuse", 0.0, 1.0);
+            diagnoseValidRange($material+".incandescence", 0.0, 1.0);
+            diagnoseValidRange($material+".roughness", 2.0 / 128.0, 1.0);
+            diagnoseValidRange($material+".specularColor", 0.0, 1.0);
+            diagnoseValidRange($material+".reflectedColor", 0.0, 1.0);
+            diagnoseValidRange($material+".reflectivity", 0.0, 1.0);
+            diagnoseValidRange($material+".ambientColor", 0.0, 1.0);
+
+            diagnoseDiffuseMap($material+".diffuse");
+            diagnoseReflectionMap($material+".reflectedColor");
+
+            diagnoseIsDefault($material+".translucence");
+            diagnoseIsDefault($material+".specularRollOff");
+            diagnoseIsDefault($material+".glowIntensity");
+            diagnoseIsDefault($material+".matteOpacityMode");
+            diagnoseIsDefault($material+".matteOpacity");
+            
+            diagnoseIsOff($material+".refractions");
+            diagnoseIsOff($material+".chromaticAberration");
+        
+            diagnoseSamePlacement($material+".specularColor", $material+".roughness");
+        }
+        else if ($type == "surfaceShader") {
+            diagnoseValidRange($material+".outColor", 0.0, 1.0);
+            diagnoseValidRange($material+".outTransparency", 0.0, 1.0);
+        }
+        else if ($type == "useBackground") {
+            diagnoseIsDefault($material+".specularColor");
+            diagnoseIsDefault($material+".reflectivity");
+            diagnoseIsDefault($material+".reflectionLimit");
+
+            int $pointLightCount = 0;
+            int $intensityLightCount = 0;
+            int $decayLightCount = 0;
+            string $lights[] = `ls -lights`;
+            for ($light in $lights) {
+                string $type = `objectType $light`;
+                if ($type == "pointLight") {
+                    if (`getAttr ($light+".useDepthMapShadows")`) {
+                        $pointLightCount = $pointLightCount + 1;
+                    }
+                }
+                else if ($type == "directionalLight") {
+                    if (`getAttr ($light+".useDepthMapShadows")`) {
+                        // Check intensity
+                        if (`getAttr ($light+".intensity")` != 1) {
+                            $intensityLightCount = $intensityLightCount + 1;
+                        }
+                    }
+                }
+                else if ($type == "spotLight") {
+                    if (`getAttr ($light+".useDepthMapShadows")`) {
+                        // Check intensity and decay rate
+                        if (`getAttr ($light+".intensity")` != 1) {
+                            $intensityLightCount = $intensityLightCount + 1;
+                        }
+                        if (`getAttr ($light+".decayRate")` != 0) {
+                            $decayLightCount = $decayLightCount + 1;
+                        }
+                    }
+                }
+            }
+            if ($pointLightCount > 0) {
+				string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdShadow1"));
+                diagnose(`format -s $material $msg`);
+            }
+            if ($intensityLightCount > 0) {
+				string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdLightInt1"));
+                diagnose(`format -s $material $msg`);
+			}
+            if ($decayLightCount > 0) {
+				string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdLightDecay5"));
+                diagnose(`format -s $material $msg`);
+            }
+
+            // Diagnose any cameras with non-black backgrounds
+            int $nonBlackCameraCount = 0;
+            string $cameras[] = `ls -type camera`;
+            for ($camera in $cameras) {
+                if (`getAttr ($camera+".renderable")`) {
+                    float $background[] = `getAttr ($camera+".backgroundColor")`;
+                    if ($background[0] != 0 && $background[2] != 0 && $background[2] != 0) {
+                        $nonBlackCameraCount = $nonBlackCameraCount + 1;
+                    }
+                }
+            }
+            if ($nonBlackCameraCount > 0) {
+				string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdCamera1"));
+                diagnose(`format -s $material $msg`);
+            }
+        }
+        else {
+            if ($type != "lambert") {
+				string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdAsLambert1"));
+                diagnose(`format -s $material $msg`);
+            }
+            else {
+                diagnoseIsDefault($material+".translucence");
+                diagnoseIsDefault($material+".glowIntensity");
+                diagnoseIsDefault($material+".matteOpacityMode");
+                diagnoseIsDefault($material+".matteOpacity");
+            }
+
+            diagnoseValidRange($material+".color", 0.0, 1.0);
+            diagnoseValidRange($material+".transparency", 0.0, 1.0);
+            diagnoseValidRange($material+".diffuse", 0.0, 1.0);
+            diagnoseValidRange($material+".incandescence", 0.0, 1.0);
+            diagnoseValidRange($material+".ambientColor", 0.0, 1.0);
+
+            diagnoseDiffuseMap($material+".diffuse");
+        }
+
+        diagnoseSamePlacement($material+".color", $material+".transparency");
+    }
+}
+
+proc diagnoseLightDepthMap(string $light)
+{
+    if (!`getAttr ($light+".useDepthMapShadows")`)
+        return;
+
+    string $type = `nodeType $light`;
+    if (hasCgFragmentProgramability() && $type == "pointLight") {
+		string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdDepthShadow1"));
+        diagnose(`format -s $light $msg`);
+    }
+    else {
+        if (`getAttr ($light+".dmapResolution")` > 2048) {
+
+			string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdDepthRes1"));
+		    diagnose(`format -s $light $msg`);
+        }
+
+        diagnoseIsOff($light+".useMidDistDmap");
+
+        int $useAutoFocus = `getAttr ($light+".useDmapAutoFocus")`;
+        if ($useAutoFocus) {
+			string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdDepthAuto1"));
+		    diagnose(`format -s $light $msg`);
+        }
+
+        if ($type == "directionalLight") {
+            if (!$useAutoFocus) {
+                diagnoseIsDefault($light+".dmapWidthFocus");
+            }
+        }
+        else if ($type == "spotLight") {
+            if (!$useAutoFocus) {
+                diagnoseIsDefault($light+".dmapFocus");
+            }
+        }
+        else if ($type == "pointLight") {
+            if (!$useAutoFocus) {
+                diagnoseIsDefault($light+".dmapFocus");
+            }
+        
+            diagnoseIsOn($light+".useXPlusDmap");
+            diagnoseIsOn($light+".useXMinusDmap");
+            diagnoseIsOn($light+".useYPlusDmap");
+            diagnoseIsOn($light+".useYMinusDmap");
+            diagnoseIsOn($light+".useZPlusDmap");
+            diagnoseIsOn($light+".useZMinusDmap");
+        }
+
+		string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdLightClip1"));
+        diagnose(`format -s $light -s ($light+".dmapNearClipPlane") -s ($light+".dmapFarClipPlane") $msg`);
+        diagnoseIsDefault($light+".dmapFilterSize");
+        diagnoseIsDefault($light+".writeDmap");
+        diagnoseIsDefault($light+".reuseDmap");
+    }
+}
+
+proc diagnoseLightDecay(string $light)
+{
+    if (!hasCgFragmentProgramability()) {
+        int $decay = `getAttr ($light+".decayRate")`;
+        if ($decay == 1) {
+			string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdLightDecay1"));
+            diagnose(`format -s $light $msg`);
+        }
+        else if ($decay == 3) {
+			string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdLightDecay3"));
+            diagnose(`format -s $light $msg`);
+		}
+    }
+}
+
+proc diagnoseLights()
+//
+// # Point light shadows are unsupported (only spot and directional shadows are supported).
+// # Area lights are unsupported.
+// # Lights attribute settings are clamped to 0-1.
+// # Lights with linear or cubic decay are emulated as "none" or "quadratic" decay.
+// # The depth maps are not filtered.
+// # The depth map resolution is capped at 2048.
+// # Light fog is unsupported.
+// # Light glow is unsupported.
+// # Intensity curve is unsupported.
+// # Color curves are unsupported
+// # No support for shadow color.
+// # No support for disk based shadow maps.
+// # Projection light placement will differ compared to software rendering.
+// # Only spot lights can have projection color.
+// # Mid-distance shadow maps are unsupported.
+//
+{
+    diagnoseHeader((uiRes("m_mayaHardwareRenderDiagnostics.kHwrdLights")));
+
+    string $lights[] = `ls -lights`;
+    for ($light in $lights) {
+        $type = `nodeType $light`;
+
+        string $colorMaps[] = `listConnections ($light+".color")`;
+        if (size($colorMaps) > 0) {
+            if ($type == "spotLight") {
+                // TODO: when will they match
+				string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdSpotLight1"));
+                diagnose(`format -s $light $msg`);
+            }
+            else {
+				string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdSpotLight3"));
+                diagnose(`format -s $light $msg`);
+            }
+        }
+
+        if ($type == "ambientLight") {
+            diagnoseValidRange($light+".color", 0.0, 1.0);
+			if( !hasCgFragmentProgramability() )
+			{
+				diagnoseValidRange($light+".intensity", 0.0, 1.0);
+			}
+            diagnoseValidRange($light+".ambientShade", 0.0, 1.0);
+            diagnoseIsDefault($light+".shadowColor");
+            diagnoseIsOff($light+".useRayTraceShadows");
+        }
+        else if ($type == "areaLight") {
+			string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdAreaLight1"));
+            diagnose(`format -s $light $msg`);
+        }
+        else if ($type == "directionalLight") {
+            diagnoseValidRange($light+".color", 0.0, 1.0);
+			if( !hasCgFragmentProgramability() )
+			{
+				diagnoseValidRange($light+".intensity", 0.0, 1.0);
+			}
+            diagnoseIsOn($light+".emitDiffuse");
+            diagnoseIsOn($light+".emitSpecular");
+            diagnoseIsDefault($light+".shadowColor");
+            diagnoseLightDepthMap($light);
+            diagnoseIsOff($light+".useRayTraceShadows");
+        }
+        else if ($type == "pointLight") {
+            diagnoseValidRange($light+".color", 0.0, 1.0);
+			if( !hasCgFragmentProgramability() )
+			{
+				diagnoseValidRange($light+".intensity", 0.0, 1.0);
+			}
+            diagnoseIsOn($light+".emitDiffuse");
+            diagnoseIsOn($light+".emitSpecular");
+            diagnoseLightDecay($light);
+            string $fog[] = `listConnections ($light+".fogRadius")`;
+            if (size($fog) > 0) {
+				string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdLightFog1"));
+                diagnose(`format -s $light $msg`);
+            }
+            string $glow[] = `listConnections ($light+".color")`;
+            if (size($glow) > 0) {
+                if (`nodeType $glow` == "opticalFX") {
+					string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdOpticalFX1"));
+                    diagnose(`format -s $light $msg`);
+                }
+            }
+            diagnoseIsDefault($light+".shadowColor");
+            diagnoseLightDepthMap($light);
+            diagnoseIsOff($light+".useRayTraceShadows");
+        }
+        else if ($type == "spotLight") {
+            diagnoseValidRange($light+".color", 0.0, 1.0);
+			if( !hasCgFragmentProgramability() )
+			{
+				diagnoseValidRange($light+".intensity", 0.0, 1.0);
+			}
+            diagnoseIsOn($light+".emitDiffuse");
+            diagnoseIsOn($light+".emitSpecular");
+            diagnoseLightDecay($light);
+            if (!hasCgFragmentProgramability()) {
+                diagnoseIsDefault($light+".dropoff");
+            }
+            string $fog[] = `listConnections ($light+".fogGeometry")`;
+            if (size($fog) > 0) {
+				string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdLightFog3"));
+				diagnose(`format -s $light $msg`);				
+            }
+            string $glow[] = `listConnections ($light+".color")`;
+            if (size($glow) > 0) {
+                if (`nodeType $glow` == "opticalFX") {
+					string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdOpticalFX3"));
+					diagnose(`format -s $light $msg`);
+                }
+            }
+            string $intensity[] = `listConnections ($light+".intensity")`;
+            if (size($intensity) > 0) {
+                if (`nodeType $intensity` == "animCurveUU") {
+					string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdIntensityCurve1"));
+					diagnose(`format -s $light $msg`);
+                }
+            }
+            string $intensity[] = `listConnections ($light+".colorR")`;
+            if (size($intensity) > 0) {
+                if (`nodeType $intensity` == "animCurveUU") {
+					string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdColCurve1"));
+                    diagnose(`format -s $light $msg`);
+                }
+            }
+            diagnoseIsOff($light+".barnDoors");
+            diagnoseIsOff($light+".useDecayRegions");
+            diagnoseIsDefault($light+".shadowColor");
+            diagnoseLightDepthMap($light);
+            diagnoseIsOff($light+".useRayTraceShadows");
+        }
+        else if ($type == "volumeLight") {
+			string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdNoVolLight1"));
+            diagnose(`format -s $light $msg`);
+        }
+    }
+}
+
+proc diagnoseParticles()
+//
+// #  Particle points are drawn as filled circles (HRB draws them as filled squares)
+// # The numeric particle type is unsupported.
+// # All software particle types are unsupported.
+// # Particle disk cache must exist for motion blur particles
+//
+{
+    diagnoseHeader((uiRes("m_mayaHardwareRenderDiagnostics.kWhrdParticles")));
+
+    string $particles[] = `ls -type particle`;
+    string $particle;
+    for ($particle in $particles) {
+        int $particleType = `getAttr ($particle+".particleRenderType")`;
+        if ($particleType == 3) {
+			string $msg1 = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdParticle1"));
+            diagnose(`format -s $particle $msg1`);
+        }
+        else if ($particleType == 2) {
+			string $msg2 = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdParticle3"));
+            diagnose(`format -s $particle $msg2`);
+        }
+        else if ($particleType == 7 || $particleType == 8 || $particleType == 9) {
+			string $msg3 = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdParticle5"));			
+            diagnose(`format -s $particle $msg3`);
+        }
+    }
+
+    if (size($particles) > 0)
+    {
+        // Particle system exists, check for motion blur and disk cache
+        //
+        int $motionBlurEnabled = `getAttr hardwareRenderGlobals.enableMotionBlur`;
+        string $dynGlobalNode[] =`ls -type dynGlobals`;
+
+        int $particleCacheEnabled = 0;
+        if( size( $dynGlobalNode ) > 0 ) {
+            $particleCacheEnabled = `getAttr dynGlobals1.useParticleDiskCache`;
+        }
+
+        if ($motionBlurEnabled && !$particleCacheEnabled) {
+			string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdParticle7"));
+            diagnose($msg);
+        }
+    }
+}
+
+proc diagnoseHardware()
+//
+// # The proper hardware extensions must exist for rendering to work at all (WGL_ARB_pbuffer or GLX_create_pbuffer or GLX_create_pbuffer_sgix).
+// # The proper hardware extensions must exist for specular and bump mapping support (NV_texture_shader or ATI_fragment_shader).
+// # The proper hardware extensions must exist for high-resolution 24 bit shadow support (ARB_depth_texture and ARB_shadow or SGIX_depth_texture and SGIX_shadow).
+// # Draw performance may be less than ideal if the hardware doesn't support vertex programming (ARB_vertex_program).
+// # The proper hardware extensions must exist for reflection mapping (NV_texture_shader or ATI_fragment_shader).
+// # The proper hardware extensions must exist for multi-sampling (ARB_multisample).
+// # Per fragment lighting requires texture combiner extensions (ARB_texture_env_combine).
+//
+{
+    diagnoseHeader((uiRes("m_mayaHardwareRenderDiagnostics.kWhrdHardware")));
+
+    // TODO: check for pbuffer support
+
+    if ((`openGLExtension -extension NV_texture_shader` == "") &&
+        (`openGLExtension -extension ATI_fragment_shader` == "") )
+    {
+        diagnose((uiRes("m_mayaHardwareRenderDiagnostics.kHwrdNoReflect1")));
+        diagnose((uiRes("m_mayaHardwareRenderDiagnostics.kHwrdNoReflect2")));
+    }
+
+    if (((`openGLExtension -extension ARB_depth_texture` == "") || (`openGLExtension -extension ARB_shadow` == "")) &&
+        ((`openGLExtension -extension SGIX_depth_texture` == "") || (`openGLExtension -extension SGIX_shadow` == "")) )
+    {
+        diagnose((uiRes("m_mayaHardwareRenderDiagnostics.kHwrdDepthMap")));
+    }
+
+    if (`openGLExtension -extension ARB_vertex_program` == "") {
+        diagnose((uiRes("m_mayaHardwareRenderDiagnostics.kHwrdNoVP")));
+    }
+
+    if (`openGLExtension -extension ARB_multisample` == "") {
+        diagnose((uiRes("m_mayaHardwareRenderDiagnostics.kHwrdNoMultiSample")));
+    }
+
+    if (`openGLExtension -extension ARB_texture_env_combine` == "") {
+        diagnose((uiRes("m_mayaHardwareRenderDiagnostics.kHwrdNoFragLight")));
+    }
+
+    if (!hasCgFragmentProgramability()) {
+        diagnose((uiRes("m_mayaHardwareRenderDiagnostics.kHwrdNoCg1")));
+        diagnose((uiRes("m_mayaHardwareRenderDiagnostics.kHwrdNoCg2")));
+    }
+
+    if (`getAttr hardwareRenderGlobals.enableAcceleratedMultiSampling`) {
+        if (!`hwRender -q -acceleratedMultiSampleSupport`) {
+            diagnose((uiRes("m_mayaHardwareRenderDiagnostics.kHwrdNoMultiSample2")));
+        }
+    }
+
+}
+
+proc diagnoseQuality()
+//
+// # Only mipmapped file textures are supported.
+// # Bump mapping may require higher "bump resolution".
+// # Check for transparency, triangle sorting may not be resolved properally.
+//
+{
+    diagnoseHeader((uiRes("m_mayaHardwareRenderDiagnostics.kHwrdQuality")));
+
+    string $files[] = `ls -type file`;
+    for ($file in $files) {
+        int $filter = `getAttr ($file+".filterType")`;
+        if ($filter != 1) {
+			string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdFileMip"));
+            diagnose( `format -s $file $msg` );
+        }
+    }
+
+    // TODO: handle bump resolution
+
+    // TODO: handle transparency
+}
+
+global proc mayaHardwareRenderDiagnostics()
+{
+    hwRenderLoad;
+
+    diagnoseInit();
+
+    print((uiRes("m_mayaHardwareRenderDiagnostics.kHwrdDiag")) + "\n");
+
+    diagnoseHardware();
+    diagnoseMaterials();
+    diagnoseTextures();
+    diagnoseLights();
+    diagnoseParticles();
+    diagnoseMiscellaneous();
+    diagnoseQuality();
+    diagnosePerformance();
+
+    global int $gMayaHardwareRenderDiagnosticsCount;
+    if ($gMayaHardwareRenderDiagnosticsCount > 0) {
+		string $msg = (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdWarn1"));
+        warning( `format -s $gMayaHardwareRenderDiagnosticsCount $msg` );
+    }
+    else {
+        print( (uiRes("m_mayaHardwareRenderDiagnostics.kHwrdWarn2")) + "\n" );
+    }
+}

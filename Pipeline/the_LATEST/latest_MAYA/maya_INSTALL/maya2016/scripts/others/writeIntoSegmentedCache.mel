@@ -1,0 +1,132 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+// Creation Date:  29 Dec 2003
+//
+//
+//  Procedure Name:
+//      writeIntoSegmentedCache
+//
+//  Description:
+//		Normally, a fluid cache (once created) cannot be
+//		modified.  We can work around this limitation for
+//		segmented caches that were created with one frame per file
+//		(segment or chunk size of 1 frame per segment).  
+//		
+//		This procedure takes the current contents of a fluid,
+//		generates a single frame cache file (according 
+//		to the regular Create Cache options), and overwrites the
+//		appropriate file in the cache-file sequence so that the
+//  	current contents are now part of the cache sequence.
+//
+//	Replaces the contents of the current frame's (segmented) cache file
+//	with the contents of the active fluid.
+//	
+//	The basic workflow to replace frame 10 in the cache:
+//		- Create segmented cache
+//		- execute MEL "currentTime 10;"
+//		- Paint in your replacement (or execute your setFluidAttr cmd)
+//		- execute MEL "writeIntoSegmentedCache();" 
+//	
+//	So, to distort all the density by a random value between +/-1.0: 
+//	you could do something like this: 
+// 
+//		for( $frame = 1; $frame <= 10; $frame++ ) {
+//			currentTime $frame;
+//			setFluidAttr -addValue -floatRandom 1.0 -at density;
+//			writeIntoSegmentedCache();
+//		}
+//	
+//
+global proc writeIntoSegmentedCache() 
+//	Description:
+//	 We want to create a new single-frame cache based on
+//	 the current contents of the fluid.  Can't create two
+//	 caches for the same fluid, so we'll fool the fluid by
+//	 disconnecting the original cache.  Then, Maya lets us
+//	 create a new cache (whose contents in the temp
+//	 directory since we haven't saved our scene yet).
+//	 Copy the temp file for the new cache over to the
+//	 currently active data file for the original cache,
+//	 in the project directory.
+//	
+{
+	string $fluidShapes[] = getActiveFluidShapes();
+	if (size($fluidShapes) == 0)
+	{
+		warning((uiRes("m_writeIntoSegmentedCache.kNoFluidsSelected")));
+		return;
+	}
+
+	string $fluid = $fluidShapes[0];
+	string $cache = fluidPlaybackCacheName( $fluid );
+
+	string $basicErrorMsg = (uiRes("m_writeIntoSegmentedCache.kNeedOneFilePerFrame"));
+
+	// Do we have a cache to play with?
+	//
+	if( size( $cache ) == 0 ) {
+		string $fmt = (uiRes("m_writeIntoSegmentedCache.kNoCacheFound"));
+		error(`format -s $basicErrorMsg $fmt`);
+		return;
+	}
+
+	// Is it segemented?
+	//
+	if( !fluidCacheIsSegmented( $cache ) 
+	||( `getAttr( $cache + ".endTime" )` - `getAttr( $cache + ".startTime" )` > 1 ) )
+	{
+		
+		error( $basicErrorMsg );
+		return;
+	}
+
+	// Break the connections on the original cache node.
+	//
+	string $origCache = fluidPlaybackCacheName( $fluid );
+	string $replaceThis = `getAttr ($origCache + ".cacheName")`;
+	disconnectAttr ($origCache + ".diskCache") ($fluid + ".diskCache" );
+
+	// Now create a new, one-frame diskCache to store the current 
+	// contents of the fluid.
+	//
+	float $currTime = `currentTime -q`;
+	doFluidsDiskCache 2 { "mcfp", 3, 1, $currTime, $currTime, 
+						  1, 1, 1, 0, 0, 0, 0, 0, 1, "replacement", 1 } ;
+
+	// Copy the temporary one-frame cache file over to the
+	// location of the segmented cache files, replacing the
+	// one that's valid at the current time.
+	//
+	string $newCache = fluidPlaybackCacheName( $fluid );
+	string $withThis = (`diskCache -tmp` + "/" + `getAttr ($newCache + ".hiddenCacheName")`);
+	evalEcho( "sysFile -copy \"" + $replaceThis + "\" \"" + $withThis + "\"");
+
+	// Clean up the new cache and disk cache file we created
+	//
+	doDeleteFluidsPB 1 { "1" };
+
+	// Reconnect to point to the original cache again.
+	//
+	connectAttr ($origCache + ".diskCache") ($fluid + ".diskCache" );
+}

@@ -1,0 +1,1003 @@
+# guard against multiple inclusions
+$ifndef "bifrostphen_mi_included"
+set "bifrostphen_mi_included" "true"
+
+## Copyright 2013 Autodesk, Inc. All rights reserved.
+## This computer source code and related instructions and comments are the
+## unpublished confidential and proprietary information of Autodesk, Inc. and
+## are protected under applicable copyright and trade secret law. They may not
+## be disclosed to, copied or used by any third party without the prior written
+## consent of Autodesk, Inc.
+
+# depends on these libraries
+
+$include "mayabase.mi"
+$include "bifrostMR.mi"
+$include "layering.mi"
+
+# bifrost aero material
+declare phenomenon material "maya_bifrost_aero" (
+    scalar "densityScale" default 1.0,
+    scalar "densityThreshold" default 0.0,
+    string "densityChannel",
+    boolean "densityRemapEnable" default off,
+    string "densityRemapChannel",
+    scalar "densityRemapInputMin" default 0.0,
+    scalar "densityRemapInputMax" default 1000.0,
+    array struct "densityRemap" {
+        scalar "densityRemap_position",
+        scalar "densityRemap_floatValue",
+        integer "densityRemap_interp" #:enum "None:Linear:Smooth:Spline"
+        },
+
+    color "emissionColor" default 0.0 0.0 0.0,
+    scalar "emissionIntensity" default 1.0,
+    scalar "emissionOffset" default 0.0,
+    boolean "emissionColorRemapEnable" default off,
+    string "emissionColorRemapChannel",
+    scalar "emissionColorRemapInputMin" default 100.0,
+    scalar "emissionColorRemapInputMax" default 400.0,
+    array struct "emissionColorRemap" {
+        scalar "emissionColorRemap_position",
+        color "emissionColorRemap_color",
+        integer "emissionColorRemap_interp" #:enum "None:Linear:Smooth:Spline"
+        },
+    array struct "emissionColorValueRemap" {
+        scalar "emissionColorValueRemap_position",
+        scalar "emissionColorValueRemap_floatValue",
+        integer "emissionColorValueRemap_interp" #:enum "None:Linear:Smooth:Spline"
+        },
+
+    color "absorptionColor" default 0.0 0.0 0.0,
+    scalar "absorptionIntensity" default 1.0,
+    scalar "absorptionOffset" default 0.0,
+
+    color "scatteringColor" default 0.5 0.5 0.5,
+    scalar "scatteringIntensity" default 1.0,
+    scalar "scatteringOffset" default 0.0,
+    scalar "scatteringDensityCutoff" default 0.0,
+	scalar "scatteringDirectionality" default 0.0,
+	scalar "shadowOpacityScale" default 0.5,
+	scalar "coloredOpacity" default 1.0,
+    vector "displacement" default 0.0 0.0 0.0,
+
+    integer "miMaxSteps" default 1000,
+    scalar "miStepSize" default 0.1,
+
+    boolean "miShadowing" default off,
+    integer "miShadowingMaxSteps" default 1000,
+    scalar "miShadowingStepSize" default 0.1,
+	boolean "miDepthJitter" default on
+    )
+
+    # Channels
+    shader "density_channel_value" "bifrost_scalar_channel" (
+        "channel" = interface "densityChannel"
+    )
+
+    shader "density_remap_channel_value" "bifrost_scalar_channel" (
+        "channel" = interface "densityRemapChannel"
+    )
+
+    shader "emission_color_remap_channel_value" "bifrost_scalar_channel" (
+        "channel" = interface "emissionColorRemapChannel"
+    )
+
+    # Remap Density
+    shader "remap_density" "maya_remapvalue" (
+        "inputValue" = "density_remap_channel_value",
+        "inputMin" = interface "densityRemapInputMin",
+        "inputMax" = interface "densityRemapInputMax",
+        "outputMin" 0.0,
+        "outputMax" 1.0,
+        "value" = interface "densityRemap"
+    )
+
+    shader "density" "bifrost_scalar_if" (
+        "input" = interface "densityRemapEnable",
+        "if_true" = "remap_density.outValue",
+        "if_false" = "density_channel_value"
+    )
+
+    # Density
+    shader "density_threshold" "bifrost_scalar_if" (
+        "input" = interface "densityRemapEnable",
+        "if_true" 0.0,
+        "if_false" = interface "densityThreshold"
+    )
+
+    shader "density_scale" "bifrost_scalar_if" (
+        "input" = interface "densityRemapEnable",
+        "if_true" 1.0,
+        "if_false" = interface "densityScale"
+    )
+
+    # Remap Emission Color
+    shader "remap_emission_color_value" "maya_remapvalue" (
+        "inputValue" = "emission_color_remap_channel_value",
+        "inputMin" = interface "emissionColorRemapInputMin",
+        "inputMax" = interface "emissionColorRemapInputMax",
+        "outputMin" 0.0,
+        "outputMax" 1.0,
+        "value" = interface "emissionColorValueRemap"
+    )
+
+    shader "remap_emission_color" "maya_remapvalue" (
+        "inputValue" = "remap_emission_color_value.outValue",
+        "inputMin" 0.0,
+        "inputMax" 1.0,
+        "outputMin" 0.0,
+        "outputMax" 1.0,
+        "color" = interface "emissionColorRemap"
+    )
+
+    shader "emission_color_switch" "bifrost_color_if" (
+        "input" = interface "emissionColorRemapEnable",
+        "if_true" = "remap_emission_color.outColor",
+        "if_false" = interface "emissionColor"
+    )
+
+    shader "emission_color" "bifrost_color_remap" (
+        "input" = "emission_color_switch",
+        "intensity" = interface "emissionIntensity",
+        "offset" = interface "emissionOffset"
+    )
+
+    #
+    shader "scatter_remap" "bifrost_color_remap" (
+        "input" = interface "scatteringColor",
+        "intensity" = interface "scatteringIntensity",
+        "offset" = interface "scatteringOffset"
+        )
+
+    shader "emit_remap" "bifrost_color_remap" (
+        "input" = interface "emissionColor",
+        "intensity" = interface "emissionIntensity",
+        "offset" = interface "emissionOffset"
+        )
+
+    shader "absorb_remap" "bifrost_color_remap" (
+        "input" = interface "absorptionColor",
+        "intensity" = interface "absorptionIntensity",
+        "offset" = interface "absorptionOffset"
+        )
+
+    shader "scatter" "bifrost_simple_scatter" (
+        "scatter" = "scatter_remap",
+        "directionality" = interface "scatteringDirectionality"
+        )
+
+    shader "densityVolume" "bifrost_density_volume" (
+        "minStepSize" = interface "miStepSize",
+        "maxStepSize" 0.5,
+        "maxSteps" = interface "miMaxSteps",
+		"density" = "density",
+        "density_threshold" = "density_threshold",
+        "density_scale" = "density_scale",
+        "absorb_density" true,
+        "emit_density" true,
+        "scatter_density" true,
+        "absorb" = "absorb_remap",
+        "emit" = "emission_color",	
+        "scatter" = "scatter_remap",
+		"in_scatter" = "scatter",
+        "scatter_density_cutoff" = interface "scatteringDensityCutoff",
+		"shadow_opacity_scale" = interface "shadowOpacityScale",
+		"colored_opacity" = interface "coloredOpacity",
+        "displacement" = interface "displacement",
+        "light_absorb" false,
+        "lightStepSize" 0.1,
+        "lightMaxSteps" 0,
+        "shadow_absorb" = interface "miShadowing",
+        "shadowStepSize" = interface "miShadowingStepSize",
+        "shadowMaxSteps" = interface "miShadowingMaxSteps",
+		"depth_jitter" = interface "miDepthJitter"
+        )
+
+    material "mtl"
+        volume = "densityVolume"
+        shadow = "densityVolume"
+    end material
+
+    root material "mtl"
+    #: nodeid 1476395840
+end declare
+
+declare phenomenon
+    "maya_liquid_mila_material" (
+
+        # Top Reflection Layer
+        scalar  "reflection_weight"                 default 1.0, #: min 0.0 max 1.0
+        scalar  "reflection_roughness"              default 0.0, #: min 0.0 max 1.0 softmax 0.8
+        color   "reflection_color"                  default 1.0 1.0 1.0,
+
+        integer "reflection_fresnel_mode"           default 0,   #: enum "fresnel:custom"
+        scalar  "reflection_fresnel_ior"            default 1.4, #: min 0.1 softmax 2.0
+        scalar  "reflection_zero_degree"            default 0.2, #: min 0.0 max 1.0
+        scalar  "reflection_ninety_degree"          default 1.0, #: min 0.0 max 1.0
+        scalar  "reflection_curve_exponent"         default 5.0, #: min 0.1 softmax 20
+
+        # Transmission layer
+        scalar  "transmission_weight"               default 0.9, #: min 0.0 max 1.0
+        scalar  "transmission_roughness"            default 0.0, #: min 0.0 max 1.0
+        color   "transmission_color"                default 1.0 1.0 1.0,
+        boolean "use_color_at_max_distance"         default off,
+        scalar  "max_distance"                      default 0.0,
+        color   "max_distance_color"                default 1.0 1.0 1.0,
+
+        scalar  "index_of_refraction"               default 1.4, #: min 0.1 softmax 2.0
+
+        # Surface Foam
+        scalar  "surface_foam_weight"               default 0.0,
+        color   "surface_foam_color"                default 0.5 0.5 0.5,
+
+        # Diffuse Reflection 
+        color   "diffuse_color"                     default 0.5 0.5 0.5,
+
+        # Contribution
+        scalar  "direct"                            default 1.0, #: min 0 max 1
+        scalar  "indirect"                          default 1.0 #: min 0 max 1
+    )
+
+    shader "glossy_reflection" "mila_glossy_reflection" (
+        "tint"               = interface "reflection_color",
+        "roughness"          = interface "reflection_roughness",
+        "anisotropy"         0,
+        "use_max_dist"       off, # for now until we connect internal reflection behavior
+        "max_dist"           = interface "max_distance",
+        "use_max_dist_color" on,
+        "max_dist_color"     = interface "max_distance_color",
+
+        "direct"             = interface "direct",
+        "indirect"           = interface "indirect"
+    )
+           
+    shader "glossy_transmission" "mila_glossy_transmission" (
+        "tint"               = interface "transmission_color",
+        "roughness"          = interface "transmission_roughness",
+        "ior"                = interface "index_of_refraction",
+        "anisotropy"         0,
+        "use_max_dist"       = interface "use_color_at_max_distance",
+        "max_dist"           = interface "max_distance",
+        "use_max_dist_color" = interface "use_color_at_max_distance",
+        "max_dist_color"     = interface "max_distance_color",
+
+        "direct"             = interface "direct",
+        "indirect"           = interface "indirect"
+    )
+
+    shader "surface_foam_reflection" "mila_diffuse_reflection" (
+        "tint"               = interface "surface_foam_color",
+        "direct"             = interface "direct",
+        "indirect"           = interface "indirect"
+    )
+
+    shader "diffuse_reflection" "mila_diffuse_reflection" (
+        "tint" = interface "diffuse_color",
+        "direct" = interface "direct",
+        "indirect" = interface "indirect")
+
+    # Layers
+    shader "liquid_layers" "mila_layer" (
+        "layers" [{
+            "shader" "glossy_reflection",
+            "on" on,
+            "weight"                  = interface "reflection_weight",
+            "weight_tint"             1 1 1 1,
+            "use_directional_weight"  on,
+            "directional_weight_mode" = interface "reflection_fresnel_mode",
+            "ior"                     = interface "reflection_fresnel_ior",
+            "grazing_reflectivity"    = interface "reflection_ninety_degree",
+            "normal_reflectivity"     = interface "reflection_zero_degree",
+            "exponent"                = interface "reflection_curve_exponent"
+        },
+        {
+            "shader" "glossy_transmission",
+            "on" on,
+            "weight"      = interface "transmission_weight", 
+            "weight_tint" 1 1 1 1
+        },
+        {
+            "shader" "surface_foam_reflection",
+            "on" on,
+            "weight"      = interface "surface_foam_weight", 
+            "weight_tint" 1 1 1 1
+        },
+        {
+            "shader" "diffuse_reflection",
+            "on" on,
+            "weight"      1.0, 
+            "weight_tint" 1 1 1 1
+        }
+        ]
+
+    )
+    shader "mila_root" "mila_material" (
+        "shader" "liquid_layers",
+        #"thin_walled" off,
+        #"visibility" 1.0,
+        "show_framebuffer" 0,
+        #"bump" 0 0 0,
+        "extra_color" [],
+        "extra_vector" [],
+        "extra_scalar" []
+    )
+    root = "mila_root"
+    apply material, photon, shadow
+    version 1
+    #: nodeid 1476395856
+end declare
+
+declare phenomenon
+    "maya_bifrost_remap_liquid" (
+
+        # Top Reflection Layer
+        scalar  "reflectionRoughness"               default 0.0, #: min 0.0 max 1.0 softmax 0.8
+
+        color   "reflectionColor"                   default 1.0 1.0 1.0,
+        boolean "reflectionColorRemapEnable"        default off,
+        string  "reflectionColorRemapChannel",
+        scalar  "reflectionColorRemapInputMin"       default 0.0,
+        scalar  "reflectionColorRemapInputMax"       default 100.0,
+        array struct "reflectionColorRemap" {
+            scalar  "reflectionColorRemap_position",
+            color   "reflectionColorRemap_color",
+            integer "reflectionColorRemap_interp"   #:enum "None:Linear:Smooth:Spline"
+            },
+        array struct "reflectionColorValueRemap" {
+            scalar  "reflectionColorValueRemap_position",
+            scalar  "reflectionColorValueRemap_floatValue",
+            integer "reflectionColorValueRemap_interp"   #:enum "None:Linear:Smooth:Spline"
+            },
+
+        scalar  "reflectionWeight"                  default 1.0, #: min 0.0 max 1.0
+        boolean "reflectionWeightRemapEnable"       default off,
+        string  "reflectionWeightRemapChannel",
+        scalar  "reflectionWeightRemapInputMin"      default 0.0,
+        scalar  "reflectionWeightRemapInputMax"      default 100.0,
+        array struct "reflectionWeightRemap" {
+            scalar  "reflectionWeightRemap_position",
+            scalar  "reflectionWeightRemap_floatValue",
+            integer "reflectionWeightRemap_interp"  #:enum "None:Linear:Smooth:Spline"
+            },
+
+        integer "reflectionFresnelMode"             default 0,   #: enum "Fresnel:Custom"
+        scalar  "reflectionFresnelIOR"              default 1.4, #: min 0.1 softmax 2.0
+        scalar  "reflectionZeroDegree"              default 0.2, #: min 0.0 max 1.0
+        scalar  "reflectionNinetyDegree"            default 1.0, #: min 0.0 max 1.0
+        scalar  "reflectionCurveExponent"           default 5.0, #: min 0.1 softmax 20
+
+        # Transmission layer
+        scalar  "indexOfRefraction"                 default 1.4, #: min 0.1 softmax 2.0
+        scalar  "refractionRoughness"               default 0.0, #: min 0.0 max 1.0
+
+        color   "refractionColor"                   default 1.0 1.0 1.0,
+        boolean "refractionUseColorAtMaxDistance"   default off,
+        scalar  "refractionMaxDistance"             default 0.0,
+        boolean "refractionColorRemapEnable"        default off,
+        string  "refractionColorRemapChannel",
+        scalar  "refractionColorRemapInputMin"      default 0.0,
+        scalar  "refractionColorRemapInputMax"      default 100.0,
+        array struct "refractionColorRemap" {
+            scalar  "refractionColorRemap_position",
+            color   "refractionColorRemap_color",
+            integer "refractionColorRemap_interp"   #:enum "None:Linear:Smooth:Spline"
+            },
+        array struct "refractionColorValueRemap" {
+            scalar  "refractionColorValueRemap_position",
+            scalar  "refractionColorValueRemap_floatValue",
+            integer "refractionColorValueRemap_interp"   #:enum "None:Linear:Smooth:Spline"
+            },
+
+        scalar  "transparency"                      default 0.9, #: min 0.0 max 1.0
+        boolean "transparencyRemapEnable"           default off,
+        string  "transparencyRemapChannel",
+        scalar  "transparencyRemapInputMin"         default 0.0,
+        scalar  "transparencyRemapInputMax"         default 100.0,
+        array struct "transparencyRemap" {
+            scalar  "transparencyRemap_position",
+            scalar  "transparencyRemap_floatValue",
+            integer "transparencyRemap_interp"      #:enum "None:Linear:Smooth:Spline"
+            },
+
+        # Surface Foam
+        color   "surfaceFoamColor"                   default 0.5 0.5 0.5,
+        boolean "surfaceFoamColorRemapEnable"        default off,
+        string  "surfaceFoamColorRemapChannel",
+        scalar  "surfaceFoamColorRemapInputMin"      default 0.0,
+        scalar  "surfaceFoamColorRemapInputMax"      default 100.0,
+        array struct "surfaceFoamColorRemap" {
+            scalar  "surfaceFoamColorRemap_position",
+            color   "surfaceFoamColorRemap_color",
+            integer "surfaceFoamColorRemap_interp"  #:enum "None:Linear:Smooth:Spline"
+            },
+        array struct "surfaceFoamColorValueRemap" {
+            scalar  "surfaceFoamColorValueRemap_position",
+            scalar  "surfaceFoamColorValueRemap_floatValue",
+            integer "surfaceFoamColorValueRemap_interp"   #:enum "None:Linear:Smooth:Spline"
+            },
+
+        scalar  "surfaceFoamWeight"                 default 0.0,
+        boolean "surfaceFoamWeightRemapEnable"      default off,
+        string  "surfaceFoamWeightRemapChannel",
+        scalar  "surfaceFoamWeightRemapInputMin"    default 0.0,
+        scalar  "surfaceFoamWeightRemapInputMax"    default 100.0,
+        array struct "surfaceFoamWeightRemap" {
+            scalar  "surfaceFoamWeightRemap_position",
+            scalar  "surfaceFoamWeightRemap_floatValue",
+            integer "surfaceFoamWeightRemap_interp"  #:enum "None:Linear:Smooth:Spline"
+            },
+
+        # Diffuse Reflection 
+        color   "diffuseColor"                      default 0.5 0.5 0.5,
+        boolean "diffuseColorRemapEnable"           default off,
+        string  "diffuseColorRemapChannel",
+        scalar  "diffuseColorRemapInputMin"         default 0.0,
+        scalar  "diffuseColorRemapInputMax"         default 100.0,
+        array struct "diffuseColorRemap" {
+            scalar  "diffuseColorRemap_position",
+            color   "diffuseColorRemap_color",
+            integer "diffuseColorRemap_interp"           #:enum "None:Linear:Smooth:Spline"
+        },
+        array struct "diffuseColorValueRemap" {
+            scalar  "diffuseColorValueRemap_position",
+            scalar  "diffuseColorValueRemap_floatValue",
+            integer "diffuseColorValueRemap_interp"      #:enum "None:Linear:Smooth:Spline"
+        },
+
+        # Contribution
+        scalar  "direct"                                 default 1.0, #: min 0 max 1
+        scalar  "indirect"                               default 1.0  #: min 0 max 1
+
+        # miExtension attributes
+        #boolean  "miThinWalled"                         default off,
+        #scalar   "miCutoutOpacity"                      default 1.0,   #: min 0.0 max 1.0
+
+    )
+
+
+    # Channels
+    shader "reflection_color_remap_channel_value" "bifrost_scalar_channel" (
+        "channel" = interface "reflectionColorRemapChannel"
+    )
+
+    shader "refraction_color_remap_channel_value" "bifrost_scalar_channel" (
+        "channel" = interface "refractionColorRemapChannel"
+    )
+
+    shader "surface_foam_color_remap_channel_value" "bifrost_scalar_channel" (
+        "channel" = interface "surfaceFoamColorRemapChannel"
+    )
+
+    shader "diffuse_color_remap_channel_value" "bifrost_scalar_channel" (
+        "channel" = interface "diffuseColorRemapChannel"
+    )
+
+    shader "reflection_weight_remap_channel_value" "bifrost_scalar_channel" (
+        "channel" = interface "reflectionWeightRemapChannel"
+    )
+
+    shader "transparency_remap_channel_value" "bifrost_scalar_channel" (
+        "channel" = interface "transparencyRemapChannel"
+    )
+
+    shader "surface_foam_weight_remap_channel_value" "bifrost_scalar_channel" (
+        "channel" = interface "surfaceFoamWeightRemapChannel"
+    )
+
+
+    # Remap Reflection Color
+    shader "remap_reflection_color_value" "maya_remapvalue" (
+        "inputValue" = "reflection_color_remap_channel_value",
+        "inputMin"   = interface "reflectionColorRemapInputMin",
+        "inputMax"   = interface "reflectionColorRemapInputMax",
+        "outputMin"  0.0,
+        "outputMax"  1.0,
+        "value"      = interface "reflectionColorValueRemap"
+    )
+    shader "remap_reflection_color" "maya_remapvalue" (
+        "inputValue" = "remap_reflection_color_value.outValue",
+        "inputMin"   0.0,
+        "inputMax"   1.0,
+        "outputMin"  0.0,
+        "outputMax"  1.0,
+        "color"      = interface "reflectionColorRemap"
+    )
+    shader "reflection_color" "bifrost_color_if" (
+        "input"      = interface "reflectionColorRemapEnable",
+        "if_true"    = "remap_reflection_color.outColor",
+        "if_false"   = interface "reflectionColor"
+    )
+
+    # Remap Refraction Color
+    shader "remap_refraction_color_value" "maya_remapvalue" (
+        "inputValue" = "refraction_color_remap_channel_value",
+        "inputMin"   = interface "refractionColorRemapInputMin",
+        "inputMax"   = interface "refractionColorRemapInputMax",
+        "outputMin"  0.0,
+        "outputMax"  1.0,
+        "value"      = interface "refractionColorValueRemap"
+    )
+    shader "remap_refraction_color" "maya_remapvalue" (
+        "inputValue" = "remap_refraction_color_value.outValue",
+        "inputMin"   0.0,
+        "inputMax"   1.0,
+        "outputMin"  0.0,
+        "outputMax"  1.0,
+        "color"      = interface "refractionColorRemap"
+    )
+    shader "refraction_color" "bifrost_color_if" (
+        "input"      = interface "refractionColorRemapEnable",
+        "if_true"    = "remap_refraction_color.outColor",
+        "if_false"   = interface "refractionColor"
+    )
+
+    shader "transmission_color" "bifrost_color_if" (
+        "input"      = interface "refractionUseColorAtMaxDistance",
+        "if_true"    1 1 1,
+        "if_false"   = "refraction_color"
+    )
+
+    shader "max_distance_color" "bifrost_color_if" (
+        "input"      = interface "refractionUseColorAtMaxDistance",
+        "if_true"    = "refraction_color",
+        "if_false"   0 0 0
+    )
+
+    # Remap Surface Foam Color
+    shader "remap_surface_foam_color_value" "maya_remapvalue" (
+        "inputValue" = "surface_foam_color_remap_channel_value",
+        "inputMin"   = interface "surfaceFoamColorRemapInputMin",
+        "inputMax"   = interface "surfaceFoamColorRemapInputMax",
+        "outputMin"  0.0,
+        "outputMax"  1.0,
+        "value"      = interface "surfaceFoamColorValueRemap"
+    )
+    shader "remap_surface_foam_color" "maya_remapvalue" (
+        "inputValue" = "remap_surface_foam_color_value.outValue",
+        "inputMin"   0.0,
+        "inputMax"   1.0,
+        "outputMin"  0.0,
+        "outputMax"  1.0,
+        "color"      = interface "surfaceFoamColorRemap"
+    )
+    shader "surface_foam_color" "bifrost_color_if" (
+        "input"      = interface "surfaceFoamColorRemapEnable",
+        "if_true"    = "remap_surface_foam_color.outColor",
+        "if_false"   = interface "surfaceFoamColor"
+    )
+
+    # Remap Diffuse Color
+    shader "remap_diffuse_color_value" "maya_remapvalue" (
+        "inputValue" = "diffuse_color_remap_channel_value",
+        "inputMin"   = interface "diffuseColorRemapInputMin",
+        "inputMax"   = interface "diffuseColorRemapInputMax",
+        "outputMin"  0.0,
+        "outputMax"  1.0,
+        "value"      = interface "diffuseColorValueRemap"
+    )
+    shader "remap_diffuse_color" "maya_remapvalue" (
+        "inputValue" = "remap_diffuse_color_value.outValue",
+        "inputMin"   0.0,
+        "inputMax"   1.0,
+        "outputMin"  0.0,
+        "outputMax"  1.0,
+        "color"      = interface "diffuseColorRemap"
+    )
+    shader "diffuse_color" "bifrost_color_if" (
+        "input"      = interface "diffuseColorRemapEnable",
+        "if_true"    = "remap_diffuse_color.outColor",
+        "if_false"   = interface "diffuseColor"
+    )
+
+#   Layer weights
+
+    # Remap reflection weight
+    shader "remap_reflection_weight" "maya_remapvalue" (
+        "inputValue" = "reflection_weight_remap_channel_value",
+        "inputMin"   = interface "reflectionWeightRemapInputMin",
+        "inputMax"   = interface "reflectionWeightRemapInputMax",
+        "outputMin"  0.0,
+        "outputMax"  1.0,
+        "value"      = interface "reflectionWeightRemap"
+    )
+    shader "reflection_weight" "bifrost_scalar_if" (
+        "input"      = interface "reflectionWeightRemapEnable",
+        "if_true"    = "remap_reflection_weight.outValue",
+        "if_false"   = interface "reflectionWeight"
+    )
+
+    # Remap transparency
+    shader "remap_transparency" "maya_remapvalue" (
+        "inputValue" = "transparency_remap_channel_value",
+        "inputMin"   = interface "transparencyRemapInputMin",
+        "inputMax"   = interface "transparencyRemapInputMax",
+        "outputMin"  0.0,
+        "outputMax"  1.0,
+        "value"      = interface "transparencyRemap"
+    )
+    shader "transmission_weight" "bifrost_scalar_if" (
+        "input"      = interface "transparencyRemapEnable",
+        "if_true"    = "remap_transparency.outValue",
+        "if_false"   = interface "transparency"
+    )
+
+    # Remap Surface Foam Weight
+    shader "remap_surface_foam_weight" "maya_remapvalue" (
+        "inputValue" = "surface_foam_weight_remap_channel_value",
+        "inputMin"   = interface "surfaceFoamWeightRemapInputMin",
+        "inputMax"   = interface "surfaceFoamWeightRemapInputMax",
+        "outputMin"  0.0,
+        "outputMax"  1.0,
+        "value"      = interface "surfaceFoamWeightRemap"
+    )
+    shader "surface_foam_weight" "bifrost_scalar_if" (
+        "input"      = interface "surfaceFoamWeightRemapEnable",
+        "if_true"    = "remap_surface_foam_weight.outValue",
+        "if_false"   = interface "surfaceFoamWeight"
+    )
+
+    shader "mila_root" "maya_liquid_mila_material" (
+        "reflection_weight"             = "reflection_weight",
+        "reflection_roughness"          = interface "reflectionRoughness",
+        "reflection_color"              = "reflection_color",
+
+        "reflection_fresnel_mode"       = interface "reflectionFresnelMode",
+        "reflection_fresnel_ior"        = interface "reflectionFresnelIOR",
+        "reflection_zero_degree"        = interface "reflectionZeroDegree",
+        "reflection_ninety_degree"      = interface "reflectionNinetyDegree",
+        "reflection_curve_exponent"     = interface "reflectionCurveExponent",
+
+        # Transmission layer
+        "transmission_weight"           = "transmission_weight",
+        "transmission_roughness"        = interface "refractionRoughness",
+        "transmission_color"            = "transmission_color",
+        "use_color_at_max_distance"     = interface "refractionUseColorAtMaxDistance",
+        "max_distance"                  = interface "refractionMaxDistance",
+        "max_distance_color"            = "max_distance_color",
+        "index_of_refraction"           = interface "indexOfRefraction",
+
+        # Surface Foam
+        "surface_foam_weight"           = "surface_foam_weight",
+        "surface_foam_color"            = "surface_foam_color",
+
+        # Diffuse Reflection 
+        "diffuse_color"                 = "diffuse_color",
+
+        # Contribution
+        "direct"                        = interface "direct",
+        "indirect"                      = interface "indirect"
+    )
+
+    root = "mila_root"
+    apply material, photon, shadow
+    version 1
+    #: nodeid 1476395857
+end declare
+
+declare phenomenon
+    "maya_foam_mila_material" (
+
+        # Top Reflection Layer
+        scalar  "reflection_weight"                 default 1.0, #: min 0.0 max 1.0
+        color   "reflection_color"                  default 1.0 1.0 1.0,
+
+        integer "reflection_fresnel_mode"           default 0,   #: enum "fresnel:custom"
+        scalar  "reflection_fresnel_ior"            default 1.33, #: min 0.1 softmax 2.0
+        scalar  "reflection_zero_degree"            default 0.2, #: min 0.0 max 1.0
+        scalar  "reflection_ninety_degree"          default 1.0, #: min 0.0 max 1.0
+        scalar  "reflection_curve_exponent"         default 5.0, #: min 0.1 softmax 20
+
+        # Transparency layer
+        scalar  "transparency_weight"               default 0.6, #: min 0.0 max 1.0
+        color   "transparency_color"                default 1.0 1.0 1.0,
+
+        # Scatter layer
+        scalar  "scatter_weight"                    default 0.0, #: min 0.0 max 1.0
+        color   "scatter_color"                     default 1.0 1.0 1.0,
+
+        # Diffuse Reflection 
+        color   "diffuse_color"                     default 0.7 0.7 0.7,
+        scalar  "diffuse_roughness"                 default 0.5,
+
+        # Contribution
+        scalar  "direct"                            default 1.0, #: min 0 max 1
+        scalar  "indirect"                          default 1.0 #: min 0 max 1
+    )
+
+    shader "specular_reflection" "mila_specular_reflection" (
+        "tint"               = interface "reflection_color",
+
+        "direct"             = interface "direct",
+        "indirect"           = interface "indirect"
+    )
+           
+    shader "transparency" "mila_transparency" (
+        "transparency"       = interface "transparency_color"
+    )
+
+    shader "scatter" "mila_scatter" (
+        "front_tint"           = interface "scatter_color",
+        "front_weight"         1.0,
+        "front_radius"         20 20 20,
+        "front_radius_mod"     = interface "scatter_color",
+        "back_tint"            = interface "scatter_color",
+        "back_weight"          0.0,
+        "back_radius"          20 20 20,
+        "back_radius_mod"      = interface "scatter_color",
+        "back_depth"           0,
+        "sampling_radius_mult" 1.0,
+        "scale_conversion"     1.0,
+        "resolution"           -1,
+ 
+        "direct"               = interface "direct",
+        "indirect"             = interface "indirect"
+    )
+
+    shader "diffuse_reflection" "mila_diffuse_reflection" (
+        "tint"               = interface "diffuse_color",
+        "roughness"          = interface "diffuse_roughness",
+        "direct"             = interface "direct",
+        "indirect"           = interface "indirect")
+
+    # Layers
+    shader "foam_layers" "mila_layer" (
+        "layers" [{
+            "shader" "specular_reflection",
+            "on" on,
+            "weight"                  = interface "reflection_weight",
+            "weight_tint"             1 1 1 1,
+            "use_directional_weight"  on,
+            "directional_weight_mode" = interface "reflection_fresnel_mode",
+            "ior"                     = interface "reflection_fresnel_ior",
+            "grazing_reflectivity"    = interface "reflection_ninety_degree",
+            "normal_reflectivity"     = interface "reflection_zero_degree",
+            "exponent"                = interface "reflection_curve_exponent"
+        },
+        {
+            "shader" "transparency",
+            "on" on,
+            "weight"      = interface "transparency_weight",
+            "weight_tint" 1. 1. 1. 1.
+        },
+        {
+            "shader" "scatter",
+            "on" on,
+            "weight"      = interface "scatter_weight", 
+            "weight_tint" 1 1 1 1
+        },
+        {
+            "shader" "diffuse_reflection",
+            "on" on,
+            "weight"      1.0, 
+            "weight_tint" 1 1 1 1
+        }
+        ]
+
+    )
+    shader "mila_root" "mila_material" (
+        "shader" "foam_layers",
+        #"thin_walled" off,
+        #"visibility" 1.0,
+        "show_framebuffer" 0,
+        #"bump" 0 0 0,
+        "extra_color" [],
+        "extra_vector" [],
+        "extra_scalar" []
+    )
+    root = "mila_root"
+    apply material, photon, shadow
+    version 1
+    #: nodeid 1476395858
+end declare
+
+declare phenomenon
+    "maya_bifrost_remap_foam" (
+
+        # Top Reflection Layer
+        color   "reflectionColor"                   default 1.0 1.0 1.0,
+        boolean "reflectionUseDiffuseColor"         default off,
+
+        scalar  "reflectionWeight"                  default 1.0, #: min 0.0 max 1.0
+        boolean "reflectionWeightRemapEnable"       default off,
+        string  "reflectionWeightRemapChannel",
+        scalar  "reflectionWeightRemapInputMin"     default 0.0,
+        scalar  "reflectionWeightRemapInputMax"     default 100.0,
+        array struct "reflectionWeightRemap" {
+            scalar  "reflectionWeightRemap_position",
+            scalar  "reflectionWeightRemap_floatValue",
+            integer "reflectionWeightRemap_interp"  #:enum "None:Linear:Smooth:Spline"
+            },
+
+        integer "reflectionFresnelMode"             default 0,   #: enum "Fresnel:Custom"
+        scalar  "reflectionFresnelIOR"              default 1.4, #: min 0.1 softmax 2.0
+        scalar  "reflectionZeroDegree"              default 0.2, #: min 0.0 max 1.0
+        scalar  "reflectionNinetyDegree"            default 1.0, #: min 0.0 max 1.0
+        scalar  "reflectionCurveExponent"           default 5.0, #: min 0.1 softmax 20
+
+        # Transparency Layer
+        color   "transparencyColor"                 default 1.0 1.0 1.0,
+
+        scalar  "transparencyWeight"                default 0.9, #: min 0.0 max 1.0
+        boolean "transparencyWeightRemapEnable"     default off,
+        string  "transparencyWeightRemapChannel",
+        scalar  "transparencyWeightRemapInputMin"   default 0.0,
+        scalar  "transparencyWeightRemapInputMax"   default 100.0,
+        array struct "transparencyWeightRemap" {
+            scalar  "transparencyWeightRemap_position",
+            scalar  "transparencyWeightRemap_floatValue",
+            integer "transparencyWeightRemap_interp" #:enum "None:Linear:Smooth:Spline"
+            },
+
+        # Scatter Layer
+        color   "scatterColor"                      default 1.0 1.0 1.0,
+        boolean "scatterUseDiffuseColor"            default off,
+
+        scalar  "scatterWeight"                     default 1.0, #: min 0.0 max 1.0
+        boolean "scatterWeightRemapEnable"          default off,
+        string  "scatterWeightRemapChannel",
+        scalar  "scatterWeightRemapInputMin"        default 0.0,
+        scalar  "scatterWeightRemapInputMax"        default 100.0,
+        array struct "scatterWeightRemap" {
+            scalar  "scatterWeightRemap_position",
+            scalar  "scatterWeightRemap_floatValue",
+            integer "scatterWeightRemap_interp"     #:enum "None:Linear:Smooth:Spline"
+            },
+
+        # Diffuse Reflection 
+        color   "diffuseColor"                      default 0.5 0.5 0.5,
+        boolean "diffuseColorRemapEnable"           default off,
+        string  "diffuseColorRemapChannel",
+        scalar  "diffuseColorRemapInputMin"         default 0.0,
+        scalar  "diffuseColorRemapInputMax"         default 100.0,
+        array struct "diffuseColorRemap" {
+            scalar  "diffuseColorRemap_position",
+            color   "diffuseColorRemap_color",
+            integer "diffuseColorRemap_interp"      #:enum "None:Linear:Smooth:Spline"
+            },
+        array struct "diffuseColorValueRemap" {
+            scalar  "diffuseColorValueRemap_position",
+            scalar  "diffuseColorValueRemap_floatValue",
+            integer "diffuseColorValueRemap_interp" #:enum "None:Linear:Smooth:Spline"
+            },
+
+        # Contribution
+        scalar  "direct"                            default 1.0, #: min 0 max 1
+        scalar  "indirect"                          default 1.0 #: min 0 max 1
+
+    )
+
+    # Channels
+
+    shader "diffuse_color_remap_channel_value" "bifrost_scalar_channel" (
+        "channel" = interface "diffuseColorRemapChannel"
+    )
+
+    shader "reflection_weight_remap_channel_value" "bifrost_scalar_channel" (
+        "channel" = interface "reflectionWeightRemapChannel"
+    )
+
+    shader "transparency_weight_remap_channel_value" "bifrost_scalar_channel" (
+        "channel" = interface "transparencyWeightRemapChannel"
+    )
+
+    shader "scatter_weight_remap_channel_value" "bifrost_scalar_channel" (
+        "channel" = interface "scatterWeightRemapChannel"
+    )
+
+    # Remap Diffuse Color
+    shader "remap_diffuse_color_value" "maya_remapvalue" (
+        "inputValue" = "diffuse_color_remap_channel_value",
+        "inputMin"   = interface "diffuseColorRemapInputMin",
+        "inputMax"   = interface "diffuseColorRemapInputMax",
+        "outputMin"  0.0,
+        "outputMax"  1.0,
+        "value"      = interface "diffuseColorValueRemap"
+    )
+    shader "remap_diffuse_color" "maya_remapvalue" (
+        "inputValue" = "remap_diffuse_color_value.outValue",
+        "inputMin"   0.0,
+        "inputMax"   1.0,
+        "outputMin"  0.0,
+        "outputMax"  1.0,
+        "color"      = interface "diffuseColorRemap"
+    )
+    shader "diffuse_color" "bifrost_color_if" (
+        "input"      = interface "diffuseColorRemapEnable",
+        "if_true"    = "remap_diffuse_color.outColor",
+        "if_false"   = interface "diffuseColor"
+    )
+
+    # Scatter Color
+    shader "scatter_color" "bifrost_color_if" (
+        "input"      = interface "scatterUseDiffuseColor",
+        "if_true"    = "diffuse_color",
+        "if_false"   = interface "scatterColor"
+    )
+
+    # Reflection Color
+    shader "reflection_color" "bifrost_color_if" (
+        "input"      = interface "reflectionUseDiffuseColor",
+        "if_true"    = "diffuse_color",
+        "if_false"   = interface "reflectionColor"
+    )
+
+#   Layer weights
+
+    # Remap reflection weight
+    shader "remap_reflection_weight" "maya_remapvalue" (
+        "inputValue" = "reflection_weight_remap_channel_value",
+        "inputMin"   = interface "reflectionWeightRemapInputMin",
+        "inputMax"   = interface "reflectionWeightRemapInputMax",
+        "outputMin"  0.0,
+        "outputMax"  1.0,
+        "value"      = interface "reflectionWeightRemap"
+    )
+    shader "reflection_weight" "bifrost_scalar_if" (
+        "input"      = interface "reflectionWeightRemapEnable",
+        "if_true"    = "remap_reflection_weight.outValue",
+        "if_false"   = interface "reflectionWeight"
+    )
+
+    # Remap transparency weight
+    shader "remap_transparency_weight" "maya_remapvalue" (
+        "inputValue" = "transparency_weight_remap_channel_value",
+        "inputMin"   = interface "transparencyWeightRemapInputMin",
+        "inputMax"   = interface "transparencyWeightRemapInputMax",
+        "outputMin"  0.0,
+        "outputMax"  1.0,
+        "value"      = interface "transparencyWeightRemap"
+    )
+    shader "transparency_weight" "bifrost_scalar_if" (
+        "input"      = interface "transparencyWeightRemapEnable",
+        "if_true"    = "remap_transparency_weight.outValue",
+        "if_false"   = interface "transparencyWeight"
+    )
+
+    # Remap scatter weight
+    shader "remap_scatter_weight" "maya_remapvalue" (
+        "inputValue" = "scatter_weight_remap_channel_value",
+        "inputMin"   = interface "scatterWeightRemapInputMin",
+        "inputMax"   = interface "scatterWeightRemapInputMax",
+        "outputMin"  0.0,
+        "outputMax"  1.0,
+        "value"      = interface "scatterWeightRemap"
+    )
+    shader "scatter_weight" "bifrost_scalar_if" (
+        "input"      = interface "scatterWeightRemapEnable",
+        "if_true"    = "remap_scatter_weight.outValue",
+        "if_false"   = interface "scatterWeight"
+    )
+
+    shader "mila_root" "maya_foam_mila_material" (
+        "reflection_weight"          = "reflection_weight",
+        "reflection_color"           = "reflection_color",
+
+        "reflection_fresnel_mode"    = interface "reflectionFresnelMode",
+        "reflection_fresnel_ior"     = interface "reflectionFresnelIOR",
+        "reflection_zero_degree"     = interface "reflectionZeroDegree",
+        "reflection_ninety_degree"   = interface "reflectionNinetyDegree",
+        "reflection_curve_exponent"  = interface "reflectionCurveExponent",
+
+        "transparency_weight"        = "transparency_weight",
+        "transparency_color"         = interface "transparencyColor",
+
+        "scatter_weight"             = "scatter_weight",
+        "scatter_color"              = "scatter_color",
+
+        "diffuse_color"              = "diffuse_color",
+
+        # Contribution
+        "direct"                     = interface "direct",
+        "indirect"                   = interface "indirect"
+    )
+    root = "mila_root"
+    apply material, photon, shadow
+    version 1
+    #: nodeid 1476395859
+end declare
+
+$endif
+
+
+

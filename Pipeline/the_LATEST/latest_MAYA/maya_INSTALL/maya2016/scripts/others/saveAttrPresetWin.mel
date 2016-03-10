@@ -1,0 +1,221 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//
+//  Creation Date:  2001 
+//
+
+global string $gTmpAttrPresetNameField;
+global string $gTmpAttrPresetNodeName;
+global int $gAttrPresetWinUpdateJob = -1;
+
+// Description:  This is called to check to see if the $variable 
+//      is a procedure which has the format "procName()".
+//
+proc int isAProcedure(string $variable)
+{
+    int $length = size($variable);
+    if ($length < 2)
+    {
+        // Too short to have "()" in it.
+        //
+        return false;
+    } 
+    
+    int $secondLast = $length -1;
+    if (`substring $variable $secondLast $length` == "()")
+    {
+        return true;
+    }
+    return false;
+}
+
+//
+// Save the current node using the specified preset name
+//
+global proc psWinSavePreset()
+{
+	global string $gTmpAttrPresetNameField;
+	global string $gTmpAttrPresetNodeName;
+
+    // We use a nodeName ending with "()" to indicate that
+    // instead of a node, we passed a procedure for creating
+    // the node on the fly, and we want the node to be deleted
+    // after it is used.
+    //
+    int $needToDeleteNode = false;
+    if (isAProcedure($gTmpAttrPresetNodeName))
+    {
+		// suspect we don't ever use the temp node any more
+        $gTmpAttrPresetNodeName = eval($gTmpAttrPresetNodeName);
+        $needToDeleteNode = true;
+    }
+
+	if( objExists ($gTmpAttrPresetNodeName) ){
+		string $presetName = `textFieldGrp -q -text $gTmpAttrPresetNameField`;
+
+		string $actualName = `saveAttrPreset $gTmpAttrPresetNodeName $presetName false`;
+		// if we saved something, close the window
+		// otherwise the user might want a different name
+		if(size ($actualName) > 0) {
+			window -e -visible false attrPresetWin;
+		}
+    
+	} else {
+		warning (uiRes("m_saveAttrPresetWin.kNothingSelected"));
+		window -e -visible false attrPresetWin;
+	}
+
+    if ($needToDeleteNode && $gTmpAttrPresetNodeName != "")
+    {
+        delete $gTmpAttrPresetNodeName;
+    }
+}
+
+//
+// Update the name displayed in the saveAttrPreset window
+//
+global proc updateSaveAttrPresetWin()
+{
+	global string $gTmpAttrPresetNameField;
+	global string $gTmpAttrPresetNodeName;
+
+    string $initialPresetName = "";
+
+    // We use a nodeName ending with "()" to indicate that
+    // instead of a node, we passed a procedure for creating
+    // the node on the fly.  If this is the case, then we do not have
+    // a initial suggestion for presetName, leave the preset name 
+    // field empty.
+    //
+    if (isAProcedure($gTmpAttrPresetNodeName))
+    {
+        $initialPresetName = "";
+    }
+    else
+    {
+	    // TODO make sure name is initially unique?
+	    string $names[];
+	    int $numTokens = `tokenize  $gTmpAttrPresetNodeName "|" $names`;
+	    if( $numTokens > 0 ){
+		    $initialPresetName = $names[$numTokens-1]; 
+	    }
+    }
+		    
+    textFieldGrp -e -text $initialPresetName $gTmpAttrPresetNameField;
+}
+
+//
+// Open a simple window that allows one to set the name
+// of a preset then save the preset.
+// 
+global proc saveAttrPresetWin( string $nodeName )
+{
+	global string $gTmpAttrPresetNameField;
+	global string $gTmpAttrPresetNodeName;
+	global int $gAttrPresetWinUpdateJob;
+
+	$gTmpAttrPresetNodeName = $nodeName;
+
+	if( !`window -exists attrPresetWin` ) 
+	{
+		window -title (uiRes("m_saveAttrPresetWin.kSaveAttributePresetTitle")) -w 410 -h 150 attrPresetWin;
+		formLayout fl;
+			columnLayout -adj true col1;
+			$gTmpAttrPresetNameField =
+				`textFieldGrp -label (uiRes("m_saveAttrPresetWin.kPresetName")) presetNameField`;
+		setParent fl;
+		separator -horizontal true shelfSeparator;
+		button
+			-label (uiRes("m_saveAttrPresetWin.kSaveAttributePreset"))
+			-c "psWinSavePreset"
+			saveAttrPresetButton;
+		button
+			-label (uiRes("m_saveAttrPresetWin.kClose"))
+			-c "window -e -visible false attrPresetWin" 
+			closeAttrPresetEdButton;
+		formLayout -e
+			-af shelfSeparator "left" 0
+			-af shelfSeparator "right" 0
+			-ac shelfSeparator "bottom" 5 closeAttrPresetEdButton
+
+			-af saveAttrPresetButton "left" 5
+			-af saveAttrPresetButton "bottom" 5
+			-ap saveAttrPresetButton "right" 3 50
+			-an saveAttrPresetButton "top"
+
+			-ap closeAttrPresetEdButton "left" 2 50
+			-af closeAttrPresetEdButton "bottom" 5
+			-af closeAttrPresetEdButton "right" 5
+			-an closeAttrPresetEdButton "top"
+			fl;
+	}
+	updateSaveAttrPresetWin();
+	showWindow attrPresetWin;
+     
+	if (isAProcedure($nodeName))
+	{
+	    // In this case, we want the save preset window to focus on 
+	    // this node, so we delete the callback scriptJob if there
+	    // is any.
+	    //
+	    global int $gAttrPresetWinUpdateJob;
+	    if ($gAttrPresetWinUpdateJob > 0)
+	    {
+	        scriptJob -kill $gAttrPresetWinUpdateJob;
+	        $gAttrPresetWinUpdateJob = -1; 
+	    } 
+	}
+	else
+	{
+		if( $gAttrPresetWinUpdateJob == -1 ){
+			$gAttrPresetWinUpdateJob = `scriptJob -e SelectionChanged "attrPresetWinCallback"`;
+		}
+	}
+
+}
+
+//
+// Update the save preset window for selection changes
+//
+global proc attrPresetWinCallback()
+{
+	global int $gAttrPresetWinUpdateJob;
+	global string $gTmpAttrPresetNodeName;
+
+	if( !`window -exists attrPresetWin` 
+	  || !`window -q -visible attrPresetWin` )
+	{
+		$gTmpAttrPresetNodeName = "";
+		evalDeferred ("scriptJob -kill " +$gAttrPresetWinUpdateJob);
+		$gAttrPresetWinUpdateJob = -1;
+		return;
+	}
+	string $sl[] = `ls -sl`;
+	if( size( $sl ) > 0 ){
+		$gTmpAttrPresetNodeName = $sl[0];
+	} else {
+		$gTmpAttrPresetNodeName = "";
+	}
+	updateSaveAttrPresetWin();
+}

@@ -1,0 +1,469 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Procedure Name:
+//		updateSendToAppMenu
+//
+//  Description:
+//      Update the enable state of the menu items for the available
+//		one-click interop interaction options with the given application,
+//		depending on the app's state.
+//
+//  Input Arguments:
+//		$app - The application that the one-click interaction applies to
+//
+//  Return Value:
+//		None.
+//
+global proc updateSendToAppMenu(string $app)
+{
+	string $appNameNoSpaces = substituteAllString($app," ","");
+	string $menuName = "FileMenuSendTo" + $appNameNoSpaces;
+	setParent -m $menuName;
+
+	string $stateCmd = "OneClickGetState \"" + $app + "\"";
+	int $peerState = `eval($stateCmd)`;
+	switch($peerState) {
+		case 1:
+		{
+			// Installed but not running.
+			menuItem -e -enable false updateCurrentSceneMenuItem;
+			menuItem -e -enable false addToCurrentSceneMenuItem;
+			break;
+		}
+		case 2:	// Running but not connected.
+		case 4:	// Connected with sent data.
+		{
+			menuItem -e -enable true updateCurrentSceneMenuItem;
+			menuItem -e -enable true addToCurrentSceneMenuItem;
+			break;
+		}
+		default:
+			break;
+	}
+}
+
+global proc string getSendToCommandForApp(string $command, string $app)
+{
+	string $returnedCmd;
+
+	string $sendCmd;
+	string $updateCmd;
+	string $addCmd;
+	string $selectCmd;
+
+	switch($app) {
+		case "Mudbox":
+			$sendCmd = "SendAsNewSceneMudbox";
+			$updateCmd = "UpdateCurrentSceneMudbox";
+			$addCmd = "AddToCurrentSceneMudbox";
+			$selectCmd = "SelectPreviousObjectsMudbox";
+			break;
+		case "MotionBuilder":
+			$sendCmd = "SendAsNewSceneMotionBuilder";
+			$updateCmd = "UpdateCurrentSceneMotionBuilder";
+			$addCmd = "AddToCurrentSceneMotionBuilder";
+			$selectCmd = "SelectPreviousObjectsMotionBuilder";
+			break;
+		case "3ds Max":			
+			$sendCmd = "SendAsNewScene3dsMax";
+			$updateCmd = "UpdateCurrentScene3dsMax";
+			$addCmd = "AddToCurrentScene3dsMax";
+			$selectCmd = "SelectPreviousObjects3dsMax";
+			break;
+		default:
+			break;
+	}
+
+	switch($command) {
+		case "Send":
+			$returnedCmd = $sendCmd;
+			break;
+		case "Update":
+			$returnedCmd = $updateCmd;
+			break;
+		case "Add":
+			$returnedCmd = $addCmd;
+			break;
+		case "Select":
+			$returnedCmd = $selectCmd;
+			break;
+		default:
+			break;
+	}
+
+	return $returnedCmd;
+}
+
+//
+//  Procedure Name:
+//		buildSendToAppMenu
+//
+//  Description:
+//      Create menu items for the available one-click interop
+//		interaction options with the given application
+//
+//  Input Arguments:
+//		$app - The application that the one-click interaction applies to
+//
+//  Return Value:
+//		None.
+//
+global proc buildSendToAppMenu(string $app)
+{
+	string $appNameNoSpaces = substituteAllString($app," ","");	
+	string $menuName = "FileMenuSendTo" + $appNameNoSpaces;
+	menu -edit -deleteAllItems $menuName;
+	setParent -m $menuName;
+
+	string $sendCmd = getSendToCommandForApp("Send", $app);
+	string $updateCmd = getSendToCommandForApp("Update", $app);
+	string $addCmd = getSendToCommandForApp("Add", $app);
+	string $selectCmd = getSendToCommandForApp("Select", $app);
+
+	menuItem -label (uiRes("m_buildSendToSubMenus.kSendAsNewScene"))
+		-annotation (getRunTimeCommandAnnotation($sendCmd))
+		-command $sendCmd sendAsNewSceneMenuItem;
+
+	menuItem -label (uiRes("m_buildSendToSubMenus.kUpdateCurrentScene"))
+		-annotation (getRunTimeCommandAnnotation($updateCmd))
+		-command $updateCmd updateCurrentSceneMenuItem;
+
+	menuItem -label (uiRes("m_buildSendToSubMenus.kAddToCurrentScene"))
+		-annotation (getRunTimeCommandAnnotation($addCmd))
+		-command $addCmd addToCurrentSceneMenuItem;
+
+	menuItem -divider true;
+
+	menuItem -label (uiRes("m_buildSendToSubMenus.kSelectPreviouslySentObjects"))
+		-annotation (getRunTimeCommandAnnotation($selectCmd))
+		-command $selectCmd selectPrevSentObjsMenuItem;
+
+
+	updateSendToAppMenu($app);
+
+	// Only need to update the menu item states from now on.
+	//
+	string $postCmd = "updateSendToAppMenu \"" + $app + "\"";
+	menu -e -postMenuCommand $postCmd $menuName;
+}
+
+//
+//  Procedure Name:
+//		updateSendToStatusDisplay
+//
+//  Description:
+//      Callback to display the current one-click interop status
+//		next to the help line, along with buttons to show logs and
+//		halt/reinitiate interop actions.
+//
+//  Input Arguments:
+//		$app - The application that the one-click status update applies to
+//		$state - Maya's current state of interaction with $app
+//
+//  Return Value:
+//		None.
+//
+global proc updateSendToStatusDisplay(string $state, string $app)
+{
+	global string $gHelpLineForm;
+	string $currParent = `setParent -q`;
+	setParent $gHelpLineForm;
+
+	string $connectedText;
+	string $sendingText;
+	string $receivingText;
+
+	switch($app) {
+		case "Mudbox":
+			$connectedText = (uiRes("m_buildSendToSubMenus.kConnectedToMudbox"));
+			$sendingText = (uiRes("m_buildSendToSubMenus.kSendingToMudbox"));
+			$receivingText = (uiRes("m_buildSendToSubMenus.kReceivingFromMudbox"));
+			break;
+		case "MotionBuilder":
+			$connectedText = (uiRes("m_buildSendToSubMenus.kConnectedToMotionBuilder"));
+			$sendingText = (uiRes("m_buildSendToSubMenus.kSendingToMotionBuilder"));
+			$receivingText = (uiRes("m_buildSendToSubMenus.kReceivingFromMotionBuilder"));
+			break;
+		case "3ds Max":
+			$connectedText = (uiRes("m_buildSendToSubMenus.kConnectedToMax"));
+			$sendingText = (uiRes("m_buildSendToSubMenus.kSendingToMax"));
+			$receivingText = (uiRes("m_buildSendToSubMenus.kReceivingFromMax"));
+			break;
+		default:
+			break;
+	}
+
+	switch($state) {
+		case "Connected":
+		case "PreparingToSend":
+		case "PreparingToReceive":
+		case "FinishedReceiving":
+		{
+			// Create the status display if it hasn't already been created.
+			//
+			if(!`frameLayout -exists sendToStatusDisplayFrame`) {
+				frameLayout 
+					-lv false -cl false -cll false sendToStatusDisplayFrame;
+					formLayout -bgc 0.357 0.453 0.255 sendToStatusDisplayForm;
+						text -font "smallPlainLabelFont" -label $connectedText
+							sendToStatusDisplayText;
+						button -h 18 -bgc 0.447 0.451 0.451
+							-label (uiRes("m_buildSendToSubMenus.kUpdate"))
+							sendToStatusDisplayButton;
+
+						formLayout -edit
+							-af sendToStatusDisplayButton "top" 1
+							-af sendToStatusDisplayButton "bottom" 1
+							-af sendToStatusDisplayButton "right" 2
+
+							-af sendToStatusDisplayText "top" 0
+							-af sendToStatusDisplayText "bottom" 0
+							-ac sendToStatusDisplayText "right" 12 sendToStatusDisplayButton
+
+							sendToStatusDisplayForm;
+					setParent ..;	// formLayout
+				setParent ..;	// frameLayout
+			}
+
+			// Make sure the Update button is correctly hooked
+			// up to the newly connected application.
+			//
+			if($state == "Connected") {
+				string $updateCmd = getSendToCommandForApp("Update", $app);
+				button -e -command $updateCmd sendToStatusDisplayButton;
+			}
+		}
+
+		case "ConnectedBusy":
+		{
+			// Show the status display.
+			//
+			frameLayout -e -vis true sendToStatusDisplayFrame;
+			formLayout -edit
+				-ap helpLineFrame "right" 2 82
+				-ap sendToStatusDisplayFrame "left" 0 82
+				-af sendToStatusDisplayFrame "top" 0
+				-af sendToStatusDisplayFrame "bottom" 0
+				-af sendToStatusDisplayFrame "right" 0
+				$gHelpLineForm;
+
+			// Set default text and button state when connected.
+			//
+			string $statusText = $connectedText;
+			int $buttonEnable = 1;				// Hide the Update button unless there is something to resend
+
+			// Update text and button state as necessary.
+			//
+			switch($state) {
+				case "PreparingToSend":
+					$statusText = $sendingText;
+					$buttonEnable = 0;
+					break;
+				case "PreparingToReceive":
+					$statusText = $receivingText;
+					$buttonEnable = 0;
+					break;
+				case "ConnectedBusy":
+					$buttonEnable = 0;
+					break;
+				default:
+					break;
+			}
+
+			text -e -label $statusText sendToStatusDisplayText;
+			button -e -enable $buttonEnable sendToStatusDisplayButton;
+			break;
+		}
+
+		case "FinishedSending":
+		case "Disconnected":
+		{
+			// Hide the status display.
+			//
+			if(`frameLayout -exists sendToStatusDisplayFrame` && `frameLayout -q -vis sendToStatusDisplayFrame`) {
+				frameLayout -e -vis false sendToStatusDisplayFrame;
+				formLayout -edit
+					-af helpLineFrame "right" 0
+					$gHelpLineForm;
+			}
+			break;
+		}
+		default:
+			break;
+	}
+
+	setParent $currParent;
+}
+
+//
+//  Procedure Name:
+//		setSendToStatusDisplayCallback
+//
+//  Description:
+//      Sets the callback function to update the one-click
+//		interop status display.
+//
+//  Input Arguments:
+//		None.
+//
+//  Return Value:
+//		None.
+//
+global proc setSendToStatusDisplayCallback()
+{
+	// Set the callback function to update the status display.
+	//
+	eval("OneClickSetCallback \"updateSendToStatusDisplay\"");
+}
+
+//
+//  Procedure Name:
+//		buildSendToSubMenus
+//
+//  Description:
+//      Create submenu items to support one-click interop connection
+//		interaction with other Suites applications, depending
+//		on whether or not they are installed on the machine.
+//
+//  Input Arguments:
+//		None.
+//
+//  Return Value:
+//		None.
+//
+global proc buildSendToSubMenus()
+{
+	global string $gMainFileMenu;
+	setParent -m $gMainFileMenu;
+
+	if (! `pluginInfo -q -loaded "OneClick"`) {
+		loadPlugin "OneClick";
+	}
+
+	// Create "Send to Mudbox" menu if Mudbox is installed.
+	//
+	int $mudboxState = `eval("OneClickGetState \"Mudbox\"")`;
+	if($mudboxState > 0) {
+        
+    
+		if(!`menuItem -exists FileMenuSendToMudbox`) {
+			menuItem
+                -ltVersion "2016"
+				-subMenu true
+				-insertAfter importFileOptions	// between Import and Export menu items
+				-label (uiRes("m_buildSendToSubMenus.kSendtoMudbox"))
+				-postMenuCommand "buildSendToAppMenu \"Mudbox\""
+				FileMenuSendToMudbox;
+
+			setParent -m ..;
+		}
+
+		if($mudboxState == 3) {	// Busy
+			menuItem -e -enable false FileMenuSendToMudbox;
+		} else {
+			menuItem -e -enable true FileMenuSendToMudbox;
+		}
+	} else {
+		// If Mudbox is not installed, we don't want
+		// the "Send to Mudbox" menu item to appear.
+		//
+		if(`menuItem -exists FileMenuSendToMudbox`) {
+			deleteUI -menuItem FileMenuSendToMudbox;
+		}
+	}
+    
+	// Create "Send to MotionBuilder" menu if MotionBuilder is installed.
+	//
+	int $motionBuilderState = `eval("OneClickGetState \"MotionBuilder\"")`;
+	if($motionBuilderState > 0) {
+		if(!`menuItem -exists FileMenuSendToMotionBuilder`) {
+			menuItem
+				-subMenu true
+				-insertAfter importFileOptions	// between Import and Export menu items
+				-label (uiRes("m_buildSendToSubMenus.kSendtoMotionBuilder"))
+				-postMenuCommand "buildSendToAppMenu \"MotionBuilder\""
+				FileMenuSendToMotionBuilder;
+
+			setParent -m ..;
+		}
+
+		if($motionBuilderState == 3) {	// Busy
+			menuItem -e -enable false FileMenuSendToMotionBuilder;
+		} else {
+			menuItem -e -enable true FileMenuSendToMotionBuilder;
+		}
+	} else {
+		// If MotionBuilder is not installed, we don't want
+		// the "Send to MotionBuilder" menu item to appear.
+		//
+		if(`menuItem -exists FileMenuSendToMotionBuilder`) {
+			deleteUI -menuItem FileMenuSendToMotionBuilder;
+		}
+	}
+
+	// "Send to Softimage" is no longer supported.
+	//
+	if(`menuItem -exists FileMenuSendToSoftimage`) {
+		deleteUI -menuItem FileMenuSendToSoftimage;
+	}
+
+	// Create "Send to 3ds Max" menu if 3ds Max is installed.
+	//
+	int $maxState = `eval("OneClickGetState \"3ds Max\"")`;
+	if($maxState > 0) {
+		if(!`menuItem -exists FileMenuSendTo3dsMax`) {
+			menuItem
+				-subMenu true
+				-insertAfter importFileOptions	// between Import and Export menu items
+				-label (uiRes("m_buildSendToSubMenus.kSendto3dsMax"))
+				-postMenuCommand "buildSendToAppMenu \"3ds Max\""
+				FileMenuSendTo3dsMax;
+
+			setParent -m ..;
+		}
+
+		if($maxState == 3) {	// Busy
+			menuItem -e -enable false FileMenuSendTo3dsMax;
+		} else {
+			menuItem -e -enable true FileMenuSendTo3dsMax;
+		}
+	} else {
+		// If 3ds Max is not installed, we don't want
+		// the "Send to 3ds Max" menu item to appear.
+		//
+		if(`menuItem -exists FileMenuSendTo3dsMax`) {
+			deleteUI -menuItem FileMenuSendTo3dsMax;
+		}
+	}
+
+	if ($mudboxState || $motionBuilderState || $maxState) {
+		// If any of the applications are installed, we want to
+		// set the callback to update the one-click status display
+		// as necessary.
+		//
+		setSendToStatusDisplayCallback();
+	}
+}
+
+{
+}        

@@ -1,0 +1,168 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+global proc aero(){
+undoInfo -cn "Aero" -ock ;
+
+// Save selection
+string $sel[] = `ls -sl`;
+
+// Create Container node
+string $cont = `bifrost -c -g "Aero" -rv "1.0"`;
+setAttr ($cont+".perFrameCaching") 1;
+if( `optionVar -exists bifrostScratchCacheVar`) {
+	if( !`optionVar -query bifrostScratchCacheVar` ) {
+		setAttr ($cont+".perFrameCaching") 0;
+	}
+}
+
+setAttr ($cont+".masterVoxelSize") 0.5;
+setAttr ($cont+".masterVoxelSizeRenderFactor") 1.0;
+setAttr ($cont+".minDepth") 0;
+setAttr ($cont+".maxDepth") 7;
+setAttr ($cont+".airDensity") 1.225;
+setAttr ($cont+".airTemperature") 20.0;
+setAttr ($cont+".flipParticleDensity") 1.0;
+setAttr ($cont+".renderParticleDensity") 2.0;
+setAttr ($cont+".smokeThreshold") 0.1;
+setAttr ($cont+".adaptive") 0;
+setAttr ($cont+".gravityDirection") -type double3 0 -1 0;
+setAttr ($cont+".gravityMagnitude") 9.8;
+
+setAttr ($cont+".enableSpatialAdapt") 1;
+
+setAttr ($cont+".transportStepAdaptivity") 0.32;
+addAttr -e -min -0 ($cont+".transportStepAdaptivity");
+addAttr -e -max 1 ($cont+".transportStepAdaptivity");
+
+setAttr ($cont+".transportTimeScale") 1;
+setAttr ($cont+".minSteps") 1;
+setAttr ($cont+".maxSteps") 1000;
+
+setAttr ($cont+".timeStepAdaptivity") 0.1;
+
+connectAttr -f ($cont+".worldMatrix[0]") ($cont+".transform");
+
+
+// Create Shape connect it to the container
+string $shape = `createNode "bifrostShape"`;
+setAttr ($shape+".steps") 250;
+setAttr ($shape+".bifrostRenderType") 0;
+setAttr ($shape+".particles") 1;
+setAttr ($shape+".particleType") 0; // Point particles
+setAttr ($shape+".particleChannel") -type "string" "position";
+setAttr ($shape+".particleColorChannel") -type "string" "velocity";
+setAttr ($shape+".particleVectorChannel") -type "string" "velocity";
+setAttr ($shape+".particleNumericChannel") -type "string" "velocity";
+setAttr ($shape+".particleColorRemapMin") 0.0;
+setAttr ($shape+".particleColorRemapMax") 20.0;
+setAttr ($shape+".voxels") 0;
+setAttr ($shape+".voxelType") 0; // Soft Voxels
+setAttr ($shape+".voxelChannel") -type "string" "smoke";
+setAttr ($shape+".voxelColorChannel") -type "string" "smoke";
+setAttr ($shape+".voxelColorRemapMin") 0.0;
+setAttr ($shape+".voxelColorRemapMax") 3.0;
+setAttr ($shape+".voxelColorRemap[0].voxelColorRemap_Color") -type double3 0 0 0;
+connectAttr -force ($cont+".AeroObject") ($shape+".object");
+
+// Get transform
+string $parents[] = `listRelatives -fullPath -parent $shape`;
+string $transform = $parents[0];
+
+// Create the bifrost material shader
+string $shader = `shadingNode -asShader bifrostAeroMaterial`;
+setAttr ($shader+".densityScale") 1.0;
+setAttr ($shader+".densityThreshold") 0.001;
+setAttr ($shader+".scatteringDensityCutoff") 0.0;
+setAttr ($shader+".scatteringColor") -type double3 1 1 1 ;
+string $shaderStrs[];
+int $numStrs = `tokenize $shader ":" $shaderStrs`;
+string $shaderBase = $shaderStrs[$numStrs - 1];
+ 
+// Create Shading Group and connect shader to it
+string $SG = `createNode -n ($shaderBase+"SG") "shadingEngine"`;
+setAttr ".ihi" 0;
+setAttr -s 3 ".dsm";
+setAttr ".ro" true;
+relationship "link" ":lightLinker1" ($SG+".message") ":defaultLightSet.message";
+relationship "shadowLink" ":lightLinker1" ($SG+".message") ":defaultLightSet.message";
+connectAttr -na ($SG+".pa") ":renderPartition.st";
+connectAttr -f ($shader+".outColor") ($SG+".surfaceShader");
+
+// Apply the Shading Group on the transform
+select -r $transform;
+sets -e -forceElement $SG;
+
+// Hook up the temporary mental ray material tree
+bifrostMR $SG "volume";
+
+
+
+// Set default meshing settings
+// Note: the bifrostShape node initialization also sets the defaults
+setAttr ($shape + ".meshingEnable") false  ;
+setAttr ($shape + ".meshingDropletRevealFactor") 3 ;
+setAttr ($shape + ".meshingSurfaceRadius") 1.4 ;
+setAttr ($shape + ".meshingDropletRadius") 1.2 ;
+setAttr ($shape + ".meshingKernelFactor")  2.0;
+setAttr ($shape + ".meshingSmoothing")  2;
+setAttr ($shape + ".meshingResolutionFactor")  1.0;
+setAttr ($shape + ".meshingFlipFaceNormals")  false;
+
+// create bifrost mesh shape for meshing output
+string $meshShape = `createNode "mesh" -n "bifrostMeshShape#"`;
+string $parents[] = `listRelatives -fullPath -parent $meshShape`;
+string $meshTransform = $parents[0];
+
+// Set the motion vector of a bifrostMeshShape to its  bifrost velocity CPV.
+setAttr -type "string" ($meshShape + ".motionVectorColorSet") "bifrostVelocity";
+
+// Connect bifrostShape output to bifrostMeshShape input
+connectAttr -force ($shape + ".meshingOutput") ($meshShape + ".inMesh");
+
+// Assign the shading group to the birostMeshShape
+select $meshShape;
+sets -e -forceElement $SG;
+
+// Add mental ray user data to the mesh
+if (`pluginInfo -q -l "Mayatomr"`)
+{
+	catchQuiet( `miCreateGlobalsNode` );
+	catchQuiet( `setAttr "miDefaultOptions.autoVolume" 1` );
+	catchQuiet( `setAttr "miDefaultOptions.shadowMethod" 3` );
+
+	// Add mental ray user data to the mesh
+	bifrostMRMeshUserData $meshTransform ($cont+".AeroObject");
+}
+
+
+// if we had any meshes selected before creating the the container, use them as emitters
+if(size($sel) > 0) {
+	select -r $transform;
+	select -add $sel;
+	addBifrostEmitter "Emitters";
+}
+
+// Restore selection
+select -r $transform;
+
+undoInfo -cck ;
+}

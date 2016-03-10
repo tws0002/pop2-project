@@ -1,0 +1,171 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  2005
+//
+//  Description:
+//		
+//
+
+proc int clashesWithInSceneCacheFile(string $descriptionFileNames[],
+									 string $cachesToBeDeleted[])
+{
+	string $allFiles[] = `ls -type cacheFile`;
+	for ($cf in $allFiles) {
+		if (AWNumberOfOccurrencesInStringArray($cf,$cachesToBeDeleted) > 0) {
+			continue;
+		}
+		
+		string $path = `getAttr ($cf+".cachePath")`;
+		string $fileName = `getAttr ($cf+".cacheName")`;
+		string $cacheFileName = ($path+$fileName+".xml");
+		for ($df in $descriptionFileNames) {
+			if ($df == $cacheFileName) {
+				return 1;
+			}
+		}
+	}
+	return 0;
+}
+
+global proc string getCacheDirectory(	string $directory, string $filerule,
+										string $objsToCache[],
+										string $fileName,
+										int $useAsPrefix, int $perGeometry,
+										string $replaceMode,
+										int $force,
+										int $points )
+{
+	string $cacheDirectory;
+	string $subDir, $baseDirectory;
+	
+	if ($directory == "") {
+		$directory = `workspace -q -fre $filerule`;
+		$directory = `workspace -en $directory`;
+		$directory += "/";
+		$subDir = getNameForCacheSubDir(0,$directory, "");
+		$baseDirectory = $directory;
+		$directory += $subDir;
+	}
+	else {
+		if( !endsWith($directory, "/") ) { $directory += "/"; }
+		$subDir = basename( $directory, "");
+		int $len = size($directory) - size($subDir) - 1;
+		$baseDirectory = startString( $directory, $len);
+	}
+
+	$cacheDirectory = $directory;
+	if (`file -q -exists $cacheDirectory`) {
+		// Check whether cache files for this attribute exist in this
+		// directory. If they do, query the user whether they want to
+		// overwrite the existing data or to create a uniquely named
+		// directory
+		//
+		string $queryCmd = ("cacheFile ");
+		if( $fileName != "" ) {
+			$queryCmd += ("-fileName \"" + $fileName + "\" ");
+		}
+		$queryCmd += ("-directory \""+$cacheDirectory+"\" ");
+		if( !$perGeometry ) {
+			$queryCmd += "-singleCache ";
+		}
+		if( $useAsPrefix ) {
+			$queryCmd += "-prefix ";
+		}
+		for ($obj in $objsToCache) {
+			if ($points) {
+				$queryCmd += (" -points "+$obj);
+			} else {
+				$queryCmd += (" -cnd "+$obj);				
+			}
+		}
+		$queryCmd += " -query -descriptionFileName";
+		string $descriptionFileNames[] = `eval $queryCmd`;
+
+		int $dfExists = 0;
+		string $existingDir;
+		for ($df in $descriptionFileNames) {
+			if (`file -q -exists $df`) {
+				$existingDir = $df;
+				$dfExists = 1;
+				break;
+			}
+		}
+
+		// find existing caches that will be deleted
+		//
+		string $existingCaches[];
+		if ($replaceMode == "replace") {
+			for ($obj in $objsToCache) {
+				string $cachesToBeDeleted[] = `findExistingCaches($obj)`;
+				for ($cf in $cachesToBeDeleted) {
+					$existingCaches[size($existingCaches)] = $cf;
+				}
+			}
+		}
+		
+		if ($dfExists) {
+			if (clashesWithInSceneCacheFile($descriptionFileNames,
+											$existingCaches)) {
+				// assume user will not want to overwrite files if it would
+				// mean clobbering data used elsewhere in this very file
+				//
+				$subDir = getNameForCacheSubDir(1,$baseDirectory, $subDir);
+				$cacheDirectory = ($baseDirectory + $subDir);
+				$dfExists = 0;
+			}
+		}
+		
+		if ($dfExists && !$force) {
+			string $replace = (uiRes("m_getCacheDirectory.kReplace"));
+			string $rename = (uiRes("m_getCacheDirectory.kRename"));
+			string $noReplace = (uiRes("m_getCacheDirectory.kDoNotReplace"));
+			string $cancel = (uiRes("m_getCacheDirectory.kCancel"));
+			string $format = (uiRes("m_getCacheDirectory.kReplaceExistingFmt"));
+			string $msg = `format -stringArg $existingDir $format`;
+			string $userChoice = `confirmDialog 
+				-title (uiRes("m_getCacheDirectory.kCreateCacheWarning"))
+				-message $msg
+				-messageAlign "left"
+				-button $rename
+				-button $noReplace
+				-button $cancel
+				-button $replace
+				-defaultButton $rename
+				-cancelButton $cancel -dismissString $cancel`;
+			if ($userChoice == $cancel) {
+				return "";
+			} else if ($userChoice == $rename) {
+				return "rename";
+			} else if ($userChoice == $noReplace) {
+				$subDir = getNameForCacheSubDir(1,$baseDirectory, $subDir);
+				$cacheDirectory = ($baseDirectory + $subDir);
+			}
+		}
+	}
+
+	if( $subDir == "" ) { return ""; }
+
+	return $cacheDirectory;
+}
+

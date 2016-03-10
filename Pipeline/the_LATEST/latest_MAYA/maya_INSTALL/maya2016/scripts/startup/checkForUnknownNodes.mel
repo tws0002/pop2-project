@@ -1,0 +1,131 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+// Creation Date:  07.Nov.2002
+//
+//  Procedure Name:
+//      checkForUnknownNodes
+//
+//  Description:
+//		Check the scene for unknown nodes before saving the scene.
+//      If unknown nodes are found prompt the user with a dialog asking
+//		if the nodes should be removed.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      int number of unknown nodes removed
+//
+
+proc unlockAndDeleteNode(string $nodeName)
+{
+    // Delete the unknown node
+    int $isLocked[] = `lockNode -q -lock $nodeName`;
+    if($isLocked[0]){
+        lockNode -lock false $nodeName;
+    }                
+    delete $nodeName;
+}
+
+global proc int checkForUnknownNodes()
+{ 
+	int $numUnknownNodes = 0;
+	if (`about -evalVersion` || `about -ltVersion`) {
+		string $allUnknownNodes[] = `ls -type unknown -type unknownDag -type unknownTransform`;
+
+		$numUnknownNodes = size($allUnknownNodes);
+        
+		string $yes = (uiRes("m_checkForUnknownNodes.kYes"));
+		string $no = (uiRes("m_checkForUnknownNodes.kNo"));
+		string $ok = (uiRes("m_checkForUnknownNodes.kOK"));
+
+		if (0 < $numUnknownNodes) {
+			string $response = $yes;
+			if (`about -evalVersion`) {
+				// If file type is maya ple, then only ask the user confirmation
+				// for deleting unknown nodes. For .ma and .mb files, delete unknown nodes
+				// since ma -> mp or mb -> mp conversion is not allowed unless user
+				// deletes unknown nodes.
+				//
+				$response = `confirmDialog
+					-title (uiRes("m_checkForUnknownNodes.kMayaPersonalLearning"))
+					-parent "MayaWindow"
+					-message (uiRes("m_checkForUnknownNodes.kSceneFileMessage"))
+					-button $yes
+					-button $no
+					-defaultButton $no
+					-cancelButton $no
+					-dismissString $no`;
+			}
+
+			if ($yes == $response) {
+				print (uiRes("m_checkForUnknownNodes.kDletingUnknown"));
+                print $allUnknownNodes;
+                for($unknownNode in $allUnknownNodes)
+                {
+                    // Validate if the node still exist, sometimes node deletion triggers other node deletion.
+                    if(`objExists $unknownNode`)
+                    {
+                        if(catchQuiet(`delete $unknownNode`))
+                        {
+                            
+                            // If the node that we try do delete is in a locked containers we need to unlock that or these containers
+                            // in order to be able to delete it.
+                            string $parentContainer = $unknownNode;                            
+                            string $nodeToRelock[]; 
+                            
+                            while(true)
+                            {
+                                $parentContainer = `container -q -findContainer $parentContainer`; 
+                                $isLocked = (size($parentContainer) > 0) ? `lockNode -q -lock $parentContainer` : {0};
+                                if($isLocked[0]){                                
+                                    $nodeToRelock[size($nodeToRelock)] = $parentContainer;
+                                } else {
+                                    break;
+                                }
+                            }  
+                                                    
+                            // Unlock the locked containers found in reverse order
+                            int $i = (size( $nodeToRelock ) -1);                        
+                            for( ; $i >= 0; $i-- ) {                                 
+                                lockNode -lock false $nodeToRelock[$i];
+                            }
+                            
+                            
+                            unlockAndDeleteNode($unknownNode);
+                            
+                            // Relock the containers
+                            for($lockedContainer in $nodeToRelock)
+                            {               
+                                lockNode -lock true $lockedContainer;
+                            }                                                                    
+                        
+                        } 
+                    }
+                }
+			}
+		}
+	}
+	return ($numUnknownNodes);
+}

@@ -1,0 +1,186 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+//
+
+
+//
+//  Procedure Name:
+//      createOffsetSurfaceOutline
+//
+//  Description:
+//		This generates an offset surface cartoon outline for all 
+//		selected objects
+//
+//  Input Arguments:
+//		fixedWidth   If true then lines are constant screenspace width
+//	    innerLine    If true then surface is inset instead of offset for lines.
+//		autoFlip	 If true then we negate the offset direction if needed.
+//
+//  Return Value:
+//      None.
+//
+//
+
+
+
+
+proc setupOutlineMesh( string $obj, int $fixedWidth, int $innerLine, int $autoFlip, string $lineGlobals )
+{
+	float $widthFac = 0.1;
+
+	string $newMesh = `createNode mesh`;
+	string $lineObj = $newMesh;
+	if( $innerLine ){
+		$widthFac *= -0.1;
+		$lineObj = $obj;	
+	}
+	setAttr ($lineObj + ".doubleSided") 0;
+	setAttr ($lineObj + ".opposite") 1;
+	addAttr -ln lineWidthScale -sn lws -at double  -min 0 -max 20 -dv 1 $newMesh;
+	setAttr -e -keyable true ($newMesh + ".lineWidthScale");	
+
+	string $tforms[] = `listTransforms $obj`;
+	string $newTforms[] = `listTransforms $newMesh`;
+	//string $sourceMesh = `connectionInfo -sfd ($obj + ".inMesh")`;
+	//connectAttr $sourceMesh ($newMesh + ".inMesh");
+
+	string $type = `nodeType $obj`;
+	if( !$innerLine || $type == "mesh" ){
+		setAttr ($lineObj + ".displayEdges") 2;
+	}
+	if( $type == "mesh" ){
+		connectAttr ($obj + ".outMesh") ($newMesh + ".inMesh");
+	} else if( $type == "nurbsSurface" ){
+		string $tess = `createNode nurbsTessellate`;
+		connectAttr ($obj + ".worldSpace[0]") ($tess + ".inputSurface");
+		connectAttr ($tess + ".outputPolygon") ($newMesh + ".inMesh");
+	} else {
+		warning( (uiRes("m_createOffsetSurfaceOutline.kBadNodeType")));
+		return;
+	}
+	polyChipOff -ch 1 -ltz $widthFac $newMesh;
+	string $inputs[] = `listConnections ($newMesh + ".inMesh")`;
+	string $chip = $inputs[0];
+	setAttr ($chip + ".duplicate") 0;
+/*
+	string $material = `shadingNode -asShader "surfaceShader"`;
+	setAttr ($material + ".outColor" ) 1 1 1;
+	// create and assign shading group
+	string $sg = `sets -renderable true -noSurfaceShader true -empty -name ($material + "SG")`;
+	defaultNavigation
+		-connectToExisting
+		-source $material
+		-destination $sg;
+	if( $innerLine ){
+		select -r $newMesh;
+	} else {
+		select -r $obj;
+	}
+	hyperShade -assign $sg;
+*/
+
+	string $material = `shadingNode -asShader "surfaceShader"`;
+	// create and assign shading group
+	string $sg = `sets -renderable true -noSurfaceShader true -empty -name ($material + "SG")`;
+	defaultNavigation
+		-connectToExisting
+		-source $material
+		-destination $sg;
+	if( $innerLine ){
+		select -r $obj;
+	} else {
+		select -r $newMesh;
+	}
+	hyperShade -assign $sg;
+	rename $material "toonLineColor";
+
+	string $lineScale1 = `createNode multiplyDivide`;
+	connectAttr ($newMesh + ".lineWidthScale") ($lineScale1 + ".input2X");
+	string $lineGlobalScale = `createNode multiplyDivide`;
+	connectAttr ($lineGlobals + ".lineWidth") ($lineGlobalScale + ".input2X");
+	if( $fixedWidth ){
+		string $perspCameras[] = `listCameras -p`;
+		if( size($perspCameras) > 0){
+			for($cameraList = 0; $cameraList < size($perspCameras); $cameraList++) {
+				string $transStr = $perspCameras[$cameraList] + ".translate";
+
+				if(`objExists $transStr`) {
+					string $distBetween = `createNode distanceBetween`;
+					connectAttr  $transStr ($distBetween + ".point1");
+					connectAttr  ($newMesh + ".center") ($distBetween + ".point2");
+					string $lineScale2 = `createNode multiplyDivide`;
+					connectAttr  ($distBetween + ".distance") ($lineScale2 + ".input2X");
+					connectAttr  ($lineScale2 + ".outputX") ($lineScale1 + ".input1X");
+					$widthFac *= 0.1;
+					connectAttr ($lineGlobalScale + ".outputX") ($lineScale2 + ".input1X");
+					connectAttr ($lineGlobals + ".viewUpdate") ($distBetween + ".nodeState");
+					break;
+				}
+			}
+		}
+	} else {
+		connectAttr ($lineGlobalScale + ".outputX") ($lineScale1 + ".input1X");
+	}
+	setAttr ($lineGlobalScale + ".input1X") $widthFac;
+	connectAttr ($lineScale1 + ".outputX") ($chip + ".ltz");
+
+
+	if( $autoFlip && $type == "mesh" ){
+		select -r $obj;
+		float $objVol = computePolysetVolume();
+		if( $objVol < 0 ){
+			string $fmt = (uiRes("m_createOffsetSurfaceOutline.kReversingNormals"));
+			print( `format -s $obj $fmt` );
+			polyNormal -normalMode 0 -ch 0 $obj;
+		}
+	}
+	connectAttr ($lineGlobals + ".lineVisibility") ($lineObj + ".visibility");
+	$newTforms[0] = `rename $newTforms[0] "outline#"`;
+	parent -r $newTforms[0] $tforms[0];
+
+}
+
+global proc createOffsetSurfaceOutline(int $fixedWidth, int $innerLine, int $autoFlip)
+{
+	string $objs[] = `ls -sl -dag -ni -type mesh -type nurbsSurface`;
+	if( $fixedWidth ){
+		cycleCheck -e off;
+	}
+	// string $lineGlobals = "globalLineAttributes";	
+	string $lineGlobals = `createNode toonLineAttributes`;	
+/*
+	if( !objExists(	"globalLineAttributes" ) ){
+		$lineGlobals = `createNode -name "globalLineAttributes" unknown`;
+		addAttr -ln lineWidthScale -sn lws -at double  -min 0 -max 50 -dv 1 $lineGlobals;
+		setAttr -e -keyable true ($lineGlobals + ".lineWidthScale");	
+		addAttr -ln lineVisibility -sn lv -at bool  -dv true $lineGlobals;
+		setAttr -e -keyable true ($lineGlobals + ".lineVisibility");	
+		addAttr -ln viewUpdate -sn vu -at "enum" -en "ON=0:OFF=2:" $lineGlobals;
+		setAttr -e -keyable true ($lineGlobals + ".viewUpdate");	
+	}
+*/
+	string $obj;
+	for( $obj in $objs ){
+		setupOutlineMesh( $obj, $fixedWidth, $innerLine, $autoFlip, $lineGlobals );		
+	}
+}

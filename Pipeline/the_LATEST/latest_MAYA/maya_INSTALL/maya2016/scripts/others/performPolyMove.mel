@@ -1,0 +1,302 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Creation Date:  4 April 1997
+//
+//  Description:
+//
+//
+//  Procedure Name:
+//      performPolyMove(string $operation, int $option)
+//
+//  Description:
+// 		brings a dialog box to set chip off parameters if $option==1
+// 		if ($option ==0) performs an extrude instead
+// 		returns a command string otherwise.
+//         
+//  Input Arguments:
+//        $option : 
+//        $operation : the type of item to move, if empty string: moves the current pick mask component.
+//  Return Value:
+//        command string iff $option==2
+//
+
+proc setOptionVars (string $comp, int $forceFactorySettings)
+{
+	string $ovar="polyMove" + $comp;
+	
+//   -ran/-random 
+	if ($forceFactorySettings || !`optionVar -exists ($ovar+"Random")`)
+		optionVar -floatValue ($ovar+"Random") 0.;
+
+	if ($comp == "e") {
+//	-lc/localCenter enum <I>0|1|2</I>
+//       Local center on the edge. (Middle point : 0, Start point : 1, End point :2)
+		if ($forceFactorySettings || !`optionVar -exists ($ovar+"LocalCenter")`)
+            optionVar -intValue ($ovar+"LocalCenter") 1;
+	}
+}
+
+global proc performPolyMoveSetup (string $comp, string $parent, int $forceFactorySettings)
+{
+	setOptionVars($comp, $forceFactorySettings);
+	setParent $parent;
+	int $ival; float $fval;
+	
+	string $ovar="polyMove" + $comp;
+	
+	$fval =`optionVar -query ($ovar+"Random")`;
+	floatSliderGrp -edit -value $fval polyMoveRandom;
+
+	if ($comp == "e")
+	{
+		$ival = `optionVar -query ($ovar+"LocalCenter")`;
+		optionMenuGrp -edit -sl $ival polyMoveLocalCenter;
+	}
+}
+
+global proc performPolyMoveCallback (string $comp, string $parent, int $doIt)
+{
+	string $ovar="polyMove" + $comp;
+	setParent $parent;
+
+	optionVar -floatValue ($ovar+"Random")
+		`floatSliderGrp -query -value polyMoveRandom`;
+	
+	if ($comp == "e")
+	{
+		optionVar -intValue ($ovar+"LocalCenter")
+			`optionMenuGrp -query -sl polyMoveLocalCenter`;
+	}
+
+	if ($doIt) {
+		performPolyMove $comp 0;
+		string $tmpCmd = "performPolyMove \"" + $comp + "\" 0";
+		addToRecentCommandQueue $tmpCmd "PolyMove";
+	}
+}
+
+proc polyMoveOptions (string $comp)
+{
+	// Global template variables for form spacing
+	global int $gOptionBoxTemplateDescriptionMarginWidth;
+	global int $gOptionBoxTemplateFrameSpacing;
+	
+	string $commandName = "performPolyMove";
+
+	string $callback = ($commandName + "Callback " + $comp);
+	string $setup = ($commandName + "Setup " + $comp);
+	   
+	string $layout = getOptionBox();
+	setParent $layout;
+ 	setUITemplate -pushTemplate OptionBoxTemplate;
+
+	// Form layout
+	string $parent = `formLayout polyMoveOptions`;
+	
+		// Description frame
+		string $descriptionFrame = 
+		`frameLayout -label (uiRes("m_performPolyMove.kDescriptionFrame")) -mw $gOptionBoxTemplateDescriptionMarginWidth`;	
+			text (uiRes("m_performPolyMove.kDescription"));
+		setParent $parent; // frameLayout	
+
+		// Settings frame
+		string $settingsFrame = 
+		`frameLayout -label (uiRes("m_performPolyMove.kSettingsFrame"))`;
+			columnLayout;
+
+				floatSliderGrp 
+					-label (uiRes("m_performPolyMove.kRandom")) 
+					polyMoveRandom;
+					
+				if ($comp == "e")
+				{
+					optionMenuGrp -label (uiRes("m_performPolyMove.kLocalCenter")) polyMoveLocalCenter;
+						menuItem -label (uiRes("m_performPolyMove.kMiddle")) LocalCenMiddleMenuItem;
+						menuItem -label (uiRes("m_performPolyMove.kStart")) LocalCenStartMenuItem;
+						menuItem -label (uiRes("m_performPolyMove.kEnd")) LocalCenEndMenuItem;
+				}
+	
+		setParent $parent; // frameLayout	
+		
+	setParent ..; // formLayout
+
+	// Attach Description/Settings frames to form layout
+	formLayout -edit
+		-attachForm $descriptionFrame "top" $gOptionBoxTemplateFrameSpacing
+		-attachForm $descriptionFrame "left" $gOptionBoxTemplateFrameSpacing
+		-attachForm $descriptionFrame "right" $gOptionBoxTemplateFrameSpacing
+		-attachNone $descriptionFrame "bottom"
+
+		-attachControl $settingsFrame "top" $gOptionBoxTemplateFrameSpacing $descriptionFrame
+		-attachForm $settingsFrame "left" $gOptionBoxTemplateFrameSpacing
+		-attachForm $settingsFrame "right" $gOptionBoxTemplateFrameSpacing
+		-attachNone $settingsFrame "bottom" 
+
+	$parent;
+	
+	setUITemplate -popTemplate;
+	   
+	string $lbl, $buttonLbl;
+	if ($comp == "f") 			$lbl = (uiRes("m_performPolyMove.kFace")); 
+	else if ($comp == "e") 		$lbl = (uiRes("m_performPolyMove.kEdge")); 
+	else if ($comp == "vtx")	$lbl = (uiRes("m_performPolyMove.kVertex"));
+	else if ($comp == "map")	$lbl = (uiRes("m_performPolyMove.kUVs"));
+	$buttonLbl = (uiRes("m_performPolyMove.kTransformButton"));
+	
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit -label (`format -s $lbl $buttonLbl`)
+	       -command ($callback + " " + $parent + " " + 1)
+		$applyBtn;
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + $parent + " " + 0 + "; hideOptionBox")
+		$saveBtn;
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + " " + $parent + " " + 1)
+		$resetBtn;
+			 
+	string $title = (uiRes("m_performPolyMove.kTransformComponent"));
+	setOptionBoxTitle( `format -s $lbl $title` );
+
+	//	Customize the 'Help' menu item text.
+	//
+	setOptionBoxHelpTag( "MoveComponent" );
+
+	eval (($setup + " " + $parent + " " + 0));
+	scriptJob -protected
+		-parent $parent 
+		-event "SelectTypeChanged" "evalDeferred \"performPolyMove \\\"\\\" 1\"";
+
+	showOptionBox();
+}
+
+proc string assembleCmd (string $comp)
+{
+	global int $polyGroupComponents;
+	string $ovar="polyMove"+$comp;
+	string $cmd="";
+	
+	if ($comp == "f") $cmd="polyMoveFacet";
+	else if ($comp == "e") $cmd="polyMoveEdge";
+	else if ($comp == "vtx") $cmd="polyMoveVertex";
+	else if ($comp == "map") $cmd="polyMoveUV";
+	
+	// history flag
+	int $doHistory = `constructionHistory -q -toggle`;
+	$cmd = ($cmd + " -constructionHistory " + $doHistory);
+	
+	// random flag
+	$cmd = ($cmd + " -random " + `optionVar -query ($ovar+"Random")`);
+	
+	// localCenter flag
+	if ($comp == "e")
+	{
+		int $localCenter = `optionVar -query ($ovar+"LocalCenter")` -1;
+		$cmd = ($cmd + " -localCenter " + $localCenter);
+	}
+	
+	return $cmd;
+}
+
+global proc string performPolyMove (string $comp, int $option)
+{	
+	string $cmd;
+	string $lbl;
+	string $sel[];
+	
+	
+	string $vertSelection[];
+	string $edgeSelection[];
+	string $faceSelection[];
+	string $UVSelection[];
+	
+	$vertSelection = `filterExpand -sm 31`;
+	$edgeSelection = `filterExpand -sm 32`;
+	$faceSelection = `filterExpand -sm 34`;
+	$UVSelection = `filterExpand -sm 35`;
+	
+	if ($comp == "") {
+		
+		if (`size($vertSelection)`){
+			$comp = "vtx";
+		} else if (`size($faceSelection)`){
+			$comp = "f";
+		} else if (`size($edgeSelection)`){
+			$comp = "e";
+		} else if (`size($UVSelection)`){
+			$comp = "map";	
+		}else {
+			$comp = "vtx";
+		}
+
+		// if still not resolved, take it to be vertex selection
+		if($comp == "")
+			$comp = "vtx";
+	}
+
+	if ($comp == "f") $lbl="polyMoveFacet";
+	else if ($comp == "e") $lbl="polyMoveEdge";
+	else if ($comp == "vtx") $lbl="polyMoveVertex";
+	else if ($comp == "map") $lbl="polyMoveUV";
+	else {
+		warning (uiRes("m_performPolyMove.kPolyComponentNotSelected"));
+		return "";
+	}
+	
+	switch ($option) {
+	case 0:
+		$sel=`polyCheckSelection $lbl $comp 0`;
+		if (size($sel) != 0) {
+			setOptionVars($comp, false);
+			int $index=0;
+			string $oldnodes[]=`ls -sl -dep`;
+			if (size($oldnodes) > 0)
+				select -d $oldnodes;
+			while (size($sel) > $index) {
+				string $cursel[];
+				string $res[];
+				$index=`polyNextSelectionBatch $sel $cursel $index`;
+				string $cmd=`assembleCmd $comp`;
+				for ($i=0; $i<size($cursel); $i++)
+					$cmd=($cmd + " " + $cursel[$i]);
+				$res=`evalEcho $cmd`;
+
+				if (size($res) > 0) {
+					select -add $res;
+				}
+
+			}
+			clear $sel;
+			// *** should perhaps remove the following line
+			// and restore the current ctx instead.
+			setToolTo ShowManips;	
+		}
+		break;
+	case 1: polyMoveOptions $comp; break;
+	default:
+		// useless, but we'd like a fix: setOptionVars($comp, false);
+		$cmd = "performPolyMove \"\" 0";
+	}
+	return $cmd;
+}

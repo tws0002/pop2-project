@@ -1,0 +1,137 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// Description:
+//		Make it so that objects do not instance
+//		this shader.
+//
+//		Note: This procedure does not handle the case
+//		where the texture being used by the shader is instanced.
+//
+global proc 
+removeShaderInstances(string $shader)
+{
+	// Parse through the full list and separate
+	// the entries by object.
+	string $fullList[] = `sets -q $shader`;
+	string $sepList[];
+	string $sepListObj[];
+	int $numSep = 0;
+	int $numEntries = size($fullList);
+	
+	// Scan each item in the full list
+	for ($i=0; $i < $numEntries; $i++) {
+		
+		string $entry = $fullList[$i];
+		string $buf[];
+		string $objPart;
+		
+		// Degenerate case. Add the first item
+		if ($numSep == 0) {
+			int $bsize = `tokenize $entry "." $buf`;
+			$sepListObj[$numSep] = $buf[0];
+			$sepList[$numSep] =  $entry;
+			$numSep++;
+		}
+		
+		// Adding additional items
+		else {
+			int $bsize = `tokenize $entry "." $buf`;	  
+			
+			// If have a component description, do
+			// a search for an existing item
+			//
+			if ($bsize > 1) {
+				int $found = 0;
+				
+				// Search...
+				for ($b=0; $b<$numSep; $b++) {
+					
+					// Found an existing entry, add item to it
+					if ($sepListObj[$b] == $buf[0]) {
+						$found = 1;
+						$sepList[$b] = $sepList[$b] + " " + $entry;
+						break;
+					}
+				}
+				
+				// Add a new entry, since not found
+				if (!$found) {
+					$sepListObj[$numSep] = $buf[0];
+					$sepList[$numSep] =  $entry;
+					$numSep++;			
+				}
+			}
+			
+			// Add a new entry
+			else {
+				$sepListObj[$numSep] = $buf[0];
+				$sepList[$numSep] =  $entry;
+				$numSep++;			
+			}
+		}
+	}
+	
+	// Duplicate for every item except the first item
+	// If there is only 1 item. i.e. 1 object/comp associated
+	// with the shader than no instancing is required 
+	// naturally.
+	//
+	// You can't duplicate the initial shading group, and
+	// things like convertSolidTexture will fail on this.
+	// so we need to create a non-default shader for even
+	// the first object.
+	int $start = 1;
+	string $shaderType = defaultShaderType();
+	if ($shader == "initialShadingGroup") {
+		string $fmt = (uiRes("m_removeShaderInstances.kCannotDupShader"));
+		warning(`format -s $shaderType $fmt`);
+		$start = 0;
+	}
+	
+	for ($i=$start; $i<$numSep; $i++) {
+		string $newName = ($shader + "_" + $i);
+		// If the shader is the default shader we can't duplicate it.
+		// So just create a new dummy shader of type
+		//	lambert
+		//
+		if ($shader == "initialShadingGroup") {
+			string $newName2 = `shadingNode -name $newName -asShader $shaderType`;
+			string $sgName = ($newName2 + "SG");
+			string $sgName = `sets -renderable true -noSurfaceShader true -empty -name $sgName`;
+			eval ("connectAttr -f " + $newName2+".outColor " + $sgName+".surfaceShader");
+			// To be nice, preserve the color connection.
+			string $colorAttr = `defaultShaderName` + ".color";
+			float $color[] = `getAttr $colorAttr`;
+			eval ("setAttr -type float3 " + $newName2+".color " + $color[0] + " " + $color[1] + " " + $color[2]);
+			$newName = $sgName;
+		}
+		else {
+			string $res[] = `duplicate -name $newName -upstreamNodes -ic $shader`;
+			$newName = $res[0];
+		}
+		// Connect entry to new shader
+		string $evalString = "sets -forceElement " + $newName + " " + $sepList[$i];
+		evalEcho $evalString;
+	}
+}
+

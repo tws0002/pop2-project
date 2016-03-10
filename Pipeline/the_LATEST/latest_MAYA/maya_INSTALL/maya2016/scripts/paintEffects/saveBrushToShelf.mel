@@ -1,0 +1,826 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  1998
+//
+
+// IF YOU ARE CHANGING THE NAMES OF THESE VARIABLES YOU
+// MUST ALSO CHANGE THEIR NAMES IN OTHER MEL FILES WHERE THEY
+// ARE REFERENCED! (ie. setPresetTmpIcon.mel) APP 17mar99
+global string $gTmpPaintPresetShelveButton;
+global string $gTmpPaintPresetLabelField;
+global string $gTmpPaintPresetOverlayField;
+global int $gBrushPresetWinUpdateJob;
+global string $gSaveBrushToShelf;
+global string $gTmpVisorDirField;
+global int $gBrushCount = 1;
+
+proc string makeNTPath( string $path ) {
+	string $retPath = `substitute "/" $path  "\\\\"`;
+	string $c = `match  "/" $retPath `;
+	while ( $c != "" ) {
+		$retPath = `substitute "/" $retPath  "\\\\"`;
+		$c = `match "/" $retPath `;
+	}
+	return $retPath;
+}
+
+// Returns the value corresponding to "unknown" 
+// that is returned by `file -q -loc`
+proc string fileUnknownString()
+{
+    return `uiRes("s_TfileIOStrings.rFileUnknownType")`;
+}
+
+proc string getPfxImageLocation( string $imageName )
+{
+	// We Added this routine because the following line
+	// failed to find images in the brushImages directory.-DB
+
+	string $fullPath = `file -q -loc $imageName`;
+	if( $fullPath == fileUnknownString() ){
+		string $visorBase = `getenv "MAYA_LOCATION"`;
+		if ($visorBase != "") {
+			$fullPath = `file -q -loc ($visorBase + "/brushImages/" + $imageName)`;
+		}
+		if( $fullPath == fileUnknownString() ){
+			string $iconDir  = `internalVar -userBitmapsDir`;
+			if( $iconDir != "" ){
+				string $brushImagePath = ($iconDir + "brushImages/");
+				$brushImagePath = substitute( "/icons", $brushImagePath, "");
+				$fullPath = `file -q -loc ($brushImagePath + $imageName)`;
+			}
+		}
+	}
+	return $fullPath;
+}
+
+//
+// This routine makes use of many system dependent utilities like copy, mkdir, delete, etc.
+// It really should make use of as many MEL commands to do this as possible instead of the
+// conditional operating system dependent code. APP 11may01
+global proc saveBrushPreset()
+{
+	// IF YOU ARE CHANGING THE NAMES OF THESE VARIABLES YOU
+	// MUST ALSO CHANGE THEIR NAMES IN OTHER MEL FILES WHERE THEY
+	// ARE REFERENCED! (ie. setPresetTmpIcon.mel) APP 17mar99
+	global string $gTmpPaintPresetShelveButton;
+	global string $gTmpPaintPresetLabelField;
+	global string $gTmpPaintPresetOverlayField;
+	global string $gShelfTopLevel;
+	global string $gSaveBrushToShelf;
+	global string $gTmpVisorDirField;
+	global int	  $gBrushCount;
+	int $i;
+    //String used many times in the file
+    string $warnMessage = (uiRes("m_saveBrushToShelf.kWarningMessage"));
+	// gSelectDir is a flag to identify whether the 
+	// directory is selected thro' text field or fileBrowser
+
+	global int $gSelectDir;
+	global string $gVisorSelectedDirectory;
+	global string $gLastPresetDir;
+
+	$shelfLayout = $gShelfTopLevel;
+
+	if (`radioButtonGrp -q -sl $gSaveBrushToShelf` != 1 && `about -evalVersion`){
+		// Because fopen and fprint are disabled in PLE, 
+		// saveBrushPreset to Visor is not supported.
+		warning (uiRes("m_saveBrushToShelf.kWarnSaveBrushPreset"));
+		return;
+	}
+	
+	if (`tabLayout -exists $shelfLayout` == 0) 
+	{
+        string $messageError = (uiRes("m_saveBrushToShelf.kErrorMessage"));
+        error (`format -s $shelfLayout $messageError`);
+		return; 
+	}
+
+	string $brushName = `getDefaultBrush`;
+
+	if (`nodeType $brushName` != "brush" ) 
+	{
+        string $errorReport = (uiRes("m_saveBrushToShelf.kErrorRepot"));
+		error (`format -s  $brushName $errorReport`);
+		return;
+	}
+
+	string $label = 
+		`textFieldGrp -q -tx $gTmpPaintPresetLabelField`;
+	string $overlay = 
+		`textFieldGrp -q -tx $gTmpPaintPresetOverlayField`;
+
+	if( $label == ("brush" + $gBrushCount) )
+		$gBrushCount++;
+
+	string $tmpIcon  = `shelfButton -q -i1 $gTmpPaintPresetShelveButton`;
+	string $iconName = "userPaint.png";
+	string $tmpIconPath;
+
+	string $brushImagePath;
+
+	string $iconDir  = `internalVar -userBitmapsDir`;
+	string $prefDir = `internalVar -userPrefDir`;
+			
+	if (`radioButtonGrp -q -sl $gSaveBrushToShelf` == 1) {
+		// The user wishes to save this preset to the shelf. (Not the visor).
+
+		// Set the brushImage directory path appropriately.
+		$brushImagePath = ($iconDir + "brushImages/");
+		$brushImagePath = substitute( "/icons", $brushImagePath, "");
+
+		if( $tmpIcon != $iconName )
+		{
+			$iconName = $label;
+			string $iconPathName = ($iconDir + $iconName);
+			if(`about -mac`)
+				$iconPathName += ".iff";  // Mac gives the grabbe image as iff and uses it as it is.
+			else
+				$iconPathName += ".xpm";
+
+			if( `file -q -ex $iconPathName` )
+			{
+				// So, like, if there are more than 100 presets of the same name already,
+				// we just keep overwriting the same icon. Just so you know. APP
+				for( $i = 0; $i < 100; $i++ )
+				{
+					string $newName = ($iconName + $i);
+					$iconPathName = ($iconDir + $newName);
+					if(`about -mac`)
+						$iconPathName += ".iff";
+					else
+						$iconPathName += ".xpm";
+						
+					if( `file -q -ex $iconPathName` == 0 )
+					{
+						$iconName = $newName;
+						break;
+					}
+				}
+			}
+			$tmpIconPath = ($iconDir + $tmpIcon);
+			if ( `about -nt` ) {
+				// Even though the path may have been entered with '\', Maya has
+				// replaced those with '/' which makes the following 'copy' not work.
+				// So, we substitute bits of the string. APP 07apr99
+
+				string $NTIconPath = `substitute "/" $tmpIconPath  "\\\\"`;
+				string $c = `match "/" $NTIconPath `;
+				while ( $c != "" ) {
+					$NTIconPath = `substitute "/" $NTIconPath  "\\\\"`;
+					$c = `match "/" $NTIconPath `;
+				}
+
+				string $NTIconPathName = `substitute "/" $iconPathName  "\\\\"`;
+				$c = `match  "/" $NTIconPathName `;
+				while ( $c != "" ) {
+					$NTIconPathName = `substitute "/" $NTIconPathName  "\\\\"`;
+					$c = `match "/" $NTIconPathName `;
+				}
+
+				sysFile -copy $NTIconPathName $NTIconPath;
+			}
+			else if (`about -linux` || `about -mac`) {
+				sysFile -copy $iconPathName $tmpIconPath;
+			} else {
+				warning($warnMessage);
+			}
+
+		}
+		string $currentShelf = `tabLayout -q -st $shelfLayout`;
+		string $buttonParent = ($shelfLayout + "|" + $currentShelf);
+		setParent $buttonParent;
+
+		// Create a command for this button
+		string $shelfCommand = `createBrushPresetScript $brushName`;
+		$shelfCommand = $shelfCommand + "rename (getDefaultBrush()) " + $label +";";
+
+		// Create a button on this shelf
+		string $bName = `shelfButton -parent $buttonParent`;
+		if(!gmatch( $iconName, "*.png") ) {
+			if(`about -mac`){
+				if(!gmatch( $iconName, "*.iff") ) {
+					$iconName += ".iff";
+				}
+			}else{
+				if ( !gmatch( $iconName, "*.xpm") )
+				// If it does not have the .xpm extension, add it.
+				$iconName += ".xpm";
+			}
+		}
+		shelfButton 
+			-e
+			-command $shelfCommand
+			-label $label
+			-iol $overlay
+			-st "iconAndTextHorizontal"
+			-width `shelfLayout -q -cellWidth $currentShelf`
+			-height `shelfLayout -q -cellHeight $currentShelf`
+			-i1 $iconName 
+			$bName;
+	}
+	else {
+		// The user wishes that this brush be saved to Visor.
+		string $visorDir = `textFieldGrp -q -text $gTmpVisorDirField`;
+		// MAYA_LOCATION must be writable by the user for them to be able to save a preset to Visor.
+		string $visorBase = `getenv "MAYA_LOCATION"`;
+		if ($visorBase != "") {
+
+			// Set the brushImage directory path appropriately.
+			$brushImagePath = ($visorBase + "/brushImages/");
+
+			string $brushDir;
+
+			if($gSelectDir)
+			{
+				// Directory is selected through fileBrowser.
+			
+				if ($visorDir != "")
+				{
+					$brushDir = ($visorDir +"/");
+					string $visorEd = "visorPanel1VisorEd";
+				}
+				else
+				{
+					$brushDir = ($prefDir + "brushes/");
+				}
+			}
+			else
+			{
+				// Directory name is entered in the Text Field.			
+				if ($visorDir != "") {
+					$brushDir = ($prefDir + "brushes/" + $visorDir +"/");
+					//$brushDir = ($visorBase + "/brushes/" + $visorDir + "/");
+					//If the $visorDir directory does not exist, create on and add to visor.
+					string $visorEd = "visorPanel1VisorEd";
+				}
+				else {
+					$brushDir = ($prefDir + "brushes/");
+					//$brushDir = ($visorBase + "/brushes/");
+				}
+			}
+
+		       // if $brushDir doesn't exists, create it.
+			if(`file -q -ex $brushDir` == 0)
+			{
+				sysFile -makeDir $brushDir;
+			}
+
+			//if(`about -mac`) // deliberately NT is avoided here.
+			//	$brushDir = unconvert($brushDir);
+			string $brushFile = ($label + ".mel");
+			string $iconFile;
+			string $iconExtName;
+			$iconExtName = $brushFile + ".icon";
+
+			if(`about -mac`)
+				$iconFile = ($brushFile + ".iff");
+			else
+				$iconFile = ($brushFile + ".sgi");
+
+			// Create a command for this button
+			string $shelfCommand = `createBrushPresetScript $brushName`;
+			$shelfCommand = $shelfCommand + "rename (getDefaultBrush()) " + $label +";";
+
+			// Save this command to a file.
+			string $brushPathName = ($brushDir + $brushFile);
+
+			if( `file -q -ex $brushPathName` )
+			{
+				string	$result;
+				string $title = (uiRes("m_saveBrushToShelf.kSavePath"));
+				$title = `format -s $brushPathName $title`;
+				string $msg = (uiRes("m_saveBrushToShelf.kPathExistsMsg"));
+				$msg = `format -s $brushPathName $msg`;
+				string $no = (uiRes("m_saveBrushToShelf.kNo"));
+				$result = `confirmDialog -message $msg 
+							 -ma center -button (uiRes("m_saveBrushToShelf.kYes")) -button $no -defaultButton $no -title $title`;
+
+				if($result == $no)
+				{
+					return;
+				}
+
+				string $newName = ($label + ".mel");
+				$brushPathName = ($brushDir + $newName);
+
+				if( `file -q -ex $brushPathName` == 0 )
+				{
+					$brushFile = $newName;
+					if(`about -mac`)
+						$iconFile = ($newName + ".iff");
+					else
+						$iconFile = ($newName + ".sgi");
+
+					$iconExtName = ($newName + ".icon");
+				}
+			}
+
+			// fopen seems to open it for write + append by default, so specify "w" to stop the append.
+			int $fileId = `fopen $brushPathName "w"`;
+			if ($fileId == 0) {
+                string $errorMessage = (uiRes("m_saveBrushToShelf.kBrushErrorMessage"));
+				error (`format -s $brushPathName $errorMessage`);
+			}
+			else {
+				fprint $fileId $shelfCommand;
+				fclose $fileId;
+			}
+
+			// Save the icon to the brushDir.
+			string $iconPathName = ($brushDir + $iconFile);
+
+			$iconExtName = ($brushDir + $iconExtName);
+			$tmpIconPath = ($iconDir + $tmpIcon);
+			if(`about -mac`) // for Mac check for .iff and others .xpm.
+			{
+				if ( gmatch( $tmpIconPath, "*.iff") ) {
+					// If it does have the .iff extension, delete it.
+					$tmpIconPath = substitute ("\\.iff", $tmpIconPath , "");
+				}
+			} else {
+				if ( gmatch( $tmpIconPath, "*.xpm") ) {
+				// If it does have the .xpm extension, delete it.
+				$tmpIconPath = substitute ("\\.xpm", $tmpIconPath , "");
+				}
+			}
+			if(`about -mac`)
+				$tmpIconPath += ".iff";
+			else
+			$tmpIconPath += ".xpm";
+			if ( `about -nt` ) {
+				// Even though the path may have been entered with '\', Maya has
+				// replaced those with '/' which makes the following 'copy' not work.
+				// So, we substitute bits of the string. APP 07apr99
+ 
+				string $NTIconPath = makeNTPath( $tmpIconPath );
+
+				string $NTIconPathName = makeNTPath( $iconPathName );
+
+				$iconExtName = makeNTPath( $iconExtName );
+
+				string $exePathName = `getenv "MAYA_LOCATION"` + "/bin/";
+				$exePathName = makeNTPath( $exePathName );
+
+				string $toimgPath = $exePathName + "imgcvt ";
+
+				string $imgcvtPath = $exePathName + "imconvert ";
+				string $newIconName = ($iconDir + $iconFile);
+
+				string $convertToSgiString = $imgcvtPath + "\"" + $NTIconPath + "\"" + " " + "\"" + $newIconName + "\"";
+				system($convertToSgiString);
+
+				string $convertToIconString = $toimgPath + "\"" + $newIconName + "\"" + " " + "\"" + $iconExtName + "\"";
+				system($convertToIconString);
+				sysFile -delete $newIconName;
+			}
+			else if (`about -linux` || `about -mac`) {
+				sysFile -copy $iconPathName $tmpIconPath;
+			} else {
+				warning($warnMessage);
+			}
+		}
+	}
+
+	// Now we want to look at the template brush and find any file textures which are
+	// applied and copy them to the maya/#.#/prefs/icons directory.
+	string $imageName    = `getAttr ($brushName + ".imageName")`;
+	int    $useFrameExt  = `getAttr ($brushName + ".useFrameExtension")`;
+	string $leafImage    = `getAttr ($brushName + ".leafImage")`;
+	string $flowerImage  = `getAttr ($brushName + ".flowerImage")`;
+	string $tbip = "";
+
+	if ( `about -nt` ) {
+		$tbip = $brushImagePath;
+		$brushImagePath = makeNTPath( $brushImagePath );
+	}
+	if ($imageName != "" || $leafImage != "" || $flowerImage != "") {
+		// Check to see if the brushImages/ directory exists.
+		if ( !`file -q -ex $brushImagePath` ) {
+			// If not, create it. There are no checks to see if this succeeds or fails
+			// because the system command does not return the status of commands, only their
+			// output. Bug logged to correct this.
+			sysFile -makeDir $brushImagePath;
+			if ( !`file -q -ex $brushImagePath` ) {
+                string $warnMessageUnable = (uiRes("m_saveBrushToShelf.kWarningUnableToCreate"));
+				warning(`format -s $brushImagePath $warnMessageUnable`);
+			}
+		}
+	}
+
+	if ( `file -q -ex $brushImagePath` ) {
+		if ( $imageName != "" ) {
+			string $buffer[];
+			$numTokens = `tokenize $imageName "/" $buffer`;
+			$imageName = $buffer[$numTokens-1];
+            string $copyTexFmt = (uiRes("m_saveBrushToShelf.kCopyImageTexture"));
+			if ($useFrameExt) {
+				// We will have to copy a number of files. Look for all files with the common root and
+				// an extension and copy them.
+				int $ext = `getAttr($brushName + ".frameExtension")`;
+				string $buffer[];
+				int $numTokens = tokenize( $imageName, ".", $buffer );
+
+				// Try to find if there is a numerical component to the input string.
+				// If so, assume it is the fame number and extract it from the image name.
+				if ($numTokens > 1) {
+					int $i = 1;
+					$imageName = $buffer[0];
+					while ( $i < $numTokens ) {
+						if (
+							substring($buffer[$i],1,1) == "1" ||
+							substring($buffer[$i],1,1) == "2" ||
+							substring($buffer[$i],1,1) == "3" ||
+							substring($buffer[$i],1,1) == "4" ||
+							substring($buffer[$i],1,1) == "5" ||
+							substring($buffer[$i],1,1) == "6" ||
+							substring($buffer[$i],1,1) == "7" ||
+							substring($buffer[$i],1,1) == "8" ||
+							substring($buffer[$i],1,1) == "9" ||
+							substring($buffer[$i],1,1) == "0" ||
+							substring($buffer[$i],1,1) == "#"
+							) {
+							// It is numerical, we are assuming that this is the frame number.
+							$i = $numTokens;
+						} else {
+							$imageName = $imageName + "." + $buffer[$i];
+						}
+						++$i;
+					}
+				}
+				string $fullPath = getPfxImageLocation($imageName + "." + $ext);
+
+				// Truncate the extension.
+				$fullPath = `substitute ("\\." + $ext) $fullPath ""`;
+				
+				string $files;
+				string $fileList[] = `getFileList -fld $fullPath -fs "*.*"`;
+				$numTokens = size($fileList);
+				
+				if ( `about -nt` ) {
+				    $fullPath = unconvert( $fullPath );
+					$fullPath = `substitute $imageName $fullPath ""`;
+				}
+				
+				// Iterate on $fileList and copy them to $brushImagePath.
+				
+				if ($numTokens == 0 || ($numTokens == 1 && $fileList[0] == fileUnknownString())) {
+					warning (uiRes("m_saveBrushToShelf.kWarningSourceFile"));
+				} else {
+					string $file;
+					for ( $file in $fileList ) {
+						string $filePath[];
+						int $index = tokenize( $file, "/", $filePath );
+						string $fullFileName = $fullPath + $filePath[$index-1];
+						if ( `about -nt` ) {
+							// Do not copy the file if it is already there.
+							string $result = getPfxImageLocation($brushImagePath + "\\" + $filePath[$index-1]);
+							if ($result == fileUnknownString() || $result != ($tbip + $filePath[$index-1])) {
+								sysFile -copy $brushImagePath $fullFileName;
+								$file = unconvert( $file );
+                                print (`format -s $file -s $tbip $copyTexFmt`);
+							}
+						}
+						else if (`about -linux` || `about -mac`) {
+							string $result = getPfxImageLocation($brushImagePath + $filePath[$index-1]);
+							if ($result == fileUnknownString() || $result != ($brushImagePath + $filePath[$index-1])) {
+                                print (`format -s $file -s $brushImagePath $copyTexFmt`);
+								sysFile -copy $brushImagePath $file;
+							}
+						} else {
+							warning($warnMessage);
+						}
+					}
+				}
+			} else { // NOT if ($useFrameExt)
+				// The name of the file is literal.
+				string $fullPath = getPfxImageLocation( $imageName );
+				if ($fullPath != fileUnknownString()) {
+					if ( `about -nt` ) {
+						string $mfullPath = makeNTPath( $fullPath );
+						string $result = getPfxImageLocation ($brushImagePath + "\\" + $imageName);
+						if ( $result == fileUnknownString() || $result != ($tbip + $imageName)) {
+                            print (`format -s $fullPath -s $tbip $copyTexFmt`);
+							sysFile -copy  $brushImagePath $mfullPath;
+						}
+					}
+					else if (`about -linux` || `about -mac`) {
+						string $result = getPfxImageLocation($brushImagePath + $imageName);
+						if ($result == fileUnknownString() || $result != ($brushImagePath + $imageName)) {
+                            print (`format -s $fullPath -s $brushImagePath $copyTexFmt`);
+							sysFile -copy $brushImagePath $fullPath;
+						}
+					} else {
+						warning($warnMessage);
+					}
+				} 
+			} // end of else portion of if ($useFrameExt)
+		} // end of $imageName != ""
+
+		if ( $leafImage != "" ) {
+			string $buffer[];
+			$numTokens = `tokenize $leafImage "/" $buffer`;
+			$leafImage = $buffer[$numTokens-1];
+
+			string $fullPath = getPfxImageLocation($leafImage);
+			if ($fullPath != fileUnknownString()) {
+				string $copyLeafFmt = (uiRes("m_saveBrushToShelf.kCopyLeafFmt"));
+				if ( `about -nt` ) {
+					string $mfullPath = makeNTPath( $fullPath );
+					string $result = getPfxImageLocation($brushImagePath + "\\" + $leafImage);
+					if ( $result == fileUnknownString() || $result != ($tbip + $leafImage)) {
+						sysFile -copy $brushImagePath $mfullPath;
+                        print (`format -s $fullPath -s $tbip $copyLeafFmt`);
+					}
+				}
+				else if (`about -linux`) {
+					string $result = getPfxImageLocation($brushImagePath + $leafImage);
+					if ( $result == fileUnknownString() || $result != ($brushImagePath + $leafImage)) {
+                        print (`format -s $fullPath -s $brushImagePath $copyLeafFmt`);
+						sysFile -copy $brushImagePath $fullPath;
+					}
+				} else if(`about -mac`) {
+					string $result = getPfxImageLocation($brushImagePath + $leafImage);
+					if ( $result == fileUnknownString() || $result != ($brushImagePath + $leafImage)) {
+                        print (`format -s $fullPath -s $brushImagePath $copyLeafFmt`);
+						sysFile -copy $brushImagePath $fullPath;
+					}
+				} else {
+					warning($warnMessage);
+				}
+			} 
+		} // end $leafImage != ""
+
+		if ( $flowerImage != "" ) {
+			// We should really only try to copy the image file if "Flower Use Branch Texture" is off, but...
+			string $buffer[];
+			$numTokens = `tokenize $flowerImage "/" $buffer`;
+			$flowerImage = $buffer[$numTokens-1];
+
+			string $fullPath = getPfxImageLocation( $flowerImage );
+			if ($fullPath != fileUnknownString()) {
+				string $copyFlowerFmt = (uiRes("m_saveBrushToShelf.kCopyFlowerFmt"));
+				if ( `about -nt` ) {
+					string $mfullPath = makeNTPath( $fullPath );
+					string $result = getPfxImageLocation ($brushImagePath + "\\" + $flowerImage);
+					if ( $result == fileUnknownString() || $result != ($tbip + $flowerImage)) {
+						sysFile -copy $brushImagePath $mfullPath;
+                        print (`format -s $fullPath -s $tbip $copyFlowerFmt`);
+					}
+				}
+				else if (`about -linux`) {
+					string $result = getPfxImageLocation ($brushImagePath + $flowerImage);
+					if ( $result == fileUnknownString() || $result != ($brushImagePath + $flowerImage)) {
+                        print (`format -s $fullPath -s $brushImagePath $copyFlowerFmt`);
+						sysFile -copy $brushImagePath $fullPath;
+					}
+				} else if (`about -mac`) {
+					string $result = getPfxImageLocation ($brushImagePath + $flowerImage);
+					if ( $result == fileUnknownString() || $result != ($brushImagePath + $flowerImage)) {
+                        print (`format -s $fullPath -s $brushImagePath $copyFlowerFmt`);
+						sysFile -copy $brushImagePath $fullPath;
+					}
+				} else {
+					warning($warnMessage);
+				}
+			} 
+		} // end $flowerImage != ""
+	}
+
+	//
+	// save the last used Visor Directory.
+	//
+	$gLastPresetDir = $gVisorSelectedDirectory;
+
+	$gSelectDir = 0;
+	window -e -visible false brushPresetWin; 
+	dynPaintEditor -edit -iconGrab false dynPaintScriptedPanelEd;
+}
+
+global proc updateBrushPresetWin()
+{
+	// IF YOU ARE CHANGING THE NAMES OF THESE VARIABLES YOU
+	// MUST ALSO CHANGE THEIR NAMES IN OTHER MEL FILES WHERE THEY
+	// ARE REFERENCED! (ie. setPresetTmpIcon.mel) APP 17mar99
+	global int $gBrushCount;
+	global string $gTmpPaintPresetShelveButton;
+	global string $gTmpPaintPresetLabelField;
+	global string $gTmpPaintPresetOverlayField;
+	global int $gBrushPresetWinUpdateJob;
+	global string $gTmpVisorDirField;
+
+	if( !`window -exists brushPresetWin` ) 
+	{
+		return;
+	}
+
+	string $brushName = `getDefaultBrush`;
+	string $userName;
+
+	if( $brushName == "defaultBrush" )
+	{
+		$userName = "brush" + $gBrushCount;
+	}
+	else
+	{
+		$userName = $brushName;
+	}
+	textFieldGrp -e -text $userName $gTmpPaintPresetLabelField;
+	textFieldGrp -e -text $userName $gTmpPaintPresetOverlayField;
+	shelfButton -e -i1 "userPaint.png"  $gTmpPaintPresetShelveButton;
+}
+
+global proc prepareIconGrab (string $editor)
+{
+    string $msg = (uiRes("m_saveBrushToShelf.kClickAndDragIcon"));
+	print ($msg);
+	print "\n";
+	dynPaintEditor -edit -iconGrab true $editor;
+}
+
+global proc int visorDirSelCB( string $filename,
+                                 string $fileType )
+{
+	// Visor Directory selection callback function.
+	global string $gVisorSelectedDirectory;
+	global string $gTmpVisorDirField;
+	global int $gSelectDir;
+
+	$gVisorSelectedDirectory = $filename;
+	textFieldGrp -e -text $gVisorSelectedDirectory $gTmpVisorDirField;
+	$gSelectDir = 1;
+
+	return true;
+}
+
+global proc openVisorFileBrowser()
+{
+	global string $gLastPresetDir;
+
+	if(!`file -q -ex $gLastPresetDir`)
+	{
+		sysFile -makeDir $gLastPresetDir;
+	}
+
+	workspace -dir $gLastPresetDir;
+	fileBrowser "visorDirSelCB" (uiRes("m_saveBrushToShelf.kSaveBrushPreset2")) "" 4;
+}
+
+global proc saveBrushToShelf()
+{
+	global string $gTmpPaintPresetShelveButton;
+	global string $gTmpPaintPresetLabelField;
+ 	global string $gTmpPaintPresetOverlayField;
+	global int $gBrushPresetWinUpdateJob;
+	global string $gSaveBrushToShelf;
+	global string $gTmpVisorDirField;
+
+	global string $gVisorDirSelector;
+	global string $gVisorSelectedDirectory = "";
+	global int $gSelectDir = 0;
+
+	//
+	// $gLastPresetDir remembers the last directory used for saving the Brush Preset.
+	//
+	global string $gLastPresetDir = "";
+    
+
+	if($gLastPresetDir == "")
+	{
+		$gLastPresetDir = `internalVar -userPrefDir` + "brushes/";
+	}
+
+	if( !`window -exists brushPresetWin` ) 
+	{
+		window -title (uiRes("m_saveBrushToShelf.kTitleSaveBrushPreset")) 
+            -width 410 -height 380 brushPresetWin;
+		formLayout fl;
+			columnLayout -adj true col1;
+				formLayout -nd 100 psForm;
+				$gTmpPaintPresetLabelField =
+					`textFieldGrp -label (uiRes("m_saveBrushToShelf.kLabel"))  tfg2`;
+				$gTmpPaintPresetOverlayField =
+					`textFieldGrp -label (uiRes("m_saveBrushToShelf.kOverlayLabel")) tfg3`;
+
+				$gTmpPaintPresetShelveButton = `shelfButton shButTmp`;
+				shelfButton -e -st "iconAndTextHorizontal"
+					$gTmpPaintPresetShelveButton;
+
+				button -label (uiRes("m_saveBrushToShelf.kGrabIcon")) -c "prepareIconGrab dynPaintScriptedPanelEd" gbBut;
+
+				$gSaveBrushToShelf = `radioButtonGrp -numberOfRadioButtons 2 -label (uiRes("m_saveBrushToShelf.kSavePresetGroup"))
+					-labelArray2 (uiRes("m_saveBrushToShelf.kToShelf")) 
+                    (uiRes("m_saveBrushToShelf.kToVisor")) -sl 1 sbts`;
+
+				$gTmpVisorDirField =
+					`textFieldGrp -label (uiRes("m_saveBrushToShelf.kVisorDirectory"))  -ed 0 tfg4`;
+
+				$gVisorDirSelector = `symbolButton -c "openVisorFileBrowser" -i "navButtonBrowse.png" -en false tfg5`;
+
+				radioButtonGrp -e -on2 "textFieldGrp -e -ed 1 $gTmpVisorDirField;symbolButton -e -en true $gVisorDirSelector" $gSaveBrushToShelf;
+				radioButtonGrp -e -of2 "textFieldGrp -e -ed 0 $gTmpVisorDirField;symbolButton -e -en false $gVisorDirSelector" $gSaveBrushToShelf;
+
+				formLayout -e 
+					-af tfg2 right 0
+					-af tfg2 left 0
+					-af tfg2 top 7
+					-an tfg2 bottom
+							
+					-af tfg3 right 0 
+					-af tfg3 left 0
+					-ac tfg3 top 7 tfg2
+					-an tfg3 bottom
+								
+					-af sbts left 0
+					-af sbts right 0
+					-ac sbts top 12 tfg3
+					-an sbts bottom
+
+					-af tfg4 left 0
+					-an tfg4 right
+					-ac tfg4 top 2 sbts
+					-an tfg4 bottom
+
+					-aof shButTmp right -95
+					-an shButTmp left 
+					-ac shButTmp top 2 tfg4
+					-af shButTmp bottom 2
+							
+					-af gbBut left 140 
+					-an gbBut right
+					-ac gbBut top 4 tfg4
+					-an gbBut bottom 
+
+					-ac tfg5 left 0 tfg4
+					-af tfg5 right 5
+					-ac tfg5 top 2 sbts
+					-an tfg5 bottom 
+
+
+					psForm;
+
+		setParent fl;
+		string $shelfSeparator = `separator -horizontal true`;
+		button
+			-label (uiRes("m_saveBrushToShelf.kSaveBrushPreset"))
+            -c "saveBrushPreset;dynPaintEditor -edit -iconGrab false dynPaintScriptedPanelEd"
+			saveBrushPresetButton;
+		button
+			-label (uiRes("m_saveBrushToShelf.kClose"))
+			-c "window -e -visible false brushPresetWin; dynPaintEditor -edit -iconGrab false dynPaintScriptedPanelEd" 
+			closeBrushPresetEdButton;
+		formLayout -e
+			-af $shelfSeparator "left" 0
+			-af $shelfSeparator "right" 0
+			-ac $shelfSeparator "bottom" 5 closeBrushPresetEdButton
+
+			-af saveBrushPresetButton "left" 5
+			-af saveBrushPresetButton "bottom" 5
+			-ap saveBrushPresetButton "right" 3 50
+			-an saveBrushPresetButton "top"
+
+			-ap closeBrushPresetEdButton "left" 2 50
+			-af closeBrushPresetEdButton "bottom" 5
+			-af closeBrushPresetEdButton "right" 5
+			-an closeBrushPresetEdButton "top"
+			fl;
+	}
+	updateBrushPresetWin();
+	showWindow brushPresetWin;
+	$gBrushPresetWinUpdateJob = `scriptJob -e SelectionChanged "brushPresetWinCallback"`;
+
+}
+
+global proc brushPresetWinCallback()
+{
+	global int $gBrushPresetWinUpdateJob;
+	if( !`window -exists brushPresetWin` 
+	  || !`window -q -visible brushPresetWin` )
+	{
+		dynPaintEditor -edit -iconGrab false dynPaintScriptedPanelEd;
+		evalDeferred ("scriptJob -kill " +$gBrushPresetWinUpdateJob);
+		return;
+	}
+	updateBrushPresetWin();
+}

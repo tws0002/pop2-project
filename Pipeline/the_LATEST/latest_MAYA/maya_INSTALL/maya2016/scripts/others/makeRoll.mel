@@ -1,0 +1,133 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+//
+//
+//
+//  Creation Date:  2002 
+//
+//<doc>
+//<name makeRoll>
+//
+//<synopsis>
+//		makeRoll objectName groundHeight boxSimulation diameter
+//
+//<returns>
+//		None.	
+//
+//<description>
+//		Creates an expression that simulates rolling an object on the ground.
+//	    The rotation of the specified object is set based on the change in
+// 		position from the last time the expression was evaluated. The start
+//		rotation values(for frame 1) are initially cached in dynamic
+//		attributes added to the object: startRotX,Y and Z. Look under the extra
+//		attributes block in the attribute editor to change these values.
+//		Note that one should keyframe the X and Z position of the object to
+//		animate, but not key the rotate values because the expression sets
+//		these using rotate commands. When the animation is satisfactory one
+//		should then bake the result, as scrubbing the time slider or rendering
+//		will otherwise have inconsistent results.
+//		Note that when the current frame is greater than 1 you can
+//		interactively move the object in x and z while seeing the effect
+//		of the rolling rotation.
+//		If you are using radians for your rotate values, you will need to
+//		remove "rad_to_deg" from the created expression.
+//
+//<flags>
+//	None.
+//
+//<examples>
+//	// Create a 1 unit sphere rolling on the groundplane
+//  sphere;
+//  makeRoll nurbsSphere1 0.0 false 1.0;
+//
+//	// Create a rectangular prism rolling on the groundplane
+//  nurbsCube;
+//  scale -r 1 2 3;
+//  makeRoll nurbsSphere1 0.0 true 1.0;
+//
+//	// Create a card rolling on the groundplane
+//  plane;
+//  scale -r 1 0.7 1;
+//  makeRoll plane1 0.0 true 1.0;
+//
+//	// Create a torus rolling on the groundplane
+//  torus -ax 0 1 0 -hr 0.5;
+//  makeRoll nurbsTorus1 0.0 true 0.5;
+//
+//</doc>
+
+global proc makeRoll( string $obj, float $ground, int $isBox, float $diameter )
+{
+	float $pos[3] = `getAttr ($obj + ".t")`;
+	float $rot[3] = `getAttr ($obj + ".r")`;
+
+	addAttr -s 1 -sn strx -ln startRotX -dv $rot[0]  $obj;
+	addAttr -s 1 -sn stry -ln startRotY -dv $rot[1]  $obj;
+	addAttr -s 1 -sn strz -ln startRotZ -dv $rot[2]  $obj;
+
+	addAttr -h true -s 1 -sn ltx -ln lastX -dv $pos[0]  $obj;
+	addAttr -h true -s 1 -sn ltz -ln lastZ -dv $pos[2]  $obj;
+	addAttr -h true -s 1 -sn dmy -ln dummy -dv 0 $obj;
+
+	string $exp; 
+	if( $isBox ){
+		$exp +=		("float $bmy = `getAttr "+$obj+".boundingBoxMinY`;\n"
+				    +"float $bxy = `getAttr "+$obj+".boundingBoxMaxY`;\n"
+				    +"float $diameter = ($bxy - $bmy) * "+$diameter+";\n");
+	} else {
+		$exp +=     ("float $diameter = " +$diameter+";\n");
+	}
+	$exp +=  		($obj+".ty = $diameter * 0.5 + " + $ground + ";\n"
+					+"float $tx = "+$obj+".tx;\n"
+					+"float $tz = "+$obj+".tz;\n"
+					+"if( frame <= 1 ){\n"
+					+"    float $rx = "+$obj+".strx;\n"
+					+"    float $ry = "+$obj+".stry;\n"
+					+"    float $rz = "+$obj+".strz;\n"
+					+"    setAttr "+$obj+".rx $rx;\n"
+					+"    setAttr "+$obj+".ry $ry;\n"
+					+"    setAttr "+$obj+".rz $rz;\n"
+					+"   "+$obj+".ltx = $tx;\n"
+					+"   "+$obj+".ltz = $tz;\n"
+					+"} else {\n"
+					+"    float $lx = `getAttr \""+$obj+".ltx\"`;\n"
+					+"    float $lz = `getAttr \""+$obj+".ltz\"`;\n"
+					+"    float $x = $tx-$lx;\n"
+					+"    float $z = $tz-$lz;\n"
+					+"    float $d = sqrt($x * $x + $z*$z);\n"
+					+"    if( $d > 0.00001 ){\n"
+					+"        $x /= $d;\n"
+					+"        $z /= $d;\n"
+					+"        float $piD = 3.14 * $diameter;\n"
+					+"        float $xrot = 360.0 * $d/$piD;\n"
+					+"        float $yrot =  rad_to_deg( atan2( $x, $z ));\n"
+					+"		  rotate -ws -r 0 (-$yrot) 0 "+$obj+";\n"
+					+"		  rotate -ws -r ($xrot) 0 0 "+$obj+";\n"
+					+"		  rotate -ws -r 0 ($yrot) 0 "+$obj+";\n"
+					+"       "+$obj+".ltx = $tx;\n"
+					+"       "+$obj+".ltz = $tz;\n"
+					+"    }\n"
+					+"}\n");
+
+	expression -s $exp;
+}

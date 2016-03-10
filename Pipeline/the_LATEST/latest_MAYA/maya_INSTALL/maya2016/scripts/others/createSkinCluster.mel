@@ -1,0 +1,561 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//	Creation Date:  3 Aug 1998
+//
+//  Procedure Name:
+//      createSkinCluster
+//
+//  Description:
+//      Creates a skinCluster out of each of the selected 
+//      pieces of geometry
+//
+//      Example:
+//         Select all the geometries to be included in the skin
+//         and one joint and run "createSkinCluster".  
+//
+//         If multiple joints are selected then the skinCluster 
+//         will be bound only to the individual joints
+//
+
+proc string connectedToSkinCluster(string $node)
+//
+// Description:
+//    Returns the name of the skinCluster in the history of
+//    a particular node.  If there's no skinCluster in the 
+//    history then it returns the empty string
+//
+{
+	string $histL[] = `listHistory $node`;
+	string $hist;
+	for($hist in $histL)
+		if (nodeType($hist) == "skinCluster")
+			return $hist;
+	
+	return "";
+}
+
+proc string[] getSkinningTransforms()
+{
+	string $result[];
+	string $sel[] = `ls -sl -type transform`;
+	for ($obj in $sel) {
+		if (nodeType($obj) == "transform") {
+			$result[size($result)] = $obj;
+		}
+	}
+	return $result;
+}
+
+proc string[] getSkinningShapes()
+{
+	string $result[];
+
+	// look for shapes under transforms
+	//
+	string $transforms[] = `getSkinningTransforms`;
+	for ($transform in $transforms) {
+		string $children[] = `ls -lf -type controlPoint -dag $transform`;
+		if (size($children) > 0) {
+			$result[size($result)] = $transform;
+		}
+	}
+
+	// look for shapes selected directly
+	//
+	string $shapes[] = `ls -sl -type deformableShape`;
+	for ($sh in $shapes) {
+		$result[size($result)] = $sh;
+	}
+	
+
+	// look for components in the selection list
+	//
+	string $sel[] = `ls -sl`;
+	string $buf[];	
+	for ($item in $sel) {
+		if (tokenize($item,".",$buf) > 1)
+		{
+			string $isControlPoint[] = `ls -lf -dag -type controlPoint $buf[0]`;
+			int $io = `getAttr ($buf[0]+".io")`;
+			if (size($isControlPoint) && !$io)
+			{
+				$result[size($result)] = $item;
+			}
+		}
+	}
+	
+	return $result;
+}
+
+proc string[] getArgValues( string $args, string $argsToExtract[] )
+{
+	string $arr[] = stringToStringArray( $args, " " );
+	string $values[];
+
+	for ( $a in $argsToExtract )
+	{
+		int $index = stringArrayFind( $a, 0, $arr );
+
+		if ( $index > -1 )
+			$values[ size( $values ) ] = $arr[ $index + 1 ];
+		else
+			$values[ size( $values ) ] = "";
+	}
+
+	return $values;
+}
+
+proc string updateArgValues( string $args, string $argsToUpdate[], string $newArgValues[] )
+{
+	if ( size( $argsToUpdate ) != size( $newArgValues ) )
+		error( (uiRes("m_createSkinCluster.kErrSizeDiff")) );
+
+	string $arr[] = stringToStringArray( $args, " " );
+	for ( $i = 0; $i < size( $argsToUpdate ); $i++ )
+	{
+		int $index = stringArrayFind( $argsToUpdate[ $i ], 0, $arr );
+		if ( $index > -1 )
+			$arr[ $index + 1 ] = $newArgValues[ $i ];
+	}
+
+	return stringArrayToString( $arr, " " );
+}
+
+proc string removeArgs( string $args, string $argsToRemove[] )
+{
+	string $arr[] = stringToStringArray( $args, " " );
+	if ( size( $arr ) == 0 )
+		return $args;
+
+	int $indices[];
+	for ( $a in $argsToRemove )
+	{
+		int $index = stringArrayFind( $a, 0, $arr );
+		if ( $index > -1 )
+			$indices[ size( $indices ) ] = $index;
+	}
+
+	string $newArgs[];
+	for ( $i = 0; $i < size( $arr ); $i++ )
+	{
+		// Skip arg if flagged for removal
+		//
+		if ( intArrayFind( $i, 0, $indices ) > -1 )
+		{
+			$i++;
+			continue;
+		}
+
+		$newArgs[ size( $newArgs ) ] = $arr[ $i ];
+	}
+
+	return stringArrayToString( $newArgs, " " );
+}
+
+global proc string[] createSkinCluster(string $args)
+{
+	string $result[];
+	int $clusterCount;
+
+	// Get the currently selected objects
+	//
+	string $sel[] = `ls -sl`;
+	if (size($sel) == 0) {
+		error( (uiRes("m_createSkinCluster.kSelectObjectsToBind")));
+		return $result;
+	}
+
+	// If geodesic binding is specified, we trap and update the arguments
+	// to first compute default distance based weights on all the selected geometries.
+	// This first operation will create the skinning graph and individual skinClusters.
+	//
+	// At the end of the function, we gather all skinClusters that have been created to
+	// recompute weights using the geodesic voxel algorithm since it operates on a
+	// character volume (all individual meshes are considered at the same time).
+	//
+	string $geodesicArgs[] = getArgValues(
+		$args,
+		{ "-bindMethod", "-geodesicResolution", "-geodesicPostVoxelCheck", "-heatmapFalloff", "-mi", "-rui" }
+		);
+
+	int $isGeodesicBind = ( size( $geodesicArgs ) && $geodesicArgs[ 0 ] == "3" );
+	if ( $isGeodesicBind )
+	{
+		$args = removeArgs( $args, { "-heatmapFalloff", "-geodesicResolution", "-geodesicPostVoxelCheck" } );
+
+		// We temporarily replace the binding method and removed unused influences
+		// arguments which will be applied later.
+		//
+		$args = updateArgValues( $args, { "-bindMethod", "-rui" }, { "0", "false" } );
+	}
+
+	string $bindToTransforms = "toSkeletonAndTransforms";
+	string $matchStr = match($bindToTransforms,$args);
+	int $bindingToTransforms = ($matchStr == $bindToTransforms);
+
+	string $selectedJoints[] = `ls -sl -type joint`;
+	string $allSelectedTransforms[] = getSkinningTransforms();
+	string $selectedShapes[] = getSkinningShapes();
+	string $selectedTransforms[] = stringArrayRemove($selectedShapes,$allSelectedTransforms);
+
+	int $jointCount = size($selectedJoints);
+	int $transformCount = size($selectedTransforms);
+	int $skinCount = size($selectedShapes);
+	
+	// If we have more than one skinnable object, and we're using the bindToTransform option,
+	// assume the first shape is the skinnable one, and treat the others as influences
+	if( $bindingToTransforms && 
+		$jointCount == 0 && 
+		$transformCount == 0 && 
+		size($selectedShapes) > 1) 
+	{
+		// Note: the getSkinningShapes method will not necessarily
+		// list shapes in the selection order. So we can't just
+		// take $selectedShapes[0]. So compare to ordered selection
+		// list
+		//
+		int $found = 0;
+		for( $s in $sel ) {
+			if( $found ) break;
+			for( $shape in $selectedShapes) {
+				$found = ($s == $shape);
+				if( $found ) {
+					$selectedShapes = { $shape };
+					$selectedTransforms = stringArrayRemove($selectedShapes,$allSelectedTransforms);
+					$transformCount = size($selectedTransforms);
+					$skinCount = size($selectedShapes);
+					break;
+				}
+			}
+		}
+	}
+
+	if (! $bindingToTransforms && ($jointCount == 0)) {
+		error( (uiRes("m_createSkinCluster.kMustSelectJoint")));
+		return $result;
+	} else if ($bindingToTransforms) {
+		if (size($sel) == 1) {
+			error( (uiRes("m_createSkinCluster.kMustSelectSkinAndJoint")));
+			return $result;
+		}
+		if ($jointCount == 0 && $transformCount == 0) {
+			error( (uiRes("m_createSkinCluster.kBindingByHierarchy")));
+			return $result;
+		}
+	}
+
+	string $FKjoints[] = `ls -sl -type hikFKJoint`;
+	if (size($FKjoints) > 0) {
+		warning((uiRes("m_createSkinCluster.kBindingToFK")));
+	}
+
+	// Use the joints as influences
+	//
+	int $i;
+	string $influences;
+	string $allInfluences[];
+	for ( $i=0; $i<$jointCount; $i++)
+	{
+		$item = $selectedJoints[$i];
+		$influences = $influences + " " + $item;
+		$allInfluences[size($allInfluences)] = $item;
+	}
+
+	if ($bindingToTransforms) {
+		for ( $i=0; $i<$transformCount; $i++)
+		{
+			$item = $selectedTransforms[$i];
+			$influences = $influences + " " + $item;
+			$allInfluences[size($allInfluences)] = $item;
+		}
+	}
+
+	// Create the skin clusters
+	//
+	string $cmd;
+	int $j;
+	string $validShapes[];
+	string $componentShapes[];
+	int $shapeCount = 0;
+	int $compShapeCount = 0;
+	string $buf[];
+	for ($i=0; $i<$skinCount; $i++)
+	{
+		$item = $selectedShapes[$i];
+		// Check if we are dealing with a whole shape 
+		// or just individual components
+		//
+		if (tokenize($item,".",$buf) == 1)
+		{
+			string $allShapesCmd = "ls -lf -dag "+"\""+$item+"\"";
+			string $allShapes[] = eval($allShapesCmd);
+			for ($j=0;$j<size($allShapes);$j++)
+			{
+				string $nt[] = `ls -type controlPoint $allShapes[$j]`;
+				int $io = `getAttr ($allShapes[$j]+".io")`;
+				if (size($nt) && ! $io) {
+					int $found = 0;
+					for($vShape in $validShapes) {
+						if ($vShape == $allShapes[$j]) {
+							$found = true;
+							break;
+						}
+					}
+					if (!$found) {
+						$validShapes[$shapeCount++] = $allShapes[$j];
+					}
+				}
+			}
+		}
+		else
+		{
+			$componentShapes[$compShapeCount++] = $buf[0];
+		}
+	}
+
+	// Deal with surfaces bound as a whole
+	//
+	string $cmd;
+	for ($j = 0; $j < $shapeCount; $j++) {
+		if (nodeType($validShapes[$j]) == "mesh") {
+			int $vcount[] = `polyEvaluate -v $validShapes[$j]`;
+			if ($vcount[0] == 0) {
+				// ignore pointless polys
+				//
+				continue;
+			}
+		}
+		
+		$cmd = "skinCluster "+ $args + " ";
+		$cmd = $cmd + $influences + " " + $validShapes[$j];
+		string $res[];
+
+		if ($j == ($shapeCount-1) && 0 == $clusterCount) {
+			// on the very last shape, if we have not yet created any
+			// clusters, we eval without a catch so that the script will
+			// quit on the error rather than printing out an empty result
+			//
+			$res = eval($cmd);
+			$result[$clusterCount++] = $res[0];
+		} else {
+			if (!catch($res = eval($cmd))) {
+				$result[$clusterCount++] = $res[0];
+			}
+		}
+	}
+
+	// Deal with surfaces whose components are bound
+	//
+	string $cShape;
+	int $count = 0;
+	for ($cShape in $componentShapes)
+	{
+		// If the surface already has a skin cluster attached
+		// then just add the selected points to the existing 
+		// skin cluster set
+		//
+		string $skinCluster = connectedToSkinCluster($cShape);
+		int $foundSet = false;
+		if ($skinCluster != "")
+		{
+			if ("toSelectedBones" == match("toSelectedBones",$args)) {
+				// Are the selected bones influence objects yet? If not
+				// we need to add them as influence objects. We'll also lock
+				// all weights while we do this so we do not affect anything
+				// else in the scene.
+				//
+
+				// First, find the missing influences
+				//
+				string $currentInfluences[] = `skinCluster -q -inf $skinCluster`;
+				string $missingInfluences[];
+				int $sizeMI = 0;
+				for ($sInf in $allInfluences) {
+					int $found = 0;
+					for ($cInfluence in $currentInfluences) {
+						if ($sInf == $cInfluence) {
+							$found = 1;
+							break;
+						}
+					}
+					if (! $found) {
+						$missingInfluences[$sizeMI] = $sInf;
+						$sizeMI += 1;
+					}
+				}
+
+				// Now, add the missing influences
+				//
+				if ($sizeMI > 0) {
+					// lock all other influences
+					//
+					string $currentlyLockedInfluences[];
+					int $sizeCLI = 0;
+					for ($cInfluence in $currentInfluences) {
+						if (getAttr ($cInfluence+".liw")) {
+							$currentlyLockedInfluences[$sizeCLI] = $cInfluence;
+							$sizeCLI += 1;
+						}
+						setAttr ($cInfluence+".liw") 1;
+					}
+
+					// actually add the missing influences
+					//
+					for ($mInfluence in $missingInfluences) {
+						skinCluster -e -ai $mInfluence $skinCluster;
+					}
+
+					// unlock the other influences, unless they were previously
+					// locked
+					//
+					for ($cInfluence in $currentInfluences) {
+						int $found = 0;
+						for ($lInfluence in $currentlyLockedInfluences) {
+							if ($lInfluence == $cInfluence) {
+								$found = 1;
+								break;
+							}
+						}
+						if (! $found) {
+							setAttr ($cInfluence+".liw") 0;
+						}
+					}
+				}
+			}
+			
+			string $connL[] = `listConnections -type objectSet ($skinCluster+".message")`;
+			string $conn;
+			for ($conn in $connL)
+			{
+				if (nodeType($conn) == "objectSet")
+				{
+					$foundSet = true;
+					$cmd = "sets -fe " + $conn + " ";
+				}
+			}
+		}
+
+		// If a skinCluster is not found then just use
+		// the skinCluster command to create a new one
+		//
+		if (!$foundSet)
+			$cmd = "skinCluster "+ $args + " " + $influences + " ";
+
+		for($s in $sel)
+		{
+			if (tokenize($s, ".", $buf) != 1 &&
+				$buf[0] == $cShape)
+			{
+				
+				$cmd = $cmd + $s + " ";
+			}
+		}
+
+		string $res[];
+		if ($count == ($compShapeCount-1) && 0 == $clusterCount) 
+		{
+			if ($foundSet)
+			{
+				eval($cmd);
+				$result[$clusterCount++] = $skinCluster;
+			}
+			else
+			{
+				$res = eval($cmd);
+				$result[$clusterCount++] = $res[0];
+			}
+		} 
+		else 
+		{
+			if ($foundSet)
+			{
+				if (!catch(eval($cmd)))
+					$result[$clusterCount++] = $skinCluster;
+			}
+			else
+			{
+				if (!catch($res = eval($cmd))) 
+					$result[$clusterCount++] = $res[0];
+			}
+		}
+	 
+		$count++;
+	}
+
+	if ( $isGeodesicBind && $clusterCount > 0 )
+	{
+		// Assemble command for geodesic voxel bind
+		//
+		string $cmd = "geomBind ";
+
+		// Add geodesic voxel params
+		//
+		$cmd += "-bm 3 ";
+		$cmd += "-gvp ";
+		$cmd += $geodesicArgs[ 1 ] + " "; // Resolution
+		$cmd += $geodesicArgs[ 2 ] + " "; // Post voxel check
+
+		$cmd += "-fo ";
+		$cmd += $geodesicArgs[ 3 ] + " "; // Falloff
+		$cmd += "-mi " + $geodesicArgs[ 4 ] + " "; // Max influences 
+
+		// Add skinClusters to command
+		//
+		for ( $r in $result )
+		{
+			if ( `objectType -isType "skinCluster" $r` )
+				$cmd += $r + " ";
+		}
+
+		// Perform bind
+		//
+		eval( $cmd );
+
+		// Now that weights have been applied to skin clusters
+		// remove unused influences from skinClusters if previously specified
+		//
+		if ( $geodesicArgs[ 5 ] == "true" )
+		{
+			if ( !`exists removeUnusedForSkin` )
+				source "removeUnusedInfluences";
+
+			for ( $r in $result )
+			{
+				if ( `objectType -isType "skinCluster" $r` )
+					removeUnusedForSkin( $r, 0 );
+			}
+		}
+	}
+
+	if ($shapeCount == 0 && $compShapeCount == 0) {
+		error( (uiRes("m_createSkinCluster.kBindableSelect")));
+	}
+
+	return $result;
+}
+
+
+				
+
+

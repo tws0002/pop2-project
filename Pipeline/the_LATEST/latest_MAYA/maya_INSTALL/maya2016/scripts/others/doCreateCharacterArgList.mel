@@ -1,0 +1,182 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Oct 26, 1998
+//
+//	Procedure Name:
+//		doCreateCharacterArgList
+//
+//	Description:
+//		Create a new character
+//
+//	Input Arguments:
+//	$version: The version of this option box.  Used to know how to 
+//	interpret the $args array.
+//		"1" : $name
+//  
+//	$args
+//	Version 1
+//	[0]		$name :  name to give the new character
+//	Version 2
+//	[0]		$name :  name to give the new character
+//  [1]     $excludeTranslate : exclude translate attrs when creating char
+//  [2]     $excludeRotate : exclude rotate attrs when creating char
+//  [3]     $excludeScale : exclude scale attrs when creating char
+//  [4]     $excludeVis : exclude visibility attrs when creating char
+//  [5]     $excludeDynamic : exclude dynamic attrs when creating char
+//  [6]     $channelBox : create based on channel box selections
+//	Version 3
+//  [7]     $useHierarchy : use entire selected hierarchy
+//	Version 4
+//  [8]     $makeRedirectable : use the (last) selected object as the root of the character
+//
+//	Return Value:
+//		None
+//
+
+proc
+float[] getChildPsuedoBounds(string $child, float $bounds[] )
+{
+	float $matrix[] = `xform -query -matrix -worldSpace $child`;
+	float $pos[] = {$matrix[12],$matrix[13],$matrix[14]};
+
+	$bounds[0] = min($bounds[0], $pos[0]);
+	$bounds[1] = min($bounds[1], $pos[1]);
+	$bounds[2] = min($bounds[2], $pos[2]);
+	$bounds[3] = max($bounds[3], $pos[0]);
+	$bounds[4] = max($bounds[4], $pos[1]);
+	$bounds[5] = max($bounds[5], $pos[2]);
+
+	return $bounds;
+}
+
+proc
+float[] psuedoBoundingBox(string $rootObject)
+{
+	float $matrix[] = `xform -query -matrix -worldSpace $rootObject`;
+	float $bounds[] = {$matrix[12],$matrix[13],$matrix[14],
+					   $matrix[12],$matrix[13],$matrix[14]};
+
+	string $children[] = `listRelatives -allDescendents -type transform`;
+
+	for ($child in $children)
+	{
+		$bounds = getChildPsuedoBounds($child, $bounds);
+		getChildPsuedoBounds($child, $bounds);
+	}
+
+	return $bounds;
+}
+
+global proc doCreateCharacterArgList( string $version, string $args[] )
+{
+	string $name = $args[0];
+	int $versionNo = $version;
+	int $excludeTranslate = 0;
+	int $excludeRotate = 0;
+	int $excludeScale = 0;
+	int $excludeVisibility = 0;
+	int $excludeDynamic = 0;
+	int $useChannelBox = 0;
+	int $useHierarchy = 0;
+    int $makeRedirectable = 0;
+    int $redirectionMode = 0;
+
+	if ($versionNo > 1) {
+		$excludeTranslate = $args[1];
+		$excludeRotate = $args[2];
+		$excludeScale = $args[3];
+		$excludeVisibility = $args[4];
+		$excludeDynamic = $args[5];
+		$useChannelBox = $args[6];
+	}
+	if ($versionNo > 2) {
+		$useHierarchy = $args[7];
+	}
+    
+    if ($versionNo > 3) {
+		$makeRedirectable = $args[8];
+        $redirectionMode = $args[9];
+	}
+
+    string $currentSelection[] = `ls -selection`;
+	if ($useHierarchy) {
+		string $sel;
+		$currentSelection = `ls -selection -dag -tr -ap`;
+		for ($sel in $currentSelection) {
+			string $isConstraint[] = `ls -type constraint $sel`;
+			if (nodeType($sel) != "ikEffector" &&
+				size($isConstraint) == 0) {
+				select -add $sel;
+			}
+		}
+	}
+
+	if ($useChannelBox) {
+		string $attrs[] = `selectedChannelBoxPlugs`;
+		select -r $attrs;
+	}
+	
+	// Build the create character command
+	//
+	$cmd = ( "character -name \"" + $name + "\"");
+
+	if ($excludeVisibility)
+		$cmd += " -excludeVisibility";
+	if ($excludeScale)
+		$cmd += " -excludeScale";
+	if ($excludeTranslate)
+		$cmd += " -excludeTranslate";
+	if ($excludeRotate)
+		$cmd += " -excludeRotate";
+	if ($excludeDynamic)
+		$cmd += " -excludeDynamic";
+
+	
+	// Create the new character
+	//
+	string $character = evalEcho( $cmd );
+
+	if ($makeRedirectable)
+	{
+        string $root = $currentSelection[0]; 
+
+        string $cmd = "doAddAnimationOffsetArgList 1 { " +
+        		"\"" + $root + "\"" +
+        		",\"" + $redirectionMode + "\"" +
+                " };";
+                
+        string $offsetNode = `eval $cmd`;
+            
+        connectAttr ($offsetNode+".message") ($character+".offsetNode");
+    }
+        
+	// Set the new character to be the current character on the highlight list
+	//
+	setCurrentCharacters( { $character } );
+    
+    // Put back the previous selection.  We've put the character on
+    // the highlight list, which is what we want
+    //
+    select -r $currentSelection;
+}

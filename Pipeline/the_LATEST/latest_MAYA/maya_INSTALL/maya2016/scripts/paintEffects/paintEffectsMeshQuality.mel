@@ -1,0 +1,197 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Description:
+//      Creates An Editor that contains all the brush and stroke attributes
+//		affecting tessellation for the selected surface or stroke 
+//
+
+global int $pfxTessSomethingSelectedJob = 0;
+global int $pfxTessSelectionChangedJob = 0;
+
+proc pfxTessUpdateForSelected()
+{
+	string $brush = "";
+	string $stroke = "";
+	string $meshes[] = `ls -sl -dag -type mesh`;
+
+	int $i;
+	for( $i = 0; $i < size( $meshes ); $i++){
+		string $strokes[] = `listConnections -sh 1 -type stroke ($meshes[$i]+".inMesh")`;
+		if( size( $strokes ) > 0 ){
+			$stroke = $strokes[0];
+			string $brushes[] = `listConnections -sh 1 -type brush ($stroke+".brush")`;
+			if( size( $brushes ) > 0){
+				$brush = $brushes[0];
+				break;
+			}
+		}
+	}
+	if(size($brush) < 1 ){
+		string $brushes[] = `getBrushes 3`;
+		if( size( $brushes ) > 0){
+			$brush = $brushes[0];
+		}
+	}
+	if(size($stroke) < 1){
+		string $strokes[] = `ls -sl -dag -type stroke`;
+		if( size( $strokes ) > 0){
+			$stroke = $strokes[0];
+		}
+	}
+	int	$doLeaves = false;
+	int	$doFlowers = false;
+	int	$doTubes = false;
+	int	$doStroke = false;
+	int	$doBrush = false;
+	if(size($brush) > 0 ){
+		$doBrush = true;
+		$doTubes = `getAttr($brush + ".tubes")`;	
+		if( $doTubes ){
+			$doLeaves = `getAttr($brush + ".leaves")`;	
+			$doFlowers = `getAttr($brush + ".flowers")`;	
+		} 
+		if( size($stroke) > 0 ){
+			$doStroke = true;
+		}
+	}
+
+	if($doBrush || $doStroke ){
+		text -e -m false pfxTessNothingSelected;
+	} else {
+		text -e -m true pfxTessNothingSelected;
+	}
+	if( $doBrush ){
+		attrFieldSliderGrp -e -m true -at ( $brush + ".tubeSections" ) pfxTessTubeSections;
+		attrFieldSliderGrp -e -m true -at ( $brush + ".subSegments" ) pfxTessSubSegments;
+	} else {
+		attrFieldSliderGrp -e -m false pfxTessTubeSections;
+		attrFieldSliderGrp -e -m false pfxTessSubSegments;
+	}
+
+	if( $doTubes ){
+		attrFieldSliderGrp -e -m true -at ( $brush + ".segments" ) pfxTessSegments;
+	} else {
+		attrFieldSliderGrp -e -m false pfxTessSegments;
+	}
+	if( $doLeaves ){
+		attrFieldSliderGrp -e -m true -at ( $brush + ".leafSegments" ) pfxTessLeafSegments;
+		attrFieldSliderGrp -e -m true -at ( $brush + ".leafStiffness" ) pfxTessLeafStiffness;
+		attrFieldSliderGrp -e -m true -at ( $brush + ".leafFlatness" ) pfxTessLeafFlatness;
+	} else {
+		attrFieldSliderGrp -e -m false pfxTessLeafSegments;
+		attrFieldSliderGrp -e -m false pfxTessLeafStiffness;
+		attrFieldSliderGrp -e -m false pfxTessLeafFlatness;
+	}
+	if( $doFlowers ){
+		attrFieldSliderGrp -e -m true -at ( $brush + ".petalSegments" ) pfxTessPetalSegments;
+		attrFieldSliderGrp -e -m true -at ( $brush + ".flowerStiffness" ) pfxTessFlowerStiffness;
+		attrFieldSliderGrp -e -m true -at ( $brush + ".petalFlatness" ) pfxTessPetalFlatness;
+	} else {
+		attrFieldSliderGrp -e -m false pfxTessPetalSegments;
+		attrFieldSliderGrp -e -m false pfxTessFlowerStiffness;
+		attrFieldSliderGrp -e -m false pfxTessPetalFlatness;
+	}
+	if( $doStroke ){
+		attrFieldSliderGrp -e -m true -at ( $stroke + ".meshPolyLimit" ) pfxTessPolyLimit;
+	} else {
+		attrFieldSliderGrp -e -m false pfxTessPolyLimit;
+	}
+	if( $doStroke && $doBrush && ($doTubes == false) ){
+		attrFieldSliderGrp -e -m true -at ( $stroke + ".sampleDensity" ) pfxTessSampleDensity;
+	} else {
+		attrFieldSliderGrp -e -m false pfxTessSampleDensity;
+	}
+}
+
+global proc pfxTessKillScriptJobs()
+{
+	global int $pfxTessSomethingSelectedJob;
+	global int $pfxTessSelectionChangedJob;
+
+	scriptJob -kill $pfxTessSomethingSelectedJob;
+	scriptJob -kill $pfxTessSelectionChangedJob;
+	$pfxTessSomethingSelectedJob = 0;
+	$pfxTessSelectionChangedJob = 0;
+}
+
+
+global proc pfxTessSomethingSelected()
+{
+	pfxTessUpdateForSelected( );
+}
+
+global proc pfxTessSelectionChanged()
+{
+	pfxTessUpdateForSelected( );
+}
+
+global proc paintEffectsMeshQuality()
+{
+	global int $pfxTessSomethingSelectedJob;
+	global int $pfxTessSelectionChangedJob;
+
+	global int $somethingSelectedJob;
+	global int $selectionChangedJob;
+	
+	$pfxTessVal1 = 0;
+
+    if ( `window -ex pfxTessWnd` ) 
+	{
+    	showWindow pfxTessWnd;
+	}
+	else 
+	{
+		window 
+		-rtf 1
+		-title (uiRes("m_paintEffectsMeshQuality.kTitleMesh"))
+		-in (uiRes("m_paintEffectsMeshQuality.kWinIconName"))
+		-menuBar 1
+		-s 1
+		pfxTessWnd;
+
+		scrollLayout pfxTessScroll;
+
+		columnLayout pfxTesscol;
+		text -label (uiRes("m_paintEffectsMeshQuality.kNothingSelected")) pfxTessNothingSelected; 
+		attrFieldSliderGrp -label (uiRes("m_paintEffectsMeshQuality.kTubeSections")) -cw 1 160 pfxTessTubeSections ; 
+		attrFieldSliderGrp -label (uiRes("m_paintEffectsMeshQuality.kSubSegments")) -cw 1 160 pfxTessSubSegments; 
+		attrFieldSliderGrp -label (uiRes("m_paintEffectsMeshQuality.kSegments")) -cw 1 160 pfxTessSegments; 
+		attrFieldSliderGrp -label (uiRes("m_paintEffectsMeshQuality.kLeafSegments")) -cw 1 160 pfxTessLeafSegments; 
+		attrFieldSliderGrp -label (uiRes("m_paintEffectsMeshQuality.kLeafStiffness")) -cw 1 160 pfxTessLeafStiffness; 
+		attrFieldSliderGrp -label (uiRes("m_paintEffectsMeshQuality.kLeafFlatness")) -cw 1 160 pfxTessLeafFlatness; 
+		attrFieldSliderGrp -label (uiRes("m_paintEffectsMeshQuality.kPetalSegments")) -cw 1 160 pfxTessPetalSegments; 
+		attrFieldSliderGrp -label (uiRes("m_paintEffectsMeshQuality.kFlowerStiffness")) -cw 1 160 pfxTessFlowerStiffness; 
+		attrFieldSliderGrp -label (uiRes("m_paintEffectsMeshQuality.kPetalFlatness")) -cw 1 160 pfxTessPetalFlatness; 
+		attrFieldSliderGrp -label (uiRes("m_paintEffectsMeshQuality.kSampleDensity")) -cw 1 160 pfxTessSampleDensity; 
+		attrFieldSliderGrp -label (uiRes("m_paintEffectsMeshQuality.kPolyLimit")) -cw 1 160 pfxTessPolyLimit; 
+
+		$pfxTessSomethingSelectedJob =  `scriptJob -conditionTrue "SomethingSelected"  "pfxTessSomethingSelected"`;
+		$pfxTessSelectionChangedJob = `scriptJob -event "SelectionChanged"  "pfxTessSelectionChanged"`;
+		scriptJob -runOnce true -uiDeleted pfxTessWnd pfxTessKillScriptJobs;
+
+		// Call the something selected method so that the slider is updated to the correct value.
+		pfxTessUpdateForSelected();
+	}
+	showWindow pfxTessWnd;
+}
+        

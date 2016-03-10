@@ -1,0 +1,290 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+// Fundamental properties of namespaces for assembly nodes in general:
+// 
+// o There are two namespaces involved for assemblies:
+//   1) The namespace for the assembly node itself
+//   2) The namespace for the representations in the assembly
+//   Both are optional.  If a representation namespace is present, it
+//   is by definition a child namespace of the assembly node
+//   namespace.  These two properties match the behavior of file
+//   referencing namespaces.
+//
+// Properties of namespaces for top-level assemblies:
+// o Namespace selection: only top-level assemblies can have their
+//   namespaces chosen (interactively or through scripting).  Nested
+//   assemblies are brought into the representation namespace of their
+//   parent assembly. 
+// o Data model: the top-level assembly nodes' namespace(s) are stored
+//   in the node names in the top-level scene file.  This is identical
+//   to file referencing behavior.  The top-level assembly nodes'
+//   representation namespaces are stored as assembly node attributes
+//   in the top-level scene file.  File referencing stores this information
+//   in the file reference statements in the header of the file.
+// o Current namespace: the current namespace is completely ignored
+//   when setting both the assembly node namespace and the
+//   representation namespace.  This matches file referencing behavior.
+// 
+// 3 choices for assembly representation namespace selection.  In all
+// cases, the tree view selection is the assembly node namespace
+// (parent namespace for the representation namespace).
+//
+// 1) File base name is representation namespace.
+// 2) User string is representation namespace (can be empty string).
+// 3) Representation namespace is empty.
+//
+// gAssemblyNodeNS and gAssemblyNSChoice are used to build
+// the namespace name according to this user selection, and are set by
+// the last invocation of assemblyReferenceSetDefinitionDialog.
+//
+// Assembly node's namespace, set by assemblyNSDialogCommitUI.
+// Returns the treeView value.
+global string $gAssemblyNodeNS;
+
+// Representation namespace.  Set by assemblyNSDialogCommitUI.
+global string $gAssemblyRepresentationNS;
+
+// String for the representation namespace option radio button choice.
+// Possible values: "radioNSOnFileName", "radioNSOnString", 
+// "radioNSMergeToRename".
+global string $gAssemblyRepresentationNSChoice;
+
+// Tree view widget name from last invocation of
+// assemblyReferenceSetDefinitionDialog, which unfortunately cannot be
+// passed from the UI creation procedure to the UI commit procedure.
+global string $gAssemblyNodeNSTreeView;
+
+proc string addAbsoluteNSPrefix(string $objectName, string $ns)
+{
+  // Prepend a leading colon, to return a fully-qualified absolute
+  // namespace name.  Two cases to consider: the namespace is a single
+  // colon (root), and non-root namespaces.  Make sure we prepend a
+  // single colon for non-root namespaces.
+  return ($ns == ":") ? (":" + $objectName)
+    : (":" + stringRemovePrefix($ns, ":") + ":" + $objectName);
+}
+
+global proc assemblyReferencePostCreateUIProc(string $assemblyRef)
+{
+  global string $gAssemblyNodeNS;                 // Assembly node's namespace.
+  global string $gAssemblyRepresentationNS;       // Representation namespace.
+  global string $gAssemblyRepresentationNSChoice; // Radio button choice.
+
+  string $assemblyNameWithNS = $assemblyRef;
+  string $file = assemblyReferenceSetDefinitionDialog();
+
+  if (size($file) > 0) {
+    // Rename the assembly reference to match the assembly definition
+    // file name, and use the chosen assembly node namespace, ensuring
+    // we ignore the current namespace.  To change namespaces, use
+    // fully-qualified new name with absolute namespace.   
+    string $fileBaseName = basenameEx($file);
+    string $assemblyNameWithARSuffixNoNS = $fileBaseName + "_AR";
+    string $assemblyNameWithARSuffixWithNS =
+      addAbsoluteNSPrefix($assemblyNameWithARSuffixNoNS, $gAssemblyNodeNS);
+    $assemblyNameWithNS =
+      `rename $assemblyNameWithNS $assemblyNameWithARSuffixWithNS`;
+
+
+
+    // use file name when the customized ns string is empty	
+    if ($gAssemblyRepresentationNSChoice == "radioNSOnFileName" || $gAssemblyRepresentationNS == "")  {
+      // Extract the possible numerical suffix to the assemblyName.
+      // Because rename returns a name without a leading colon (it's
+      // implicit), convert our input assembly name back to non-absolute.
+      $assemblyNameWithARSuffixWithNS = 
+        stringRemovePrefix($assemblyNameWithARSuffixWithNS, ":");
+      // MAYA-43544 in the case where the file name contains extra . characters i.e sphere.AD.v1.ma
+      // the procedure to extract a numerical suffix will fail because when rename command is used on assemblyNameWithNS
+      // it will convert all . to _ and then assemblyNameWithARSuffixWithNS will be too different for the stringRemovePrefix
+      // to work as intended. Solution is to convert all . to _ in assemblyNameWithARSuffixWithNS so they will be similar enough
+      // to work.
+      $assemblyNameWithARSuffixWithNS = substituteAllString($assemblyNameWithARSuffixWithNS, ".", "_");
+      
+      string $numericalSuffix =
+        stringRemovePrefix($assemblyNameWithNS, $assemblyNameWithARSuffixWithNS);
+      $gAssemblyRepresentationNS = ($fileBaseName + $numericalSuffix);
+
+    }
+
+    // turn off undo
+	// The setAttr of the reference definition triggers
+    // an import, which will flush the undo queue. 
+	// Then after, the setAttr is recorded as an operation in the undo list.
+    // So doing an undo will set the definition to nothing.
+	int $currUndoState = `undoInfo -query -state`;
+    undoInfo -state false; 
+    // Since setting assembly definition activates a representation, do
+    // so after setting namespace.
+    setAttr ($assemblyNameWithNS + ".repNamespace") -type "string" $gAssemblyRepresentationNS;
+
+    setAttr ($assemblyNameWithNS + ".definition") -type "string" $file;
+    // set undo to what it was before
+    undoInfo -state $currUndoState; 
+  }
+
+  select -r $assemblyNameWithNS;
+}
+
+global proc string assemblyReferenceSetDefinitionDialog()
+{
+  string $workspace = assemblySceneStartingDirectory();
+  string $filter    = assemblyMayaFileFilter();
+   
+  // Choose a file to import.
+  string $files[] = `fileDialog2
+    -fileFilter $filter -dialogStyle 2 -fileMode 1
+    -caption (uiRes("m_assemblyReferenceUtil.kSetDefnFile"))
+    -optionsUICreate "assemblyNSDialogCreateUI"
+    -optionsUICommit "assemblyNSDialogCommitUI"
+    -selectionChanged "assemblyNSSelectionChangedUI"
+    -startingDirectory $workspace`;
+
+  return assemblyFirstSceneFileName($files);
+}
+
+global proc assemblyNSDialogCreateUI(string $layout)
+{
+  setParent $layout;
+
+  // Adapted from fileOptions.mel.  Localization resources from that
+  // file not re-used here, to avoid coupling.
+  frameLayout -label (uiRes("m_assemblyReferenceUtil.kNamespaceOptions"))
+    namespaceOptionFrame;
+
+  string $useNSsMsg =
+    (uiRes("m_assemblyReferenceUtil.kUseNamespacesMsg"));
+						
+  formLayout namespaceOptionLayout;
+
+  text -label (uiRes("m_assemblyReferenceUtil.kAssemblyReferenceNSLabel"))
+    assemblyRefNSLabel;
+  text -label (uiRes("m_assemblyReferenceUtil.kRepresentationNSLabel"))
+    representationNSLabel;
+
+  // Define TreeView.
+  string $treeViewName = namespaceTreeView(0, "", "");
+  global string $gAssemblyNodeNSTreeView;
+  $gAssemblyNodeNSTreeView = $treeViewName;
+  treeView -edit -parent namespaceOptionLayout -width 200 -height 150
+    $treeViewName;
+                        
+  // Set up namespace options radio buttons.
+  columnLayout -adjustableColumn 1 -parent namespaceOptionLayout
+    radioColumnLayout;
+  radioCollection namespaceRadioCollectionName;
+
+  // Assembly definition file name as representation namespace.
+  string $radioChangeCmd = "assemblyNSChangeRadioCollection";
+
+  formLayout formFileNameStr;
+  radioButton -label (uiRes("m_assemblyReferenceUtil.kNamespaceOptionNewNamespaceWithFileName")) -onCommand $radioChangeCmd radioNSOnFileName;
+
+  text -w 300 -label "" -align "left" fileNameNamespaceString; 
+  text -e -visible false fileNameNamespaceString;
+  formLayout -edit -ac fileNameNamespaceString "left" 2 radioNSOnFileName
+    -af fileNameNamespaceString "top" 2
+    formFileNameStr;
+  setParent ..;
+
+  // User string as representation namespace.
+  formLayout formUserStr;
+  radioButton -label (uiRes("m_assemblyReferenceUtil.kNamespaceOptionNewNamespaceWithString")) -onCommand $radioChangeCmd radioNSOnString;
+
+  textField -w 100 userNamespaceString;
+  textField -e -visible false userNamespaceString;
+  formLayout -edit -ac userNamespaceString left 2  radioNSOnString formUserStr;
+  setParent ..;
+            
+  radioCollection -edit -select radioNSOnFileName
+    namespaceRadioCollectionName;
+
+  formLayout -edit
+    -attachForm    assemblyRefNSLabel "top" 5
+    -attachForm    assemblyRefNSLabel "left" 5
+    -attachControl $treeViewName "left" 5 assemblyRefNSLabel
+    -attachForm    $treeViewName "top" 5
+    -attachForm    $treeViewName "right" 5
+    -attachControl representationNSLabel "top" 10 $treeViewName
+    -attachForm    representationNSLabel "left" 5
+    // For some reason, radioColumnLayout is 3 pixels lower than
+    // representationNSLabel, so align them by bringing
+    // radioColumnLayout 3 pixels closer to the tree view.
+    -attachControl radioColumnLayout "top" 7 $treeViewName
+    -attachControl radioColumnLayout "left" 5 assemblyRefNSLabel
+    -attachForm    radioColumnLayout "right" 5
+    namespaceOptionLayout;  
+  setParent ..;
+
+  // Fill the treeView, and select the root namespace.
+  namespaceTreeView_update($treeViewName, "");
+  string $selSet[] = {":"};
+  namespaceTreeView_select($treeViewName, $selSet);
+}
+
+// Invoked when the namespace radio button collection is changed.
+global proc assemblyNSChangeRadioCollection()
+{
+  string $whichButton =
+    `radioCollection -q -select namespaceRadioCollectionName`;
+
+  text -edit -visible ($whichButton == "radioNSOnFileName")
+    fileNameNamespaceString;
+  textField -edit -visible ($whichButton == "radioNSOnString")
+    userNamespaceString;
+}
+
+
+
+global proc assemblyNSDialogCommitUI(string $layout)
+{
+  // Get the namespace to use from the UI, and save it.
+  // Unfortunately, because the fileDialog2 is a function with a
+  // single return value (the file) and not an object, communication
+  // to the assembly reference namespace setting code is done through
+  // global variables.
+  global string $gAssemblyNodeNSTreeView;   // Input tree view name.
+  global string $gAssemblyNodeNS;           // Output assembly node namespace.
+  global string $gAssemblyRepresentationNS; // Output representation namespace.
+  global string $gAssemblyRepresentationNSChoice; // Output radio button choice.
+
+  // Get the button that was selected by the user.
+  string $whichButton =
+    `radioCollection -q -select namespaceRadioCollectionName`;
+  $gAssemblyRepresentationNSChoice = $whichButton;
+
+  // namespaceTreeView_getSelectedItems() can return a multiple selection.
+  // Use the first selected item.  If nothing is selected, use root
+  // namespace as selected namespace.
+  string $namespaces[] =
+    namespaceTreeView_getSelectedItems($gAssemblyNodeNSTreeView);
+  $gAssemblyNodeNS = (size($namespaces) > 0) ? $namespaces[0] : ":";
+
+  $gAssemblyRepresentationNS = ($whichButton == "radioNSOnString") ? 
+    `textField -q -text userNamespaceString` : "";
+}
+
+global proc assemblyNSSelectionChangedUI(string $layout, string $selection)
+{
+  string $baseName = basenameEx($selection);
+  text -e -label $baseName fileNameNamespaceString;
+}

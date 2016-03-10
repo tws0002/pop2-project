@@ -1,0 +1,232 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Procedure Name:
+//      renderLayerSaveCustomPreset
+//
+//  Description:
+//		Procedure to return the MEL commands which will can apply a layer's
+//      state to another layer. This can be used as a "custom save" with the
+//      nodePreset command to save the override and adjustment state of a
+//      render layer.
+//
+//  Input Arguments:
+//      $layerName  - the name of the layer in which state will be saved
+//      $presetName - the name of the nodePreset.
+//
+//  Return Value:
+//      An array of MEL commands which will apply $layerName's state to
+//      the selected object.
+//
+
+proc string first(string $array[])
+//
+// Description:
+//      Return the first element of $array.
+//
+{
+    int $count = size($array);
+    return ($count == 0) ? "" : $array[0];
+}
+
+proc string last(string $array[])
+//
+// Description:
+//      Return the last element of $array.
+//
+{
+    int $count = size($array);
+    return ($count == 0) ? "" : $array[$count-1];
+}
+
+proc add(string $array[], string $item)
+//
+// Description:
+//      Add $item to the end of $array.
+//
+{
+    $array[size($array)] = $item;
+}
+
+proc overrideCmds( string $layerName, string $presetName, string $cmds[] )
+//
+// Description:
+//      Procedure to export $layerName's shading group override and return
+//      the commands that will apply the override to $layerName (defined in
+//      the scope of command execution).
+//
+{
+    string $shadingGroupName = first(`listConnections
+        -type shadingEngine -d 0 ($layerName+".shadingGroupOverride")`);
+
+    if ($shadingGroupName != "") {
+        // Export the shading network
+        string $presetsPath = `internalVar -userPresetsDir`;
+        string $exportFile = "renderLayerPreset_" + $presetName + "_sgo.ma";
+        string $exportFilePath = $presetsPath + "/" + $exportFile;
+        string $selection[] = `ls -selection`;
+        select -noExpand $shadingGroupName;
+        file -f -type "mayaAscii" -exportSelected -shader on $exportFilePath;
+        select -noExpand $selection;
+
+        // Now create some commands which will load the exported file
+        // and connect the shading group to the render layer.
+        add($cmds, "string $presetsPath = `internalVar -userPresetsDir`;");
+        add($cmds, "string $importFilePath = $presetsPath+\"/"+$exportFile+"\";");
+        add($cmds, "if (!`file -q -exists $importFilePath`) {");
+        string $msgFormat = (uiRes("m_renderLayerSaveCustomPreset.kCantOpenFile"));  
+        add($cmds, "  warning(`format -s $importFilePath \"" + $msgFormat + "\"`);");
+        add($cmds, "}");
+        add($cmds, "else {");
+          add($cmds, "  string $before[] = `ls -type shadingEngine`;");
+          add($cmds, "  file -import $importFilePath;");
+          add($cmds, "  string $after[] = `ls -type shadingEngine`;");
+          add($cmds, "  string $diff[] = stringArrayRemove($before, $after);");
+          add($cmds, "  connectAttr -f ($diff[0]+\".message\") ($layerName+\".shadingGroupOverride\");");
+        add($cmds, "}");
+    }
+}
+
+proc adjustmentCmds(
+    string $layerAdjPlug,
+    string $valuePlug,
+    string $scenePlug,
+    string $cmds[])
+//
+// Description:
+//      Procedure to produce the commands which will create an adjustment
+//      to $scenePlug with it's value set to $valuePlug. The commands can
+//      be executed to apply the state to $layerName (defined in the scope
+//      of command execution).
+//
+{
+    // TODO: don't yet handle connections
+    if (size(`listConnections -d 0 $valuePlug`) != 0) {
+	    string $msgFormat = (uiRes("m_renderLayerSaveCustomPreset.kConnectionIgnored"));
+	    warning(`format -s $valuePlug $msgFormat`);
+    }
+
+    //
+    // 1. Get the scene value
+    //
+
+    string $dataType = `getAttr -type $valuePlug`;
+    if ($dataType == "string") {
+        string $value = `getAttr $valuePlug`;
+        add($cmds, "$strValue = \""+$value+"\";");
+    }
+    else {
+        // handle enum, bool, short, long, byte, char, etc.
+        float $value = `getAttr $valuePlug`;
+        add($cmds, "$numValue = "+$value+";");
+    }
+
+    //
+    // 2. Create the adjustment
+    //
+
+    add($cmds, "editRenderLayerAdjustment -layer $layerName "+$scenePlug+";");
+
+    //
+    // 3. Set the adjustment value
+    //
+
+    add($cmds, "if ($layerName == $currentLayerName) {");
+      // Set data directly on the scene.
+      if ($dataType == "string") {
+          add($cmds, "  setAttr "+$scenePlug+" -type \"string\" $strValue;");
+      }
+      else {
+          add($cmds, "  setAttr "+$scenePlug+" $numValue;");
+      }
+    add($cmds, "}");
+    add($cmds, "else {");
+      // Set data on the render layer.
+      add($cmds, "  $plugs = `listConnections -type \"renderLayer\" -s 0 -p 1 "+$scenePlug+"`;");
+      add($cmds, "  for ($item in $plugs) {");
+        add($cmds, "    if (plugNode($item) == $layerName) {");
+          add($cmds, "      $valuePlug = substitute(\"\\\\.plug$\", $item, \".value\");");
+          if ($dataType == "string") {
+              add($cmds, "      setAttr $valuePlug -type \"string\" $strValue;");
+          }
+          else {
+              add($cmds, "      setAttr $valuePlug $numValue;");
+          }
+          add($cmds, "      break;");
+        add($cmds, "    }");
+      add($cmds, "  }");
+    add($cmds, "}");
+}
+
+global proc string[] renderLayerSaveCustomPreset(
+    string $layerName,
+    string $presetName )
+{
+    string $cmds[];
+
+    add($cmds, "string $selection[] = `ls -selection`;");
+    add($cmds, "string $layerName = $selection[size($selection)-1];");
+    add($cmds, "string $currentLayerName = `editRenderLayerGlobals -q -crl`;");
+
+    // Handle render layer overrides.
+    //
+    catch(overrideCmds($layerName, $presetName, $cmds));
+
+    // Collect all the render globals nodes.
+    //
+    string $allGlobals[];
+    string $renderList[] = `renderer -q -namesOfAvailableRenderers`;
+    for ($item in $renderList) {
+        string $globals[] = `renderer -q -globalsNodes $item`;
+        $allGlobals = stringArrayCatenate($allGlobals, $globals);
+    }
+
+    add($cmds, "float $numValue;");
+    add($cmds, "string $strValue;");
+    add($cmds, "string $plugs[];");
+
+    // Iterate the layer and save adjustments to any render globals nodes.
+    //
+    string $currentLayerName = `editRenderLayerGlobals -q -crl`;
+    string $connections[] = `listConnections -p 1 -c 1 ($layerName+".adjustments")`;
+    for ($i=0; $i<size($connections); $i=$i+2) {
+        string $layerAdjPlug = $connections[$i];
+        string $scenePlug = $connections[$i+1];
+
+        string $attrs[];
+        tokenize($layerAdjPlug, ".", $attrs);
+        string $childAttrName = last($attrs);
+
+        if ($childAttrName == "plug") {
+            if (stringArrayContains(plugNode($scenePlug), $allGlobals)) {
+                string $valuePlug = $scenePlug;
+                if ($layerName != $currentLayerName) {
+                    $valuePlug = substitute("\\.plug$", $layerAdjPlug, ".value");
+                }
+
+                catch(adjustmentCmds($layerAdjPlug,$valuePlug,$scenePlug,$cmds));
+            }
+        }
+    }
+
+    return $cmds;
+}

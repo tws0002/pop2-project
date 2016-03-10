@@ -1,0 +1,408 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  July 16, 1999
+//
+//  Description:
+//      This script is the duplicate clip option box dialogs.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+
+global string $clipDupClipToDuplicate = "";
+
+proc setOptionVars (int $forceFactorySettings)
+{
+	if ($forceFactorySettings || !`optionVar -exists duplicateClipSchedule`) {
+		optionVar -intValue duplicateClipSchedule 1;
+	}	
+
+	if ($forceFactorySettings || !`optionVar -exists duplicateClipTimeWarp`) {
+		optionVar -intValue duplicateClipTimeWarp 1;
+	}
+
+	if ($forceFactorySettings || !`optionVar -exists duplicateUpstream`) {
+		optionVar -intValue duplicateUpstream 0;
+	}	
+
+}
+
+//
+//  Procedure Name:
+//      duplicateClipSetup
+//
+//  Description:
+//		Update the state of the option box UI to reflect the option values.
+//
+//  Input Arguments:
+//      parent               - Top level parent layout of the option box UI.
+//                             Required so that UI object names can be 
+//                             successfully resolved.
+//
+//	forceFactorySettings     - Whether the option values should be set to
+//                             default values.
+//
+//  Return Value:
+//      None.
+//
+global proc duplicateClipSetup (string $parent, int $forceFactorySettings)
+{
+	// Retrieve the option settings.
+	setOptionVars( $forceFactorySettings );
+
+	setParent $parent;
+	
+	// Set the schedule flag
+	int $scheduleIt = `optionVar -query duplicateClipSchedule`;
+	switch ($scheduleIt) {
+	case 1:
+			radioButtonGrp -e -sl 1 dupToScheduleMethod;
+			break;
+	default:
+			radioButtonGrp -e -sl 1 dupToLibraryMethod;
+			break;
+	}
+	
+	int $timeWarp = `optionVar -query duplicateClipTimeWarp`;
+	
+	switch ($timeWarp)
+	{        
+		case 1:
+			radioButtonGrp -e -sl 1 dupTimeWarpRadioBoxGrp;
+			break;
+		case 2:
+			radioButtonGrp -e -sl 1 instanceTimeWarpRadioBoxGrp;
+			break;
+		default:
+			radioButtonGrp -e -sl 1 noTimeWarpRadioBoxGrp;
+			break;
+	}
+	
+	int $duplicateUpstream = `optionVar -query duplicateUpstream`;
+	checkBoxGrp -e -v1 $duplicateUpstream dupInputConnections;
+	
+	if ($duplicateUpstream)
+	{
+		enableVisorButtonsCB ;
+	}
+	else
+	{
+		disableVisorButtonsCB ;
+	}
+
+}
+
+//
+//  Procedure Name:
+//      duplicateClipCallback
+//
+//  Description:
+//		Update the option values with the current state of the option box UI.
+//
+//  Input Arguments:
+//      parent - Top level parent layout of the option box UI.  Required so
+//               that UI object names can be successfully resolved.
+//
+//	doIt       - Whether the command should execute.
+//
+//  Return Value:
+//      None.
+//
+global proc duplicateClipCallback (string $parent, int $doIt)
+{
+	setParent $parent;
+
+	// Set the schedule flag
+	if (`radioButtonGrp -q -sl dupToLibraryMethod`) {
+		optionVar -intValue duplicateClipSchedule 0;
+	} else {
+		optionVar -intValue duplicateClipSchedule 1;
+	}
+	
+	int $duplicateWarp;
+	
+	if (`radioButtonGrp -q -sl dupTimeWarpRadioBoxGrp`) 
+	{
+		$duplicateWarp = 1;
+	}
+	else if (`radioButtonGrp -q -sl instanceTimeWarpRadioBoxGrp`)
+	{
+		$duplicateWarp = 2;
+	}
+	else
+	{
+		$duplicateWarp = 0;
+	}
+
+	optionVar -intValue duplicateClipTimeWarp $duplicateWarp;
+
+	int $duplicateUpstream = `checkBoxGrp -q -v1 dupInputConnections`;
+	optionVar -intValue duplicateUpstream $duplicateUpstream;
+
+	global string $clipDupClipToDuplicate;
+	if ($doIt)
+		performDuplicateClip( false, $clipDupClipToDuplicate );
+}
+
+global proc enableVisorButtonsCB ()
+{
+	radioButtonGrp -edit -enable 1 dupToLibraryMethod;
+	radioButtonGrp -edit -enable 1 dupToScheduleMethod;
+}
+
+global proc disableVisorButtonsCB ()
+{
+	radioButtonGrp -edit -enable 0 dupToLibraryMethod;
+	radioButtonGrp -edit -enable 0 dupToScheduleMethod;
+}
+
+
+proc string duplicateClipWidgets( string $parent )
+{
+	setParent $parent;
+	
+	string $tabForm = `columnLayout -adj true`;
+
+	checkBoxGrp -label ""
+				-label1 (uiRes("m_performDuplicateClip.kDuplicateInputConnections")) 
+				-onc enableVisorButtonsCB
+				-ofc disableVisorButtonsCB
+				dupInputConnections;
+
+	// how to schedule it
+	radioButtonGrp -numberOfRadioButtons 1
+		-label (uiRes("m_performDuplicateClip.kCopy")) 
+		-label1 (uiRes("m_performDuplicateClip.kPutCopyInVisorOnly")) 
+		dupToLibraryMethod;
+
+	radioButtonGrp -numberOfRadioButtons 1
+		-label1 (uiRes("m_performDuplicateClip.kPutCopyInTraxEditorAndVisor")) 
+		-shareCollection dupToLibraryMethod
+		dupToScheduleMethod;
+	
+	radioButtonGrp -numberOfRadioButtons 1
+		-label (uiRes("m_performDuplicateClip.kTimeWarp")) 
+		-label1 (uiRes("m_performDuplicateClip.kDuplicateTimeWarpCurve")) 
+		dupTimeWarpRadioBoxGrp;
+	radioButtonGrp -numberOfRadioButtons 1
+		-label1 (uiRes("m_performDuplicateClip.kInstanceTimeWarpCurve")) 
+		-shareCollection dupTimeWarpRadioBoxGrp
+		instanceTimeWarpRadioBoxGrp;
+	radioButtonGrp -numberOfRadioButtons 1
+		-label1 (uiRes("m_performDuplicateClip.kNoTimeWarpCurve")) 
+		-shareCollection dupTimeWarpRadioBoxGrp
+		noTimeWarpRadioBoxGrp;
+
+	return $tabForm;
+}
+
+global proc duplicateClipOptions ()
+{
+	string $commandName = "duplicateClip";
+
+	string $applyTitle = "Duplicate";
+	
+	// Build the option box "methods"
+	//
+	string $callback = ($commandName + "Callback");
+	string $setup = ($commandName + "Setup");
+
+	//	Get the option box.
+	//
+	//  The value returned is the name of the layout to be used as
+	//	the parent for the option box UI.
+	//
+	string $layout = getOptionBox();
+	setParent $layout;
+
+	setOptionBoxCommandName("clip");
+
+	setUITemplate -pushTemplate DefaultTemplate;
+	waitCursor -state 1;
+	tabLayout -scr true -tv false;	// To get the scroll bars
+
+	string $parent = `columnLayout -adjustableColumn 1`;
+
+	duplicateClipWidgets $parent;
+
+	waitCursor -state 0;
+	setUITemplate -popTemplate;
+
+	//	'Apply' button.
+	//
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit
+		-label (uiRes("m_performDuplicateClip.kDuplicateClip")) 
+		-command ($callback + " " + $parent + " " + 1)
+		$applyBtn;
+
+	//	'Save' button.
+	//
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + $parent + " " + 0 + "; hideOptionBox")
+		$saveBtn;
+
+	//	'Reset' button.
+	//
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + " " + $parent + " " + 1)
+		$resetBtn;
+
+	//	Set the option box title.
+	//
+	setOptionBoxTitle (uiRes("m_performDuplicateClip.kDuplicateClipOptions"));
+
+	//	Customize the 'Help' menu item text.
+	//
+	setOptionBoxHelpTag( "DuplicateClip" );
+
+	//	Set the current values of the option box.
+	//
+	eval (($setup + " " + $parent + " " + 0));	
+	
+	//	Show the option box.
+	//
+	showOptionBox();
+}
+
+
+//
+//  Procedure Name:
+//      assembleCmd
+//
+//  Description:
+//		Construct the command that will apply the option box values.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      The command to perform the duplication.
+//
+proc string assembleCmd()
+{
+	string $cmd;
+
+	setOptionVars(false);
+
+	int $scheduleIt = 1;
+	if (`optionVar -exists duplicateClipSchedule`) {
+		$scheduleIt = `optionVar -query duplicateClipSchedule`;
+	}
+
+	int $duplicateWarp = 1;
+	if (`optionVar -exists duplicateClipTimeWarp`) {
+		$duplicateWarp = `optionVar -query duplicateClipTimeWarp`;
+	}
+	
+	int $duplicateUpstream = 0;
+	if (`optionVar -exists duplicateUpstream`) {
+		$duplicateUpstream = `optionVar -query duplicateUpstream`;
+	}
+	
+	global string $clipDupClipToDuplicate;
+	string $clipList = "";
+	if ( size( $clipDupClipToDuplicate ) > 0 ) {
+		$clipList = ",\"" + $clipDupClipToDuplicate +"\"";
+	}
+
+	// doDuplicateClipArgList takes a string array 
+	//
+	$cmd =	"doDuplicateClipArgList 2 { " +
+				"\"" + $scheduleIt + "\"" +
+				",\"" + $duplicateWarp + "\"" +
+				",\"" + $duplicateUpstream + "\"" +
+				$clipList +
+			" };";
+	return $cmd;
+}
+
+//
+//  Procedure Name:
+//      performDuplicateClip
+//
+//  Description:
+//		Duplicate a clip and add the animatable attributes from the 
+//      selected nodes.  This procedure will also show the option box
+//		window if necessary as well as construct the command string
+//		that will duplicate a clip with the current option box values.
+//
+//  Input Arguments:
+//   $action:   0 - Execute the command.
+//      		1 - Show the option box dialog.
+//      		2 - Return the command.
+//
+//	$clip:		The name of a clip to be duplicated, or "" if the
+//				selection should be used.
+//
+//  Return Value:
+//      None.
+//
+global proc string performDuplicateClip (int $action, string $clip)
+{
+	string $cmd = "";
+	// This variable gets set since we don't know if we were just called or called
+	// as a result of the option box dialog.  If we were called by the option box
+	// then it already had this value since the dialog uses this value to
+	// construct the call.
+	global string $clipDupClipToDuplicate;
+	$clipDupClipToDuplicate = $clip;
+	
+	switch ($action) {
+
+		//	Execute the command.
+		//
+		case 0:
+			//	Retrieve the option settings
+			//
+			setOptionVars(false);
+
+			//	Get the command.
+			//
+			$cmd = `assembleCmd`;
+
+			//	Execute the command with the option settings.
+			//
+			if ($cmd != "")
+				eval($cmd);
+			break;
+
+		//	Show the option box.
+		//
+		case 1:
+			duplicateClipOptions;
+			break;
+		case 2:
+			//	Get the command.
+			//
+			$cmd = `assembleCmd`;
+	}
+	return $cmd;
+}
+

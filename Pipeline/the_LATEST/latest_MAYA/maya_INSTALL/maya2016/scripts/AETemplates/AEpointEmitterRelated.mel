@@ -1,0 +1,127 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:	1998
+//
+//  Procedure Name:  AEpointEmitterRelated
+//
+//  Description Name;
+//		Return a list nodes related to the emitter that we want to
+//		display tabs for when the emitter is in the AE.
+//
+//  Input Value:
+//	   nodeName:  name of the emitter node that is in the editor, that
+//				  we are finding related nodes for.
+//
+//  Output Value:
+//		The list of related nodes, with the node whose tab we want to be
+//          opened, with the emitter node added at the end of the
+//          array.  
+//
+global proc string[] AEpointEmitterRelated (string $node)
+{
+	string $relatedNodes[];
+	string $nTypes[] = { "nParticle", "nucleus", "dynamicConstraint", "nComponent", "cacheFile","cacheBlend"};
+
+	int $i;
+
+	// Find related particle nodes:
+	// Just look for destination plugs.  It the emitter is connected to a
+	// particle's "newParticles" plug, then it must be that the emitter is
+	// emitting into that particle, and we want the particle's tab to go in
+	// the Attribute Editor with the emitter.
+	//
+	// Get the list of emitter's destination connections.
+	//
+	string $connections[] = 
+			`listConnections -type "particle" -plugs true -s false ($node)`;
+
+	// See if the emitter is connected to the particle's "newParticles"
+	// attribute.  If it is, add the particle to the list of related nodes.
+	//
+	int $numRelated = 0;
+	for ($i = 0; $i < size($connections); $i++) 
+	{
+		string $matchString = match("newParticles", $connections[$i]);
+		if ($matchString == "newParticles") 
+		{
+			string $buffer[]; 
+			tokenize($connections[$i], ".", $buffer);
+			string  $nType = `nodeType $buffer[0]`;	
+			if( $nType == "nParticle" ) {
+				string $nucleusRelated[] = getNucleusRelated( $buffer[0], $nTypes,  $buffer[0], 0);
+				$relatedNodes = stringArrayCatenate( $relatedNodes, $nucleusRelated);
+				$numRelated = size($relatedNodes);
+			} else {
+				$relatedNodes[$numRelated] = $buffer[0];
+				$numRelated++;
+			}
+		}
+	}
+
+	// Find also geoConnectors whose output attribute "ownerPositions" is 
+	// connected to the emitter's "ownerPosData" attribute
+	//
+	$connections = 
+			`listConnections -type "geoConnector" -plugs true -s true -d false
+			($node)`;
+
+	// See if the emitter is connected to the geoConnectors's "ownerPositions"
+	// attribute.  If it is, add the geoConnector to the list of related nodes.
+	//
+	for ($i = 0; $i < size($connections); $i++) 
+	{
+		string $matchString = match("ownerPositions", $connections[$i]);
+		if ($matchString == "ownerPositions") 
+		{
+			string $buffer[]; 
+			tokenize($connections[$i], ".", $buffer);
+			$relatedNodes[$numRelated] = $buffer[0];
+			$numRelated++;
+		}
+	}
+
+	// Look for a dynGlobals node, and if it exists, also add it.  Add only
+	// the active one.
+	//
+	string $dynGlobalsList[] = `ls -type dynGlobals`;
+	if (size($dynGlobalsList) > 0)
+	{
+		string $theGlobal = `dynGlobals -q -active`;
+		$relatedNodes[$numRelated] = $theGlobal;
+		$numRelated++;
+	}
+
+	// could have duplicates if the emitter was connected to multiple nParticles connected to the same nucleus
+	$relatedNodes = stringArrayRemoveDuplicates( $relatedNodes );
+
+	// The AE requires the name of the node we are finding related nodes
+	// for to be at the end of the list of related nodes.  Actually, I think
+	// the point is, it will open the tab at the end of the list.
+	//
+
+	$relatedNodes[size($relatedNodes)] = $node;
+
+	return $relatedNodes;
+}
+

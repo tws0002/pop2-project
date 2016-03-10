@@ -1,0 +1,272 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Dec, 2002
+//
+//<doc>
+//<name moveIKtoFK>
+//
+//<synopsis>
+//		moveIKtoFK
+//
+//<returns>
+//		None
+//
+//<description>
+//      Script for moving the selected ik handle or object connected to
+//      and ik handle to the location of the associated fk joint.
+//
+//<examples>
+// // Say you have an ikHandle in FK mode (i.e. ikBlend is set to zero),
+// // and you have performed a "Connect to FK/IK" operation to associate
+// // a driver object with the ikHandle.
+//
+// // You have rotated the joints in the handle so that now the driver
+// // and the ikHandle are no longer near to the joint.
+// // Select the ikHandle or the driver object and type:
+//
+// moveIKtoFK;
+//</doc>
+/////////////////////////////////////////////////////////////////////////
+proc string getEndJointForHandle(string $handle)
+//
+// Given a handle, return the end joint that it controls.
+//
+{
+	string $endJoint;
+	string $endEffector = `ikHandle -q -endEffector $handle`;
+	if (size($endEffector)) {
+		string $connJoint[] = `listConnections -s 1 -d 0 ($endEffector+".translateX")`;
+		if (size($connJoint)) {
+			$endJoint = $connJoint[0];
+		}
+	}
+	return $endJoint;
+}
+
+proc string getHandleForStartJoint(string $joint)
+{
+	string $result;
+	if (nodeType($joint) == "joint") {
+		string $connHandles[] = `listConnections -type ikHandle ($joint+".msg")`;
+		if (size($connHandles)) {
+			$result = $connHandles[0];
+		}
+	}
+	return $result;
+}
+
+proc string ikBlendAttrName(string $obj)
+//
+// Given a handle or connected object, return the ikBlend or solverEnable
+// attribute as appropriate. (solverEnable is pre-5.0, ikBlend is post.)
+// Return "" if no attribute is found.	
+//
+{
+	string $attrName = ".ikBlend";
+	if (size(`ls ($obj+".solverEnable")`)) {
+		// In 5.0, the solverEnable attribute name was switched to
+		// ikBlend. 
+		//
+		$attrName = ".solverEnable";
+	}
+	if (size(`ls ($obj+$attrName)`)) {
+		return $attrName;
+	}
+	return "";
+}
+
+proc int isFKhandle(string $handle)
+{
+	if (nodeType($handle) == "ikHandle") {
+		float $blendVal = `getAttr ($handle+".ikBlend")`;
+		if ($blendVal < 0.0001) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+proc string[] findFKHandlesInHierarchy(string $handle)
+//
+// Find FK handles that are below the supplied handle or the
+// joints that it controls in the hierarchy.
+//
+{
+	string $result[];
+	string $startJoint = `ikHandle -q -sj $handle`;
+	
+	string $jointsBelow[] = `listRelatives -path -allDescendents -typ joint $startJoint`;
+	string $handlesBelow[] = `listRelatives -path -allDescendents -typ ikHandle $startJoint`;
+
+	int $ii;
+	int $count = size($jointsBelow);
+	string $currItem = "";
+	for ($ii = ($count-1); $ii >= 0; $ii--) {
+		string $attrName = ikBlendAttrName($jointsBelow[$ii]);
+		if (size($attrName)) {
+			string $connHandles[] =
+				`listConnections -type ikHandle ($handle+$attrName)`;
+			for ($conn in $connHandles) {
+				if ($currItem != $conn && isFKhandle($conn)) {
+					$result[size($result)] = $conn;
+					$currItem = $conn;
+				}
+			}
+		} else {
+			string $handle = getHandleForStartJoint($jointsBelow[$ii]);
+			if ("" != $handle) {
+				$result[size($result)] = $handle;
+				$currItem = $handle;
+			}
+		}
+	}
+
+	$count = size($handlesBelow);
+	for ($ii = ($count-1); $ii >= 0; $ii--) {
+		string $item = $handlesBelow[$ii];
+		if ($currItem != $item && isFKhandle($item)) {
+			$result[size($result)] = $item;
+			$currItem = $item;
+		}
+	}
+
+	string $resultNoDup[] = stringArrayRemoveDuplicates($result);
+	return $resultNoDup;
+}
+
+
+proc string findDriverParent(string $handle) {
+	string $result;
+	string $attrName = ikBlendAttrName($handle);
+	if (size($attrName)) {
+		string $drivers[] = `listConnections -s 0 -d 1 -exactType 1 -type transform ($handle+$attrName)`;
+		string $parent[] = `listRelatives -pa -p $handle`;
+		if (size($drivers) && size($parent)) {
+			for ($driver in $drivers) {
+				if ($driver == $parent[0]) {
+					$result = $driver;
+					break;
+				}
+			}
+		}
+	}
+	return $result;
+}
+
+global proc moveIKtoFK()
+//
+//	Description:
+//		Move the ikHandle and its connected handle to the position of the FK
+// 		joint.
+//
+{
+	string $selected[] = `ls -sl`;
+	int $nSelected = size($selected);
+	string $errMsg = (uiRes("m_moveIKtoFK.kMustSelectIKHandle"));
+	if (0 == $nSelected) {
+		error($errMsg);
+	}
+
+	// based on the selection, build a list of the handles we need to
+	// operate on
+	//
+	string $relatedHandles[];
+
+	// Find handles for valid objects. Valid selected objects are:
+	//   joints
+	//   handles
+	//   objects connected to handles using "connect to ikfk"
+	//
+	for ($obj in $selected) {
+		if ("ikHandle" == nodeType($obj)) {
+			$relatedHandles[size($relatedHandles)] = $obj;
+		} else if ("joint" == nodeType($obj) ||
+				   "transform" == nodeType($obj)) {
+			string $attrName = ikBlendAttrName($obj);
+			if (size($attrName)) {
+				string $connHandles[] =
+					`listConnections -type ikHandle ($obj+$attrName)`;
+				for ($conn in $connHandles) {
+					$relatedHandles[size($relatedHandles)] = $conn;
+				}
+			}
+		}
+	}
+
+	// add handles in the hierarchy
+	//
+	string $hierarchyHandles[];
+	for ($handle in $relatedHandles) {
+		$hierarchyHandles[size($hierarchyHandles)] = $handle;
+		string $handlesBelow[] = findFKHandlesInHierarchy($handle);
+		for ($hierHandle in $handlesBelow) {
+			$hierarchyHandles[size($hierarchyHandles)] = $hierHandle;
+		}
+	}
+	string $handlesToMove[] = stringArrayRemoveDuplicates($hierarchyHandles);
+
+	// Now calculate how to move the handles & move them
+	//
+	for ($handle in $handlesToMove) {
+		string $objectToMove = $handle;
+		float $ikBlendVal = `getAttr ($handle+".ikBlend")`;
+		
+		// get handle position
+		//
+		float $handlePos[] = `xform -q -t -ws $handle`;
+
+		// get position of related end joint
+		//
+		string $endJoint = getEndJointForHandle($handle);
+		if (0 == size($endJoint)) {
+			continue;
+		}
+		float $endJointPos[];
+		if ($ikBlendVal > 0) {
+			setAttr ($handle+".ikBlend") 0.0;
+			$endJointPos = `xform -q -t -ws $endJoint`;
+			setAttr ($handle+".ikBlend") $ikBlendVal;
+		} else {
+			$endJointPos = `xform -q -t -ws $endJoint`;
+		}
+
+		// is the handle parented to a "Connect To IK" driver object?
+		//
+		string $connectedDriver = findDriverParent($handle);
+		if (size($connectedDriver)) {
+			$objectToMove = $connectedDriver;
+		}
+
+		string $moveCmd = ("move -r "+
+						   ($endJointPos[0]-$handlePos[0])+" "+
+						   ($endJointPos[1]-$handlePos[1])+" "+
+						   ($endJointPos[2]-$handlePos[2])+" "+
+						   $objectToMove);
+		evalEcho $moveCmd;
+	}
+
+	if (0 == size($handlesToMove)) {
+		error($errMsg);
+	}
+}

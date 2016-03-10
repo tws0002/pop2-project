@@ -1,0 +1,200 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  April 17, 1997
+//
+//  Description:
+//      The doAttachSurfaceArgList() procedure executes an attach surface
+//      operation on a pair of surfaces based on the attach option vars.
+//		In general if you have n surfaces selected, only the last 2 surfaces 
+//		would be attached.
+//
+//  Versions:
+//      "1" is Maya V1, Maya V1.5
+//      "2" is Maya V2.
+
+
+proc string pieceTogetherAttachCmd( string $version, string $args[] )
+//
+//	Description :
+//		Piece together an attach command.
+//
+{
+	string $cmd = "";
+	int $need = 0;
+
+	if( "1" == $version ) {
+		$need = 3;
+	}
+	else if( "2" == $version ) {
+		$need = 7;
+	}
+	else {
+		warning( (uiRes("m_doAttachSurfaceArgList.kWarningBadVersion")) );
+		$version = "1";
+		$need = 3;
+	}
+
+	if( size($args) < $need ) {
+		error (uiRes("m_doAttachSurfaceArgList.kAttachSurfacesTooFewArgs"));
+		return $cmd;
+	}
+
+	$cmd = "attachSurface ";
+
+	$cmd += " -ch " + $args[0];
+	$cmd += " -rpo " + $args[1];
+	$cmd += " -kmk " + $args[2];
+
+	if( "2" == $version ) {
+		$cmd = $cmd + " -m " + $args[3];
+		$cmd = $cmd + " -bb " + $args[4];
+		$cmd = $cmd + " -bki " + $args[5];
+		$cmd = $cmd + " -p " + $args[6];
+	}
+	return $cmd;
+}
+
+global proc doAttachSurfaceArgList( string $version, string $args[] )
+//
+//	$args[0] = history
+//	$args[1] = replace originals
+//	$args[2] = keep multiple knots
+//	$args[3] = method
+//	$args[4] = blend value
+//	$args[5] = knot insertion
+//	$args[6] = parameter for knot insertion
+//	
+//
+{
+	string $cmd = pieceTogetherAttachCmd( $version, $args );
+	if( "" == $cmd ) return;
+
+	int $history = $args[0];
+	int $replaceOriginal = $args[1];
+
+	int $nitems = 2;
+	$cmd = appendToCmdPlaceHoldersForSelectionItems( $cmd, $nitems );
+
+	// Get the list of nurbs surfaces selected.
+	//
+	global int $gSelectNurbsSurfacesBit;
+	global int $gSelectIsoparmsBit;
+	string $surfacesList[] = `filterExpand -ex true -sm $gSelectNurbsSurfacesBit -sm $gSelectIsoparmsBit`;
+
+	int $numSurfaces = size($surfacesList);
+	if ( $numSurfaces == 0 )
+	{
+		error (uiRes("m_doAttachSurfaceArgList.kAttachSurfacesInvalSelection"));
+	}
+	else if ( $numSurfaces == 1 )
+	{
+		error (uiRes("m_doAttachSurfaceArgList.kAttachSurfacesIncompleteSelection"));
+	}
+	else if ( $numSurfaces > 1 )
+	{
+		// just use the last 2 selected surfaces
+		//
+		if ( $numSurfaces > 2 ) 
+			warning((uiRes("m_doAttachSurfaceArgList.kWarningTooManySurfaces")) );
+
+		string $attachPair[2];
+		$attachPair[0] = $surfacesList[$numSurfaces-2];
+		$attachPair[1] = $surfacesList[$numSurfaces-1];
+
+		if ( $history == 0 && $replaceOriginal == 1 )
+		{
+			// delete history on each input to attach cmd (so that command 
+			// won't force history on)
+			//
+			string $buffer[];
+			tokenize($attachPair[0], ".", $buffer);
+			string $surfaceName = $buffer[0];
+			$buffer = `listHistory -pdo 1 $surfaceName`;
+			if ( size($buffer) > 0 )
+			{
+				// the first surface has history so delete it
+				//
+				warning((uiRes("m_doAttachSurfaceArgList.kWarningHistoryDeleted1")) );
+				evalEcho("delete -ch " + $surfaceName);
+			}
+
+			tokenize($attachPair[1], ".", $buffer);
+			$surfaceName = $buffer[0];
+			$buffer = `listHistory -pdo 1 $surfaceName`;
+			if ( size($buffer) > 0 )
+			{
+				// the second surface has history so delete it
+				//
+				warning((uiRes("m_doAttachSurfaceArgList.kWarningHistoryDeleted2")) );
+				evalEcho("delete -ch " + $surfaceName);
+			}
+		}
+
+		string $results[] = executeCmdOnItems( $cmd, $attachPair );	
+
+		// select the results.
+		//
+		int $resultCount = size($results);
+		if ( $resultCount > 0 ) 
+		{
+			string $selectString;
+        	$selectString = "select ";
+			if ( $replaceOriginal )
+			{
+				if ( $history == 0 )
+				{
+					// delete the second surface since it is no longer required
+					evalEcho("delete " + $results[1]);
+				}
+				else
+				{
+					// make the second surface an intermediate object (so that
+					// the user won't ever see it). Note: can't do "delete"
+					// here or else attach result will go away due to history
+					// on.
+					//
+					string $resultShapes[] = `listRelatives -fullPath -s $results[1]`;
+					int $shapeCount = size($resultShapes);
+					if ( $shapeCount > 0 )
+					{
+						evalEcho("setAttr " + $resultShapes[0] + ".io true");
+					}
+				}
+				$selectString +=  $results[0];
+			}
+			else
+			{
+				int $i;
+				for ( $i = 0; $i < $resultCount; $i++ ) 
+				{
+					$selectString +=  $results[$i];
+					$selectString += " ";
+				}
+			}
+			$selectString += ";";
+			select -cl;
+			eval($selectString);
+		}
+	}
+}

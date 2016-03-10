@@ -1,0 +1,766 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  21 Jun 1999
+//
+//  Description:
+//      Procedures to create a wrap deformer, and add and remove influences
+//      from it
+//
+
+proc int driverOk(string $driverTrans)
+//
+// Description:
+//       Checks if there are any mesh/nurbs curves/nurbs surface objects
+//       under the given transform
+{
+	// Find all the shapes under the given transform
+	//
+	string $shapes[] = `ls -dag -shapes $driverTrans`;
+
+	// Find if at least one of them is an allowable influence
+	// type
+	//
+	string $shape;
+	for($shape in $shapes)
+	{
+		int $io = `getAttr ($shape+".io")`;
+		if ($io == 1)
+			continue;
+
+		string $type = `nodeType($shape)`;
+		if ($type == "mesh" || $type == "nurbsCurve" || $type == "nurbsSurface")
+		{
+			return 1;
+		}
+
+	}
+
+	error( (uiRes("m_doWrapArgList.kInfluenceObjects")));
+
+	return 0;
+}
+
+
+proc int plugMultiIndex(string $plug)
+//
+//  Method:   int plugMultiIndex(string $plug)
+//
+//  Description:
+//    Given a plug that contains a multiIndex, return the index
+//
+//    If no multiIndex is found, returns -1.
+//        If plug is a multi multi, returns the first multiIndex only.
+//
+{
+        string $buffer[], $buffer2[];
+        tokenize($plug,"[",$buffer);
+        if (size($buffer) != 2) {
+                return(-1);
+        }
+        tokenize($buffer[1],"]",$buffer2);
+        return $buffer2[0];
+}
+
+proc addInfluence(string $wrapNodeList[], string $topTrans, int $inflType, int $renderInfl)
+//
+// Description:
+//     Adds any valid influence shapes under the top transform to 
+//     the given wrap node
+//
+{
+	// Find all the deformable shapes under the given transform
+	//
+	string $shapes[] = `ls -long -dag -type controlPoint -type particle $topTrans`;
+	
+	// Create all the base objects by duplicating the 
+	// influences
+	//
+	string $baseTransList[];
+	string $driverShape;
+	int $baseCount = 0;
+	for ($driverShape in $shapes)
+	{
+		int $io = `getAttr ($driverShape+".io")`;
+		if ($io == 1)
+			continue;
+
+		// Find the parent of the shape
+		//
+		string $driverTransL[] = `listRelatives -parent -path $driverShape`;
+		string $driverTrans = $driverTransL[0];
+		
+		// Duplicate the driver shape
+		//
+		string $base[] = `duplicate -name ($driverTrans+"Base") $driverTrans`;
+		influenceRemoveSiblings($base[0], $driverShape);
+		$baseTransList[$baseCount++] = $base[0];
+		
+		// Hide the base surface
+		//
+		hide $base[0];
+	}
+
+
+	string $wrapNode;
+	for($wrapNode in $wrapNodeList)
+	{
+		// Get the first available connection number on the wrap 
+		//
+		int $connNum;
+		string $conn[] = `listConnections -p true -c true ($wrapNode + ".driverPoints")`;
+		if (size($conn) == 0)
+			$connNum = 0;
+		else
+		{
+			string $lastConnection = $conn[size($conn)-2];
+			$connNum = plugMultiIndex($lastConnection);
+			if ($connNum == -1)
+				return;
+			$connNum += 1;
+		}
+		
+		string $driverShape;
+		$baseCount = 0;
+		for($driverShape in $shapes)
+		{
+			int $io = `getAttr ($driverShape+".io")`;
+			if ($io == 1)
+				continue;
+			
+			string $driverType = `nodeType($driverShape)`;
+			if ($driverType == "mesh" || $driverType == "nurbsCurve" || $driverType == "nurbsSurface")
+			{
+				// Find the parent of the shape
+				//
+				string $driverTransL[] = `listRelatives -path -parent $driverShape`;
+				string $driverTrans = $driverTransL[0];
+				
+				
+				// Add a dropoff attribute to the driver transform
+				//
+				string $exists[] = `listAttr -st dropoff $driverTrans`;
+				if (size($exists) == 0)
+				{
+					addAttr -sn dr -ln dropoff -dv 4.0 -min 0.0 -max 20.0 $driverTrans;
+					setAttr -k true ($driverTrans+".dr");
+				}
+				
+				
+				// Add an influence type attribute to the driver transform
+				//
+				if ($driverType == "mesh")
+				{
+					// Add the smoothness attribute to the driver transform
+					//
+					string $exists[] = `listAttr -st smoothness $driverTrans`;
+					if (size($exists) == 0)
+					{
+						addAttr -sn smt -ln smoothness -dv 0.0 -min 0.0 $driverTrans;
+						setAttr -k true ($driverTrans+".smt");
+					}
+					
+					// Add the influence type attribute to the driver transform
+					//
+					$exists = `listAttr -st inflType $driverTrans`;
+					if (size($exists) == 0)
+					{
+						addAttr -at short -sn ift -ln inflType -dv 2 -min 1 -max 2 $driverTrans;
+						setAttr ($driverTrans + ".inflType") $inflType;
+					}
+				}
+				
+				if (($driverType == "nurbsCurve") || ($driverType == "nurbsSurface"))
+				{
+					$exists = `listAttr -st wrapSamples $driverTrans`;
+					if (size($exists) == 0)
+					{
+						addAttr -at short -sn wsm -ln wrapSamples -dv 10 -min 1 $driverTrans;
+						setAttr -k true ($driverTrans+".wsm");
+					}
+				}	
+	
+				// Find the shape in the driver and base poly-surface
+				//
+				string $baseTrans = $baseTransList[$baseCount++];
+				string $baseShapeL[]   = `listRelatives -path -c -s $baseTrans`;
+				string $baseShape = $baseShapeL[0];
+			
+				// Make the driver poly non-renderable
+				//
+				if(0 == $renderInfl) {
+					disableRenderabilityAttrs $driverShape;
+				}
+
+				// Make the connections between the shapes and the wrap node
+				//
+				string $tmp;
+				if ($driverType == "mesh")
+				{
+					$tmp = ".driverPoints["+$connNum+"]";
+					connectAttr ($driverShape+".worldMesh") ($wrapNode+$tmp);
+					$tmp = ".basePoints["+$connNum+"]";
+					connectAttr ($baseShape+".worldMesh") ($wrapNode+$tmp);
+					$tmp = ".inflType["+$connNum+"]";
+					connectAttr ($driverTrans+".inflType") ($wrapNode+$tmp);
+					$tmp = ".smoothness["+$connNum+"]";
+					connectAttr ($driverTrans+".smoothness") ($wrapNode+$tmp);
+				}
+				if ($driverType == "nurbsCurve" || $driverType == "nurbsSurface")
+				{
+					$tmp = ".driverPoints["+$connNum+"]";
+					connectAttr ($driverShape+".ws") ($wrapNode + $tmp);
+					$tmp = ".basePoints["+$connNum+"]";
+					connectAttr ($baseShape+".ws") ($wrapNode + $tmp);
+					$tmp = ".nurbsSamples["+$connNum+"]";
+					connectAttr ($driverTrans+".wsm") ($wrapNode + $tmp);
+				}
+				
+				$tmp = ".dropoff["+$connNum+"]";
+				connectAttr ($driverTrans+".dropoff") ($wrapNode+$tmp);
+				
+			}
+			
+			// Advance the connection number index
+			//
+			$connNum++;
+		}	
+	}
+}
+
+
+proc string[] getSelectedSurfs()
+//
+// Description:
+//     Loops through the selection list and finds all the shapes
+//     that are below the transforms.  It fills an array with 
+//     the parent transforms of all these shapes. 
+//
+{
+	string $surfs[];
+
+	// Get the selection list
+	//
+	string $selectedItems[] = `ls -sl`;
+	int $numSelected = size($selectedItems);
+
+	int $ii;
+	int $surfCount = 0;
+	string $buffer[];
+	for($ii=0;$ii < $numSelected - 1; $ii++)
+	{
+		clear($buffer);
+		string $trans = $selectedItems[$ii];
+		int $numTokens = tokenize($selectedItems[$ii],".",$buffer);
+		if ($numTokens > 0) {
+			$trans = $buffer[0];
+		}
+		string $isShape[] = `ls -type controlPoint -type particle $trans`;
+		if (0 == size($isShape)) {
+			if ($numTokens > 1) {
+				// a component was selected
+				//
+				int $jj;
+				int $foundSurf = 0;
+				for ($jj = 0; $jj < $surfCount; $jj++) {
+					clear($buffer);
+					int $numTokens = tokenize($surfs[$jj],".",$buffer);
+					if ($numTokens > 1) {
+						if ($buffer[0] == $trans) {
+							$surfs[$jj] = ($surfs[$jj]+" "+$selectedItems[$ii]);
+							$foundSurf = 1;
+							break;
+						}
+					}
+				}
+				if (! $foundSurf) {
+					$surfs[$surfCount++] = $selectedItems[$ii];
+				}
+			} else {
+				string $surfShapes[] = `ls -dag -type controlPoint -type particle $trans`;
+				string $surf;
+				for($surf in $surfShapes)
+				{
+					// Disregard intermediate objects
+					//
+					int $io = `getAttr ($surf+".io")`;
+					if (!$io)
+					{
+						string $parentL[] = `listRelatives -path -p $surf`;
+						$surfs[$surfCount++] = $parentL[0];
+					}
+				}
+			}
+		} else {
+			string $rel[] = `listRelatives -path -p $trans`;
+			$surfs[$surfCount++] = ($rel[0]+"|"+$trans);
+		}
+	}
+	return $surfs;
+}
+
+
+proc string[] createWrap(float $threshold, float $maxDistance, int $inflType, int $exclusiveBind, int $autoWeightThreshold, int $renderInfl, int $falloffMode)
+//
+//  Description:
+//		Creates a new wrap node for the selected geometries
+//      and adds one influence object (the last element of the 
+//      selection list). 
+{
+	string $returnStr[];
+
+	// Get the selection list
+	//
+	string $selectedItems[] = `ls -sl`;
+	int $numSelected = size($selectedItems);
+	
+	if ($numSelected < 2)
+	{
+		error( (uiRes("m_doWrapArgList.kSelectAtLeast")));
+		return $returnStr;
+	}
+
+	// The influence object is always the last element of the 
+	// selection list
+	//
+	string $driverTrans = $selectedItems[$numSelected-1];
+	
+	if (!driverOk($driverTrans))
+	{
+		return $returnStr;
+	}
+
+	int $ii;
+
+	string $wrapNodeList[];
+	int $wrapCount = 0;
+	
+	// Find all the surf transforms that have been selected
+	//
+	string $selectedSurfs[] = getSelectedSurfs();
+	int $numSurfs = size($selectedSurfs);
+
+	if ($numSurfs == 0)
+	{
+		error( (uiRes("m_doWrapArgList.kNoDeformableSel")));
+		return $returnStr;
+	}
+
+	// Create the wrap deformer for each surface
+	//
+	for($ii=0; $ii < $numSurfs; $ii++)
+	{
+		string $surface = $selectedSurfs[$ii];
+		string $surfaceShape = $surface;
+		string $buffer[];
+		int $numTokens = tokenize($surface," ",$buffer);
+		if ($numTokens > 0) {
+			string $bufferNew[];
+			$numTokens = tokenize($buffer[0],".",$bufferNew);
+			if ($numTokens > 0) {
+				$buffer = `listRelatives -path -ni -type controlPoint -type particle $bufferNew[0]`;
+				$surfaceShape = $buffer[0];
+			}
+		}
+
+		string $wrapNodeL[];
+		if (catch($wrapNodeL =  evalEcho("deformer -type wrap "+$surface)) ||
+			size($wrapNodeL) == 0)
+		{
+			string $errFormat = (uiRes("m_doWrapArgList.kFailedToCreateWrap"));
+			string $errMsg = `format -stringArg $surface $errFormat`;
+			error( $errMsg );
+			continue;
+		}
+		string $wrapNode = $wrapNodeL[0];
+		$wrapNodeList[$wrapCount++] = $wrapNode;
+
+		// Set the values for the threshold and the max distance
+		//
+		setAttr ($wrapNode + ".weightThreshold") $threshold;
+		setAttr ($wrapNode + ".maxDistance") $maxDistance;
+		setAttr ($wrapNode + ".exclusiveBind") $exclusiveBind;
+		setAttr ($wrapNode + ".autoWeightThreshold") $autoWeightThreshold;
+		setAttr ($wrapNode + ".falloffMode") $falloffMode;
+
+		// Connect the geometry to the wrap node
+		//
+		connectAttr ($surfaceShape+".worldMatrix[0]") ($wrapNode+".geomMatrix");
+
+		$returnStr[$ii] = $wrapNode;
+		
+	}
+
+	// Add the influences to the wrap nodes
+	//
+	addInfluence($wrapNodeList, $driverTrans, $inflType, $renderInfl);
+
+
+	// Unselect the influence just added so that 
+	// the command can be easily repeated with a new influence
+	//
+	select -r $selectedItems;
+	select -tgl $driverTrans;
+
+	return $returnStr;
+}
+
+
+proc string[]  findWrapFromSurf(string $surfTrans)
+//
+// Description:
+//     This procedure returns the wrap nodes that are associated
+//     with the given surface
+// 
+{
+	string $wraps[];
+
+	string $histList[] = `listHistory $surfTrans`;
+	string $hist;
+	int $wrapCount = 0;
+	for($hist in $histList)
+	{
+		if (nodeType($hist) == "wrap")
+			$wraps[$wrapCount++] = $hist;
+	}
+	
+	return $wraps;
+}
+
+
+
+proc string[] findAllSelectedWrapNodes()
+//
+// Description:
+//     Returns a list of all the wrap nodes that are associated 
+//     with the current selection list (ignoring the last element).
+//     The list returned also contains any wrap nodes that might be in the 
+//     selection list
+// 
+{
+	string $wrapNodeList[];
+	int $wrapCount = 0;
+
+	// Get a complete list of the selected surfaces
+	//
+	string $selectedSurfs[] = getSelectedSurfs();
+	int $numSurfs = size($selectedSurfs);
+	
+	// find the wrap node(s) associated with each selected surface
+	//
+	int $ii;
+	for($ii=0; $ii < $numSurfs; $ii++)
+	{
+		string $surf = $selectedSurfs[$ii];
+		string $surfWraps[] = findWrapFromSurf($surf);
+		if (size($surfWraps)==0)
+		{
+			string $errFormat = (uiRes("m_doWrapArgList.kNoWrapDeformer"));
+			string $errMsg = `format -stringArg $surf $errFormat`;
+			error( $errMsg );
+			continue;
+		}
+		string $surfWrap;
+		for ($surfWrap in $surfWraps)
+			$wrapNodeList[$wrapCount++] = $surfWrap;
+	}
+
+	// Get any items in the selection list that are wrap nodes
+	// 
+	string $selectedWrapNodes[] = `ls -sl -type wrap`;
+	string $selectedWrap;
+	for($selectedWrap in $selectedWrapNodes)
+		$wrapNodeList[$wrapCount++] = $selectedWrap;
+
+	return $wrapNodeList;
+
+}
+
+proc string[] addWrapInfluences(int $inflType, int $renderInfl)
+//
+// Description:
+//     Adds an influence (or multiple if a group node is selected)
+//     to the selected already wrapped surfaces
+//
+{
+	string $returnStr[];
+
+	// Get the selection list
+	//
+	string $selectedItems[] = `ls -sl`;
+	int $numSelected = size($selectedItems);
+
+	if ($numSelected < 2)
+	{
+		error( (uiRes("m_doWrapArgList.kSelectAtLeastOneSurface")));
+		return $returnStr;
+	}
+
+	// The influence object is always the last element of the 
+	// selection list
+	//
+	string $driverTrans = $selectedItems[$numSelected-1];
+	
+	if (!driverOk($driverTrans))
+	{
+		return $returnStr;
+	}
+
+	// Get the wrap nodes that correspond to the current 
+	// selection
+	//
+	string $wrapNodeList[] = findAllSelectedWrapNodes();
+
+	addInfluence($wrapNodeList, $driverTrans, $inflType, $renderInfl);
+
+	// Unselect the influence just added so that 
+	// the command can be easily repeated with a new influence
+	//
+	select -r $selectedItems;
+	select -tgl $driverTrans;
+
+	return $wrapNodeList;
+}
+
+
+proc removeInfluence(string $wrapNodeList[], string $topTrans)
+// 
+// Description:
+//     Removes the specified influence (or multiple if topTrans is 
+//     a group node) from the wrap nodes in the wrapNodeList.  It 
+//     also removes the base shape and transform if it is not used 
+//     anymore
+{
+	// Find all the shapes under the given transform
+	//
+	string $shapes[] = `ls -dag -leaf -shapes $topTrans`;
+
+	string $wrapNode;
+	for($wrapNode in $wrapNodeList)
+	{
+		string $driverShape;
+		int $plugIndex;
+		for($driverShape in $shapes)
+		{
+			int $io = `getAttr ($driverShape+".io")`;
+			if ($io == 1)
+				continue;
+
+			// Find the parent of the shape
+			//
+			string $driverTransL[] = `listRelatives -parent -path $driverShape`;
+			string $driverTrans = $driverTransL[0];
+			
+			// Get all the connections of the driver transform
+			//
+			string $connectedNodes[] = `listConnections -s false -c true $driverTrans`;
+			
+			// Get the names of the connected attributes on the wrap node side
+			//
+			string $connectedAttrs[] = `listConnections -s false -c true -p true $driverTrans`;
+			
+			int $len = size($connectedNodes);
+			int $ii;
+			for($ii=0;$ii<$len;$ii++)
+			{
+				// Find all the connections of the driver to the
+				// given wrap node and disconnect them 
+				//
+				if ($connectedNodes[$ii] == $wrapNode)
+				{
+					string $sourcePlug = $connectedAttrs[$ii-1];
+					string $destPlug   = $connectedAttrs[$ii];
+
+					$plugIndex = plugMultiIndex($destPlug);
+					disconnectAttr($sourcePlug, $destPlug); 
+				}
+			}
+			// Delete the connection to the driver shape node
+			//
+			string $driverConn[] = `listConnections -c true -p true ($wrapNode+".driverPoints["+$plugIndex+"]")`;
+			if (size($driverConn) == 2)
+				disconnectAttr($driverConn[1], $driverConn[0]);
+
+			// Follow the connection of the wrap node to get
+			// to the base shape
+			//
+			string $baseConn[] = `listConnections -c true -sh true ($wrapNode+".basePoints["+$plugIndex+"]")`;
+			string $baseTrans;
+			if (size($baseConn) == 2)
+			{
+				string $baseShape = $baseConn[1];
+				string $baseTransL[] = `listRelatives -path -parent $baseShape`;
+				$baseTrans = $baseTransL[0];
+			}
+
+			// delete the connection between the wrap node and 
+			// the base shape
+			$baseConn = `listConnections -c true -p true ($wrapNode+".basePoints["+$plugIndex+"]")`;
+			if (size($baseConn) == 2)
+				disconnectAttr($baseConn[1], $baseConn[0]);
+				
+			// Check if there are any other connections to the 
+			// base shape and if not then delete it
+			//
+			if ($baseTrans != "")
+			{
+				// Find if there are any other connections to the geometry
+				// of the base shape and if not then remove the base shape
+				//
+				string $connectionsLeft[] = `listConnections $baseConn[1]`;
+				if (size($connectionsLeft) == 0)
+					delete $baseTrans;
+			}
+		}
+	}
+}
+
+			
+		
+	
+
+proc string[] removeWrapInfluence()
+//
+// Description:
+//     Removes an influence (or multiple if a group node is selected)
+//     from the selected wrapped surfaces
+//
+{
+	string $returnStr[];
+
+	// Get the selection list
+	//
+	string $selectedItems[] = `ls -sl`;
+	int $numSelected = size($selectedItems);
+
+	if ($numSelected < 2)
+	{
+		error( (uiRes("m_doWrapArgList.kSelectSurfaceOrWrap")));
+		return $returnStr;
+	}
+
+	// The influence object is always the last element of the 
+	// selection list
+	//
+	string $driverTrans = $selectedItems[$numSelected-1];
+
+	// Get all the corresponding wrap nodes
+	//
+	string $wrapNodeList[] = findAllSelectedWrapNodes();
+
+	removeInfluence($wrapNodeList, $driverTrans);
+
+	// Unselect the influence just removed so that 
+	// the command can be easily repeated with a new influence
+	//
+	select -r $selectedItems;
+	select -tgl $driverTrans;
+
+	return $wrapNodeList;
+}
+
+
+global proc string [] doWrapArgList( string $version,
+									 string $args[] )
+//  Description:
+//		Starting point of all wrap operations
+//
+//  Input Arguments:
+//      version:  The version used.  1.0 is pre Maya 2.5
+//		args[]:
+//   Version 1:	
+//        [0]  : operation:  1 - Create a new wrap
+//                           2 - Add influence
+//                           3 - Remove influence
+//   Version 2:		
+//        [1]  : threshold:  The weight threshold to be used when creating 
+//                           a wrap
+//        [2]  : maxDist  :  The maxDistance to be used when creating a wrap
+//   Version 3:
+//        [3]  : inflType :  The influence type (1 = point, 2 = face)
+//   Version 4:
+//        [4]  : exclusiveBind :  Bind algorithm (0=smooth, 1=exclusive)
+//   Version 5:
+//        [5]  : autoWeightThreshold :  Auto weight threshold control
+//   Version 6:
+//        [6]  : renderInfl :  Render influence objects
+//   Version 7:
+//        [7]  : falloffMode :  Distance falloff algorithm
+//
+//  Return Value:
+//      [string] The name of the wrap node involved in the operation
+//
+{
+	int $operation   = $args[0];
+	int $exclusiveBind = 0;
+	int $autoWeightThreshold = 0;
+	float $threshold = 0.0;
+	float $maxDist = 0.0;
+	int $inflType = 2;
+	int $versionNum = $version;
+	int $renderInfl = 0;
+	int $falloffMode = 0;
+
+	if ( $versionNum > 1 )
+	{
+		$threshold = $args[1];
+		$maxDist   = $args[2];
+	}
+
+	if ( $versionNum > 2 )
+	{
+		$inflType = $args[3];
+	}
+
+	if ( $versionNum > 3 )
+	{
+		$exclusiveBind = $args[4];
+	}
+
+	if ( $versionNum > 4 )
+	{
+		$autoWeightThreshold = $args[5];
+	}
+
+	if ( $versionNum > 5 )
+	{
+		$renderInfl = $args[6];
+	}
+	if ( $versionNum > 6 )
+	{
+		$falloffMode = $args[7];
+	}
+
+	if ($operation == 1) 
+	{
+		return createWrap($threshold, $maxDist, $inflType, $exclusiveBind, $autoWeightThreshold, $renderInfl, $falloffMode);
+	}
+	if ($operation == 2)
+	{
+		return addWrapInfluences($inflType, $renderInfl);
+	}
+	if ($operation == 3)
+	{
+		return removeWrapInfluence();
+	}
+}

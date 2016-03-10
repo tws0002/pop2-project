@@ -1,0 +1,1 @@
+methods that will be used to send e-mails should be placed here

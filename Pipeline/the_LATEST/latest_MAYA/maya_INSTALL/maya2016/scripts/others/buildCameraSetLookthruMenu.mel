@@ -1,0 +1,170 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Procedure Name:
+//      buildCameraSetLookthruMenu
+//
+//  Description:
+//      This procedure creates a menu item for each CameraSet node. When a menu item is selected,
+//		the associated cameraSet will be placed in the model view.
+//
+//  Input Arguments:
+//      parent - menu name to build menu items for
+//      panel - name of panel this menu is associated with
+//
+//  Return Value:
+//      None.
+//
+
+proc string[] getCameraSetCameras(string $cameraSet)
+//
+// Description:
+//     This procedure compiles the list of cameras controlled by the given cameraSet.  Duplicate
+//     cameras are not listed.  The list of cameras is returned.
+//
+{
+	string $cameras[];
+
+	// Get all of the connectable cameraLayer attributes.
+	string $allAttrs[] = `listAttr -multi -connectable ($cameraSet + ".cameraLayer")`;
+
+	// Iterate over them, looking for connected camera attributes.  For each unique one found,
+	// add it to the list of cameras.
+	int $i;
+	string $buffer[];
+	for ($i=0; $i < size($allAttrs); $i++)
+	{
+		tokenize($allAttrs[$i], ".", $buffer);
+		if ((size($buffer) != 2) || ($buffer[1] != "camera"))
+			continue;
+
+		// Get the upstream camera connection.  If none exists, continue.
+		string $inputs[] = `listConnections -t transform ($cameraSet + "." + $buffer[0] + ".camera")`;
+		if (size($inputs) == 0)
+			continue;
+
+		// Add the camera source name if it is unique.
+		string $source[];
+		tokenize($inputs[0], ".", $source);
+		string $cam;
+		int $foundIt = false;
+		for ($cam in $cameras)
+		{
+			if ($cam == $source[0])
+			{
+				$foundIt = true;
+				break;
+			}
+		}
+		if ($foundIt == false)
+			$cameras[size($cameras)] = $source[0];
+	}
+
+	return $cameras;
+}
+
+// Wrapper to switch to cameraSet. Use in conjunction with look through.
+//
+global proc stereoCameraSetSwitchToCameraSet( string $cameraSet, string $panel )
+{
+	//global int $gCameraSetUsed;
+	//global string $gBuildCameraSetChosenCameraSet;
+
+	if ( `pluginInfo -query -loaded "stereoCamera"` ) 
+	{ 
+        string $panelEditor = "StereoPanelEditor";
+
+		// Switch the panel
+		switchToStereoPanel( $panel );
+	
+		python("from maya.app.stereo import stereoCameraCustomPanel"); 
+		python("stereoCameraCustomPanel.switchToCameraSet\(\"" + $cameraSet + "\"," + 
+			"\"" + $panelEditor + "\")");
+
+		//$gBuildCameraSetChosenCameraSet = $cameraSet;
+		//$gCameraSetUsed = true;
+	}
+}
+
+global proc buildCameraSetChooseCameraSet(string $cameraSet, string $panel)
+//
+// Description:
+//     This procedure sets the given cameraSet as the principal object to control in the modelEditor.
+//
+{
+	//global int $gCameraSetUsed;
+	//global string $gBuildCameraSetChosenCameraSet;
+
+	string $modelPanel = `lookThroughModelPanelSetup $panel`;
+	modelEditor -e -cameraSet $cameraSet $modelPanel;
+
+	//$gBuildCameraSetChosenCameraSet = $cameraSet;
+	//$gCameraSetUsed = true;
+}
+
+global proc buildCameraSetLookthruMenu( string $parent, string $panel )
+//
+// Description:
+//     This procedure builds the Panel->Camera Sets submenu.  The menu consists of a
+//     checkbox item for whether to select the cameraSet when it is chosen, followed
+//     by the list of available cameraSets.
+//
+{
+	// Load the necessary libraries.
+	if ( !`pluginInfo -query -loaded "stereoCamera"` ) 
+		loadPlugin -qt "stereoCamera";
+    python("from maya.app.stereo import stereoCameraMenus");
+
+	string $cameraSets[] = `ls -type cameraSet`;
+
+	// Rebuild the menu.
+    setParent -m $parent;
+    menu -e -deleteAllItems $parent;
+
+	// Add the stereo cameraSets.
+	string $pyCmdRig = ("'stereoCameraSetSwitchToCameraSet %(arg1)s "+$panel+"'");
+	python("stereoCameraMenus.createStereoCameraSetSubmenus("+$pyCmdRig+")");
+
+	// Append the non-stereo cameraSet.
+	string $items[] = `menu -q -itemArray $parent`;
+	int $itemCount = size($items);
+	int $pp;
+    for ($cameraSet in $cameraSets)
+	{
+		int $foundIt = false;
+		for ($pp=0; $pp<$itemCount; $pp++)
+		{
+			if (`menuItem -q -label $items[$pp]` == $cameraSet)
+			{
+				$foundIt = true;
+				break;
+			}
+		}
+		if (!$foundIt)		
+        	menuItem -l $cameraSet -command ("buildCameraSetChooseCameraSet " + $cameraSet + " " + $panel);
+	}
+	
+	menuItem -divider true;
+    menuItem -label (uiRes("m_buildCameraSetLookthruMenu.kNewCameraSet"))
+     -c ( "{ string $cset = `cameraSet`; buildCameraSetChooseCameraSet $cset " + $panel + "; }");
+}
+

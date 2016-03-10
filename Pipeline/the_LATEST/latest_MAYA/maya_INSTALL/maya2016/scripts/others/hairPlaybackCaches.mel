@@ -1,0 +1,220 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Cloning Date:  Nov 2001
+//
+//  Description: Helper procs for processing of / operations on 
+// 		hairs playback caches.
+//
+global proc string[] hairPlaybackCaches_disableUnselected() 
+//
+// Description:
+//	For any hair playback cache whose hair isn't currently
+//	selected, disable it and return the list of caches disabled.
+//	
+{
+	string $activeHairs[] = `getSelectedHairSystems`;
+
+	string $caches[] = `ls -type diskCache`;
+	string $changedCaches[] = {};
+
+	if( size( $activeHairs ) == 0 ) {
+		error (uiRes("m_hairPlaybackCaches.kHairCacheOperationFailed"));
+		return $changedCaches;
+	}
+
+	// Disable any any nodes for unselected hairs 
+	//
+	for( $cache in $caches ) {
+		int $activeCache = false;
+		
+		int $isEnabled = eval( "getAttr \"" + $cache + ".enable\"" );
+		int $isPB = (eval("getAttr \"" + $cache + ".cacheType\"") == "mchp");
+
+		if( !$isEnabled || !$isPB ) {
+			continue;
+		}
+
+		for( $hair in $activeHairs ) {
+			string $connections[] = eval( "listConnections \"" + 
+										  $hair + ".diskCache\"" );
+
+			for( $connectedCache in $connections ) {
+				if( $connectedCache == $cache ) {
+					$activeCache = true;
+					break;
+				}
+			}
+
+			if( $activeCache ) {
+				break;
+			}
+		}
+
+		if( !$activeCache ) {
+			eval( "setAttr \"" + $cache + ".enable\" false" );
+			$changedCaches[ size($changedCaches) ] = $cache;
+		}
+	}
+
+	return $changedCaches;
+}
+
+global proc hairPlaybackCaches_enable( string $cachesToEnable[] )
+//	Enable any diskCache nodes passed in via $cachesToEnable
+//	
+{
+	// Restore the "enabled" state of any nodes you changed
+	//
+	for( $cache in $cachesToEnable ) {
+		eval( "setAttr \"" + $cache + ".enable\" true" );
+	}
+}
+
+proc int hairPlaybackCaches_appendConfirmBox( float $start, float $end )
+//
+// Description:
+//	Helper proc to post a confirm box in the case
+//	where we're appending and the new End Time is
+//	less then the previous End Time.  In this case,
+//	the user may not expect that the newly "appended"
+//	cache will end at the new End Time.  (Append 
+//	really just does a truncate at start, and append until
+//	the end.)
+//	
+{
+	int $result = true;
+	string $no = (uiRes("m_hairPlaybackCaches.kNo"));
+	string $yes = (uiRes("m_hairPlaybackCaches.kYes"));
+	string $hairs[] = getSelectedHairSystems();
+	for( $f in $hairs ) {
+//		if( `hairCacheInfo -q -hc -pb $f` == 0 ) {
+//			continue;
+//		}
+
+//		float $oldEnd = `hairCacheInfo -q -ef -pb $f`;
+$oldEnd = ($start-1);
+		if( $end >= $oldEnd ) {
+			continue;
+		}
+
+		// The user will lose the data from $newEnd to $end.
+		// Make sure he knows this.
+		//
+		string $message = (uiRes("m_hairPlaybackCaches.kAppendOperationMessage"));
+		$message = `format -s $end $message`;
+		string $lastChance = `confirmDialog 
+			-title (uiRes("m_hairPlaybackCaches.kWarning"))
+			-message $message
+			-button $yes
+			-button $no 
+			-defaultButton $no
+			-cancelButton $no -dismissString $no`;	
+		
+		if( $lastChance == $no ) {
+			$result = false;
+		}
+		
+		// Only need one confirm box...
+		//
+		break;
+	}
+
+	// If the currentTime isn't the same as the 
+	// append startTime, the resulting cache might
+	// not look like it's continuous.  Pop up a 
+	// warning...
+	//
+	if( $result ) {
+		float $currTime = `currentTime -q`;
+		if( !equivalent( $start, $currTime ) ) {
+			string $title = (uiRes("m_hairPlaybackCaches.kAppendStartTimeWarning"));
+			string $message = (uiRes("m_hairPlaybackCaches.kFluidStateMessage"));
+			$message = `format -s $start $message`;
+			string $lastChance = `confirmDialog 
+				-title $title
+				-message $message
+				-messageAlign "left"
+				-button $yes
+				-button $no 
+				-defaultButton $no
+				-cancelButton $no -dismissString $no`;	
+			
+			if( $lastChance == $no ) {
+				$result = false;
+			}
+		}
+	}
+
+	return $result;
+}
+
+global proc hairPlaybackCaches_append( float $startTime, 
+										float $endTime,
+										string $overSample,
+										int   $sampleRate )
+//
+// Description:
+//	Preprocessing before calling the "diskCache -append" cmd.
+//	
+{
+	if( hairPlaybackCaches_appendConfirmBox( $startTime,
+											  $endTime ) ) 
+	{
+		string $disabledCaches[] = `hairPlaybackCaches_disableUnselected`;
+		int $oldEnable = `getAttr globalCacheControl.writeEnable`;
+		
+		
+		setAttr globalCacheControl.writeEnable 1;
+
+		// Figure out how much before the current time we 
+		// want to truncate, so "append" will happen at the
+		// right position.  
+		//
+		float $interval = $sampleRate;
+		if( !equivalent( $sampleRate, 0.0 ) ) {
+			$interval = 1.0 / $interval;
+		}
+
+		// Truncate leaves the data at the currentTime in
+		// the cache.  If we're appending, we want to overwrite
+		// the currentTime with what we're seeing in the hair,
+		// so we need to keep everything *before* the current time.
+		//
+		currentTime -update false ( $startTime - $interval );
+		truncateHairCache;
+		currentTime -update false  $startTime ;
+
+		setAttr globalCacheControl.writeEnable $oldEnable;
+		
+		//	currentTime $currTime;
+		
+		evalEcho( "diskCache -append -enabledCachesOnly " +
+				  " -startTime " + $startTime +
+				  " -endTime " + $endTime + " " + 
+				  $overSample + 
+				  " -samplingRate " + $sampleRate + "; " );
+		
+		hairPlaybackCaches_enable( $disabledCaches );
+	}
+}

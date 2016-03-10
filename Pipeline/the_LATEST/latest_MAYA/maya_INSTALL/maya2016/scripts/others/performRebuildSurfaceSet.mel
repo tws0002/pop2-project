@@ -1,0 +1,208 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Mar 14, 1997
+//
+//  Description:
+//      This script runs rebuild surface on the selection list.
+//
+
+
+global proc performRebuildSurfaceSet( int $doHistory, int $replaceOriginal,
+									  int $rebuildType, float $globalTol,
+									  int $srfNumSpansU, int $srfNumSpansV,
+									  int $srfDegreeU, int $srfDegreeV,
+									  int $endKnots,
+									  int $keepParmRange, int $keepCornerPts,
+									  int $keepControlPoints, int $direction,
+									  int $srfUseGlobalTol, float $srfLocalTol,
+									  int $polys, int $fitRebuild )
+{
+	// Get a list of each type of acceptable object type - 
+	// surfaces, and surfaces-on-surface.
+	//
+	global int $gSelectNurbsSurfacesBit;
+	global int $gSelectSubdivSurface;
+	global int $gSelectIsoparmsBit;
+	global int $gSelectMeshesBit;
+	string $surfaceList[] =`filterExpand -ex true -sm $gSelectNurbsSurfacesBit`;
+	string $isoparmList[] = `filterExpand -ex true -sm $gSelectIsoparmsBit`;
+
+	if( $rebuildType == 2 ) {
+		if( (size($surfaceList) + size($isoparmList)) < 2 ) {
+			error (uiRes("m_performRebuildSurfaceSet.kRebuildSurfaceInvalSelection")) ;
+			return;
+		}
+	}
+	else {
+		if( (size($surfaceList) + size($isoparmList)) < 1 ) {
+			error (uiRes("m_performRebuildSurfaceSet.kRebuildSurfaceImproperSelection"));
+			return;
+		}
+	}
+
+	// Put together the command to execute
+	//
+	$cmd = "rebuildSurface" + " -ch " + $doHistory + 
+		   " -rpo " + $replaceOriginal+
+		   " -rt " + $rebuildType + 
+		   " -end " + $endKnots +
+		   " -kr " + $keepParmRange +
+		   " -kcp " + $keepControlPoints +
+		   " -kc " + $keepCornerPts;
+
+	$cmd += " -su " + $srfNumSpansU + " -du " + $srfDegreeU;
+	$cmd += " -sv " + $srfNumSpansV + " -dv " + $srfDegreeV;
+
+	if( $srfUseGlobalTol == 0 ) {	// Use globl tolerance vs. local tolerance
+		$cmd += " -tol " + $srfLocalTol;
+	} else {
+		$cmd += " -tol " + $globalTol;
+	}
+	if( $polys ) {
+		$cmd += " -po " + $polys;
+	}
+    $cmd += " -fr " + $fitRebuild;
+	$cmd += " ";
+
+	// Execute the command on all surfaces
+	//
+	int $i;
+	string $isoCmd; $isoCmd = $cmd;
+	$cmd = $cmd + " -dir " + $direction ;
+	string $surfaceResults[] ;
+	if( $rebuildType == 2 ) {
+		int $l = size($surfaceList) ;
+		if( $l > 2 ) {
+            warning( (uiRes("m_performRebuildSurfaceSet.kWarningRebuilding")) );
+        }	
+		if( $l >= 2 ) {
+            int $nitems = 2 ;
+            $cmd = appendToCmdPlaceHoldersForSelectionItems( $cmd, $nitems ) ;
+            string $srfPair[2] ;
+			for( $i=0; $i<($l-1); $i+=1 ) {
+				$srfPair[0] = $surfaceList[$i] ;
+				$srfPair[1] = $surfaceList[$l-1] ;
+				string $oneRes[] = executeCmdOnItems($cmd,$srfPair);
+				appendStringArray( $surfaceResults, $oneRes, size($oneRes) );
+			}
+        }
+	} else {
+		$surfaceCmd = $cmd + " %s;";
+		$surfaceResults = executeForEachObject( $surfaceList, $surfaceCmd );
+	}
+
+	// Processing isoparms is a little more involved.  Use groupObjectsByName().
+	// This chunk of code groups the isoparms from the selection list
+	// and uses them to guess a rebuild direction.  If an isoparm is
+	// selected in both directions on the same surface, then this
+	// will figure out that the user wants to rebuild in BOTH directions.
+	// Even if the user has selected >1 U isoparms on the same surface, 
+	// this will only call the rebuild command ONCE.
+	//
+	string $isoparmResults[];
+	string $isoparms[] = groupObjectsByName( $isoparmList, "." );
+	int $numIsoStrs = size($isoparms);
+	for( $i = 0; $i < $numIsoStrs; $i ++ ) {
+
+		string $rebuildCmd;
+		string $results[];
+		string $objectName[];
+		string $names[];
+
+		tokenize $isoparms[$i] " " $objectName;
+		$names = groupObjectsByName( $objectName, "\\[" );
+
+		if( size($names) > 1 ) {
+			tokenize $isoparms[$i] "\\." $objectName;
+			$rebuildCmd = $isoCmd + " -dir 2 " + $objectName[0];
+		}
+		else {
+			string $foundU = `match "\\.u\\[" $names[0]`;
+			if( size($foundU) > 0 ) {
+				tokenize $isoparms[$i] "\\." $objectName;
+				$rebuildCmd = $isoCmd + " -dir 1 " + $objectName[0];
+			}
+			else {
+				string $foundV = `match "\\.v\\[" $names[0]`;
+				if( size($foundV) > 0 ) {
+					tokenize $isoparms[$i] "\\." $objectName;
+					$rebuildCmd = $isoCmd + " -dir 0 " + $objectName[0];
+				}
+			}
+		}
+
+		if( catch( $results = evalEcho( $rebuildCmd )) ) {
+			warning( `format -s $rebuildCmd (uiRes("m_performRebuildSurfaceSet.kWarningProblemExecuting"))` );
+		}
+		else {
+			int $j;
+			int $numResults = size( $results );
+			int $numIsoResults = size( $isoparmResults );
+			for( $j = 0; $j < $numResults; $j ++, $numIsoResults ++ ) {
+				$isoparmResults[$numIsoResults] = $results[$j];
+			}
+		}
+	}
+
+	if( (size($surfaceResults)+size($isoparmResults)) == 0 ) {	
+		int $l = size($surfaceList) ;
+		if( $rebuildType == 2 ) {
+			if( $l < 2 ) {
+				error (uiRes("m_performRebuildSurfaceSet.kRebuildSurfacesInvalSelection")) ;
+			}
+			else {
+				error (uiRes("m_performRebuildSurfaceSet.kRebuildSurfaceFailed"));
+			}
+		}
+		else if( 0 == $l ) {
+			error( uiRes( "m_performRebuildSurfaceSet.kRebuildSurfaceImproperSelection"));
+		}
+		else {
+			error( uiRes( "m_performRebuildSurfaceSet.kRebuildSurfaceFailed"));
+		}
+	} else {
+		// Select all the results with one select command.  Note that only
+		// resulting surfaces and surfaces are selected, not dependency nodes.
+		//
+		string $selectString;
+		$selectString = "select ";
+		int $i;
+		$surfaceResults = `filterExpand -ex true -sm $gSelectNurbsSurfacesBit -sm $gSelectSubdivSurface -sm $gSelectMeshesBit $surfaceResults`;
+		int $numSurfaces = size($surfaceResults);
+		for( $i = 0; $i < $numSurfaces; $i ++ ) {
+			$selectString += $surfaceResults[$i];
+			$selectString += " ";
+		}
+		$isoparmResults = `filterExpand -ex true -sm $gSelectNurbsSurfacesBit -sm $gSelectSubdivSurface -sm $gSelectMeshesBit $isoparmResults`;
+		int $numSurfaces = size($isoparmResults);
+		for( $i = 0; $i < $numSurfaces; $i ++ ) {
+			$selectString += $isoparmResults[$i];
+			$selectString += " ";
+		}
+		$selectString += ";";
+		select -cl;
+		eval($selectString);
+	}
+}
+

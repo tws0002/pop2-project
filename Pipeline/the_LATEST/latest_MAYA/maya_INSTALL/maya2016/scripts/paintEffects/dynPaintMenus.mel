@@ -1,0 +1,1892 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date: 
+//
+// 	Description:
+//    
+//
+global string $gCurrentDynFileName = "";
+global int	  $gSavedAsOnce = false;
+global string $gPEXSizeField;
+global string $gPEYSizeField;
+
+proc int isDynToolbarDisplayed ()
+{
+	if( `optionVar -exists dynPaintDisplayToolbar` )
+	{
+		return `optionVar -query dynPaintDisplayToolbar`;
+	}
+	else
+	{
+		optionVar -intValue dynPaintDisplayToolbar 1;
+		return 1;
+	}
+}
+
+global proc dynPaintSaveDialog(string $editor)
+{
+	global string $gCurrentDynEditor;
+   	$gCurrentDynEditor = $editor;
+
+    string  $workspace = `workspace -q -fn`;
+    setWorkingDirectory $workspace "image" "sourceImages";
+	string $saveImage = (uiRes("m_dynPaintMenus.kSaveImage"));
+	fileBrowser("dynPaintSaveFile", $saveImage, "image", 1);
+}
+
+// repeated code moved into a function to avoid duplication
+global proc int dynPaintSetRenderGlobalsInfo(string $imageFileName)
+{
+	int $reset = 0;
+
+	global string $imgExt[];  // This is the actual file extension
+	global string $imfKey[];  // This is the unique imf keyword
+
+	string $tokens[];
+	int $numTokens = `tokenize $imageFileName "." $tokens`;
+	string $ext = $tokens[$numTokens-1];
+	if ($numTokens > 1) {
+
+		// 'rgb' and 'pix' doesn't appear in imgExt[] and imfKey[] arrays,
+		// look into createImageFormats.mel. To overcome this problem,
+		// the equivalent extensions are harcoded for these two.
+
+		if($ext == "rgb")       $ext = "sgi";
+		else if($ext == "pix")  $ext = "als";
+		else if($ext == "jpg")  $ext = "jpeg";
+		else if($ext == "tiff") $ext = "tif";
+
+		// There may be an extension. Look through the extensions to
+		// see if we match.
+		int $ct = `size( $imgExt )`;
+		if ($ct == 0) {
+			createImageFormats();
+			$ct = `size( $imgExt )`;
+		}
+		for ($i = 0; $i < $ct; $i++) {
+			if ($imgExt[$i] == $ext) {
+				// We have a match!
+				$reset = 1;
+				setAttr defaultRenderGlobals.imageFormat $i;
+				setAttr defaultRenderGlobals.imfkey -type "string" "";
+				break;
+			}
+		}
+		if (! $reset) {
+			global string $imfPlugInExt[];
+			global string $imfPlugInKey[];
+			$ct = `size( $imfPlugInExt )`;
+			for ($i = 0; $i < $ct; $i++) {
+				if ($imfPlugInExt[$i] == $ext) {
+					// We have a match!
+					$reset = 1;
+					setAttr defaultRenderGlobals.imageFormat 50;
+					setAttr defaultRenderGlobals.imfkey -type "string" $imfPlugInKey[$i];
+				break;
+				}
+			}
+		}
+	}
+	return $reset;
+}
+
+global proc dynPaintSave(string $editor)
+{
+	global string $gCurrentDynFileName;
+	global int	  $gSavedAsOnce;
+
+	if( $gSavedAsOnce && size(  $gCurrentDynFileName ) > 1 )
+	{
+		// no confirm overwrite save
+		sysFile -del `file -query -location $gCurrentDynFileName`;
+		if (!`optionVar -exists dynSaveAlpha`) {
+			optionVar -intValue dynSaveAlpha 1;
+		}
+		int $alphaValue = `optionVar -query dynSaveAlpha`;
+
+		dynPaintEditor -e -saveAlpha $alphaValue $editor; // set the alpha saving value appropriately.
+
+		// Capture the results from the dynPaintEditor command because it will contain the name
+		// of the file we just wrote. bug 125378 APP 13mar00
+
+		int $reset      = 0;
+		int $resetValue = `getAttr defaultRenderGlobals.imageFormat`;
+		string $resetValueImfKey = `getAttr defaultRenderGlobals.imfkey`;
+
+        // Check current file extension to see if there is a format we should be using for the file.
+        if ($gCurrentDynFileName != "") {
+            // There is a filename already.
+			// Check to see if it already has an image file format extension, if so, use that
+			// extension to set the output format type.
+			// Since we turn the animation extension off, we never have to worry about
+			// the order of the extension/framenumber - the extension is always the last thing.
+			// That is, until something changes with the way we format filenames. APP 17apr01
+
+			$reset = dynPaintSetRenderGlobalsInfo($gCurrentDynFileName);
+        }
+
+		int $currentAni = `getAttr defaultRenderGlobals.animation`; // Remember current state.
+		setAttr defaultRenderGlobals.animation        0; // Turn off animation.
+
+		// SET TO THE DIRECTORY WHERE WE ARE GOING TO WRITE.
+   		string  $workspace = `workspace -q -fn`;
+   		setWorkingDirectory $workspace "image" "sourceImages";
+
+		// WRITE THE IMAGE TO DISK.
+		string $results[] = `dynPaintEditor -e -writeImage $gCurrentDynFileName $editor`;
+
+		if ($reset == 1) {
+			setAttr defaultRenderGlobals.imageFormat $resetValue;
+			setAttr defaultRenderGlobals.imfkey -type "string" $resetValueImfKey;
+		}
+		setAttr defaultRenderGlobals.animation        $currentAni; // Restore to previous state.
+
+		$gCurrentDynFileName =  $results[1];
+		updateFileTextures( $gCurrentDynFileName );
+	}
+	else
+	{
+		dynPaintSaveDialog($editor);
+	}
+}
+
+global proc int getAutoSave (string $editor)
+
+{
+	int $as = `dynPaintEditor -q -autoSave $editor`;	
+
+	return $as;
+}
+	 
+global proc toggleAutoSave( string $editor )
+{
+	global string $dynAutoSaveToggle;
+
+	int $autoSave = `getAutoSave($editor)`;
+
+	$autoSave = !$autoSave;
+
+	if( size($dynAutoSaveToggle ) > 0 )
+	{
+		menuItem -e -checkBox $autoSave  $dynAutoSaveToggle;
+	}
+	setDynPaintAutoSaveToolbox(  $autoSave );
+	dynPaintEditor -e -autoSave $autoSave $editor;
+}
+
+global proc string[] getSelectedBrushes()
+{
+	string $brushes[];
+	int $brushesIndex = 0;
+
+	string $selection[] = `ls -sl -long`;
+
+	for ($node in $selection) {
+		//check for stroke here
+		if ( (`nodeType $node` == "stroke") || (`nodeType $node` == "pfxHair") || (`nodeType $node` == "pfxToon") ){
+			string $brush[] = `listConnections -type "brush" $node`;
+			if ($brush[0] != "") {
+				$brushes[$brushesIndex++] = $brush[0];
+			}
+		}
+		else{
+		      string $children[] = `listRelatives -fullPath -shapes $node`;
+		      for ($child in $children) {
+			      if ( (`nodeType $child` == "stroke") || (`nodeType $child` == "pfxHair") || (`nodeType $child` == "pfxToon") ){
+				  string $brush[] = `listConnections -type "brush" $child`;
+				  if ($brush[0] != "") {
+					$brushes[$brushesIndex++] = $brush[0];
+				  }
+			      }
+		     }
+	       }
+	}
+	return $brushes;
+}
+
+global proc dynPaintNewScenOpenedCB( string $editorName ) {
+//
+// Description:
+//		Called when a "NewSceneOpened" is requested
+//	
+	// if in canvas mode, ask about saving the image
+	// 
+
+	global string $gCurrentDynFileName;
+	global int $gSavedAsOnce;
+
+	int $canvasMode = `dynPaintEditor -q -canvasMode $editorName`;
+	if ( $canvasMode ) {
+		// this will prompt the user only if necessary to save the canvas
+		// 
+		dynPaintToggleCanvasMode(0, $editorName );
+		
+		// return back to the canvas mode
+		//
+		dynPaintEditor -e -canvasMode 1 $editorName;
+	
+// bug 117383 - To work around the canvas not saving on File>New problem, let's not
+// clear the buffer at all. This can be reinstated after bug 133120 (modal file save) is
+// fixed. APP 16may00
+//		// clear the image to the current color
+//		// 
+//		float $cc[] = `optionVar -q dynPaintPanelClearColour`;
+//		dynPaintEditor -e -cl $cc[0] $cc[1] $cc[2] $editorName;
+
+		clearCanvas($editorName);
+
+	}
+
+	$gCurrentDynFileName = "";
+	$gSavedAsOnce = false;
+}
+
+
+global proc dynPaintToggleCanvasMode(int $canvasMode, string $editorName)
+// Description:
+//     Toggle the 2D/3D state of the dynPaintEditor
+{
+
+	if (`licenseCheck -m "edit" -typ "particlePaint"`) {
+		if (!`optionVar -ex dynPaint23dToggle`) {
+			if( $canvasMode ){
+				optionVar -iv dynPaint23dToggle 2;
+			} else {
+				optionVar -iv dynPaint23dToggle 3;
+			}
+		}
+
+		// if pixel paint is on and we are entering Paint Scene mode
+		// turn pixel paint off 
+		if ( !$canvasMode && `isPixelPaintModeOn` ) {
+			togglePixelPaintMode($editorName);
+		}
+	}
+
+	dynPaintEditor -e -canvasMode $canvasMode $editorName;
+
+	// now check if it actually got set
+	$canvasMode = `dynPaintEditor -q -canvasMode $editorName`;
+
+	setParent -q;
+
+	if (!$canvasMode) {
+		optionVar -iv dynPaint23dToggle 3;
+		showDynPaintSceneTools( true );
+
+		//
+		// turn off autosaving when switching to scene mode
+		//
+
+		int $autoSave = `getAutoSave ($editorName)`;
+		if( $autoSave )
+		{
+			toggleAutoSave( $editorName ); 
+
+		}
+	} else {
+		optionVar -iv dynPaint23dToggle 2;
+		showDynPaintSceneTools( false );
+	}
+}
+
+global proc brushNameCallback( string $paneName )
+{
+	setParent $paneName;
+	string $cmd = "getDefaultBrush( )";
+	string $defName = `eval $cmd`;
+
+	createEditor $paneName $defName;	
+}
+
+//global proc brushToolSettings(){
+//	if ( !`window -exists PaintEffectsBrushWindow` ){
+//
+//		window
+//			-t "Paint Effects Brush Settings"
+//			-width 510 -height 600
+//			PaintEffectsBrushWindow;
+//
+//		// string $lName = `frameLayout -bv 0 -cl 0 -cll 0 -lv 0`;
+//		string $cmd = "getDefaultBrush( )";
+//		string $defName = `eval $cmd`;
+//
+//		string $lName = `paneLayout`;
+//
+//		createEditor $lName $defName;
+//
+//		setParent ..;
+//		frameLayout;
+//		nameField -ncc ("brushNameCallback " + $lName) -o $defName;
+//	}
+//
+//	showWindow PaintEffectsBrushWindow;
+//}
+
+
+
+global proc fillUpCameraMenu(string $parent, string $editor)
+{
+	setParent -m $parent;
+	menu -e -dai $parent;
+
+	string $persp[] = `listCameras -perspective`;
+	string $ortho[] = `listCameras -orthographic`;
+
+	string $cam;
+	int $isCanvas = `dynPaintEditor -q -canvasMode $editor`;
+	string $cameraAnnot = (uiRes("m_dynPaintMenus.kCameraViewAnnot"));
+
+	for ($cam in $persp) {
+		string $command = ("dynPaintEditor -e -cam " + $cam + " " + $editor);
+		menuItem -l $cam
+			-enable (!$isCanvas)
+			-annotation `format -s $cam $cameraAnnot`
+			-c $command;
+	}
+	menuItem -divider true;
+	for ($cam in $ortho) {
+		string $command = ("dynPaintEditor -e -cam " + $cam + " " + $editor);
+		menuItem -l $cam
+			-enable (!$isCanvas)
+			-annotation `format -s $cam $cameraAnnot`
+			-c $command;
+	}
+}
+
+global proc dynSaveImageOptionsWindow( string $editor, int $useDialog)
+{
+	global int $gSavedAsOnce;
+
+	if (!`optionVar -exists dynSaveAlpha`) {
+		optionVar -intValue dynSaveAlpha 1;
+	}
+
+	int $alphaValue = `optionVar -query dynSaveAlpha`;
+
+	string $layout = getOptionBox();
+	setParent $layout;
+
+	setUITemplate -pushTemplate DefaultTemplate;
+
+	waitCursor -state 1;
+
+	tabLayout -tabsVisible 0 -scrollable 0;
+	string $parent = `columnLayout -adjustableColumn 1`;
+
+	frameLayout -label (uiRes("m_dynPaintMenus.kSaveAlphaLayout")) 
+		-collapsable false -collapse false;
+	string $cB = `checkBox -label (uiRes("m_dynPaintMenus.kSaveAlpha")) -value $alphaValue`;
+	setParent ..;
+
+	waitCursor -state 0;
+	setUITemplate -popTemplate;
+
+	string $applyBtn = getOptionBoxApplyBtn();
+
+	string $saveImage = (uiRes("m_dynPaintMenus.kSaveImageButton"));
+	if ($useDialog && !$gSavedAsOnce) {
+		button -edit -label $saveImage
+			-c ("{int $av = `checkBox -q -value \"" +$cB+ "\"`;" +
+				"optionVar -iv dynSaveAlpha $av;" + 
+				"dynPaintSaveDialog(\"" + $editor + "\");}") $applyBtn;
+	} else {
+		// Do NOT use dialog
+		button -edit -label $saveImage 
+			-c ("{int $av = `checkBox -q -value \"" +$cB+ "\"`;" + 
+				"optionVar -iv dynSaveAlpha $av;" + 
+				"dynPaintSave(\"" + $editor + "\");}") $applyBtn;
+	}
+
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-c ("{int $av = `checkBox -q -value \"" +$cB+ "\"`;" + 
+			"optionVar -iv dynSaveAlpha $av;}") $saveBtn;
+
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit -c ("optionVar -iv  dynSaveAlpha 1;" +
+			"checkBox -edit -value 1 " + $cB + ";") $resetBtn;
+
+	setOptionBoxTitle (uiRes("m_dynPaintMenus.kSaveImageOptions"));
+	showOptionBox();
+}
+
+global proc turnSavedAsOnceOff( )
+{
+	global int	  $gSavedAsOnce;
+	$gSavedAsOnce = 0;
+}
+
+global proc dynPaintColourPickerWindow(string $editor)
+{
+	if (!`optionVar -ex dynPaintPanelClearColour`) {
+		optionVar -fv dynPaintPanelClearColour 1.0;
+		optionVar -fva dynPaintPanelClearColour 1.0;
+		optionVar -fva dynPaintPanelClearColour 1.0;
+	}
+
+	global string $gOptionBox;
+
+	float $clearValue[] = `optionVar -q dynPaintPanelClearColour`;
+
+	string $layout = getOptionBox();
+	setParent $layout;
+
+	setUITemplate -pushTemplate DefaultTemplate;
+
+	waitCursor -state 1;
+
+	tabLayout -tabsVisible 0 -scrollable 0;
+	string $parent = `columnLayout -adjustableColumn 1`;
+
+	$cGrp = `colorSliderGrp -label (uiRes("m_dynPaintMenus.kCleaColor")) -rgb $clearValue[0] $clearValue[1] $clearValue[2]`;
+
+	waitCursor -state 0;
+	setUITemplate -popTemplate;
+
+// APPLY AND CLOSE BUTTON
+	string $applyBtn = getOptionBoxApplyAndCloseBtn();
+	button -edit -label (uiRes("m_dynPaintMenus.kClearButton")) -c ("{float $cv[] = `colorSliderGrp -q -rgb \"" +$cGrp+ "\"`;" + 
+			"optionVar -fv dynPaintPanelClearColour $cv[0];" + 
+			"optionVar -fva dynPaintPanelClearColour $cv[1];" +
+			"optionVar -fva dynPaintPanelClearColour $cv[2];" +
+			"clearCanvas(\"" + $editor + "\");" +
+			"deleteUI(\"" + $gOptionBox + "\");}") $applyBtn;
+
+
+// APPLY BUTTON
+	string $saveBtn = getOptionBoxApplyBtn();
+	button -edit 
+		-c ("{float $clearValue[] = `colorSliderGrp -q -rgb \""+$cGrp+"\"`;" + 
+			"optionVar -fv dynPaintPanelClearColour $clearValue[0];" + 
+			"optionVar -fva dynPaintPanelClearColour $clearValue[1];" +
+			"optionVar -fva dynPaintPanelClearColour $clearValue[2];" +
+			"clearCanvas(\"" + $editor + "\");}") $saveBtn;
+
+
+// SAVE BUTTON
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-c ("{float $clearValue[] = `colorSliderGrp -q -rgb \""+$cGrp+"\"`;" + 
+			"optionVar -fv dynPaintPanelClearColour $clearValue[0];" + 
+			"optionVar -fva dynPaintPanelClearColour $clearValue[1];" +
+			"optionVar -fva dynPaintPanelClearColour $clearValue[2];}") $saveBtn;
+
+
+// RESET BUTTON
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+			-c ("optionVar -fv  dynPaintPanelClearColor 1.0;" +
+		    "optionVar -fva dynPaintPanelClearColor 1.0;" +
+		    "optionVar -fva dynPaintPanelClearColor 1.0;" +
+		    "colorSliderGrp -e -rgb 1.0 1.0 1.0 " + $cGrp + ";") $resetBtn;
+
+	setOptionBoxTitle (uiRes("m_dynPaintMenus.kClearColorTitle"));
+	showOptionBox();
+}
+
+global proc createPaintMenu(string $parent, string $editor)
+{
+	setParent -m $parent;
+	menu -e -dai $parent;
+	global string $gCreatorWireCtx;
+
+	int $isPlane = !`dynWireCtx -q -dp $gCreatorWireCtx`;
+
+	int $isCanvasMode = `dynPaintEditor -q -canvasMode $editor`;
+
+
+	radioMenuItemCollection;
+		if ( `licenseCheck -m "edit" -typ "particlePaint"`) {
+	    	menuItem -label (uiRes("m_dynPaintMenus.kPaintScene")) -radioButton  (!$isCanvasMode)
+				-annotation (uiRes("m_dynPaintMenus.kPaintSceneAnnot"))
+				-c ("dynPaintToggleCanvasMode(0, \"" + $editor + "\")");
+		}
+		menuItem -label (uiRes("m_dynPaintMenus.kPaintCanvas")) -radioButton ($isCanvasMode)
+			-annotation (uiRes("m_dynPaintMenus.kPaintCanvasAnnot"))
+			-c ("dynPaintToggleCanvasMode(1, \"" + $editor + "\")");
+		
+	setParent -m $parent;
+	menuItem -d true;
+
+	menuItem -label (uiRes("m_dynPaintMenus.kSaveSnapshot"))
+		-annotation (uiRes("m_dynPaintMenus.kSaveSnapshotAnnot"))
+		-command ("dynPaintSaveDialog(\"" + $editor + "\");");
+
+	menuItem -label (uiRes("m_dynPaintMenus.kSaveDepth"))
+		-annotation (uiRes("m_dynPaintMenus.kSaveDepthAnnot"))
+		-command ("dynPaintSaveBumpDialog(\"" + $editor + "\");");
+
+
+}
+
+global proc int dynPaintPromptForFileSaving(string $editor)
+// Warn the user the buffer is about to be cleared.
+{
+	string $yes = (uiRes("m_dynPaintMenus.kYes"));
+	string $no  = (uiRes("m_dynPaintMenus.kNo"));
+	string $queryResult = `confirmDialog -title (uiRes("m_dynPaintMenus.kSaveFile"))
+	                       -message (uiRes("m_dynPaintMenus.kSaveMsg"))
+	                       -button $yes -button $no -cancelButton $no`;
+
+	if ($queryResult == $yes) {
+		dynPaintSaveDialog($editor);
+		return 1;
+	} else if ($queryResult == $no) {
+		return 1;
+	} else {
+		return 0; // What the heck was it if not Yes or No?
+	}
+}
+
+global proc int dynPaintOpenFile(string $fileName, string $fileType)
+{
+	global string $gCurrentDynEditor;
+	global string $gCurrentDynFileName;
+	global int	  $gSavedAsOnce;
+
+	if ($fileName != "" && $gCurrentDynEditor != "") {
+		dynPaintEditor -e -loadImage $fileName $gCurrentDynEditor;
+		dynPaintEditor -e -zoom 1 $gCurrentDynEditor;
+		 $gCurrentDynFileName =  $fileName;
+		 $gSavedAsOnce = true;
+	
+	 	string $workspace = `workspace -q -dir`;
+		retainWorkingDirectory ($workspace);
+	}
+	return 1;  // return 1 to close the file browser
+}
+
+global proc dynPaintLoadImage(string $fileName, string $editor)
+{
+	global string $gCurrentDynFileName;
+	global int	  $gSavedAsOnce;
+	if( $fileName != "" )
+	{
+		dynPaintEditor -e -loadImage $fileName $editor;
+		$gCurrentDynFileName = $fileName;
+		$gSavedAsOnce = true; // so that autoSave does not prompt
+	}
+}
+global proc dynPaintOpenDialog(string $editor)
+{
+	global string $gCurrentDynEditor;
+   	$gCurrentDynEditor = $editor;
+	
+    string  $workspace = `workspace -q -fn`;
+	setWorkingDirectory $workspace "image" "sourceImages";
+	string $openImage = (uiRes("m_dynPaintMenus.kOpenImageBrowser"));
+	fileBrowser("dynPaintOpenFile", $openImage, "image", 0);
+
+	// turn off autosave
+	int $as = `getAutoSave($editor)`;
+	if ($as) {
+		toggleAutoSave($editor);
+	}
+
+}
+
+global proc int dynPaintSaveFile(string $fileName, string $fileType)
+{
+	global string $gCurrentDynEditor;
+	global string $gCurrentDynFileName;
+	global int	  $gSavedAsOnce;
+
+	int				$reset = 0;
+
+	if ($fileName != "")
+	{
+		optionVar -stringValue lastSaveImageAsFileType $fileType;
+
+		python("import maya.app.general.createImageFormats as createImageFormats");
+		python("formatManager = createImageFormats.ImageFormats()");
+		python(("formatManager.pushRenderGlobalsForDesc(\"" + $fileType + "\")"));
+		$reset = 1;
+	}
+
+	if ($fileName != "" && $gCurrentDynEditor != "") {
+		if (!`optionVar -exists dynSaveAlpha`) {
+			optionVar -intValue dynSaveAlpha 1;
+		}
+		int $alphaValue = `optionVar -query dynSaveAlpha`;
+		dynPaintEditor -e -saveAlpha $alphaValue $gCurrentDynEditor; // set the alpha saving value appropriately.
+
+		// Capture the results from the dynPaintEditor command because it will contain the name
+		// of the file we just wrote. bug 125378 APP 13mar00
+		// Further to this, let's try to turn OFF the use of format extentions and use exactly what the
+		// user gave to us. APP 14mar00
+
+		int $currentAni = `getAttr defaultRenderGlobals.animation`;
+		setAttr defaultRenderGlobals.animation        0; // Turn off animation.
+			string $results[] = `dynPaintEditor -e -writeImage $fileName $gCurrentDynEditor`;
+		setAttr defaultRenderGlobals.animation        $currentAni; // Restore to previous state.
+
+		$gCurrentDynFileName =  $results[1];
+		$gSavedAsOnce = true;
+		updateFileTextures( $gCurrentDynFileName );
+	}
+
+	if ($reset == 1) {
+		python("formatManager.popRenderGlobals()");
+	}
+
+	return 1;  // return 1 to close the file browser
+}
+
+global proc int dynPaintSaveBumpmap(string $fileName, string $fileType)
+{
+	global string $gCurrentDynEditor;
+	if ($fileName != "" && $gCurrentDynEditor != "") {
+		dynPaintEditor -e -saveBumpmap $fileName $gCurrentDynEditor;
+	}
+	return 1;  // return 1 to close the file browser
+}
+
+global proc dynPaintSaveBumpDialog(string $editor)
+{
+	global string $gCurrentDynEditor;
+   	$gCurrentDynEditor = $editor;
+    
+	string  $workspace = `workspace -q -fn`;
+    setWorkingDirectory $workspace "image" "sourceImages";
+	string $saveBumpmap = (uiRes("m_dynPaintMenus.kSaveBumpmap"));
+	fileBrowser("dynPaintSaveBumpmap", $saveBumpmap, "image", 1);
+}
+
+global proc int newTextureCB( string $filename,
+                                 string $fileType )
+{
+
+	// Get the full path.
+	textField -edit -fileName $filename textureNameField;
+
+	string $currentDir = `workspace -q -dir`;
+        retainWorkingDirectory ($currentDir);
+
+	return true;
+}
+
+global proc fileTextureNew ()
+{
+    string  $workspace = `workspace -q -fn`;
+    setWorkingDirectory $workspace "image" "sourceImages";
+	string $newTexture = (uiRes("m_dynPaintMenus.kNewTexture"));
+	fileBrowser ("newTextureCB", $newTexture, "image", 1);
+}
+
+global proc int assignTextureCB( string $filename,
+                                 string $fileType )
+{
+	textField -edit -fileName $filename textureNameField;
+
+	string $currentDir = `workspace -q -dir`;
+    retainWorkingDirectory ($currentDir);
+
+	return true;
+}
+
+global proc fileTextureBrowser ()
+{
+    string  $workspace = `workspace -q -fn`;
+    setWorkingDirectory $workspace "image" "sourceImages";
+	string $open = (uiRes("m_dynPaintMenus.kOpen"));
+	fileBrowser ("assignTextureCB", $open, "image", 0);
+}
+
+global proc dynPaintApplyNewTexture (string $fileTextureNode, string $editor)
+{
+	global string $gCurrentDynFileName;
+	global int    $gSavedAsOnce;
+	int           $justMadeIt = 0;
+
+	int $makeNewFile = true;
+
+	string $fileName = `textField -query -fileName textureNameField`;
+	string $fileNameBuffer[];
+	int $numTokens = tokenize ( $fileName, "/", $fileNameBuffer); 
+
+	setParent paintEffectsNewTextureWin;
+
+	//
+	// if the full path is not provided put it in the sourceImages directory 
+	//
+
+	if ($numTokens == 1) {
+
+    	string $workspace = `workspace -q -fn`;
+		string $sourceImagesDir = ($workspace + "/sourceImages/");
+
+		// because of a bug with workspace - can't get the file rule for 
+		// sourceImages.  so in the case where it is set to a non-standard
+		// location - we need to save the file in the project directory.
+
+		if (!`file -q -exists $sourceImagesDir`) {
+		    $fileName = ($workspace + "/" + $fileName);
+		} else {
+			$fileName = ($sourceImagesDir + $fileName);
+		}
+
+	}
+
+	//
+	// turn off autosave
+	//
+
+	int $autoSaveOn = `getAutoSave($editor)`;
+	if ($autoSaveOn) {
+		toggleAutoSave($editor);
+	}
+
+	//
+	// if the file already exists prompt the user to confirm that it be replaced
+	//
+
+	if ( `file -query -exists $fileName` ) {
+
+    	string $confirmMsg = (uiRes("m_dynPaintMenus.kConfirmMsg"));
+    	string $yes = (uiRes("m_dynPaintMenus.kConfirmYes"));
+    	string $no  = (uiRes("m_dynPaintMenus.kConfirmNo"));
+    	$confirmMsg = `format -s $fileName $confirmMsg`;
+    	string $confirm = `confirmDialog -title (uiRes("m_dynPaintMenus.kReplaceFile"))
+							-message $confirmMsg
+    						-button $yes -button $no -defaultButton $no
+    						-cancelButton $no -dismissString $no`;
+
+		$makeNewFile = $confirm == $yes;
+	}
+
+	int $canvasMode = `dynPaintEditor -q -canvasMode $editor`;
+	if ($canvasMode) {
+		// this will prompt the user only if necessary to save the canvas
+		// 
+
+		// to workaround a bug where this doesn't work in this case .. 
+		// have to switch to scene mode first and then back to canvas
+
+		dynPaintToggleCanvasMode(0, $editor);
+		dynPaintToggleCanvasMode(1, $editor);
+	}
+
+	//
+	// make the new image file on disk 
+	//
+		
+	if ($makeNewFile) {
+		int $xSize = `intSliderGrp -q -value isg1`;
+		int $ySize = `intSliderGrp -q -value isg2`;
+		float $clearColor[] = `optionVar -q dynPaintPanelClearColour`;
+		dynPaintEditor -e -newImage $xSize $ySize $clearColor[0] $clearColor[1] $clearColor[2] $editor;
+		$gCurrentDynFileName = $fileName;
+		$gSavedAsOnce = true;
+
+		dynPaintSave $editor; // This may change the gCurrentDynFileName if the user has
+							  // requested [.ext] in RenderGlobals.
+		$justMadeIt = 1;
+	
+		//
+		// if the file node provided was drag and dropped into the canvas, 
+		// provide the filename to that file node
+		//
+
+		if ($fileTextureNode != "menuDynNewFile") {
+			setAttr ($fileTextureNode + ".fileTextureName") -type "string" $gCurrentDynFileName;
+		}
+
+		window -e -visible false paintEffectsNewTextureWin;
+
+		dynPaintLoadImage ($gCurrentDynFileName, $editor);
+
+		dynPaintEditor -edit -zoom 1 $editor;
+	}
+}
+
+
+global proc dynPaintNewTexture (string $fileTextureNode, string $editor)
+{
+
+	if (!`window -exists paintEffectsNewTextureWin`) {
+
+		int $isMayaEvalVersion = `about -ev`;
+		int $kMaxSizeX = 2048;
+		int $kMaxSizeY = 2048;
+    		if ( $isMayaEvalVersion ) {
+	        	int $kPLEMaxX = 1024;
+        		int $kPLEMaxY =  768;
+			$kMaxSizeX = $kPLEMaxX;
+			$kMaxSizeY = $kPLEMaxY;
+		}
+
+		float $clearValue[] = `optionVar -q dynPaintPanelClearColour`;
+
+		window -title (uiRes("m_dynPaintMenus.kPaintEffectsNewTexture")) -w 410 -h 180 paintEffectsNewTextureWin;
+		formLayout fl;
+			setUITemplate -pst attributeEditorTemplate;
+			columnLayout -adj true col1;
+
+
+			rowLayout -nc 4 textureNameLayout;
+				text -label (uiRes("m_dynPaintMenus.kImageName"));
+				textField -text (uiRes("m_dynPaintMenus.kUntitled")) textureNameField;
+
+			symbolButton
+				-image "navButtonBrowse.png"
+				-width 16
+				-command "fileTextureNew"
+				new;
+			setParent ..;
+
+			formLayout -nd 100 pesForm;
+				intSliderGrp -field true -value 512 -minValue 2 -maxValue $kMaxSizeX -label (uiRes("m_dynPaintMenus.kXSize")) isg1;
+				intSliderGrp -field true -value 512 -minValue 2 -maxValue $kMaxSizeY -label (uiRes("m_dynPaintMenus.kYSize")) isg2;
+				$csg1 = `colorSliderGrp -rgb $clearValue[0] $clearValue[1] $clearValue[2] -label (uiRes("m_dynPaintMenus.kBackgroundColor"))`;
+
+				formLayout -e 
+					-af isg1 right 0
+					-af isg1 left 0
+					-af isg1 top 7
+					-an isg1 bottom
+							
+					-af isg2 right 0 
+					-af isg2 left 0
+					-ac isg2 top 7 isg1
+					-an isg2 bottom
+
+					-af $csg1 right 0
+					-af $csg1 left 0
+					-ac $csg1 top 7 isg2
+					-an $csg1 bottom
+
+					pesForm;
+			setUITemplate -ppt;
+
+		setParent fl;
+		separator -horizontal true shelfSeparator;
+
+		string $command1 = "float $clearValue[] = `colorSliderGrp -q -rgb \""+$csg1+"\"`;";
+		string $command2 = "optionVar -fv dynPaintPanelClearColour $clearValue[0];";
+	 	string $command3 = "optionVar -fva dynPaintPanelClearColour $clearValue[1];";
+		string $command4 = "optionVar -fva dynPaintPanelClearColour $clearValue[2];";
+		string $command5 = ("dynPaintApplyNewTexture " + $fileTextureNode + " " + $editor);
+
+		button -label (uiRes("m_dynPaintMenus.kApplyTexture")) -c ({$command1 + $command2 + $command3 + $command4 + $command5}) PESetSizeButton;
+
+		button -label (uiRes("m_dynPaintMenus.kCancel")) -c "window -e -visible false paintEffectsNewTextureWin" 
+							closePESetSizeButton;
+		formLayout -e
+			-af shelfSeparator "left" 0
+			-af shelfSeparator "right" 0
+			-ac shelfSeparator "bottom" 5 closePESetSizeButton
+
+			-af PESetSizeButton "left" 5
+			-af PESetSizeButton "bottom" 5
+			-ap PESetSizeButton "right" 3 50
+			-an PESetSizeButton "top"
+
+			-ap closePESetSizeButton "left" 2 50
+			-af closePESetSizeButton "bottom" 5
+			-af closePESetSizeButton "right" 5
+			-an closePESetSizeButton "top"
+			fl;
+	}
+	showWindow paintEffectsNewTextureWin;
+}
+
+global proc dynPaintToggleCanvasWrap( string $direction)
+
+//
+//	This procedure toggles the canvas' wrap specified
+//	by $direction.
+//
+//	valid values for $direction are: horizontal & vertical
+//
+
+{
+
+	if ($direction == "horizontal") {
+		int $value = `getAttr strokeGlobals.wrapH`;
+		$value = !$value;
+		setAttr strokeGlobals.wrapH $value;
+	} else {
+		int $value = `getAttr strokeGlobals.wrapV`;
+		$value = !$value;
+		setAttr strokeGlobals.wrapV $value;
+	}
+
+}
+
+
+global proc int dynPaintCheckCanvasWrap(string $direction)
+
+//
+//	This procedure checks whether the canvas is currently
+//  wrapped horizontally or vertically (as specified by
+//	$direction) and returns true if it is.
+//
+//  valid values for $direction are: vertical & horizontal
+//
+
+{
+	int $value = false;
+
+	if ($direction == "horizontal") {
+		$value = `getAttr strokeGlobals.wrapH` == true;
+	} else {
+		$value = `getAttr strokeGlobals.wrapV` == true;
+	}
+
+	return $value;
+}
+
+
+global proc clearCanvas(string $editor)
+
+//
+//	This procedure is executed when the user clicks on the clear icon.
+//
+
+{
+	// clear the canvas
+
+	float $cc[] = `optionVar -q dynPaintPanelClearColour`;
+  	dynPaintEditor -e -cl $cc[0] $cc[1] $cc[2] $editor;
+}
+
+
+global proc updatePaintEffectsSetSizeWin(string $editor)
+{
+	global string $gPEXSizeField;
+	global string $gPEYSizeField;
+	global string $paintEffectsSetSizeWin;
+	if( !`window -exists $paintEffectsSetSizeWin` ) 
+	{
+		return;
+	}
+	int $sizes[] = `dynPaintEditor -q -newImage $editor`;
+	intSliderGrp -e -value $sizes[0] $gPEXSizeField;
+	intSliderGrp -e -value $sizes[1] $gPEYSizeField;
+}
+global proc paintEffectsSetSize( string $editor, string $label )
+{
+	global string $gPEXSizeField;
+	global string $gPEYSizeField;
+	global string $paintEffectsSetSizeWin;
+
+	int $xSize = `intSliderGrp -q -value $gPEXSizeField`;
+	int $ySize = `intSliderGrp -q -value $gPEYSizeField`;
+	float $clearColor[] = `optionVar -q dynPaintPanelClearColour`;
+	dynPaintEditor -e -newImage $xSize $ySize $clearColor[0] $clearColor[1] $clearColor[2] $editor;
+	dynPaintEditor -edit -zoom 1 $editor;
+	if( $label == "Set" )
+	{
+		window -e -visible false $paintEffectsSetSizeWin;
+	}
+}
+
+global proc paintEffectsFitCurrentSize( string $editor )
+{
+	global string $gPEXSizeField;
+	global string $gPEYSizeField;
+	global string $paintEffectsSetSizeWin;
+
+	if( !`window -exists $paintEffectsSetSizeWin` ) 
+	{
+		return;
+	}
+	int $sizes[] = `dynPaintEditor -q -currentCanvasSize $editor`;
+	intSliderGrp -e -value $sizes[0] $gPEXSizeField;
+	intSliderGrp -e -value $sizes[1] $gPEYSizeField;
+}
+
+global proc dynPaintSetSize(string $editor)
+{
+	global string $gPEXSizeField;
+	global string $gPEYSizeField;
+	global string $gOptionBox;
+	global string $paintEffectsSetSizeWin;
+	
+	int $isMayaEvalVersion = `about -ev`;
+	int $kMaxSizeX = 2048;
+	int $kMaxSizeY = 2048;
+	if ( $isMayaEvalVersion ) {
+        	int $kPLEMaxX = 1024;
+       		int $kPLEMaxY =  768;
+		$kMaxSizeX = $kPLEMaxX;
+		$kMaxSizeY = $kPLEMaxY;
+	}
+
+
+//	$gPESetSizeWinUpdateJob = `scriptJob -e SelectionChanged "PESetSizeWinCallback"`; // cab TO DO
+
+	//	STEP 1:  Get the option box.
+	//	============================
+	//	The value returned is the name of the layout to be used as
+	//	the parent for the option box UI.
+	//
+	string $layout = getOptionBox();
+	string $paintEffectsSetSizeWin = $gOptionBox;
+	setParent $layout;
+	
+	//	STEP 2:  Activate the default UI template.
+	//	==========================================
+	//
+	//	Activate the default UI template so that the layout of this 
+	//	option box is consistent with the layout of the rest of the 
+	//	application.
+	//
+	setUITemplate -pushTemplate DefaultTemplate;
+	
+	
+	//	STEP 3: Create option box contents.
+	//	===================================
+	//	This, of course, will vary from option box to option box.	
+	//
+	waitCursor -state 1;
+	tabLayout -tabsVisible 0 -scrollable 0;
+	string $parent = `columnLayout -adjustableColumn 1`;
+
+	formLayout -nd 100 pesForm;
+	$gPEXSizeField =
+		`intSliderGrp -field true -value 512 -minValue 2 -maxValue $kMaxSizeX -label (uiRes("m_dynPaintMenus.kSetSizeX")) isg1`;
+	$gPEYSizeField =
+		`intSliderGrp -field true -value 512 -minValue 2 -maxValue $kMaxSizeY -label (uiRes("m_dynPaintMenus.kSetSizeY")) isg2`;
+
+	formLayout -e 
+		-af isg1 right 0
+		-af isg1 left 0
+		-af isg1 top 7
+		-an isg1 bottom
+				
+		-af isg2 right 0 
+		-af isg2 left 0
+		-ac isg2 top 7 isg1
+		-an isg2 bottom
+
+		pesForm;
+
+	waitCursor -state 0;
+	
+	//	Step 4: Deactivate the default UI template.
+	//	===========================================
+	//
+	setUITemplate -popTemplate;	
+	
+	//	Step 5: Customize the buttons.  
+	//	==============================
+	//
+	//	Provide more descriptive labels for the buttons.  This is not 
+	//	necessary, but in some cases, for example, a button labelled 
+	//	'Create' may be more meaningful to the user than one labelled
+	//	'Apply'.
+	//
+	//	Disable those buttons that are not applicable to the option box.
+	//
+	//	Attach actions to those buttons that are applicable to the option
+	//	box.  Note that the 'Close' button has a default action attached 
+	//	to it that will hide the window.  If a a custom action is
+	//	attached to the 'Close' button then be sure to call the 'hide the
+	//	option box' procedure within the custom action so that the option
+	//	box is hidden properly.
+
+	//	'Set' button.
+	//
+	string $setBtn = getOptionBoxApplyAndCloseBtn();
+	button -edit -label (uiRes("m_dynPaintMenus.kSet")) -command ("paintEffectsSetSize " + $editor + " Set") $setBtn;
+
+	//	'Apply' button.
+	//
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit -command ("paintEffectsSetSize " + $editor + " Apply") $applyBtn;
+
+	//	'Close' button.
+	//
+	string $closeBtn = getOptionBoxCloseBtn();
+	button -edit -command "window -e -visible false $paintEffectsSetSizeWin" $closeBtn;
+
+	//	'Reset' menu Item.
+	//
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit -command ("paintEffectsFitCurrentSize " + $editor ) $resetBtn;	
+	
+	//button -edit -command ($setup + " " + $parent + " " + 1) $resetBtn;	
+
+	//	Step 6: Set the option box title.
+	//	=================================
+	//
+	setOptionBoxTitle (uiRes("m_dynPaintMenus.kSetCanvasSize"));
+
+
+	//	Step 7: Customize the 'Help' menu item text.
+	//	============================================
+	//
+	//setOptionBoxHelpTag( "Set up the canvas" );
+
+
+	//	Step 8: Set the current values of the option box.
+	//	=================================================
+	//
+	updatePaintEffectsSetSizeWin( $editor );
+
+	
+	//	Step 9: Show the option box.
+	//	=============================
+	//
+	showOptionBox();
+	
+
+//end
+}
+
+//global proc PESetSizeWinCallback()
+//{
+//	global string $gPESetSizeWinUpdateJob;
+//	if( !`window -exists paintEffectsSetSizeWin` )
+//	{
+//		return;
+//	}
+//	if( !`window -q -visible paintEffectsSetSizeWin` )
+//	{
+//		scriptJob -kill $gPESetSizeWinUpdateJob;
+//		return;
+//	}
+//	updatePaintEffectsSetSizeWin();
+//}
+
+global proc string getBrushType()
+//
+//	gets and returns the brushType of the Default Brush (template brush)
+//
+{
+	string $templateBrush = `getDefaultBrush`;
+	string $brushTypeCmd = ("getAttr " + `getDefaultBrush` + ".brushType");
+	string $brushType = eval($brushTypeCmd);
+
+	return $brushType;
+}
+
+
+global proc setBrushType( string $dynBrushType )
+//
+//	sets the brushType of the Default Brush (template brush)
+//  which is one of: paint, smear, blur or erase
+//
+{
+
+	string $templateBrush = `getDefaultBrush`;
+	if ( $dynBrushType == "paint" ) {
+		 setAttr($templateBrush + ".brushType") 0;
+	} else if ( $dynBrushType == "smear" ) {
+		 setAttr($templateBrush + ".brushType") 1;
+	} else if ( $dynBrushType == "blur" ) {
+		 setAttr($templateBrush + ".brushType") 2;
+	} else {
+		 setAttr($templateBrush + ".brushType") 3;
+	}
+
+}
+
+
+global proc createBrushMenu(string $parent, string $editor)
+{
+
+	setParent -m $parent;
+	menu -e -dai $parent;
+	global string $gCreatorWireCtx;
+
+	global string $dynPixelPaintToggle;
+
+	int $isCanvas = `dynPaintEditor -q -canvasMode $editor`;
+
+	int $pixelPaintMode = `dynWireCtx -q -pxm $gCreatorWireCtx`;
+
+	menuItem -label (uiRes("m_dynPaintMenus.kGetBrush"))
+		 -command "{VisorWindow;string $pnl=visorPanelName();if(size($pnl)>0) visorPanelMenuCommand( $pnl, \"selectOrCreateTabByLabel Paint Effects\");}"
+		 -image "paintEffectsBrushesLarge.png"
+		 -annotation (uiRes("m_dynPaintMenus.kGetBrushAnnot")); 
+
+	// 	for future use:
+	//		 -command "VisorWindow paintEffects";
+
+	menuItem -d true;
+
+	string $brushType = `getBrushType`;
+
+	int $paintMode = $brushType == "0";
+	int $smearMode = $brushType == "1";
+	int $blurMode  = $brushType == "2";
+	int $eraseMode = $brushType == "3";
+
+	radioMenuItemCollection;
+
+		menuItem -label (uiRes("m_dynPaintMenus.kPaint"))
+		 	-radioButton $paintMode
+		 	-annotation (uiRes("m_dynPaintMenus.kPaintAnnot"))
+		 	-command "setBrushType(\"paint\")" paintItem;
+
+		menuItem -label (uiRes("m_dynPaintMenus.kSmear"))
+			-enable (!$pixelPaintMode)
+		 	-radioButton ($smearMode && !$pixelPaintMode)
+		 	-annotation (uiRes("m_dynPaintMenus.kSmearAnnot"))
+		 	-command "setBrushType(\"smear\")" smearItem;
+	
+		menuItem -label (uiRes("m_dynPaintMenus.kBlur"))
+			-enable (!$pixelPaintMode)
+		 	-radioButton ($blurMode && !$pixelPaintMode)
+		 	-annotation (uiRes("m_dynPaintMenus.kBlurAnnot"))
+		 	-command "setBrushType(\"blur\")" blurItem;
+	
+		menuItem -label (uiRes("m_dynPaintMenus.kErase"))
+		 	-radioButton $eraseMode
+		 	-annotation (uiRes("m_dynPaintMenus.kEraseAnnot"))
+		 	-command "setBrushType(\"erase\")" eraseItem;
+
+	menuItem -d true;
+
+	string $dynPixelPaintToggleCmd = ("togglePixelPaintMode(\"" + $editor + "\")");
+	$dynPixelPaintToggle = `menuItem -label (uiRes("m_dynPaintMenus.kSinglePixelBrush"))
+		-enable $isCanvas
+		-checkBox   $pixelPaintMode
+		-annotation (uiRes("m_dynPaintMenus.kSinglePixelBrushAnnot"))
+		-command $dynPixelPaintToggleCmd
+		pixelPaintToggle`;
+
+	menuItem -d true;
+
+	menuItem -label (uiRes("m_dynPaintMenus.kEditTemplateBrush"))
+		 -command "brushToolSettings"
+		 -annotation (uiRes("m_dynPaintMenus.kEditTemplateBrushAnnot"));
+
+	menuItem -label (uiRes("m_dynPaintMenus.kResetTemplateBrush"))
+		 -annotation (uiRes("m_dynPaintMenus.kResetTemplateBrushAnnot"))
+		 -command "resetBrush";
+
+	menuItem -d true;
+
+	int $usePressure = `dynWireCtx -q -usePressure $gCreatorWireCtx`;
+
+	$dynUsePressureToggle = `menuItem -label (uiRes("m_dynPaintMenus.kUseStylusPressure"))
+		-checkBox   $usePressure
+		-annotation (uiRes("m_dynPaintMenus.kUseStylusPressureAnnot"))
+		-command ("toggleUsePressure(\"" + $editor + "\")")
+		usePressureToggle`;
+
+	string $menuItemFormat = (uiRes("m_dynPaintMenus.kToolSettingsMenuItem"));
+	menuItem -label `format -s (localizedUIComponentLabel("Tool Settings")) $menuItemFormat`
+		 -command "PaintEffectsToolOptions"
+		 -annotation (uiRes("m_dynPaintMenus.kToolSettingsAnnot"));
+
+}
+
+global string $dynAutoSaveToggle = "";
+
+global proc createCanvasMenu(string $parent, string $editor)
+{
+	setParent -m $parent;
+	menu -e -dai $parent;
+	global string $gCreatorWireCtx;
+
+	int $isCanvas = `dynPaintEditor -q -canvasMode $editor`;
+	global string $dynAutoSaveToggle;
+
+	menuItem -label (uiRes("m_dynPaintMenus.kNewImage"))
+		-enable $isCanvas
+		-annotation (uiRes("m_dynPaintMenus.kNewImageAnnot"))
+		-command ("dynPaintNewTexture(\"menuDynNewFile\", \"" + $editor + "\")");
+
+	menuItem -label (uiRes("m_dynPaintMenus.kOpenImage"))
+		-enable $isCanvas
+		-annotation (uiRes("m_dynPaintMenus.kOpenImageAnnot"))
+		-command ("dynPaintOpenDialog(\"" + $editor + "\")");
+
+	menuItem -d true;
+
+	menuItem -label (uiRes("m_dynPaintMenus.kSave"))
+		-enable $isCanvas
+		-annotation (uiRes("m_dynPaintMenus.kSaveAnnot"))
+		-command ("dynPaintSave(\"" + $editor + "\");");
+	    menuItem -ob true -enable $isCanvas
+			-command("dynSaveImageOptionsWindow(\"" + $editor + "\", 1)");
+
+	menuItem -label (uiRes("m_dynPaintMenus.kSaveAs"))
+		-enable $isCanvas
+		-annotation (uiRes("m_dynPaintMenus.kSaveAsAnnot"))
+		-command ("dynPaintSaveDialog(\"" + $editor + "\");");
+	    menuItem -ob true -enable $isCanvas
+			-command("dynSaveImageOptionsWindow(\"" + $editor + "\", 1)");
+
+	int $autoSave = `dynPaintEditor -q -autoSave $editor`;
+	$dynAutoSaveToggle = `menuItem -label (uiRes("m_dynPaintMenus.kAutoSave"))
+		-enable $isCanvas
+		-checkBox   $autoSave
+		-annotation (uiRes("m_dynPaintMenus.kAutoSaveAnnot"))
+		-command ("toggleAutoSave(\"" + $editor + "\")")
+		autoSaveToggle`;
+
+	menuItem -d true;
+
+	menuItem -label (uiRes("m_dynPaintMenus.kSetSize"))
+		-enable $isCanvas
+		-annotation (uiRes("m_dynPaintMenus.kSetSizeAnnot"))
+		-command ("dynPaintSetSize(\"" + $editor + "\")");
+
+	menuItem -label (uiRes("m_dynPaintMenus.kClear"))
+		-enable $isCanvas
+		-annotation (uiRes("m_dynPaintMenus.kClearAnnot"))
+		-command ("clearCanvas(\"" + $editor + "\")");
+
+		menuItem -ob true -enable $isCanvas
+			-command ("dynPaintColourPickerWindow(\"" + $editor + "\")");
+
+	menuItem -label (uiRes("m_dynPaintMenus.kRoll")) -subMenu true -tearOff true
+		-enable $isCanvas;
+
+		menuItem -label (uiRes("m_dynPaintMenus.kHorizontal50"))
+			-enable $isCanvas
+			-command ("dynPaintEditor -e -rollImage .50 0 " + $editor);
+		menuItem -label (uiRes("m_dynPaintMenus.kHorizontal25"))
+			-enable $isCanvas
+			-command ("dynPaintEditor -e -rollImage .25 0 " + $editor);
+		menuItem -label (uiRes("m_dynPaintMenus.kHorizontalNeg25"))
+			-enable $isCanvas
+			-command ("dynPaintEditor -e -rollImage -.25 0 " + $editor);
+		menuItem -d true;
+		menuItem -label (uiRes("m_dynPaintMenus.kVertical50"))
+			-enable $isCanvas
+			-command ("dynPaintEditor -e -rollImage 0 .50 " + $editor);
+		menuItem -label (uiRes("m_dynPaintMenus.kVertical25"))
+			-enable $isCanvas
+			-command ("dynPaintEditor -e -rollImage 0 .25 " + $editor);
+		menuItem -label (uiRes("m_dynPaintMenus.kVerticalNeg25"))
+			-enable $isCanvas
+			-command ("dynPaintEditor -e -rollImage 0 -.25 " + $editor);
+
+	setParent -m ..;
+
+	int $isWrapHorizontal = `dynPaintCheckCanvasWrap ("horizontal")`;
+	int $isWrapVertical = `dynPaintCheckCanvasWrap ("vertical")`;
+
+	menuItem -label (uiRes("m_dynPaintMenus.kWrap")) -subMenu true -tearOff true
+		-enable $isCanvas;
+
+		menuItem -label (uiRes("m_dynPaintMenus.kHorizontally"))
+			-checkBox $isWrapHorizontal
+			-annotation (uiRes("m_dynPaintMenus.kHorizontallyAnnot"))
+			-command "dynPaintToggleCanvasWrap(\"horizontal\")"
+			-enable $isCanvas;
+
+		menuItem -label (uiRes("m_dynPaintMenus.kVertically"))
+			-checkBox $isWrapVertical
+			-annotation (uiRes("m_dynPaintMenus.kVerticallyAnnot"))
+			-command "dynPaintToggleCanvasWrap(\"vertical\")"
+			-enable $isCanvas;
+
+	setParent -m..;
+
+	menuItem -d true;
+
+	menuItem -label (uiRes("m_dynPaintMenus.kCanvasUndo"))
+		-enable $isCanvas
+		-annotation (uiRes("m_dynPaintMenus.kCanvasUndoAnnot"))
+		-command ("dynPaintEditor -e -cu " + $editor);
+
+}
+
+global proc createResolutionMenu(string $parent, string $editor)
+{
+	setParent -m $parent;
+	menu -e -dai $parent;
+
+	int $isCanvas = `dynPaintEditor -q -canvasMode $editor`;
+
+	menuItem -label (uiRes("m_dynPaintMenus.kFull"))
+		-annotation (uiRes("m_dynPaintMenus.kFullAnnot"))
+		-enable (!$isCanvas)
+		-command ("dynPaintChangeResolution(1.0, \"" + $editor + "\")");
+	menuItem -label (uiRes("m_dynPaintMenus.kResolution75"))
+		-annotation (uiRes("m_dynPaintMenus.kResolution75Annot"))
+		-enable (!$isCanvas)
+		-command ("dynPaintChangeResolution(0.75, \"" + $editor + "\")");
+	menuItem -label (uiRes("m_dynPaintMenus.kResolution50"))
+		-annotation (uiRes("m_dynPaintMenus.kResolution50Annot"))
+		-enable (!$isCanvas)
+		-command ("dynPaintChangeResolution(0.50, \"" + $editor + "\")");
+	menuItem -label (uiRes("m_dynPaintMenus.kResolution25"))
+		-annotation (uiRes("m_dynPaintMenus.kResolution25Annot"))
+		-enable (!$isCanvas)
+		-command ("dynPaintChangeResolution(0.25, \"" + $editor + "\")");
+	menuItem -label (uiRes("m_dynPaintMenus.kResolution15"))
+		-annotation (uiRes("m_dynPaintMenus.kResolution15Annot"))
+		-enable (!$isCanvas)
+		-command ("dynPaintChangeResolution(0.15, \"" + $editor + "\")");
+	menuItem -label (uiRes("m_dynPaintMenus.kActualSize"))
+		-annotation (uiRes("m_dynPaintMenus.kActualSizeAnnot"))
+		-enable (!$isCanvas)
+		-command ("dynPaintEditor -e -zm 1.0 " + $editor);
+}
+
+global proc dynShadingMenu(string $parent, string $editor)
+{
+	int $isCanvas = `dynPaintEditor -q -canvasMode $editor`;
+
+	setParent -m $parent;
+	menu -e -dai $parent;
+
+	radioMenuItemCollection;
+	string $displayApp = `dynPaintEditor -q -dsa $editor`;
+	string $displayTex = `dynPaintEditor -q -dtx $editor`;
+	menuItem -label (uiRes("m_dynPaintMenus.kShadeWireframe"))
+		-radioButton ($displayApp == "wireframe")
+		-enable (!$isCanvas)
+		-annotation (uiRes("m_dynPaintMenus.kShadeWireframeAnnot"))
+		-command ("DisplayWireframe");
+	menuItem -label (uiRes("m_dynPaintMenus.kShaded"))
+		-radioButton ($displayApp == "smoothShaded" && $displayTex == "off")
+		-enable (!$isCanvas)
+		-annotation (uiRes("m_dynPaintMenus.kShadedAnnot"))
+		-command ("DisplayShaded");
+	menuItem -label (uiRes("m_dynPaintMenus.kTextured"))
+		-radioButton ($displayApp == "smoothShaded" && $displayTex == "on")
+		-enable (!$isCanvas)
+		-annotation (uiRes("m_dynPaintMenus.kTexturedAnnot"))
+		-command ("dynPaintEditor -e -dsa smoothShaded -dsl \"all\" -dtx 1 " + $editor);
+
+	menuItem -d true;
+
+	radioMenuItemCollection;
+	string $displayLights = `dynPaintEditor -q -dsl $editor`;
+	menuItem -label (uiRes("m_dynPaintMenus.kUseDefaultLighting"))
+		-radioButton ($displayLights == "default")
+		-annotation (uiRes("m_dynPaintMenus.kUseDefaultLightingAnnot"))
+		-command ("dynPaintEditor -e -dsl \"default\" " + $editor);
+	menuItem -label (uiRes("m_dynPaintMenus.kUseAllLights"))
+		-radioButton ($displayLights == "all")
+		-annotation (uiRes("m_dynPaintMenus.kUseAllLightsAnnot"))
+		-command ("dynPaintEditor -e -dsl all " + $editor);
+	menuItem -d true;
+	int $displayFogState = `dynPaintEditor -q -dfg $editor`;
+	menuItem -label (uiRes("m_dynPaintMenus.kDisplayFog"))
+		-checkBox $displayFogState
+		-enable (!$isCanvas)
+		-annotation (uiRes("m_dynPaintMenus.kDisplayFogAnnot"))
+		-command   ("int $fogstate = `dynPaintEditor -q -dfg " + $editor + "`;\n"
+				  + "dynPaintEditor -e -dfg (!$fogstate) " + $editor);
+}
+
+global proc dynDisplayMenu(string $parent, string $editor)
+{
+	setParent -m $parent;
+	menu -e -dai $parent;
+
+	string $displayStyle = `dynPaintEditor -q -displayStyle $editor`;
+	float  $scaleRed = `dynPaintEditor -q -scaleRed $editor`;
+	float  $scaleGreen = `dynPaintEditor -q -scaleGreen $editor`;
+	float  $scaleBlue = `dynPaintEditor -q -scaleBlue $editor`;
+	int $isColor = ($displayStyle == "color");
+	int $isRed = $isColor && ($scaleRed == 1.0);
+	int $isGreen = $isColor && ($scaleGreen == 1.0);
+	int $isBlue = $isColor && ($scaleBlue == 1.0);
+	radioMenuItemCollection;
+	menuItem 
+		-label 					(uiRes("m_dynPaintMenus.kRedChannel"))
+		-radioButton 			($isRed && !$isBlue && !$isGreen)
+		-annotation
+			(uiRes("m_dynPaintMenus.kRedChannelAnnot"))
+		-command 				
+			("dynPaintEditor "
+				+ "-edit "
+				+ "-displayStyle \"color\" "
+				+ "-scaleRed 1 "
+				+ "-scaleGreen -1000 "
+				+ "-scaleBlue -1000 " 
+				+ $editor );
+
+	menuItem 
+		-label 					(uiRes("m_dynPaintMenus.kGreenChannel"))
+		-radioButton 			(!$isRed && !$isBlue && $isGreen)
+		-annotation
+			(uiRes("m_dynPaintMenus.kGreenChannelAnnot"))
+		-command 				
+			("dynPaintEditor "
+				+ "-edit "
+				+ "-displayStyle \"color\" "
+				+ "-scaleRed -1000 "
+				+ "-scaleGreen 1 "
+				+ "-scaleBlue -1000 " 
+				+ $editor );
+
+	menuItem 
+		-label 					(uiRes("m_dynPaintMenus.kBlueChannel"))
+		-radioButton 			(!$isRed && $isBlue && !$isGreen)
+		-annotation
+			(uiRes("m_dynPaintMenus.kBlueChannelAnnot"))
+		-command 				
+			("dynPaintEditor "
+				+ "-edit "
+				+ "-displayStyle \"color\" "
+				+ "-scaleRed -1000 "
+				+ "-scaleGreen -1000 "
+				+ "-scaleBlue 1 " 
+				+ $editor );
+
+	menuItem 
+		-label 					(uiRes("m_dynPaintMenus.kAllChannels"))
+		-radioButton 			($isColor && $isRed && $isGreen && $isBlue )
+		-annotation
+			(uiRes("m_dynPaintMenus.kAllChannelsAnnot"))
+		-command 				
+			("dynPaintEditor "
+				+ "-edit "
+				+ "-displayStyle \"color\" "
+				+ "-scaleRed 1 "
+				+ "-scaleGreen 1 "
+				+ "-scaleBlue 1 " 
+				+ $editor );
+
+	menuItem -divider true;
+
+	menuItem 
+		-label 					(uiRes("m_dynPaintMenus.kLuminance"))
+		-radioButton 			(!$isColor && ($displayStyle == "lum"))
+		-annotation
+			(uiRes("m_dynPaintMenus.kLuminanceAnnot"))
+		-command 				
+			("dynPaintEditor "
+				+ "-edit "
+				+ "-displayStyle \"lum\" " 
+				+ $editor );
+
+	menuItem 
+		-label 					(uiRes("m_dynPaintMenus.kAlphaChannel"))
+		-radioButton 			(!$isColor && ($displayStyle == "mask"))
+		-annotation
+			(uiRes("m_dynPaintMenus.kAlphaChannelAnnot"))
+		-command 				
+			("dynPaintEditor "
+				+ "-edit "
+				+ "-displayStyle \"mask\" " 
+				+ $editor );
+
+	menuItem -divider true;
+
+	int $checkon = isDynToolbarDisplayed();
+	menuItem 
+		-label 		(uiRes("m_dynPaintMenus.kToolbar"))
+		-checkBox   $checkon
+		-annotation
+			(uiRes("m_dynPaintMenus.kToolbarAnnot"))
+		-command
+			("toggleDynPaintToolbar " + $editor) ;
+
+}
+
+
+global proc displayDynToolbar (int $display)
+{
+	optionVar -intValue dynPaintDisplayToolbar $display;
+}
+
+global proc toggleDynPaintToolbar( string $editor )
+{
+	if (isDynToolbarDisplayed())
+	{
+		displayDynToolbar(false);
+		setDynPaintToolbar( false );
+	}
+	else
+	{
+		displayDynToolbar(true);
+		setDynPaintToolbar( true );
+	}
+
+}
+
+global string $dynRadRefreshOff = "";
+global string $dynRadRefreshWire;
+global string $dynRadRefreshRendered;
+global string $dynSelOnlyToggle;
+
+global proc dynStrokeRefreshMenu(string $parent, string $editor)
+{
+	setParent -m $parent;
+	menu -e -dai $parent;
+	global string $dynRadRefreshOff;
+	global string $dynRadRefreshWire;
+	global string $dynRadRefreshRendered;
+	global string $dynSelOnlyToggle;
+	global int    $dynRefreshMode;
+	int $isCanvas = `dynPaintEditor -q -canvasMode $editor`;
+
+	radioMenuItemCollection;
+	int $strokeRedraw = `dynPaintEditor -q -refreshMode $editor`;
+	$dynRadRefreshOff = `menuItem -label (uiRes("m_dynPaintMenus.kOff"))
+		-radioButton ($strokeRedraw == 0)
+		-enable (!$isCanvas)
+		-annotation (uiRes("m_dynPaintMenus.kOffAnnot"))
+		-command ("setStrokeRefreshMode 0 " + $editor)`;
+ 	$dynRadRefreshWire = `menuItem -label (uiRes("m_dynPaintMenus.kWireframe"))
+		-radioButton ($strokeRedraw == 1)
+		-enable (!$isCanvas)
+		-annotation (uiRes("m_dynPaintMenus.kWireframeAnnot"))
+		-command ("setStrokeRefreshMode 1 " + $editor)`;
+	$dynRadRefreshRendered = `menuItem -label (uiRes("m_dynPaintMenus.kRendered"))
+		-radioButton ($strokeRedraw == 2)
+		-enable (!$isCanvas)
+		-annotation (uiRes("m_dynPaintMenus.kRenderedAnnot"))
+		-command ("setStrokeRefreshMode 2 " + $editor)`;
+
+	menuItem -d true;
+
+	int $activeRef = `dynPaintEditor -q -ao $editor`;
+	$dynSelOnlyToggle = `menuItem -label (uiRes("m_dynPaintMenus.kSelectedOnly"))
+		-enable (!$isCanvas)
+		-checkBox $activeRef 
+		-annotation (uiRes("m_dynPaintMenus.kSelectedOnlyAnnot"))
+		-command ("toggleActiveOnlyStrokeRefresh " + $editor)`;
+}
+
+global proc setStrokeRefreshMode( int $mode, string $editor)
+{
+	global string $dynRadRefreshOff;
+	global string $dynRadRefreshWire;
+	global string $dynRadRefreshRendered;
+
+	if( size( $dynRadRefreshOff ) > 0 )
+	{
+		switch( $mode )
+		{
+			case 0:
+				menuItem -edit -radioButton 1 $dynRadRefreshOff;
+			break;
+			case 1:
+				menuItem -edit -radioButton 1 $dynRadRefreshWire;
+			break;
+			case 2:
+				menuItem -edit -radioButton 1 $dynRadRefreshRendered;
+			break;
+		}
+	}
+	setDynPaintModeToolbox( $mode );
+	dynPaintEditor -e -rmd $mode $editor;
+}
+
+global proc toggleActiveOnlyStrokeRefresh( string $editor )
+{
+	global string $dynSelOnlyToggle;
+
+	int $activeStrokes = `dynPaintEditor -q -ao $editor`;
+	$activeStrokes = !$activeStrokes;
+
+	if( size( $dynSelOnlyToggle ) > 0 )
+	{
+		menuItem -e -checkBox $activeStrokes  $dynSelOnlyToggle;
+	}
+	setDynPaintOnlyToolbox(  $activeStrokes );
+	dynPaintEditor -e -ao $activeStrokes $editor;
+}
+
+global proc toggleUsePressure( string $editor )
+{
+	global string $gCreatorWireCtx;
+	global string $dynUsePressureToggle;
+	int $state = `dynWireCtx -q  -usePressure $gCreatorWireCtx`;
+	$state = !$state;
+	if( size( $dynUsePressureToggle ) > 0 )
+	{
+		menuItem -e -checkBox $state  $dynUsePressureToggle;
+	}
+	dynWireCtx -e -usePressure $state $gCreatorWireCtx;
+}
+
+global proc int isPixelPaintModeOn()
+//
+//	checks whether we are in pixel paint and returns true if we are
+// 	otherwise false 
+//
+
+{
+	global string $gCreatorWireCtx;
+	return `dynWireCtx -q  -pxm $gCreatorWireCtx`;
+}
+
+global proc togglePixelPaintMode( string $editor )
+{
+	global string $gCreatorWireCtx;
+	global string $dynPixelPaintToggle;
+
+	string $brushType = `getBrushType`;
+
+	int $paintMode = $brushType == "0";
+	int $eraseMode = $brushType == "3";
+
+	// since paintMode and eraseMode are the only two valid modes 
+	// for pixel paint - check for other modes and set paintMode to
+	// true so that brush menu will reflect the fact that the pixel 
+	// paint brush automaticaly reverts to paintMode
+
+	if ( !$paintMode && !$eraseMode ) {
+		setBrushType paint;
+	}
+
+	int $pixelPaintMode = `isPixelPaintModeOn`;
+
+	$pixelPaintMode = !$pixelPaintMode;
+	if( size( $dynPixelPaintToggle ) > 0 )
+	{
+		menuItem -e -checkBox $pixelPaintMode  $dynPixelPaintToggle;
+	}
+	dynWireCtx -e -pxm $pixelPaintMode $gCreatorWireCtx;
+}
+
+
+global proc dynPaintChangeResolution(float $resolution, string $editorName)
+{
+	dynPaintEditor -e -pa $resolution $editorName;
+}
+
+global int $gDynPaintMenusFirstTime = 1;
+
+global proc dynPaintMenus(string $editor, string $parent)
+{	
+	global int $gDynPaintMenusFirstTime;
+
+	int $mbar = `menuBarLayout -exists $parent`;
+ 	if (!`optionVar -ex dynPaint23dToggle`) {
+ 		optionVar -iv dynPaint23dToggle 2;
+ 	}
+	if (!`optionVar -ex dynPaintPanelClearColour`) {
+		optionVar -fv dynPaintPanelClearColour 1.0;
+		optionVar -fva dynPaintPanelClearColour 1.0;
+		optionVar -fva dynPaintPanelClearColour 1.0;
+	}
+	if( $gDynPaintMenusFirstTime ){
+		float $cc[] = `optionVar -q dynPaintPanelClearColour`;
+
+ 		if (`optionVar -q dynPaint23dToggle` == 2) {
+ 			dynPaintEditor -e -canvasMode 1 -cl $cc[0] $cc[1] $cc[2] $editor;
+ 		} else {
+ 			dynPaintEditor -e -canvasMode 0 -cl $cc[0] $cc[1] $cc[2] $editor;
+ 		}
+		$gDynPaintMenusFirstTime = 0;
+	}
+		
+	string $paintMenuName;
+	string $paintMenu = (uiRes("m_dynPaintMenus.kPaintMenu"));
+	if ($mbar) {
+		$paintMenuName = `menu -tearOff false -label $paintMenu`;
+		menu -e -pmc ("createPaintMenu(\"" + $paintMenuName + "\",\"" + $editor + "\")") $paintMenuName;
+	} else {
+		$paintMenuName = `menuItem -label $paintMenu -subMenu true`;
+		menuItem -e -pmc ("createPaintMenu(\"" + $paintMenuName + "\",\"" + $editor + "\")") $paintMenuName;
+	}
+	
+	setParent -m ..;
+
+
+
+	string $canvasMenuName;
+	string $canvasMenu = (uiRes("m_dynPaintMenus.kCanvas"));
+	if ($mbar) {
+		$canvasMenuName = `menu -tearOff false -aob true -label $canvasMenu`;
+		menu -e -pmc ("createCanvasMenu(\"" + $canvasMenuName + "\",\"" + $editor + "\")") $canvasMenuName;
+	} else {
+		$canvasMenuName = `menuItem -aob true -label $canvasMenu -subMenu true`;
+		menuItem -e -pmc ("createCanvasMenu(\"" + $canvasMenuName + "\",\"" + $editor + "\")") $canvasMenuName;
+	}
+	
+	setParent -m ..;
+
+	string $brushMenuName;
+    string $brushMenu = (uiRes("m_dynPaintMenus.kBrush"));
+	if ($mbar) {
+		$brushMenuName = `menu -tearOff false -aob true -label $brushMenu`;
+		menu -e -pmc ("createBrushMenu(\"" + $brushMenuName + "\",\"" + $editor + "\")") $brushMenuName;
+	} else {
+		$brushMenuName = `menuItem -aob true -label $brushMenu -subMenu true`;
+		menuItem -e -pmc ("createBrushMenu(\"" + $brushMenuName + "\",\"" + $editor + "\")") $brushMenuName;
+	}
+
+	setParent -m ..;
+
+	if (`licenseCheck -m "edit" -typ "particlePaint"`) {
+		string $cameraMenu = (uiRes("m_dynPaintMenus.kCamera"));
+		if ($mbar) {
+			$cameraMenuName = `menu -tearOff false -label $cameraMenu`;
+			menu -e -pmc ("fillUpCameraMenu(\"" + $cameraMenuName + "\",\"" + $editor + "\")") $cameraMenuName;
+		}
+		else {
+			$cameraMenuName = `menuItem -label $cameraMenu -subMenu true`;
+			menuItem -e -pmc ("fillUpCameraMenu(\"" + $cameraMenuName + "\",\"" + $editor + "\")") $cameraMenuName;
+		}
+
+		setParent -m ..;
+
+		string $resolutionMenuName;
+		string $resolutionMenu = (uiRes("m_dynPaintMenus.kResolution"));
+		if ($mbar) {
+			$resolutionMenuName = `menu -tearOff false -label $resolutionMenu`;
+			menu -e -pmc ("createResolutionMenu(\"" + $resolutionMenuName + "\",\"" + $editor + "\")") $resolutionMenuName;
+		}
+			else {
+			$resolutionMenuName = `menuItem -label $resolutionMenu -subMenu true`;
+			menuItem -e -pmc ("createResolutionMenu(\"" + $resolutionMenuName + "\",\"" + $editor + "\")") $resolutionMenuName;
+		}
+
+		setParent -m ..;
+	}
+	
+	string $shadingMenuName;
+	if ($mbar) {
+		$shadingMenuName = `menu -tearOff false -label (uiRes("m_dynPaintMenus.kObjectShading"))`;
+		menu -e -pmc ("dynShadingMenu(\"" + $shadingMenuName + "\",\"" + $editor + "\")") $shadingMenuName;
+	} else {
+		$shadingMenuName = `menuItem -label (uiRes("m_dynPaintMenus.kShading")) -subMenu true`;
+		menuItem -e -pmc ("dynShadingMenu(\"" + $shadingMenuName + "\",\"" + $editor + "\")") $shadingMenuName;
+	}
+	setParent -m ..;
+
+	string $displayMenuName;
+	string $displayMenu = (uiRes("m_dynPaintMenus.kDisplay"));
+	if ($mbar) {
+		$displayMenuName = `menu -tearOff false -label $displayMenu`;
+		menu -e -pmc ("dynDisplayMenu(\"" + $displayMenuName + "\",\"" + $editor + "\")") $displayMenuName;
+	} else {
+		$displayMenuName = `menuItem -label $displayMenu -subMenu true`;
+		menuItem -e -pmc ("dynDisplayMenu(\"" + $displayMenuName + "\",\"" + $editor + "\")") $displayMenuName;
+	}
+	setParent -m ..;
+
+	if (`licenseCheck -m "edit" -typ "particlePaint"`) {
+		string $strokeRefreshMenuName;
+		string $strokeRefreshMenu = (uiRes("m_dynPaintMenus.kStrokeRefresh"));
+		if ($mbar) {
+			$strokeRefreshMenuName = `menu -tearOff false -label $strokeRefreshMenu`;
+			menu -e -pmc ("dynStrokeRefreshMenu(\"" + $strokeRefreshMenuName + "\",\"" + $editor + "\")") $strokeRefreshMenuName;
+		} else {
+			$strokeRefreshMenuName = `menuItem -label $strokeRefreshMenu -subMenu true`;
+			menuItem -e -pmc ("dynStrokeRefreshMenu(\"" + $strokeRefreshMenuName + "\",\"" + $editor + "\")") $strokeRefreshMenuName;
+		}
+		setParent -m ..;
+	}
+
+}
+

@@ -1,0 +1,219 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+// Creation Date:  Dec 2000
+//
+//  Procedure Name:
+//      createSubdPrimitive
+//
+//  Description:
+//		Create a subd primitive from a polyPrimitive or a makeNurbPrimitive
+//
+//  Input Arguments:
+//      int $makeType: 1 or 2 (nurbs or poly)
+//		string $primitiveType: primitive (Square, Cube, Cone, Plane, Torus, Cylinder)
+//
+//  Return Value:
+//      None.
+//
+
+proc primitiveWarning(){
+	warning (uiRes("m_createSubdPrimitive.kWarningMultipleSurfaces"));
+}
+
+proc extraConnectionsForCube(int $makePrimitive, string $primitive, string $makeNode, 
+	string $conversionNode){
+
+	string $conversion,		//name of created conversion node
+		$subdiv,			//name of created subdiv surface	
+		$outAttribute,		//out attribute from creation primitive
+		$inAttribute,		//in attribute for conversion node
+		$toSubd;			//out attribute from conversion node
+
+	$inAttribute = ".inputSurface";
+	$toSubd = ".outputSubd";
+
+	int $extraConnections = 5;
+
+	for ($i=1;$i<=$extraConnections;$i++){
+		//create nodes and store their names
+		$conversion = `createNode $conversionNode -name "toSubdiv#"`;
+		$subdiv = `createNode subdiv -name "subdiv#"`;
+		$outAttribute = (".outputSurface" + $i);
+
+		//connect the nodes
+		connectAttr -f ($primitive + $outAttribute) ($conversion + $inAttribute);
+		connectAttr -f ($conversion + $toSubd) ($subdiv+".create");
+		select -r $subdiv ;
+
+		//assign default shader to new subdiv
+		sets -e -forceElement initialShadingGroup;
+	}
+
+	primitiveWarning;
+}
+
+proc extraConnectionsForRevolve(int $primitiveType, string $primitive, 
+	string $conversionNode){
+
+	string $conversion,		//name of created conversion node
+		$subdiv,			//name of created subdiv surface	
+		$outAttribute,		//out attribute from creation primitive
+		$inAttribute,		//in attribute for conversion node
+		$toSubd,			//out attribute from conversion node
+		$cap;				//cap name
+
+	int $extraConnections;
+
+	$inAttribute = ".inputSurface";
+	$outAttribute = ".outputSurface";
+	$toSubd = ".outputSubd";
+
+	if ($primitiveType == 3) $extraConnections = 2;
+	if ($primitiveType == 4) $extraConnections = 1;
+
+	for ($i=1;$i<=$extraConnections;$i++){
+		//create nodes and store their names
+		$conversion = `createNode $conversionNode -name "toSubdiv#"`;
+		$subdiv = `createNode subdiv -name "subdiv#"`;
+		$cap = `createNode revolve -name "cap#"`;
+
+		//connect the nodes
+		switch ($i){
+			case 1:
+				connectAttr -f ($primitive + ".bottomCapCurve") ($cap + ".inputCurve");
+				break;
+			case 2:
+				connectAttr -f ($primitive + ".topCapCurve") ($cap + ".inputCurve");
+				break;
+		}
+		connectAttr -f ($primitive + ".tolerance") ($cap + ".tolerance");
+		connectAttr -f ($primitive + ".sections") ($cap + ".sections");
+		connectAttr -f ($primitive + ".axis") ($cap + ".axis");
+		connectAttr -f ($primitive + ".degree") ($cap + ".degree");
+		connectAttr -f ($primitive + ".useTolerance") ($cap + ".useTolerance");
+		connectAttr -f ($primitive + ".absoluteSweepDifference") ($cap + ".endSweep");
+		connectAttr -f ($primitive + ".pivot") ($cap + ".pivot");
+		//connectAttr -f ($primitive + ".startSweep") ($cap + ".startSweep");
+
+		connectAttr -f ($cap + $outAttribute) ($conversion + $inAttribute);
+		connectAttr -f ($conversion + $toSubd) ($subdiv+".create");
+		select -r $subdiv ;
+
+		//assign default shader to new subdiv
+		sets -e -forceElement initialShadingGroup;
+	}
+
+	primitiveWarning;
+}
+
+global proc createSubdPrimitive(int $makeType, int $primitiveType){
+	string $primitive,		//name of created primitive node
+		$conversion,		//name of created conversion node
+		$subdiv,			//name of created subdiv surface
+		$makePrefix,		//prefix for the creation primitive
+		$conversionPrefix,	//prefix for the to subd conversion node
+		$makeNode,			//creation primitive name
+		$conversionNode,	//conversion node name (nurbs or poly to subdiv)
+		$outAttribute,		//out attribute from creation primitive
+		$inAttribute,		//in attribute for conversion node
+		$toSubd,			//out attribute from conversion node
+		$makePrimitive;		//primitive type
+
+	//determine node and attribute names based on $makeType (nurbs or poly)
+	if ($makeType == 1){
+		$makePrefix = "makeNurb";
+		$conversionPrefix = "nurbs";
+		$outAttribute = ".outputSurface";
+		$inAttribute = ".inputSurface";
+		$toSubd = ".outputSubd";
+	}
+	else {
+		$makePrefix = "poly";
+		$conversionPrefix = "poly";
+		$outAttribute = ".output";
+		$inAttribute = ".inMesh";
+		$toSubd = ".outSubdiv";
+		
+		if ($makeType != 2){
+			warning (uiRes("m_createSubdPrimitive.kWarningExpected1or2"));
+		}
+	}
+
+	//determine primitive type
+	if ($primitiveType > 6 || $primitiveType < 1){
+		$primitiveType = 1;
+		warning (uiRes("m_createSubdPrimitive.kWarningExpected1to6"));
+	}
+	switch($primitiveType){
+		case 1:
+			$makePrimitive = "Sphere";
+			break;
+		case 2:
+			$makePrimitive = "Cube";
+			break;
+		case 3:
+			$makePrimitive = "Cylinder";
+			break;
+		case 4:
+			$makePrimitive = "Cone";
+			break;
+		case 5:
+			$makePrimitive = "Plane";
+			break;
+		case 6:
+			$makePrimitive = "Torus";
+			break;
+	}
+
+	//determine node names based on above if/else
+	$makeNode = ($makePrefix + $makePrimitive);
+	$conversionNode = ($conversionPrefix + "ToSubdiv");
+
+	//create nodes and store their names
+	$primitive = `createNode $makeNode -name "inputPrimitive#"`;
+	$conversion = `createNode $conversionNode -name "toSubdiv#"`;
+	$subdiv = `createNode subdiv -name "subdiv#"`;
+
+	//connect the nodes
+	connectAttr -f ($primitive + $outAttribute) ($conversion + $inAttribute);
+	connectAttr -f ($conversion + $toSubd) ($subdiv+".create");
+	select -r $subdiv ;
+
+	//assign default shader to new subdiv
+	sets -e -forceElement initialShadingGroup;
+
+	//nurbs cube, cylinder and cone have more than one surface
+	//so extra nodes and connections should be made
+	if ($makeType == 1){
+		if ($primitiveType == 2){
+			extraConnectionsForCube $primitiveType $primitive $makeNode $conversionNode;
+		}
+		else if ($primitiveType == 3 || $primitiveType == 4){
+			extraConnectionsForRevolve $primitiveType $primitive $conversionNode;
+		}
+	}
+
+	print ("// Result: Subdiv " + $makePrimitive + " created. //\n");
+	
+}

@@ -1,0 +1,219 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+proc string[] getAllParents( string $obj )
+// Starting at object $obj, walk parenting hierarchy and return string array with the names
+// of all parents.
+{
+	string $parents[] = {};
+	while(true)
+	{
+		string $p[] = `pickWalk -d up $obj`;
+		if ( size($p) == 0 || $p[0] == $obj )
+			break;
+		$parents[size($parents)]=$p[0];
+		$obj = $p[0];
+	} 
+	return $parents;
+}
+
+proc string[] findRequiredTRChannels( string $character, string $node )
+{
+	string $channelNames[] = {
+		".translateX",
+		".translateY",
+		".translateZ",
+		".rotateX",
+		".rotateY",
+		".rotateZ"
+	};
+
+	string $required[] = {};
+	for ( $cn in $channelNames )
+	{
+		string $channel = ( $node + $cn );
+		if (`character -im $character $channel`)
+			continue;
+
+		$required[ size( $required ) ] = $channel;
+	}
+
+	return $required;
+}
+
+proc int showAddMissingChannelConfirmDialog( string $character, string $missingChannels[] )
+{
+	int $num = size($missingChannels);
+
+	string $continue = (uiRes("m_performSetOffsetObject.kContinue"));
+	string $cancel   = (uiRes("m_performSetOffsetObject.kCancel"));
+	string $msg      = (uiRes("m_performSetOffsetObject.kMissingChannelsMsg"));
+
+	$msg = `format -s $num -s $character $msg`;
+
+	int $n = min($num, 20);
+	for ($i=0; $i<$n; $i++)
+		$msg += ( "\n    " + $missingChannels[$i] );
+
+	if ($num > 20)
+	{
+		int $diff = $num - 20;
+		$msg += `format -s $diff "\n    (and ^1s other channels)"`;
+	}
+
+	string $summary = 
+		(uiRes("m_performSetOffsetObject.kClickContinueMsg"));
+
+	$msg += ( "\n\n" + `format -s $num -s $continue $summary` );
+
+	string $dialog = `confirmDialog
+		-title         (uiRes("m_performSetOffsetObject.kWarning"))
+		-message       $msg
+		-messageAlign  "left"
+		-button        $continue
+		-button        $cancel
+		-defaultButton $continue
+		-cancelButton  $cancel
+		-dismissString $cancel`;
+
+	return ( $dialog == $continue );
+}
+
+global proc performSetOffsetObject()
+{
+	// Save the current selection
+	string $sel[] = `ls -sl`;
+
+	string $characters[] = getCharactersForAction();
+
+	if ( size( $characters ) == 0 )
+		error( (uiRes("m_performSetOffsetObject.kNoActiveCharacters")) );
+	if ( size( $characters ) != 1 )
+		error( (uiRes("m_performSetOffsetObject.kTooManyActiveCharacters")) );
+
+	// Determine all potential offset objects. 
+	//
+
+	string $offsets[] = {};
+	{
+		// Get a list of all node in the character set
+		string $members[] = `character -q -no $characters[0]`;
+	
+		// Walk the list of nodes and determine each node's parent
+		for ( $m in $members )
+		{
+			int $add = true;
+
+			// For a transform to be an offset object it must either have no parent(s)
+			// or have a all of its parents (walking up the hierarchy) outside the 
+			// character set.
+			//
+			string $parents[] = getAllParents( $m );
+			for ( $p in $parents )
+				if (stringArrayContains($p,$members))
+				{
+					$add = false;
+					break;
+				}
+
+			if ($add)
+				$offsets[ size( $offsets ) ] = $m;
+		}
+	}
+
+	// Determine if the character set is missing any offset objects T and R channels.
+	// If so, warn the user that these channels need to be added in order for
+	// clip matching/offsetting to work correctly.
+	//
+	string $missingChannels[];
+	for ( $oo in $offsets )
+	{
+		string $tmp[] = findRequiredTRChannels( $characters[0], $oo );
+		int    $count = size( $tmp );
+		if ( $count > 0 )
+			appendStringArray( $missingChannels, $tmp, $count );
+	}
+
+	if ( size( $missingChannels ) > 0 )
+	{
+		// Bail if user does not want to add the missing channels...
+		//
+		if ( !showAddMissingChannelConfirmDialog( $characters[0], $missingChannels ) )
+			return;
+
+		// Add missing offset object T and R channels
+		//
+		character -forceElement $characters[0] $missingChannels;
+	}
+
+	// Determine if a clipToGhost node already exists.
+	// If so, we will need to regenerate any clips that already exist, since they will be incorrect.
+	// To accomplish this  we figure out if the scene has a clipToGhost node ...
+	int $show[];
+	string $clips[], $clipToGhost = getClipToGhostForScheduler( `character -q -scheduler $characters[0]` );
+	if ( size( $clipToGhost ) )
+	{
+		// ... and delete ghost associated with any of the clips on it.
+		$clips = getGhostedClips( $clipToGhost );
+		for ( $c in $clips )
+		{
+			string $ghost = getGhostShapeForClip( $c );
+			$show[ size($show) ] = `getAttr ( $ghost + ".visibility" )`;
+			delete `getGhostShapeForClip( $c )`;
+		}
+	}
+
+	int $frame = `currentTime -q`;
+
+	// Next, make sure all clips are absolute and that keys exist on the offset object
+	// translation and rotation channels.
+	int $proceed = true;
+	for ( $offset in $offsets )
+		$proceed = ( $proceed && verifyClipsAreValid( $characters[0], $offset ) );
+
+	// Remove any existing offset objects
+	string $old_offsets[] = `character -q -aoo $characters[0]`;
+	if (size( $old_offsets ))
+		character -e -roo $characters[0] $old_offsets;
+
+	currentTime $frame;
+
+	// If an error was detected during validation, bail
+	if ( $proceed == false )
+		return;
+
+	// Otherwise, add the new offset object ...
+	if ( size( $offsets ) )
+		character -e -aoo $characters[0] $offsets;
+
+	// ... regenerate ghosts on the clips that were originally ghosted
+	if ( size( $clipToGhost ) )
+	{
+		performCreateClipGhost($clips);
+		for ( $i=0; $i<size($clips); $i++ )
+			setAttr ( `getGhostShapeForClip( $clips[$i] )` + ".visibility" ) $show[$i];
+	}
+
+	// Restore selection
+	if (size($sel))
+		select -r $sel;
+}

@@ -1,0 +1,217 @@
+// Copyright (C) 1997-2013 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+/**
+ * @file muAddShelfButton.mel
+ * @brief Contains the muAddShelfButton MEL procedure.
+ *
+ * CONFIDENTIAL INFORMATION: This software is the confidential and proprietary
+ * information of Walt Disney Animation Studios ("WDAS"). This software may not
+ * be used, disclosed, reproduced or distributed for any purpose without prior
+ * written authorization and license from WDAS. Reproduction of any section of
+ * this software must include this legend and all copyright notices.
+ *
+ * Copyright 2004-2011 Disney Enterprises, Inc. All rights reserved.
+ *
+ * @author Thomas V Thompson II
+ *
+ * @version tthompso  04/09/04  Initial Version
+ * @version rsharma   09/22/04  Replaced xgm with mu, moved to mayaUtils vob
+ * @version elenad    09/20/07  Added function to create button spacers
+ * @version tscopio   03/14/08  Return the name of the created button
+ * @version aselle    10/14/10  Remove iconAndTextHorizontal from muAddShelfButton
+ */
+
+//
+// Portions of this are stolen from Chic Look via Mark Hammel. We are looking
+// for a more global and better working version, but this holds up for the
+// most part and is simple.
+//
+
+global int $muQuitScriptJob;
+
+
+//
+// Register a button or button spacer.
+//
+
+global proc muRegisterButton(string $button) {
+    global string $muButtons[];
+    $muButtons[size($muButtons)] = $button;
+}
+
+
+//
+// Cleanup routine to run when quiting Maya.  Delete the registered buttons
+// and button spacers.
+//
+
+global proc muButtonCleanUp() {
+    global string $muButtons[];
+    int $i;
+
+    // Delete shelf buttons
+    for ($i = 0; $i < size($muButtons); $i++) {
+        if (`shelfButton -query -exists $muButtons[$i]`) {
+            deleteUI $muButtons[$i];
+        }
+    }
+
+    // Save shelves to make cleanup permanent
+    global string $gShelfTopLevel;
+    saveAllShelves $gShelfTopLevel;
+}
+
+
+//
+// This function adds a button to the given shelf.
+// The $command is expected to be mel; to set a python command
+// update it after calling this routine. 
+//
+// Note that both $button and $command act as "keys" to detect duplicates
+// of the button (in a somewhat inconsistent way): if any button
+// exists in the shelf with name $button, then all buttons in the
+// shelf with command $command will be removed before adding the
+// new button.  This duplicate removal will be most effective if
+// your command does not change frequently, so it's preferable
+// to use a simple command (eg call your own mel/python routine
+// instead if putting a complex command directly in the button).
+global proc string muAddShelfButton( string $shelf, string $button, string $command,
+                                     string $note, string $icon, string $label, string $version )
+{
+    if (!`window -ex MayaWindow`)
+        return("");
+
+    // Toss a warning and don't create the button if no shelf defined
+    if (size($shelf) == 0) {
+		string $fmt = "muAddShelfButton: No shelf name provided for button \"^1s\".  Aborting.";
+        warning `format -s $button $fmt`;
+        return("");
+    }
+    
+    // Make sure the provided shelf exists. Create it if it doesn't.
+    if (!`shelfLayout -q -ex $shelf` )
+	{
+		global string $gShelfTopLevel;
+		$tabIndexPrev = `shelfTabLayout -query -selectTabIndex $gShelfTopLevel`;
+        addNewShelfTab( $shelf );
+		if( $tabIndexPrev )
+		{
+			shelfTabLayout -e -selectTabIndex $tabIndexPrev $gShelfTopLevel;
+			shelfTabChange();
+		}
+	}
+
+    // Add cleanup routine
+    global int $muQuitScriptJob;
+    if ($muQuitScriptJob) {
+        scriptJob -kill $muQuitScriptJob;
+    }
+    $muQuitScriptJob = `scriptJob -event "quitApplication"
+        "muButtonCleanUp"`;
+    
+    // Add the button if it doesn't already exist
+    setParent $shelf;
+    if( !`shelfButton -q -ex $button` ) {
+
+        // Remove any other buttons with the same command ("leftovers")
+        $shelfButtons = `shelfLayout -q -childArray $shelf`;    
+        for ( $sb in $shelfButtons ) {
+
+            // Skip non-shelfButtons
+            if (!`shelfButton -q -exists $sb`)  continue;
+
+            string $existingCommand = `shelfButton -q -command $sb`;
+            if ($existingCommand == $command) {
+                deleteUI -control $sb;
+            }
+        }
+
+        // If the user doesn't specify an icon use Maya's empty icon
+        if ($icon == "")
+            $icon = "mmEmpty.png";
+
+        // Create the button
+		// Note: sending empty string ("") for version results in it being set to current.
+		if( size( $version ) ) {
+			$button = `shelfButton -version $version -imageOverlayLabel $label
+				-ann $note -image1 $icon
+				-command $command -label $button
+				-parent $shelf $button`;
+		} else {
+			$button = `shelfButton -imageOverlayLabel $label
+				-ann $note -image1 $icon
+				-command $command -label $button
+				-parent $shelf $button`;
+		}
+        muRegisterButton($button);
+    }
+
+    return($button);
+}
+
+
+//
+// This function adds a button spacer to the given shelf.  Effectively, this is
+// a blank button that has no icon and no command, it's simply used to visually
+// separate related groups of buttons.
+//
+
+global proc muAddShelfButtonSpacer( string $shelf, string $spacer )
+{
+    if (`window -ex MayaWindow`) {
+        
+	// Make sure a non-blank shelf name was given.
+	if ($shelf == "") {
+	    string $fmt = "muAddShelfButton: No shelf name provided for spacer \"^1s\".  Not adding spacer.";
+		warning `format -s $spacer $fmt`;
+	    return;
+	}
+
+        // Add cleanup routine - it's the same as the one for actual buttons.
+        global int $muQuitScriptJob;
+        if ($muQuitScriptJob)
+            scriptJob -kill $muQuitScriptJob;
+        $muQuitScriptJob = `scriptJob -event "quitApplication"
+				      "muButtonCleanUp"`;
+
+        if( !`shelfLayout -q -ex $shelf` )
+		{
+			global string $gShelfTopLevel;
+			$tabIndexPrev = `shelfTabLayout -query -selectTabIndex $gShelfTopLevel`;
+			addNewShelfTab( $shelf );
+			if( $tabIndexPrev )
+			{
+				shelfTabLayout -e -selectTabIndex $tabIndexPrev $gShelfTopLevel;
+				shelfTabChange();
+			}
+		}
+        setParent $shelf;
+        
+        // Add the button spacer.
+	if( `shelfButton -q -ex $spacer` )
+	    deleteUI -control $spacer;
+	shelfButton -p $shelf -l "" $spacer;
+
+	// Register the spacer so we can clean it up later.
+	muRegisterButton $spacer;
+    }
+}

@@ -1,0 +1,261 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Dec 3, 1999
+//
+//  Description:
+//      This script describes the contents of the context sensitive menus
+//       for the subdivision surfaces, originally all in dagMenuProc.mel
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+
+global proc subdDagMenuProc( int $action, string $item, string $maskList[] )
+{
+	string $subdivSelectionPositions[3];
+	$subdivSelectionPositions[0] = "W";
+	$subdivSelectionPositions[1] = "N";
+	$subdivSelectionPositions[2] = "S";
+	$subdivSelectionPositions[3] = "E";
+
+	int $whichMode = `subdiv -q -proxyMode $item`;
+	string $componentsOnThisNode = $item;
+
+	if( 1 == $whichMode ) {
+		// We're in polygon mode -- update the values of
+		// $componentsOnThisNode and $maskList so the marking menu
+		// commands below will operate on the poly proxy and not the
+		// subd.  (The subd components aren't selectable or drawn in
+		// proxy mode.)
+		//
+		// This way, users will use the subd marking menus to turn on
+		// "faces," for example, but they'll really be turning on the
+		// faces on the poly proxy, not the subd.
+		//
+		$componentsOnThisNode = subdFindProxyModePolygon( $item );
+
+		if( size( $componentsOnThisNode ) > 0 ) {
+			string $tmpMask[] = `objectSelectMasks( $componentsOnThisNode )`;
+			
+			// The poly selection masks aren't in the same order as those
+			// for the subs.  Remap...
+			//
+			$maskList[0] = $tmpMask[1]; // vertices
+			$maskList[1] = $tmpMask[0]; // edges
+			$maskList[2] = $tmpMask[2]; // faces
+			$maskList[3] = $tmpMask[3]; // maps/UVs
+		} 
+		// Just protecting ourselves in case we think we're in
+		// proxy mode, but we can't find the proxy.
+		// 
+		else {
+			$componentsOnThisNode = $item;
+			warning (uiRes("m_subdDagMenuProc.kCannotFindProxy"));
+		}
+	}
+
+	// create three selection items for the different component types
+	//
+	
+	if( !`exists dagMenuProc_selectionMask_melToUI` ){
+		source "dagMenuProc.mel";
+	}	
+	string $uiName;
+	for ($i = 0; $i < size($maskList); $i++) {		
+				$uiName = `dagMenuProc_selectionMask_melToUI $maskList[$i]`;				
+		menuItem -label $uiName
+			-ecr false
+			-c ( "doMenuComponentSelection(\"" +
+				 $componentsOnThisNode + "\", \"" +  $maskList[$i] + "\")")
+			-rp $subdivSelectionPositions[$i];
+	}
+
+	// If there are two subdiv shapes underneath the
+	// same transform (for instance, if the user picks a deformed 
+	// subd, and invokes Deform->Show Intermediate Objects)
+	// the getAttr command below of the form
+	// 
+	// 		getAttr ( $item + ".displayFilter" );
+	// 
+	// will return two values in an int array, instead of a simple
+	// int: one value for each of the subdiv shapes under the
+	// transform $item.
+	// 
+	// Note that a simliar "setAttr"  command
+	// 
+	// 		setAttr ( $item + ".displayFilter" ) 0 0;
+	// 
+	// would require two numeric values on the command line, for the
+	// same reason.  Since MEL doesn't allow assigning an int to an
+	// int[] (or vice versa) we have to be careful of how we form the
+	// commands for these objects.
+	// 
+	// 		$children[] : all the leaf-level subdiv children of $item
+	// 		$subdShapes : the members of $children that are *not* 
+	//					  intermediate objects.  For convenience
+	//					  when passing to the setSubdivDisplayLevelAndFilter
+	//					  proc later on, $subdShapes is the string 
+	//					  representation of an array.
+	// 		$numSubdShapes: the number of elements in the string "array"
+	//					  $subdShapes.
+	// 
+	string $children[] = `ls -dag -leaf -type subdiv $item`;
+	string $subdShapes = "{ ";
+	string $firstSubdShape = "";
+	int    $numSubdShapes = 0, $maybeProxy = 0;
+	string $child;
+
+	string $mChildren[] = `ls -dag -leaf -type mesh $item`;
+	for( $child in $mChildren ) {
+		if ( !`getAttr ($child+".io")` &&
+			  `getAttr ($child+".visibility")`) {
+			$maybeProxy = 1;
+		}
+	}
+	// For all leaf-level subdiv shapes under $item
+	//
+	for( $child in $children ) {
+		// Weed out the intermediate objects
+		//
+		if( !`getAttr ($child+".io")` ) {
+			// Keep track of the first one for a command later on.
+			//
+			if( $numSubdShapes == 0 ) {
+				$firstSubdShape = $child;
+			} 
+			// Comma separate members of the string "array"
+			//
+			else {
+				$subdShapes += ", ";
+			}
+
+			$subdShapes += ( "\"" + $child + "\"" );
+			$numSubdShapes++;
+		}
+	}
+	$subdShapes += " } ";
+
+	menuItem -label (uiRes("m_subdDagMenuProc.kDisplayFiner")) 
+		-annotation (uiRes("m_subdDagMenuProc.kDisplayFinerAnnot")) 
+		-echoCommand true
+		-c ( "setSubdivDisplayLevelAndFilter " + $subdShapes + "\"+1\" 0" )
+		-rp "NW"
+		setSubdivComponentDisplayFiner;
+
+	menuItem -label (uiRes("m_subdDagMenuProc.kDisplayCoarser")) 
+		-annotation (uiRes("m_subdDagMenuProc.kDisplayCoarserAnnot")) 
+		-echoCommand true
+ 		-c ( "setSubdivDisplayLevelAndFilter " + $subdShapes + "\"-1\" 0" )
+		-rp "SW"
+		setSubdivComponentDisplayCoarser;
+
+	// The "refine" and "filter" commands below use "setAttr" commands
+	// that need one numeric value per valid subdiv shape under the
+	// $item transform.  Build up a string with desired value repeated
+	// an appropriate number of times.
+	// 
+	string $filterString = "";
+	for( $i = 0; $i < $numSubdShapes; $i++ ) {
+		$filterString += "0 ";
+	}
+
+	// In the case of multiple subdiv shapes, they could conceivably
+	// have different "displayFilter" attribute values.  To build up
+	// the marking menu commands, we'll just go with the attribute
+	// state of the first valid subdiv shape we found.
+	//
+
+	$whichMode = `subdiv -q -proxyMode $firstSubdShape`;
+	string $polygon = (uiRes("m_subdDagMenuProc.kPolygon"));
+	string $annEditSubdiv = (uiRes("m_subdDagMenuProc.kEditSubdiv")) ;
+
+	if( 1 == $whichMode ) {
+		// We are in polygon mode.  Create a menu item to switch back
+		// to standard editing mode.
+		menuItem -label (uiRes("m_subdDagMenuProc.kStandard")) 
+			-annotation $annEditSubdiv
+			-echoCommand true
+			-c ("subdGivenIntoHierMode " + $item + "")
+			-rp "SE"
+			setSubdivHierMode;
+
+	} else if( 0 == $whichMode ) {
+		menuItem -label $polygon 
+			-annotation ( (uiRes("m_subdDagMenuProc.kEditPolyProxy")) )
+			-echoCommand true
+			-c ("subdGivenIntoPolyMode " + $item + " 1 0 0 0")
+			-rp "SE"
+			setSubdivPolyMode;
+	} else if( 2 == $whichMode ) {
+		// The Polygon menu item is disabled in this case to
+		// indicate that this subdivision surface
+		// is not in Polygon Proxy mode, but could be
+		// put into Polygon Proxy mode if its construction
+		// history was deleted.
+
+		string $label;
+		string $annotation;
+		if ($maybeProxy) {
+			// If there is a non-intermediate, visible meshShape
+			// thats a sibling of this subdShape, then thats
+			// a result of the user binding a skeleton to a
+			// a subd in the proxy mode. (which is discouraged,
+			// incorrect, but cannot be prevented)
+			//
+			// If such a mesh is in the history of this subd, then
+			// we can be sure that we are in the polygon proxy mode.
+			// If so, we should set the label to "Standard"( to which
+			// they can switch by deleting history)
+			//
+			string $inNodes[] = `listHistory -il 2 $firstSubdShape`;
+			int $found = 0;
+			for ($node in $inNodes) {
+				for ($mesh in $mChildren) {
+					if ($node == $mesh) {
+						$label = "Standard";
+						$annotation = $annEditSubdiv ;
+						$found = 1;
+						break;
+					}
+				}
+				if ($found) break;
+			}
+			if (!$found) {
+				$label = $polygon;
+				$annotation = (uiRes("m_subdDagMenuProc.kEditPolygon"));
+			}
+		} else $label = $polygon;
+
+		menuItem -label $label
+			-annotation $annotation
+			-en false
+			-echoCommand true
+			-c ("subdGivenIntoPolyMode " + $item + " 1 0 0 0")
+			-rp "SE"
+			setSubdivPolyMode;
+	}
+}

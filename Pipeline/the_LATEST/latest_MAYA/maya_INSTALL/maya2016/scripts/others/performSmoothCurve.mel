@@ -1,0 +1,325 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Sept 17, 1998
+//
+//  Description:
+//      This script is for option box dialog for smoothCurve command.
+
+proc setOptionVars ( int $forceFactorySettings )
+{
+	// -rpo/-replaceOriginals boolean
+	if( $forceFactorySettings || !`optionVar -exists smoothCurveKeepOrig` ){
+		optionVar -intValue smoothCurveKeepOrig 0;
+	}
+
+
+	// -s/-smoothness float
+	if( $forceFactorySettings || !`optionVar -exists smoothCurveSmoothness` ){
+		optionVar -floatValue smoothCurveSmoothness 10.0;
+	}
+}
+
+global proc smoothCurveSetup ( string $parent,
+							   int $forceFactorySettings,
+							   string $goToTool )
+{
+	// Retrieve the option settings
+	//
+	setOptionVars( $forceFactorySettings );
+	smoothCurveToolSetup( $forceFactorySettings, $goToTool );
+
+	setParent $parent;
+
+	// Query the optionVar's and set the values into the controls
+
+	int $localIntValue;
+
+	$localIntValue = `optionVar -q smoothCurveKeepOrig`;
+	checkBoxGrp -e -v1 $localIntValue keepOriginals;
+
+	float $smoothness;
+
+	$smoothness = `optionVar -q smoothCurveSmoothness`;
+	floatSliderGrp -e -v $smoothness smoothnessSlider;
+	if( $forceFactorySettings ){
+		floatSliderGrp -e -min 0.0 -max 100.0 -fmn 0.0 -fmx 1000.0
+				smoothnessSlider;
+	}
+
+	if( "" != $goToTool ) { 
+		checkBoxGrp -e -v1 `scriptCtx -q -euc $goToTool`
+		  scriptToolExtraWidget;
+		checkBoxGrp -e -v2 `scriptCtx -q -lac $goToTool`
+		  scriptToolExtraWidget;
+	}
+}
+
+global proc smoothCurveCallback( string $parent, int $doIt, string $goToTool )
+{
+	if( "" != $goToTool ) {
+		optionVar -iv smoothCurveEuc `scriptCtx -q -euc $goToTool`;
+		optionVar -iv smoothCurveLac `scriptCtx -q -lac $goToTool`;
+	}
+    setParent $parent;
+
+	optionVar -intValue smoothCurveKeepOrig `checkBoxGrp -q -v1 keepOriginals`;
+
+	optionVar -floatValue smoothCurveSmoothness
+			`floatSliderGrp -q -v smoothnessSlider`;
+
+	if( 1 == $doIt ){
+		performSmoothCurve( 0, $goToTool ); 
+		string $tmpCmd = "performSmoothCurve( 0, \"" + $goToTool + "\")";
+		addToRecentCommandQueue $tmpCmd "Smooth Curve";
+	}
+	else if( $doIt ) {
+		setToolTo $goToTool;
+	}
+}
+
+proc smoothCurveOptions( int $inTheTool, string $goToTool )
+{
+	//	Name of the command for this option box.
+	//
+	string $commandName = "smoothCurve";
+
+	//	Build the option box actions.
+	//
+	string $callback = ($commandName + "Callback");
+	string $setup = ($commandName + "Setup");
+
+	global string $gOptionBoxActionToolItem;
+	$gOptionBoxActionToolItem = "modelWithToolSmoothCurve";
+	global string $gOptionBoxActionToolItemCB;
+	$gOptionBoxActionToolItemCB = "smoothCurveToolScript 3";
+
+	//	Step 1:  Get the option box.
+	//	============================
+	string $layout = getOptionBox();
+	setParent $layout;
+	
+	//	Step 2:  Pass the command name to the option box.
+	//	=================================================
+	setOptionBoxCommandName( $commandName );
+	
+	//	Step 3:  Activate the default UI template.
+	//	==========================================
+	setUITemplate -pushTemplate DefaultTemplate;
+
+	//	Step 4: Create option box contents.
+	//	===================================
+	
+	//	Turn on the wait cursor.
+	//
+	waitCursor -state 1;
+
+	tabLayout -scr true -tv false;
+	
+	string $parent = `columnLayout -adjustableColumn 1`;
+	
+	floatSliderGrp -label (uiRes("m_performSmoothCurve.kSmoothness")) 
+			-min 0.0 -max 100.0 -fmn 0.0 -fmx 1000.0
+			smoothnessSlider;
+
+	checkBoxGrp -label ""
+		-ncb 1
+		-label1 (uiRes("m_performSmoothCurve.kKeepOriginal")) 
+		keepOriginals;
+	
+	if( $inTheTool ) {
+		separator;
+		checkBoxGrp -ncb 2 -label (uiRes("m_performSmoothCurve.kToolBehavior")) 
+		  -label1 (uiRes("m_performSmoothCurve.kExitOnCompletion")) 
+		  -v1 off
+		  -on1 ("scriptCtx -e -euc true " + $goToTool)
+		  -of1 ("scriptCtx -e -euc false " + $goToTool)
+
+		  -label2 (uiRes("m_performSmoothCurve.kAutoCompletion")) 
+		  -v2 on
+		  -on2 ("scriptCtx -e -lac true " + $goToTool)
+		  -of2 ("scriptCtx -e -lac false " + $goToTool)
+		  scriptToolExtraWidget;
+	}
+
+	//	Turn off the wait cursor.
+	//
+	waitCursor -state 0;
+	
+	//	Step 5: Deactivate the default UI template.
+	//  ===========================================
+	//
+	setUITemplate -popTemplate;
+
+	//	Step 6: Customize the buttons.  
+	//	==============================
+
+	//	'Apply' button.
+	//
+	string $applyBtn = getOptionBoxApplyBtn();
+	if( $inTheTool ) {
+		button -edit -label (uiRes("m_performSmoothCurve.kSmoothTool")) 
+			-command ($callback + " " + $parent + " 3 \"" + $goToTool + "\"")
+			$applyBtn;
+	}
+	else {
+		button -edit -label (uiRes("m_performSmoothCurve.kSmooth")) 
+			-command ($callback + " " + $parent + " 1 \"" + $goToTool + "\"")
+			$applyBtn;
+	}
+
+	//	'Save' button.
+	//
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + $parent + " 0 \"" +
+				  $goToTool + "\"; hideOptionBox")
+		$saveBtn;
+
+	//	'Reset' button.
+	//
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + " " + $parent + " 1 \"" + $goToTool + "\"")
+		$resetBtn;
+
+	//	Step 7: Set the option box title.
+	//	=================================
+	//
+	if( $inTheTool ) {
+		setOptionBoxTitle (uiRes("m_performSmoothCurve.kSmoothCurveToolOptions"));
+	}
+	else {
+		setOptionBoxTitle (uiRes("m_performSmoothCurve.kSmoothCurveOptions"));
+	}
+
+	//	Step 8: Customize the 'Help' menu item text.
+	//	============================================
+	//
+	setOptionBoxHelpTag( "SmoothCurve" );
+
+	//	Step 9: Set the current values of the option box.
+	//	=================================================
+	//
+	eval ($setup + " " + $parent + " 0 \"" + $goToTool + "\"");	
+	
+	//	Step 10: Show the option box.
+	//	=============================
+	//
+	showOptionBox();
+}
+
+//  Procedure Name:
+//      smoothCurveHelp
+//
+//  Description:
+//		Return a short description about this command.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      string.
+
+
+proc string smoothCurveHelp()
+{
+	return "  Command: smooth Curve - Reduce the curvature of the curve\n" +
+			"Selection: curve control points";
+}
+
+
+//  Procedure Name:
+//      assembleCmd
+//
+//  Description:
+//		Construct the command that will apply the option box values.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+
+proc string assembleCmd()
+{
+	string $cmd = "performSmoothCurvePreset ";
+
+	setOptionVars( false );
+
+	int $replaceOrig = !`optionVar -q smoothCurveKeepOrig`;
+	int $doHistory = `constructionHistory -q -tgl`;
+	float $smoothness = `optionVar -q smoothCurveSmoothness`;
+
+	$cmd = ($cmd + $doHistory + " " + $replaceOrig + " " + $smoothness);
+
+	return $cmd;
+}
+
+//  Procedure Name:
+//      performSmoothCurve
+//
+//  Description:
+//		Perform the smooth curve command using the corresponding 
+//		option values.  This procedure will also show the option box
+//		window if necessary as well as construct the command string
+//		that will invoke the smooth curve command with the current
+//		option box values.
+//
+//  Input Arguments:
+//      0 - Execute the command.
+//      1 - Show the option box dialog.
+//      2 - Return the command.
+//
+//  Return Value:
+//      The command string.
+
+global proc string performSmoothCurve( int $action, string $goToTool )
+{
+	int $inTheTool = false;
+	if( 3 == $action ) {
+		$action = 1;
+		$inTheTool = true;
+	}
+
+	string $cmd = "";
+	switch( $action ) {
+	  case 0:
+		setOptionVars( false );
+		$cmd = `assembleCmd`;
+		eval $cmd;
+		break;
+
+	  case 1:
+		smoothCurveOptions( $inTheTool, $goToTool );
+		break;
+
+	  case 2:
+	  default:
+		setOptionVars( false );
+		$cmd = `assembleCmd`;
+		break;
+	}
+
+	return $cmd;
+}

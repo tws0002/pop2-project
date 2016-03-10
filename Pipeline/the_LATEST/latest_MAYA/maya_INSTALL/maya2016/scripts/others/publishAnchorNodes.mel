@@ -1,0 +1,251 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+//<doc>
+//<name publishAnchorNodes>
+
+//<synopsis>
+//		publishAnchorNodes(int $asParent, int $namingConvention, string $customName, string $nodes[], int $publish)
+//
+//<returns>
+//		None
+//
+//<description>
+//      This script can be used to publish nodes as parent or child anchors
+//		on their container. The naming convention flag allows you to choose
+//		the following names for the published attribute: 0 = used the node
+//      name, 1 = prepend the node name to the supplied custom name, 2 =
+//		used the custom name. In all cases, an index will be added to the
+//		resulting name if it is required to make the name unique.
+//		The script can also be used to unpublish nodes.
+//
+//<flags>
+//		int $asParent If 1, publish as parent anchor, else child.
+//		int $namingConvention How to choose the publish name. See description.
+//		string $customName Custom name for $namingConvention 1 and 2
+//		string $nodes[] Nodes to publish.
+//		int $publish True for publish, false for unpublish.
+//
+//<examples>
+//	// publish the selected nodes as parent anchors, with the naming convention
+//  // of "parent_<nodeName>"
+//	publishAnchorNodes 1 1 "parent" `ls -sl` 1;
+//
+//</doc>
+//
+proc string customAnchorName( string $node,
+							  int $namingConvention,
+							  string $customName )
+//
+//	Description:
+//		Given the node to be published, the naming convention, and the optional
+//	custom name, return the resulting published name.
+//
+//	Inputs:
+//		$node				: node to be published
+//		$namingConvention	: 0 - use the node name
+//							  1 - prepend the node name to the custom name
+//							  2 - use the custom name
+//		$customName			: custom name for $namingConvention 1 & 2
+//
+{
+	string $publishName = $customName;
+	switch ($namingConvention) {
+	case 0:
+		$publishName = `plugNodeStripped $node`;
+		break;
+	case 1: 
+	{
+		string $nodeName = `plugNodeStripped $node`;
+		$publishName = ($nodeName + "_" + $customName);
+	}
+		break;
+	case 2:
+		// nothing to do here
+		break;
+	}
+	return( $publishName );
+}
+
+proc checkAnchorPublished(	string $node,
+							string $container,
+							int $isPublished,
+							int	$asParent,
+							string $cmdName)
+//
+//	Description:
+//		Given node, check it if its published state with respect to the
+//	given container matches $isPublished. If $asParent is true, check
+//	the state of published parent anchor, else the state of the child anchor.
+//	Issue an error message if anything is not as desired, otherwise return.
+//
+//	Inputs:
+//		$node		: node for which we check published state
+//		$container	: container against which publication is checked
+//		$isPublished: if true, we want $node to be published, else not.
+//		$asParent	: if true, check parent anchor, else child anchor
+//		$cmdName	: Name of command that called this method
+//
+//	Return Value.
+//		None, but only returns if there are no errors.
+//
+{
+	string $errFmt;
+	if( $isPublished ){
+		$errFmt = (uiRes("m_publishAnchorNodes.kPublishedErr"));
+	} else {
+		$errFmt = (uiRes("m_publishAnchorNodes.kNotPublishedErr"));
+	}
+	if( $asParent ){
+		string $anchors[] = `container -q -pap -ba $container`;
+		if( stringArrayContains( $node, $anchors ) != $isPublished ){
+			error( `format -s $cmdName -s $node -s (uiRes("m_publishAnchorNodes.kParent")) -s $container $errFmt` );
+		}
+	} else {
+		string $anchors[] = `container -q -pac -ba $container`;
+		if( stringArrayContains( $node, $anchors ) != $isPublished ){
+			error( `format -s $cmdName -s $node -s (uiRes("m_publishAnchorNodes.kChild")) -s $container $errFmt` );
+		}
+	}
+}
+
+global proc publishAnchorNodes(int $asParent,
+							   int $namingConvention,
+							   string $customName,
+							   string $nodes[],
+							   int $publish)
+{
+	string $cmd;
+	string $cmdName;
+	string $actionName;
+	string $cmdFlag;
+	if( $publish ){
+		$cmdFlag = "-pa";
+		$actionName = (uiRes("m_publishAnchorNodes.kPublish"));
+	} else {
+		$cmdFlag = "-up";
+		$actionName = (uiRes("m_publishAnchorNodes.kUnpublish"));
+	}
+	if( $asParent ){
+		$cmdFlag += "p";
+		$cmdName = (uiRes("m_publishAnchorNodes.kParentAnchor"));
+	} else {
+		$cmdFlag += "c";
+		$cmdName = (uiRes("m_publishAnchorNodes.kChildAnchor"));
+	}
+	string $longCmdName = ($cmdName + " " + $actionName);
+
+	if (size($nodes) == 0) {
+		$nodes = `ls -sl`;
+	}
+	
+	// Get the explicitly selected container, if any
+	//
+	string $containers[] = `ls -type container $nodes`;
+	int $numContainers = size($containers);
+	if( $numContainers > 1 ){
+		string $errFmt = (uiRes("m_publishAnchorNodes.kTooManyAssets"));
+		error( `format -s $cmdName -s $actionName $errFmt` );
+	}
+	string $container;
+	if( $numContainers == 1 ){	// explicit container
+		$container = $containers[0];
+	}
+
+	// Get the selected dag nodes
+	//
+	string $dagNodes[] = `ls -type dagNode $nodes`;
+	if( size($dagNodes) > 0 ) {
+		for ($node in $dagNodes) {
+			string $con = `container -q -fc $node`;
+			if( $con == "" ) {
+				string $errFmt = (uiRes("m_publishAnchorNodes.kNotInAsset"));
+				error(`format -s $cmdName -s $node -s $actionName $errFmt`);
+			}
+			string $dagContainer = $con;
+			if( $numContainers == 0 ){
+				// Implicit publishing/unpublishing
+				//
+				$container = $dagContainer;
+			}
+			// User could be trying to do hierarchical publishing/unpublishing.
+			// Check if the container of the dag node is either the desired
+			// container, or a descendant of that container.
+			//
+			while( ($dagContainer != "") && ($dagContainer != $container) ){
+				$dagContainer = `container -q -fc $dagContainer`;
+			}
+			if( $dagContainer == "" ){
+				// We got to the top of the hierarchy without ever finding the
+				// selected container, which means that the selected node
+				// doesn't have the selected container as an ancestor. Bail.
+				//
+				string $errFmt = (uiRes("m_publishAnchorNodes.kNotInHierarchy"));
+				error( `format -s $cmdName -s $node -s $actionName -s $container $errFmt` );
+			}
+			// If we get to here, we may be able to publish/unpublish,
+			// either directly, or hierarchically.
+			//
+			if( $publish ){
+				while( ($con != "") && ($con != $container) ){
+					// Check published status: the method will only return without
+					// an error message if everything is ok.
+					//
+					checkAnchorPublished( $node, $con, true, $asParent, $longCmdName );
+					// So far, so good, pop up to the next container, if possible.
+					//
+					$con = `container -q -fc $con`;
+				}
+			} else {
+				// Make sure it's not published to container's parent, if any
+				//
+				$con = `container -q -fc $container`;
+				if( $con != "" ){
+					checkAnchorPublished( $node, $con, false, $asParent, $longCmdName );
+				}
+			}
+			// Make sure it's not already published/unpublished wrt to desired
+			// container
+			//
+			checkAnchorPublished( $node, $container, (!$publish), $asParent, $longCmdName );
+			// If we get to here, the operation is possible, so go ahead and do it.
+			//
+			$cmd += ("container -e " + $cmdFlag + " " + $node + " ");
+			if( $publish ){
+				string $publishName = customAnchorName($node, $namingConvention,
+												   $customName);
+				$cmd += ("\"" + $publishName + "\" ");
+			}
+			$cmd += ($container + ";");
+		}
+	}
+	else {
+		string $errFmt;
+		if (size($nodes) == 0) {
+			$errFmt = (uiRes("m_publishAnchorNodes.kNothingSelected"));
+		} else {
+			$errFmt = (uiRes("m_publishAnchorNodes.kNoDagSelected"));
+		}
+		error( `format -s $cmdName -s $actionName $errFmt` );
+	}
+	evalEcho $cmd;
+}

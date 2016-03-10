@@ -1,0 +1,187 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// Description: 
+//
+//	This function converts the psdFileTex nodes to a Layered texture
+//	network. It re-establishes all the output connections of the
+//	selected psdFileTex node. The convertion is rejected if the
+//	psdFile given has no layer sets in it.
+//
+global proc hypergraphConvertPsdToLTNetwork(string $psdTexture)
+{
+	source "createRenderNode.mel";
+		
+	string $cmd = "getAttr ";
+	$cmd += $psdTexture;
+	$cmd += ".fileTextureName";
+
+    string $fileName = eval($cmd);
+	if ( $fileName == "" ) {
+		string $msg = (uiRes("m_hypergraphConvertPsdToLTNetwork.kNoFileTexture"));
+		error (`format -stringArg $psdTexture $msg`);
+		return;
+	}
+	
+	string $sets[] = `getAttr ($psdTexture + ".layerSets")` ;
+	if ( size( $sets ) == 0 ) {
+		error ((uiRes("m_hypergraphConvertPsdToLTNetwork.kNoLayerSet")));
+		return;
+	}
+
+	string $evalCmd;
+
+	// check the connections
+	//
+	// color
+	//
+	$evalCmd = "connectionInfo -isSource ";
+	$evalCmd += $psdTexture;
+	$evalCmd += ".outColor";
+	string $colNodes[];
+	if( eval ($evalCmd) == true ) {
+		$cmd = "connectionInfo -dfs ";
+		$cmd += $psdTexture;
+		$cmd += ".outColor";
+		$colNodes = eval($cmd);
+	}
+
+	// transparency
+	//
+	$evalCmd = "connectionInfo -isSource ";
+	$evalCmd += $psdTexture;
+	$evalCmd += ".outTransparency";
+	string $transparencyNodes[];
+	if( eval ($evalCmd) == true ) {
+		$cmd = "connectionInfo -dfs ";
+		$cmd += $psdTexture;
+		$cmd += ".outTransparency";
+		$transparencyNodes = eval($cmd);
+	}
+
+	// alpha
+	//
+	$evalCmd = "connectionInfo -isSource ";
+	$evalCmd += $psdTexture;
+	$evalCmd += ".outAlpha";
+	string $alphaNodes[];
+	if( eval ($evalCmd) == true ) {
+		$cmd = "connectionInfo -dfs ";
+		$cmd += $psdTexture;
+		$cmd += ".outAlpha";
+		$alphaNodes = eval($cmd);
+	}
+
+	string $layeredTexture = eval("shadingNode -asTexture layeredTexture");
+
+	int $nodeIdx = 0;
+	int $layerIndex = size( $sets ) - 1;
+
+	// re-establish the connections b/n shader and LT
+	// for color nodes
+	for ( $nodeIdx = 0; $nodeIdx < size( $colNodes ) ; $nodeIdx++) 
+	{
+		if( $colNodes[$nodeIdx] == "swatchShadingGroup.surfaceShader" )	{
+			
+			// a temporary node/attribute connection used for swatch updation which
+			// might have been deleted, hence do not re-connect it.
+			//
+
+			continue;
+		}
+
+		$cmd = "connectAttr -force ";
+		$cmd += $layeredTexture;
+		$cmd += ".outColor ";
+		$cmd += $colNodes[$nodeIdx];
+
+		eval($cmd);
+	}
+
+	// for transparency nodes
+	for ( $nodeIdx = 0; $nodeIdx < size( $transparencyNodes ) ; $nodeIdx++) 
+	{
+		$cmd = "connectAttr -force ";
+		$cmd += $layeredTexture;
+		$cmd += ".outTransparency ";
+		$cmd += $transparencyNodes[$nodeIdx];
+
+		eval($cmd);
+	}
+
+	// for alpha nodes
+	for ( $nodeIdx = 0; $nodeIdx < size( $alphaNodes ) ; $nodeIdx++) 
+	{
+		$cmd = "connectAttr -force ";
+		$cmd += $layeredTexture;
+		$cmd += ".outAlpha ";
+		$cmd += $alphaNodes[$nodeIdx];
+
+		eval($cmd);
+	}
+
+
+//	create as many (new) psdFileTex nodes as the number of layer sets present in the
+//	psdFileTex(this will be dangling) on which the command is being applied.  Connect
+//  each one of them to the layered texture node.
+//
+	string $as = `optionVar -query "psdTxAs" ` ;
+	string $flag =	` optionVar -query "psdTxFlag" `;
+	string $type = "psdFileTex";
+	string $postCommand  = "" ;
+	int $placement = `optionVar -query createTexturesWithPlacement`;
+	int $shadingGroup = `optionVar -query createMaterialsWithShadingGroup`;
+	int $createAndDrop = 0;
+	string $editor = "";
+
+	int $index = 0;
+	for ( $index = 0 ; $index < size( $sets) ; ++$index, --$layerIndex ) 
+	{
+		string $newPsdTexNode = renderCreateNode(
+			"-as2DTexture",
+			$flag,
+			$type, 
+			$postCommand,
+			false, // $projection,
+			false, // $stencil,
+			$placement,
+			$shadingGroup,
+			$createAndDrop,
+			$editor);
+
+		setAttr -type "string" ($newPsdTexNode + ".fileTextureName") $fileName ;
+		
+		setAttr -type "string" ($newPsdTexNode + ".layerSetName") $sets[ $layerIndex ] ;
+
+		connectAttr  ($newPsdTexNode + ".outColor") ($layeredTexture + ".inputs[" + $index + " ].color") ;
+
+		 //if layerset has alpha component connect it
+		int $hasAlpha = `getAttr ($newPsdTexNode + ".fileHasAlpha")` ;
+		if( $hasAlpha ) 
+		{
+			connectAttr  ($newPsdTexNode + ".outAlpha") ($layeredTexture + ".inputs[" + $index + " ].alpha") ;
+		}
+	}
+}
+
+
+

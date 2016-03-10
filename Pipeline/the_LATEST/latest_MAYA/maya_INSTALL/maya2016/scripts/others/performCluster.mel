@@ -1,0 +1,681 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  November 25, 1996
+//
+//  Description:
+//      This script provides an option box dialog for the cluster command.
+//
+//  Input Arguments:
+//		boolean showOptionBox	true - show the option box dialog
+//								false - just execute the command
+//
+//  Return Value:
+//      None.
+//
+//
+//  Procedure Name:
+//      setOptionVars
+//
+//  Description:
+//		Initialize the option values.
+//
+//  Input Arguments:
+//		Whether to set the options to default values.
+//
+//  Return Value:
+//      None.
+//
+proc setOptionVars(int $forceFactorySettings)
+{
+	if ($forceFactorySettings || !`optionVar -exists clusterRelative`) {
+		optionVar -intValue clusterRelative 0;
+	}
+
+	if ($forceFactorySettings || !`optionVar -exists clusterEnvelope`) {
+		optionVar -floatValue clusterEnvelope 1.0;
+	}
+
+	if ($forceFactorySettings || !`optionVar -exists clusterPositioning`) {
+		optionVar -stringValue clusterPositioning "default";
+	}
+	
+	if ($forceFactorySettings || !`optionVar -exists clusterExclusive`) {
+		// 0 == no exclusive
+		// 1 == exclusive with new name
+		// 2 == exclusive using an existing partition
+		//
+		optionVar -intValue clusterExclusive 0;
+	}
+
+	if ($forceFactorySettings ||
+		!`optionVar -exists clusterExclName`) {
+		optionVar -stringValue clusterExclName "deformPartition";
+	}
+}
+
+//
+//  Procedure Name:
+//      clusterSetup
+//
+//  Description:
+//		Update the state of the option box UI to reflect the option values.
+//
+//  Input Arguments:
+//      parent               - Top level parent layout of the option box UI.
+//                             Required so that UI object names can be 
+//                             successfully resolved.
+//
+//		forceFactorySettings - Whether the option values should be set to
+//                             default values.
+//      tabIndex		     - 0 = both tabs, 1 = basic, 2 = advanced
+//
+//  Return Value:
+//      None.
+//
+global proc clusterSetup(string $parent,
+						 int $forceFactorySettings,
+						 int $tabIndex)
+{
+	// Retrieve the option settings
+	//
+	setOptionVars ($forceFactorySettings);
+
+	setParent $parent;
+
+	// Query the optionVar's and set the values into the controls
+
+	if ($tabIndex !=  2) {	
+		// Relative mode or not
+		int $relative = `optionVar -query clusterRelative`;
+		checkBoxGrp -edit -value1 $relative clusterRelativeWidget;
+		
+		// Overall envelope control
+		float $envelope = `optionVar -query clusterEnvelope`;
+		floatSliderGrp -edit -value $envelope clusterEnvelopeWidget;
+	}
+	if ($tabIndex !=  1) {	
+		// Positioning of the cluster deformer in the DG
+		string $positioning = `optionVar -query clusterPositioning`;
+		if (`optionMenuGrp -exists clusterPositioningWidget`) {
+			if ($positioning == "default") {
+				optionMenuGrp -edit -select 1 clusterPositioningWidget;
+			}
+			else if ($positioning == "before") {
+				optionMenuGrp -edit -select 2 clusterPositioningWidget;
+			}
+			else if ($positioning == "after") {
+				optionMenuGrp -edit -select 3 clusterPositioningWidget;
+			}
+			else if ($positioning == "split") {
+				optionMenuGrp -edit -select 4 clusterPositioningWidget;
+			}
+			else if ($positioning == "parallel") {
+				optionMenuGrp -edit -select 5 clusterPositioningWidget;
+			}
+			else {
+				optionMenuGrp -edit -select 1 clusterPositioningWidget;
+			}
+		}
+		
+		int $exc=`optionVar -query clusterExclusive`;
+		if (`checkBoxGrp -exists exclWidget`) {
+			checkBoxGrp -e -v1 $exc exclWidget;
+		}
+		string $exn=`optionVar -query clusterExclName`;
+		if (`textFieldGrp -exists partitionNameWidget`) {
+			textFieldGrp -e -tx $exn -enable $exc partitionNameWidget;
+		}
+		if (`optionMenuGrp -exists partitionListWidget`) {
+			optionMenuGrp -e  -enable $exc partitionListWidget;
+		}
+	}
+}
+
+//
+//  Procedure Name:
+//      clusterCallback
+//
+//  Description:
+//		Update the option values with the current state of the option box UI.
+//
+//  Input Arguments:
+//      parent - Top level parent layout of the option box UI.  Required so
+//               that UI object names can be successfully resolved.
+//
+//		doIt   - Whether the command should execute.
+//
+//  Return Value:
+//      None.
+//
+global proc clusterCallback(string $parent, int $doIt)
+{
+    setParent $parent;
+
+	// Set the optionVar's from the control values, and then perform the command
+
+	// Relative mode or not
+	int $relative = `checkBoxGrp -query -value1 clusterRelativeWidget`;
+	optionVar -intValue clusterRelative $relative;
+
+	// Overall envelope control
+	optionVar -floatValue clusterEnvelope `floatSliderGrp -query -value clusterEnvelopeWidget`;
+
+	// Positioning of the cluster deformer in the DG
+	string $positioning = "default";
+	if (`optionMenuGrp -exists clusterPositioningWidget`) {
+		if (`optionMenuGrp -query -select clusterPositioningWidget` == 1) {
+			$positioning = "default";
+		}
+		else if (`optionMenuGrp -query -select clusterPositioningWidget` == 2) {
+			$positioning = "before";
+		}
+		else if (`optionMenuGrp -query -select clusterPositioningWidget` == 3) {
+			$positioning = "after";
+		}
+		else if (`optionMenuGrp -query -select clusterPositioningWidget` == 4) {
+			$positioning = "split";
+		}
+		else if (`optionMenuGrp -query -select clusterPositioningWidget` == 5) {
+			$positioning = "parallel";
+		}
+	}
+	optionVar -stringValue clusterPositioning $positioning;
+
+	if (`checkBoxGrp -exists  exclWidget`) {
+		optionVar -intValue clusterExclusive `checkBoxGrp -q -v1 exclWidget`;
+	}
+	if (`optionMenuGrp -exists partitionListWidget`) {
+		string $partitionNameVal = `optionMenuGrp -q -v partitionListWidget`;
+		if ($partitionNameVal == (uiRes("m_performCluster.kCreateNewPartition"))) {
+			if (`textFieldGrp -exists partitionNameWidget`) {
+				$partitionNameVal = `textFieldGrp -q -tx partitionNameWidget`;
+			}
+		} else {
+			// a value of 2 indicates that we use an existing partition
+			//
+			optionVar -intValue clusterExclusive 2;
+		}
+		
+		optionVar -stringValue clusterExclName $partitionNameVal;
+	}
+	if ($doIt) {
+		performCluster 0; 
+		addToRecentCommandQueue "performCluster 0" "Cluster";
+	}
+}
+
+
+//
+//  Procedure Name:
+//      createClusterTabUI
+//
+//  Description:
+//		This is an example of how to delay the creation of the tab UI.
+//		The contents of each tab is created only when it is required,
+//		ie. if the tab is initially visible or if the tab is selected
+//		by the user.
+//
+//  Input Arguments:
+//      The name of the tab layout.
+//
+//  Return Value:
+//      None.
+//
+global proc createClusterTabUI(string $tabLayout)
+{
+	string $tab[] = `tabLayout -query -childArray $tabLayout`;
+	int $currentTabIndex = `tabLayout -query -selectTabIndex $tabLayout`;
+
+	//	Determine if the UI for this tab has been created yet.
+	//	This is accomplished by querying the number of children
+	//	in the current tab.  If the tab has no children then the UI
+	//	must be created.
+	//
+	if (0 == `columnLayout -query -numberOfChildren $tab[$currentTabIndex-1]`) {
+
+		setParent $tab[$currentTabIndex-1];
+
+		string $label;
+		int $index;
+
+		//	Activate the default UI template so that the layout of this 
+		//	option box is consistent with the layout of the rest of the 
+		//	application.
+		//
+		setUITemplate -pushTemplate DefaultTemplate;
+
+		//	Turn on the wait cursor.
+		//
+		waitCursor -state 1;
+
+		//	The current tab has no children.  Determine which tab is
+		//	active and create its UI.
+		//
+		//	RECOMMENDATION:  Use the 'Grp' commands where possible because
+		//	they obey the formatting specified in the default template.
+		//	This will result in a more consistent look throughout the
+		//	application.
+		//	
+		if (1 == $currentTabIndex) {
+			
+			//	Create UI for the first tab.
+			//
+			
+			// Relative mode or not
+			checkBoxGrp
+				-label (uiRes("m_performCluster.kMode")) 
+				-label1 (uiRes("m_performCluster.kRelative")) 
+				-numberOfCheckBoxes 1
+				clusterRelativeWidget;
+
+			// Overall envelope control
+			floatSliderGrp
+				-label (uiRes("m_performCluster.kEnvelope")) 
+				-field true
+				-min 0.0 -max 1.0
+				-fmn -10.0 -fmx 10.0
+				-pre 3 clusterEnvelopeWidget;
+
+		} else if (2 == $currentTabIndex) {
+			
+			//	Create UI for the second tab.
+			//
+
+			// Positioning of the cluster deformer in the DG
+			optionMenuGrp -label (uiRes("m_performCluster.kDeformationOrder"))  clusterPositioningWidget;
+			menuItem -label (uiRes("m_performCluster.kDefault"))        clusterPosItem1;
+			menuItem -label (uiRes("m_performCluster.kBefore"))         clusterPosItem2;
+			menuItem -label (uiRes("m_performCluster.kAfter"))          clusterPosItem3;
+			menuItem -label (uiRes("m_performCluster.kSplit"))          clusterPosItem4;
+			menuItem -label (uiRes("m_performCluster.kParallel"))       clusterPosItem5;
+
+			separator;
+			checkBoxGrp	
+				-numberOfCheckBoxes 1
+				-label ""
+				-label1 (uiRes("m_performCluster.kExclusive")) 
+				-v1 0 
+				-on1 "optionMenuGrp -e -enable 1 partitionListWidget; updatePartitionNameWidget;"
+				-offCommand "optionMenuGrp -e -enable 0 partitionListWidget; updatePartitionNameWidget;"
+				exclWidget;
+
+	// Create an option menu listing the partitions
+	//
+			optionMenuGrp -label (uiRes("m_performCluster.kPartitiontoUse"))  -enable `checkBoxGrp -q -v1 exclWidget`
+				-cc "updatePartitionNameWidget" partitionListWidget;
+
+			string $currentNameOption = "";
+			if (`optionVar -exists clusterExclName`) {
+				$currentNameOption = `optionVar -q clusterExclName`;
+			}
+			
+			// add all the partitions to the menu
+			//
+			int $pp;
+			string $partitionArray[];
+			$partitionArray = `ls -type partition`;
+			int $partitionCount = size($partitionArray);
+			menuItem -label (uiRes("m_performCluster.kCreateNewPartition")) ;
+			for ($pp = 0; $pp < $partitionCount; $pp++)
+			{
+				// Do not list the render partition as adding items to
+				// it is only going to cause confusion.
+				//
+				if ($partitionArray[$pp] != "renderPartition" && 
+					$partitionArray[$pp] != "characterPartition") {
+					menuItem -label $partitionArray[$pp];					
+				}
+				if ($currentNameOption == $partitionArray[$pp]) {
+					optionVar -stringValue clusterExclName "deformPartition";
+				}
+			}
+
+			textFieldGrp -label (uiRes("m_performCluster.kNewPartitionName"))  -enable `checkBoxGrp -q -v1 exclWidget` 
+				-tx "deformPartition"
+				partitionNameWidget;
+		
+			updatePartitionNameWidget;
+		}
+
+		//	Update the control values to match the options.
+		//
+		eval (("clusterSetup " + $tabLayout + " "+0+" "+$currentTabIndex));
+
+		//	Turn off the wait cursor.
+		//
+		waitCursor -state 0;
+		
+		//	Deactivate the default UI template.
+		//
+		setUITemplate -popTemplate;
+	}
+}
+
+//
+//  Procedure Name:
+//      clusterOptions
+//
+//  Description:
+//		Construct the option box UI.  Involves accessing the standard option
+//		box and customizing the UI accordingly.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+proc clusterOptions()
+{
+	//	Name of the command for this option box.
+	//
+	string $commandName = "cluster";
+
+	//	Build the option box actions.
+	//
+	string $callback = ($commandName + "Callback");
+	string $setup = ($commandName + "Setup");
+
+	//	STEP 1:  Get the option box.
+	//	============================
+	//
+	//  The value returned is the name of the layout to be used as
+	//	the parent for the option box UI.
+	//
+	string $layout = getOptionBox();
+	setParent $layout;
+	
+	//	STEP 2:  Pass the command name to the option box.
+	//	=================================================
+	//
+	//	Any default option box behaviour based on the command name is set 
+	//	up with this call.  For example, updating the 'Help' menu item with
+	//	the name of the command.
+	//
+	setOptionBoxCommandName($commandName);
+
+	//	STEP 3:  Activate the default UI template.
+	//	==========================================
+	//
+	//	Activate the default UI template so that the layout of this 
+	//	option box is consistent with the layout of the rest of the 
+	//	application.
+	//
+	//	Note: this option box example delays the creation of the UI
+	//	until it's required.  Therefore this step is moved to the
+	//	procedure where the UI is actually created. 
+	//
+	//setUITemplate -pushTemplate DefaultTemplate;
+
+	//	STEP 4: Create option box contents.
+	//	===================================
+	//	
+	//	This, of course, will vary from option box to option box.	
+	
+	//	Demonstrate the delaying of UI creation via tab layouts.
+	//	Instead of creating all of the option box UI initially, only
+	//	create that which is initially visible.  Wait, until the 
+	//	other tabs are selected to create the remaining UI.
+	//
+	string $tabLayout = `tabLayout -scrollable 1`;
+
+	//	Attach an action that will be invoked before a tab is selected.
+	//	
+	tabLayout -edit 
+		-preSelectCommand ("createClusterTabUI " + $tabLayout)
+		$tabLayout;
+
+	//	Create just the immediate children of the tab layout so that
+	//	the tabs appear.
+	//
+	columnLayout;
+		setParent ..;
+	columnLayout;
+		setParent ..;
+	
+	//	Set the tab labels.
+	//
+	tabLayout -edit
+		-tabLabelIndex 1 (uiRes("m_performCluster.kBasic"))
+		-tabLabelIndex 2 (uiRes("m_performCluster.kAdvanced"))
+		$tabLayout;
+
+	//	Create the UI for the tab that is initially visible.
+	//
+	createClusterTabUI($tabLayout);
+
+	//	Step 5: Deactivate the default UI template.
+	//  ===========================================
+	//
+	//	Note: this option box example delays the creation of the UI
+	//	until it's required.  Therefore this step is moved to the
+	//	procedure where the UI is actually created.
+	//
+	//	See also Step 2. 
+	//
+	//setUITemplate -popTemplate;
+
+	//	Step 6: Customize the buttons.  
+	//	==============================
+	//
+	//	Provide more descriptive labels for the buttons.  This is not 
+	//	necessary, but in some cases, for example, a button labelled 
+	//	'Create' may be more meaningful to the user than one labelled
+	//	'Apply'.
+	//
+	//  Disable those buttons that are not applicable to the option box.
+	//
+	//	Attach actions to those buttons that are applicable to the option
+	//	box.  Note that the 'Close' button has a default action attached 
+	//	to it that will hide the window.  If a a custom action is
+	//	attached to the 'Close' button then be sure to call the 'hide the
+	//	option box' procedure within the custom action so that the option
+	//	box is hidden properly.
+
+	//	'Apply' button.
+	//
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit
+		-label (uiRes("m_performCluster.kCreate")) 
+		-command ($callback + " " + $tabLayout + " " + 1)
+		$applyBtn;
+
+	//	'Save' button.
+	//
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + $tabLayout + " " + 0 + "; hideOptionBox")
+		$saveBtn;
+
+	//	'Reset' button.
+	//
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + " " + $tabLayout + " " + 1+" "+0)
+		$resetBtn;
+
+	//	Step 7: Set the option box title.
+	//	=================================
+	//
+	setOptionBoxTitle (uiRes("m_performCluster.kClusterOptions"));
+
+	//	Step 8: Customize the 'Help' menu item text.
+	//	============================================
+	//
+	setOptionBoxHelpTag( "CreateCluster" );
+
+	//	Step 9: Set the current values of the option box.
+	//	=================================================
+	//
+	//	NOTE:  Can not do this here since we do not know what UI is
+	//	currently visible.  This is moved to where the UI is created.
+	//
+	//eval (($setup + " " + $tabLayout + " " + 0));	
+	
+	//	Step 10: Show the option box.
+	//	=============================
+	//
+	showOptionBox();
+}
+
+//
+//  Procedure Name:
+//      clusterHelp
+//
+//  Description:
+//		Return a short description about this command.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      string.
+//
+proc string clusterHelp()
+{
+
+	return 
+	"  Command: cluster";	
+}
+
+//
+//  Procedure Name:
+//      assembleCmd
+//
+//  Description:
+//		Construct the command that will apply the option box values.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+proc string assembleCmd()
+{
+	string $cmd;
+	
+	setOptionVars(false);
+
+	$cmd = "newCluster \"";
+
+	int $relative = `optionVar -query clusterRelative`;
+	float $envelope = `optionVar -query clusterEnvelope`;
+	
+	string $positioning = `optionVar -query clusterPositioning`;
+	
+	string $positioningFlag = "";
+	if ($positioning != "default")
+	{
+		$positioningFlag = ("-" + $positioning);
+	}
+
+	$cmd += $positioningFlag;
+	
+	if ($relative)
+		$cmd+= " -relative";
+
+	$cmd += (" -envelope " + $envelope);
+		
+	int $exc=`optionVar -query clusterExclusive`;
+	if ($exc) {
+		string $exn=`optionVar -query clusterExclName`;
+		if ($exn!="") {
+			// make sure that we do not clash names with an existing
+			// partition when the user requested a new partition, even
+			// if the user may have entered a non-unique name
+			//
+			if ($exc == 1) 	$exn += "#";
+			//$cmd += (" -exclusive \"" + $exn+"\"");
+			$cmd += (" -exclusive \\\"" + $exn+"\\\"");
+		}
+	}
+	$cmd += "\";";
+
+	return $cmd;
+}
+
+//
+//  Procedure Name:
+//      performCluster
+//
+//  Description:
+//		Perform the cluster command using the corresponding 
+//		option values.  This procedure will also show the option box
+//		window if necessary as well as construct the command string
+//		that will invoke the cluster command with the current
+//		option box values.
+//
+//  Input Arguments:
+//      0 - Execute the command.
+//      1 - Show the option box dialog.
+//      2 - Return the command.
+//
+//  Return Value:
+//      None.
+//
+global proc string performCluster(int $action)
+{
+	string $cmd = "";
+
+	switch ($action) {
+
+		//	Execute the command.
+		//
+		case 0:
+			//	Retrieve the option settings
+			//
+			setOptionVars(false);
+
+			//	Get the command.
+			//
+			$cmd = `assembleCmd`;
+
+			//	Execute the command with the option settings.
+			//
+			evalEcho($cmd);
+
+			break;
+
+		//	Show the option box.
+		//
+		case 1:
+			clusterOptions;
+			break;
+
+		//	Return the command string.
+		//
+		case 2:
+			//	Retrieve the option settings.
+			//
+			setOptionVars (false);
+
+			//	Get the command.
+			//
+			$cmd = `assembleCmd`;
+			break;
+	}
+	return $cmd;
+}
+

@@ -1,0 +1,277 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  2005
+//
+//  Description:
+//		This script provides an option box dialog for deleting nCloth caches.
+//
+//
+
+proc string[] getCacheList() 
+{
+	string $obj, $cache;
+	string $objects[] = getNclothObjectsToCache(0);	
+	string $cacheFiles[] = {};
+	for( $obj in $objects ) 
+	{
+		string $attachedCaches[]  = findExistingCaches( $obj );
+		$cacheFiles = stringArrayCatenate( $cacheFiles, $attachedCaches );
+	}
+	return $cacheFiles;
+}
+
+proc setOptionVars(int $forceFactorySettings)
+{
+	if( $forceFactorySettings || !`optionVar -exists nclothDeleteCacheFiles` )
+		optionVar -intValue nclothDeleteCacheFiles 2;
+}
+
+global proc deleteNclothCacheSetup (string $parent, int $forceFactorySettings)
+{
+	setOptionVars($forceFactorySettings);
+	setParent $parent;
+
+	int $fileOpt = `optionVar -query nclothDeleteCacheFiles`;
+	if ($fileOpt == 1) {
+		radioButtonGrp -e -sl 1 nclothDeleteCache1;
+	} else if ($fileOpt == 2) {
+		radioButtonGrp -e -sl 1 nclothDeleteCache2;
+	}
+}
+
+global proc deleteNclothCacheCallback(string $parent, int $doIt)
+{
+	int $deleteFiles = 1;
+	if ( `radioButtonGrp -q -sl nclothDeleteCache1` ) {
+		$deleteFiles = 1;
+	} else if ( `radioButtonGrp -q -sl nclothDeleteCache2` ) {
+		$deleteFiles = 2;
+	}
+	optionVar -iv nclothDeleteCacheFiles $deleteFiles;
+
+	if ($doIt)
+	{
+		performDeleteNclothCache 0;
+	}
+}
+
+proc deleteNclothCacheOptions()
+{
+	// Name of the command for this option box 
+	//
+	string $commandName = "deleteNclothCache";
+
+	// Build the option box "methods"
+	//
+	string $callback = ($commandName + "Callback ");
+	string $setup = ($commandName + "Setup");
+	
+	//  STEP 1:  Get the option box.
+	//  ============================
+	//
+	//  The value returned is the name of the layout to be used as
+	//  the parent for the option box UI.
+	//
+	string $layout = getOptionBox();
+	setParent $layout;
+
+	//  STEP 2:  Pass the command name to the option box.
+	//  =================================================
+	//
+	//  Any default option box behaviour based on the command name is set
+	//  up with this call.  For example, updating the 'Help' menu item with
+	//  the name of the command.
+	//
+	setOptionBoxCommandName("deleteCacheFile");
+
+	//  STEP 3:  Activate the default UI template.
+	//  ==========================================
+	//
+	//  Activate the default UI template so that the layout of this
+	//  option box is consistent with the layout of the rest of the
+	//  application.
+	//
+	setUITemplate -pushTemplate DefaultTemplate;
+
+    //  STEP 4: Create option box contents.
+	//  ===================================
+	//
+	//  This, of course, will vary from option box to option box.
+		   
+	//  Turn on the wait cursor.
+	//
+	waitCursor -state 1;
+
+	tabLayout -scr true -tv false;
+
+	string $parent = `columnLayout -adjustableColumn 1`;
+
+	//	Create the widgets for this option box
+	//
+
+	//	Delete the files or not
+	//
+	radioButtonGrp 
+		-label (uiRes("m_performDeleteNclothCache.kCacheFileDeletion")) -nrb 1
+		-l1 (uiRes("m_performDeleteNclothCache.kDeleteFiles"))
+		nclothDeleteCache1;
+
+	radioButtonGrp 
+		-label "" -nrb 1
+		-scl nclothDeleteCache1
+		-l1 (uiRes("m_performDeleteNclothCache.kKeep"))
+		nclothDeleteCache2;
+
+	string $caches[] = getCacheList();
+	int $size = size($caches);
+	if( $size > 1 ) {
+		separator -w 10 -style "none";
+		text -label (uiRes("m_performDeleteNclothCache.kSelect"));
+		textScrollList -nr ($size + 2) -allowMultiSelection 1 cacheList;
+		string $cache;
+		for( $cache in $caches ) {
+			textScrollList -e -append $cache cacheList;
+		}
+	}
+	//	Turn off the wait cursor.
+	//
+	waitCursor -state 0;
+	
+	//	Step 5: Deactivate the default UI template.
+	//  ===========================================
+	//
+	setUITemplate -popTemplate;
+
+	//	Step 6: Customize the buttons.  
+	//	==============================
+	//
+	//	Provide more descriptive labels for the buttons.  This is not 
+	//	necessary, but in some cases, for example, a button labelled 
+	//	'Create' may be more meaningful to the user than one labelled
+	//	'Apply'.
+	//
+	//  Disable those buttons that are not applicable to the option box.
+	//
+	//	Attach actions to those buttons that are applicable to the option
+	//	box.  Note that the 'Close' button has a default action attached 
+	//	to it that will hide the window.  If a a custom action is
+	//	attached to the 'Close' button then be sure to call the 'hide the
+	//	option box' procedure within the custom action so that the option
+	//	box is hidden properly.
+
+	//	'Apply' button.
+	//
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit -label (uiRes("m_performDeleteNclothCache.kDoDelete"))
+		-command ($callback + " " + $parent + " " + 1)
+		$applyBtn;
+
+	//  'Save' button.
+	//
+    string $saveBtn = getOptionBoxSaveBtn();
+    button -edit 
+        -command ($callback + " " + $parent + " " + 0 + "; hideOptionBox")
+        $saveBtn;
+
+	// 'Reset' button
+	string $resetBtn = getOptionBoxResetBtn();
+	int $resetToDefaults = 1;
+	button -edit 
+		-command ($setup + " " + $parent + " " + $resetToDefaults)
+		$resetBtn;
+
+	//	Step 7: Set the option box title.
+	//	=================================
+	//
+	setOptionBoxTitle((uiRes("m_performDeleteNclothCache.kDeleteOptions")));
+
+	//	Step 8: Customize the 'Help' menu item text.
+	//	============================================
+	//
+	setOptionBoxHelpTag( "deleteNclothCache" );
+
+	//	Step 9: Set the current values of the option box.
+	//	=================================================
+	//
+	eval ($setup + " " + $parent + " " + 0);
+	
+	//	Step 10: Show the option box.
+	//	=============================
+	//
+	showOptionBox();
+}
+
+//
+//  Procedure Name:
+//      assembleCmd
+//
+//  Description:
+//		Construct the command that will apply the option box values.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+proc string assembleCmd()
+{
+	string $deleteFiles = "delete";
+	int $deleteOpt = `optionVar -query nclothDeleteCacheFiles`;
+	if (2 == $deleteOpt) {
+		$deleteFiles = "keep";
+	}
+
+	string $cachesToDelete = "";
+	if( `textScrollList -q -exists cacheList` ) {
+		string $cacheFileNodes[] = `textScrollList -q -si cacheList`;
+		$cachesToDelete = stringArrayToString($cacheFileNodes, ",");
+	}
+	return( "deleteCacheFile 3 { \"" + $deleteFiles  + "\", " +
+								"\"" + $cachesToDelete + "\", " +
+								"\"nCloth\" } " );	
+}
+
+global proc string performDeleteNclothCache( int $action )
+{
+
+	string $cmd = "";
+	switch( $action ) {
+		case 0:
+			setOptionVars(false);
+			$cmd = assembleCmd();
+			evalEcho($cmd);
+			break;
+		case 1:
+			deleteNclothCacheOptions();
+			break;
+		case 2:
+			setOptionVars(false);
+			$cmd = assembleCmd();
+			break;
+	}
+
+	return $cmd;
+}
+

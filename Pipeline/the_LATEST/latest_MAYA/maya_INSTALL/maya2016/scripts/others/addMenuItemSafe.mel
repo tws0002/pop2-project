@@ -1,0 +1,103 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+//
+// Safe way to add menu items from a plug-in. This method will test if 
+// the menu is already built or not, and either create the item right
+// away, or add the command to the menu construction callback.
+//
+// $mainMenu is one of the top level menus.
+// $cmd is the mel script to be executed to build the item. It must
+//		return the mel procedure to remove the added items.
+// $globVarName must be a global variable name, variable must be
+//		initialized to "". This variable is used to keep track of the
+//		built or registered menus.
+//
+// Example:
+//         global string $myGlobVariable = "";
+//         global string $gModelingMenus[];
+//         string $menu = $gModelingMenus[4]; // Edit polygon menu
+//         addMenuItemSafe($menu, "addMyItem", "myGlobVariable");
+//
+// global proc string addMyItem() 
+// {
+//		menuItem...; 
+//		return "deleteUI ...";
+// }
+//
+///////////////////////////////////////////////////////////////////////////////
+global proc addMenuItemSafe(string $mainMenu, string $cmd, string $globVarName)
+{
+	// Get the variable value
+	string $tmp = "global string $"+$globVarName+
+		";string $temporary = $" + $globVarName;
+	string $val = eval($tmp);
+
+	// Make sure menu was not already dealt with...
+	if ($val != "")
+		return;
+
+	string $tmp = ";global string $"+$globVarName+
+		";	if (($"+$globVarName+" == \"\") || ($"+
+		$globVarName+" == \"CB:\")) {$"+$globVarName+" = `"+$cmd+"`;}";
+
+	if (`menu -q -ni $mainMenu`)			// Add a new entry to the menu
+		eval ($tmp);
+	else
+	{
+		// Otherwise, we have to add a call back to the menu.
+		string $buildMethod = `menu -q -pmc $mainMenu`;
+		menu -e -pmc ($buildMethod + $tmp) $mainMenu;
+		string $tmp2 = "global string $"+$globVarName+
+			";$"+$globVarName+" = \"CB:\"";
+		eval ($tmp2);
+	}
+	return;
+}
+
+//
+// Remove menu items created with addMenuItemSafe.
+// $mainMenu and $globVarName arguments must be the same as for
+//		addMenuItemSafe.
+//
+///////////////////////////////////////////////////////////////////////////////
+global proc removeMenuItemSafe(string $mainMenu, string $globVarName)
+{
+	string $tmp = "global string $" + $globVarName +
+		";string $temporary = $" + $globVarName;
+	string $val = eval($tmp);
+
+	if ($val != "")
+	{
+		// Remove the callback if it was added. 
+		string $buildMethod = `menu -q -pmc $mainMenu`;
+		$buildMethod = `substitute (";global string \$"+$globVarName+".*`;}")
+			$buildMethod ""`;
+		menu -e -pmc $buildMethod $mainMenu;
+
+		if ($val != "CB:") // The menu was built, remove it.
+			eval $val;
+
+		$tmp = "global string $"+$globVarName+ ";$"+$globVarName+" = \"\"";
+		eval ($tmp);
+	}
+}

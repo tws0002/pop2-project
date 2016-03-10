@@ -1,0 +1,362 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// Creation Date: August 6, 2010
+//
+// Procedure Name:
+// AErenderTargetTemplate
+// 
+// Description:
+// Creates the attribute editor controls for the render target node.
+//
+// Input Value:
+// nodeName
+//
+// Output Value:
+// None
+
+// Color profile controls.
+source "colorProfileProcedures";
+
+//------------------------------------------------------------
+// Copy-pasted from createMayaSoftwareCommonGlobalsTab.mel
+proc string cameraShape(string $dag)
+{
+  if (`objectType -isa "transform" $dag`) {
+    string $shapes[] =
+      `listRelatives -shapes -path -noIntermediate -type "camera" $dag`;
+    if (size($shapes) > 0)
+      return $shapes[0];
+  }
+  return $dag;
+}
+
+//------------------------------------------------------------
+proc string cameraTransform(string $shape)
+{
+  if (`objectType -isa "camera" $shape`) {
+    string $transforms[] =
+      `listRelatives -parent -path -noIntermediate -type "transform" $shape`;
+    if (size($transforms) > 0)
+      return $transforms[0];
+  }
+  return $shape;
+}
+
+//------------------------------------------------------------
+proc string uiNameToName(string $uiName)
+{
+  string $names[] = `renderer -q -ava`;
+
+  // UI name to name functionality should be provided as a builtin
+  // service, but is not.  Linear list lookup is unfortunate (no
+  // associative containers in MEL), but workable given the small
+  // number of renderers.
+  for ($n in $names) {
+    if ($uiName == `renderer -q -ui $n`) {
+      return $n;
+    }
+  }
+  error ((uiRes("m_AErenderTargetTemplate.kBadRendererUIName")) + $uiName);
+}
+
+//------------------------------------------------------------
+proc optionMenuDeleteAllItems(string $menu)
+{
+  string $menuItems[] = `optionMenu -q -itemListLong $menu`;
+  
+  string $m;
+  for ($m in $menuItems) {
+    deleteUI -menuItem $m;
+  }
+}
+
+//------------------------------------------------------------
+global proc setRendererAttrCB(string $rendererAttr)
+{
+  string $uiName = `optionMenu -query -value renderTargetRendererMenu`;
+  string $name = uiNameToName($uiName);
+  setAttr $rendererAttr -type "string" $name;
+}
+
+//------------------------------------------------------------
+proc updateRendererMenu(string $rendererAttr)
+{
+  // Would be nice to have something like connectControl for our
+  // string renderer attribute, but unfortunately as per
+  // documentation connectControl is int and float-oriented, and
+  // when used with optionMenu relies on integer -data in the
+  // menuItem, which is not relevant here.
+  //
+  // Renderer attribute string value may not correspond to a renderer
+  // that supports render targets, either because the renderer plugin
+  // is unavailable, or because the attribute has been set incorrectly
+  // through scripting.  In this case, we just show the current value
+  // in a disabled menu item.  PPT, 2-Sep-2010.
+
+  string $rtRenderer = `getAttr $rendererAttr`;
+  
+  if (!rendererRenderTargetSupport($rtRenderer)) {
+    menuItem -enable false -l $rtRenderer;
+  }
+  
+  string $rtRenderers[] = rendererListRenderTargetSupport();
+  
+  string $r;
+  for ($r in $rtRenderers) {
+    menuItem -l `renderer -q -ui $r`;
+  }
+  
+  optionMenu -e -value `renderer -q -ui $rtRenderer`
+    -cc ("setRendererAttrCB " + $rendererAttr) renderTargetRendererMenu;
+}
+
+//------------------------------------------------------------
+global proc rendererNew(string $rendererAttr)
+{
+  rowLayout -nc 3 rendererRowLayout;
+
+    text -l (uiRes("m_AErenderTargetTemplate.kRenderTargetRenderer"));
+
+    optionMenu -annotation (uiRes("m_AErenderTargetTemplate.kRenderTargetRendererAnnot"))
+      -l "" renderTargetRendererMenu;
+  
+    updateRendererMenu($rendererAttr);
+
+  setParent ..;
+}
+
+//------------------------------------------------------------
+global proc rendererReplace(string $rendererAttr)
+{
+  optionMenuDeleteAllItems("renderTargetRendererMenu");
+  setParent -m renderTargetRendererMenu;
+  updateRendererMenu($rendererAttr);
+}
+
+//------------------------------------------------------------
+proc string changeCameraAttr(string $cameraAttr, int $connect)
+{
+  rowLayout -e -enable $connect cameraLayout;
+  string $overrideTransform = `optionMenu -query -value renderTargetCameraMenu`;
+  string $overrideShape = cameraShape($overrideTransform);
+  return $overrideShape;
+}
+
+//------------------------------------------------------------
+global proc setRenderTargetCamera(string $cameraAttr)
+{
+  string $overrideShape = changeCameraAttr($cameraAttr, true);
+  connectAttr -f ($overrideShape + ".message") $cameraAttr;
+  setAttr ($overrideShape + ".renderable") true;
+}
+
+//------------------------------------------------------------
+global proc unsetRenderTargetCamera(string $cameraAttr)
+{
+  string $overrideShape = changeCameraAttr($cameraAttr, false);
+  disconnectAttr ($overrideShape + ".message") $cameraAttr;
+}
+
+//------------------------------------------------------------
+global proc syncRenderTargetCameraUI(string $cameraAttr)
+{
+  // Nice and comfortable dual-widget checkbox and option menu are in
+  // fact driven by a single attribute, the camera message connection.
+  // Find out if we have a connection to a camera.
+  string $overrideShapeAttr = `connectionInfo -sfd $cameraAttr`;
+  int $hasOverride = size($overrideShapeAttr);
+
+  checkBox -e -value $hasOverride renderTargetCameraCheckBox;
+  rowLayout -e -enable $hasOverride cameraLayout;
+  
+  if ($hasOverride) {
+    string $buffer[];
+    tokenize($overrideShapeAttr, ".", $buffer);
+    string $overrideShape = $buffer[0];
+    string $overrideTransform = cameraTransform($overrideShape);
+    optionMenu -e -value $overrideTransform renderTargetCameraMenu;
+  }
+}
+
+//------------------------------------------------------------
+proc updateCameraUI(string $cameraAttr)
+{
+  // First, build and fill the menu, so that user will see a camera as
+  // the value of the menu.  Get full list of cameras, renderable or not.
+  // As per documentation, listCameras can return either camera
+  // transform name (when unique) or shape name.  Use name provided by
+  // listCameras in UI, shape name for connections.
+  setParent -m renderTargetCameraMenu;
+  string $allCameras[] = `listCameras`;
+  
+  string $c;
+  for ($c in $allCameras) {
+    menuItem -l $c;
+  }
+  
+  checkBox -e -onc ("setRenderTargetCamera " + $cameraAttr)
+    -ofc ("unsetRenderTargetCamera " + $cameraAttr) renderTargetCameraCheckBox;
+  optionMenu -e -cc ("setRenderTargetCamera " + $cameraAttr)
+    renderTargetCameraMenu;
+
+  syncRenderTargetCameraUI($cameraAttr);
+
+  scriptJob -connectionChange $cameraAttr 
+    ("syncRenderTargetCameraUI " + $cameraAttr)
+    -replacePrevious -parent cameraLayout;
+}
+
+//------------------------------------------------------------
+global proc cameraNew(string $cameraAttr)
+{
+  columnLayout;
+    rowLayout -nc 3;
+      // First column is blank.
+      text -l ""; 
+      checkBox -l (uiRes("m_AErenderTargetTemplate.kRenderTargetCameraOverride"))
+        renderTargetCameraCheckBox;
+    setParent ..;
+    rowLayout -nc 3 cameraLayout;
+
+      text -l (uiRes("m_AErenderTargetTemplate.kRenderTargetCamera"));
+
+      optionMenu -annotation (uiRes("m_AErenderTargetTemplate.kRenderTargetCameraAnnot"))
+        -l "" renderTargetCameraMenu;
+  
+    setParent ..;
+  setParent ..;
+  updateCameraUI($cameraAttr);
+}
+
+//------------------------------------------------------------
+global proc cameraReplace(string $cameraAttr)
+{
+  optionMenuDeleteAllItems("renderTargetCameraMenu");
+  updateCameraUI($cameraAttr);
+}
+
+//------------------------------------------------------------
+proc overrideChanged(string $nodeName, string $override, string $attribs[])
+{
+  string $nodeAttr = $nodeName + $override;
+  // When override is false, we disable the overridden controls.
+  int $disableControl = !`getAttr $nodeAttr`;
+  string $a;
+  for ($a in $attribs) {
+    editorTemplate -dimControl $nodeName $a $disableControl;
+  }
+}
+
+//------------------------------------------------------------
+global proc renderingOverrideChanged(string $nodeName)
+{
+  string $attribs[] = {"renderer", "colorProfile"};
+  overrideChanged($nodeName, ".renderingOverride", $attribs);
+}
+
+//------------------------------------------------------------
+global proc frameBufferOverrideChanged(string $nodeName)
+{
+  string $attribs[] = {"numberOfChannels", "frameBufferType"};
+  overrideChanged($nodeName, ".frameBufferOverride", $attribs);
+}
+
+//------------------------------------------------------------
+global proc resolutionOverrideChanged(string $nodeName)
+{
+  string $attribs[] = {"width", "height"};
+  overrideChanged($nodeName, ".resolutionOverride", $attribs);
+}
+
+//------------------------------------------------------------
+global proc AErenderTargetTemplate( string $nodeName )
+{
+  // Put our attributes into a scrolled layout field
+  editorTemplate -beginScrollLayout;
+
+  editorTemplate -beginLayout (uiRes("m_AErenderTargetTemplate.kRenderTargetRendering"))
+    -collapse false;
+
+  editorTemplate -addControl "renderable";
+  //
+  // Unimplemented functionality as of 26-Nov-2010.  See 371766, 371776, 
+  // and 374072.
+  // 
+  // editorTemplate -addSeparator;
+  // editorTemplate -addControl "renderingOverride" "renderingOverrideChanged";
+  // editorTemplate -callCustom "rendererNew" "rendererReplace" 
+  //   "renderer";
+  // editorTemplate -callCustom "AEcolorProfileNew" "AEcolorProfileReplace" 
+  //   "colorProfile";
+  editorTemplate -endLayout;
+
+  // editorTemplate -beginLayout _L10N( kRenderTargetFrameBuffer, "Frame Buffer" )
+  //   -collapse false;
+
+  // editorTemplate -addControl "frameBufferOverride" "frameBufferOverrideChanged";
+  // editorTemplate -addControl "numberOfChannels";
+  // editorTemplate -addControl "frameBufferType";
+  // editorTemplate -endLayout;
+
+  // editorTemplate -beginLayout _L10N( kRenderTargetImageSize, "Image Size" )
+  //   -collapse false;
+
+  // editorTemplate -addControl "resolutionOverride" "resolutionOverrideChanged";
+  // editorTemplate -addControl "width";
+  // editorTemplate -addControl "height";
+  // editorTemplate -endLayout;
+
+  // editorTemplate -beginLayout
+  //   (uiRes("m_AErenderTargetTemplate.kRenderTargetCamera")) -collapse false;
+
+  // editorTemplate -callCustom "cameraNew" "cameraReplace" "camera";
+  // editorTemplate -endLayout;
+
+  // Create an "Extras" section and also add controls for any
+  // attributes we have not explicitly mentioned.
+  editorTemplate -addExtraControls;
+
+  editorTemplate -endScrollLayout;
+
+  // Tell the attribute editor not to display the attributes we
+  // don't care about.
+  editorTemplate -suppress "caching";
+  editorTemplate -suppress "nodeState";
+  editorTemplate -suppress "color";
+  editorTemplate -suppress "alpha";
+
+  //
+  // Unimplemented functionality as of 26-Nov-2010.  See 371766, 371776, 
+  // and 374072.
+  // 
+  editorTemplate -suppress "renderingOverride";
+  editorTemplate -suppress "renderer";
+  editorTemplate -suppress "colorProfile";
+  editorTemplate -suppress "frameBufferOverride";
+  editorTemplate -suppress "frameBufferType";
+  editorTemplate -suppress "numberOfChannels";
+  editorTemplate -suppress "resolutionOverride";
+  editorTemplate -suppress "width";
+  editorTemplate -suppress "height";
+  editorTemplate -suppress "camera";
+}

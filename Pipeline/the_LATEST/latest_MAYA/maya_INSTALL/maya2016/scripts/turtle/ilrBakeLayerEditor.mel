@@ -1,0 +1,364 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// provided at the time of installation or download, or which otherwise accompanies 
+
+//
+// Bake Layer Editor procedures
+//
+
+global proc	ilrUpdateBLE()
+{
+	if(!`window -query -exists ilrBLEMainWindow`) {
+		return;
+	}
+
+	string $layer = ilrGetCurrentBakeLayer();
+
+	// Layer list
+	//
+	textScrollList -edit -removeAll ilrBLELayerList;
+	string $layers[] = `ls -type ilrBakeLayer`;
+	for ($l in $layers) {
+		textScrollList -edit -append $l ilrBLELayerList;
+	}
+	textScrollList -edit -selectItem $layer ilrBLELayerList;
+
+	// Target list
+	//
+	// Clear the list, but save selection first
+	//
+	string $targetSel[] = `textScrollList -query -selectItem ilrBLETargetSurfaceList`;
+
+	textScrollList -edit -removeAll ilrBLETargetSurfaceList;
+
+	// Rebuild the targets list
+	//
+	string $surfaces[] = `sets -query $layer`;
+	for ($s in $surfaces) {
+		textScrollList -edit -append $s ilrBLETargetSurfaceList;
+		if (stringArrayContains($s, $targetSel))
+			textScrollList -edit -selectItem $s ilrBLETargetSurfaceList;
+	}
+	
+	// If no item is selected, select the first one in the list
+	//
+	if ((`textScrollList -query -numberOfItems ilrBLETargetSurfaceList` > 0) && 
+		(size(`textScrollList -query -selectItem ilrBLETargetSurfaceList`) == 0))
+	{
+		textScrollList -edit -selectIndexedItem 1 ilrBLETargetSurfaceList;
+	}
+	
+	// Source and envelope lists
+	//
+	// Clear the lists
+	//
+	textScrollList -edit -removeAll ilrBLESourceSurfaceList;
+	textScrollList -edit -removeAll ilrBLEEnvelopeSurfaceList;
+
+	// Make sure a target surface is selected
+	//
+	string $targets[] =`textScrollList -q -si ilrBLETargetSurfaceList`;
+	if (size($targets))
+	for ($t in $targets)
+	{
+		// Get the source surfaces linking to this target surface
+		//
+		string $surfaces[] = ilrGetBakeLayerSourceSurfaces($layer, $t);
+
+		// Rebuild the source list
+		//
+		for ($s in $surfaces) {
+			string $items[] = `textScrollList -query -allItems ilrBLESourceSurfaceList`;
+			if (!stringArrayContains($s, $items)) {
+				textScrollList -edit -append $s ilrBLESourceSurfaceList;
+			}
+		}
+
+		// Get the envelope surfaces linking to this target surface
+		//
+		string $envelopes[] = ilrGetBakeLayerEnvelopeSurfaces($layer, $t);
+
+		// Rebuild the envelope list
+		//
+		for ($e in $envelopes) {
+			string $items[] = `textScrollList -query -allItems ilrBLEEnvelopeSurfaceList`;
+			if (!stringArrayContains($e, $items)) {
+				textScrollList -edit -append $e ilrBLEEnvelopeSurfaceList;
+			}
+		}
+	}
+
+	int $useSources = `textScrollList -query -numberOfItems ilrBLETargetSurfaceList` > 0;
+	textScrollList -edit -enable $useSources ilrBLESourceSurfaceList;
+	textScrollList -edit -enable $useSources ilrBLEEnvelopeSurfaceList;
+	button -edit -enable $useSources ilrBLESourceSurfaceAddButton;
+	button -edit -enable $useSources ilrBLESourceSurfaceRemoveButton;
+	button -edit -enable $useSources ilrBLESourceSurfaceClearButton;
+	button -edit -enable $useSources ilrBLEEnvelopeSurfaceAddButton;
+	button -edit -enable $useSources ilrBLEEnvelopeSurfaceRemoveButton;
+	button -edit -enable $useSources ilrBLEEnvelopeSurfaceClearButton;
+}
+
+global proc	ilrBLEBuildLayerMembershipUI()
+{
+	rowLayout
+		-numberOfColumns 3
+		-columnWidth3 300 300 300
+		-rowAttach 1 "top" 5
+		-rowAttach 3 "top" 5;
+
+		columnLayout -columnAttach "both" 5 -rowSpacing 10 -columnWidth 280;
+
+			text -label "Bake Layers" -align "left" -font "boldLabelFont";
+			
+			textScrollList
+				-numberOfRows 45
+				-allowMultiSelection false
+				-selectCommand "string $ls[]=`textScrollList -q -si ilrBLELayerList`; if (size($ls)) { ilrSetCurrentBakeLayer($ls[0]); }"
+				-doubleClickCommand "string $ls[]=`textScrollList -q -si ilrBLELayerList`; select -clear; for ($l in $ls) { select -add (`sets -q $l`); }"
+		 		ilrBLELayerList;
+		 		
+				popupMenu -parent ilrBLELayerList;
+					menuItem -label "Select Targets" -command "string $ls[]=`textScrollList -q -si ilrBLELayerList`; select -clear; for ($l in $ls) { select -add (`sets -q $l`); }";
+
+			rowLayout	
+				-numberOfColumns 3 
+				-columnWidth3 90 90 90 
+				-columnAttach3 "both" "both" "both"  
+				-columnOffset3 3 3 3  
+				-columnAlign3 "center" "center" "center";
+ 				
+ 				button -label "New Layer" -command "ilrCreateBakeLayer(\"\", false);";
+ 				button -label "Delete Layer" -command "string $ls[]=`textScrollList -q -si ilrBLELayerList`; for ($l in $ls) { ilrDeleteBakeLayer($l); }";
+ 				button -label "Edit Layer..." -command "string $ls[]=`textScrollList -q -si ilrBLELayerList`; if (size($ls)) { ilrEditBakeLayer($ls[0]); }";
+	 			 		
+	 		setParent ..;
+			
+			rowLayout	
+				-numberOfColumns 2 
+				-columnWidth2 150 120
+				-columnAttach2 "both" "both"  
+				-columnOffset2 3 3  
+				-columnAlign2 "center" "center" ;
+		 		button -label "Scale and Texture Sizes" -command "ilrUVSizeAssignmentEditor";
+	 		setParent ..;
+
+ 		setParent ..;
+
+		columnLayout -columnAttach "both" 5 -rowSpacing 10 -columnWidth 280;
+
+			text -label "Target Surfaces" -align "left" -font "boldLabelFont";
+			
+			textScrollList
+				//-numberOfRows 8
+				-allowMultiSelection true
+				-selectCommand "ilrUpdateBLE"
+				-deleteKeyCommand "string $ss[]=`textScrollList -q -si ilrBLETargetSurfaceList`; ilrRemoveTargetSurfaces($ss);"
+				-doubleClickCommand "string $ss[]=`textScrollList -q -si ilrBLETargetSurfaceList`; select -replace $ss; }"
+		 		ilrBLETargetSurfaceList;
+
+				popupMenu -parent ilrBLETargetSurfaceList;
+					menuItem -label "Select" -command "string $ss[]=`textScrollList -q -si ilrBLETargetSurfaceList`; select -replace $ss;";
+					menuItem -label "Add to selection" -command "string $ss[]=`textScrollList -q -si ilrBLETargetSurfaceList`; select -add $ss;";
+					menuItem -label "Remove from selection" -command "string $ss[]=`textScrollList -q -si ilrBLETargetSurfaceList`; select -deselect $ss;";
+
+			rowLayout	
+				-numberOfColumns 3 
+				-columnWidth3 90 90 90 
+				-columnAttach3 "both" "both" "both" 
+				-columnOffset3 3 3 3 
+				-columnAlign3 "center" "center" "center";
+ 				
+ 				button -label "Add Selected" -command ("string $ss[]=`ls -sl`; ilrAddTargetSurfaces($ss);") ilrBLETargetSurfaceAddButton;
+ 				button -label "Remove" -command ("string $ss[]=`textScrollList -q -si ilrBLETargetSurfaceList`; ilrRemoveTargetSurfaces($ss);") ilrBLETargetSurfaceRemoveButton;
+ 				button -label "Clear All" -command ("ilrClearTargetSurfaces();")  ilrBLETargetSurfaceClearButton;
+
+	 		setParent ..;
+
+			text -label "Source Surfaces" -align "left" -font "boldLabelFont" ilrBLESourceSurfaceText;
+			
+			textScrollList
+				//-numberOfRows 8
+				-allowMultiSelection true 
+				-deleteKeyCommand "string $ss[]=`textScrollList -q -si ilrBLESourceSurfaceList`; ilrRemoveSourceSurfaces(\"ilrBLETargetSurfaceList\", $ss);"
+				-doubleClickCommand "string $ss[]=`textScrollList -q -si ilrBLESourceSurfaceList`; select -replace $ss;"
+		 		ilrBLESourceSurfaceList;
+
+				popupMenu -parent ilrBLESourceSurfaceList;
+					menuItem -label "Select" -command "string $ss[]=`textScrollList -q -si ilrBLESourceSurfaceList`; select -replace $ss;";
+					menuItem -label "Add to selection" -command "string $ss[]=`textScrollList -q -si ilrBLESourceSurfaceList`; select -add $ss;";
+					menuItem -label "Remove from selection" -command "string $ss[]=`textScrollList -q -si ilrBLESourceSurfaceList`; select -deselect $ss;";
+
+			rowLayout
+				-numberOfColumns 3 
+				-columnWidth3 90 90 90 
+				-columnAttach3 "both" "both" "both" 
+				-columnOffset3 3 3 3 
+				-columnAlign3 "center" "center" "center";
+ 				
+ 				button -label "Add Selected" -command ("string $ss[]=`ls -sl`; ilrAddSourceSurfaces(\"ilrBLETargetSurfaceList\", $ss);") ilrBLESourceSurfaceAddButton;
+ 				button -label "Remove" -command ("string $ss[]=`textScrollList -q -si ilrBLESourceSurfaceList`; ilrRemoveSourceSurfaces(\"ilrBLETargetSurfaceList\", $ss);") ilrBLESourceSurfaceRemoveButton;
+ 				button -label "Clear All" -command ("string $ss[]=`textScrollList -q -ai ilrBLESourceSurfaceList`; ilrRemoveSourceSurfaces(\"ilrBLETargetSurfaceList\", $ss);") ilrBLESourceSurfaceClearButton;
+
+	 		setParent ..;
+
+			text -label "Envelope Surfaces" -align "left" -font "boldLabelFont"  ilrBLEEnvelopeSurfaceText;
+			
+			textScrollList
+				//-numberOfRows 8
+				-allowMultiSelection true 
+				-deleteKeyCommand "string $ss[]=`textScrollList -q -si ilrBLETargetSurfaceList`; ilrRemoveEnvelopeSurfaces(\"ilrBLETargetSurfaceList\", $ss);"
+				-doubleClickCommand "string $ss[]=`textScrollList -q -si ilrBLEEnvelopeSurfaceList`; select -replace $ss;"
+		 		ilrBLEEnvelopeSurfaceList;
+
+				popupMenu -parent ilrBLEEnvelopeSurfaceList;
+					menuItem -label "Select" -command "string $ss[]=`textScrollList -q -si ilrBLEEnvelopeSurfaceList`; select -replace $ss;";
+					menuItem -label "Add to selection" -command "string $ss[]=`textScrollList -q -si ilrBLEEnvelopeSurfaceList`; select -add $ss;";
+					menuItem -label "Remove from selection" -command "string $ss[]=`textScrollList -q -si ilrBLEEnvelopeSurfaceList`; select -deselect $ss;";
+
+			rowLayout	
+				-numberOfColumns 3 
+				-columnWidth3 90 90 90 
+				-columnAttach3 "both" "both" "both" 
+				-columnOffset3 3 3 3 
+				-columnAlign3 "center" "center" "center";
+ 				
+ 				button -label "Add Selected" -command ("string $ss[]=`ls -sl`; ilrAddEnvelopeSurfaces(\"ilrBLETargetSurfaceList\", $ss);") ilrBLEEnvelopeSurfaceAddButton;
+ 				button -label "Remove" -command ("string $ss[]=`textScrollList -q -si ilrBLEEnvelopeSurfaceList`; ilrRemoveEnvelopeSurfaces(\"ilrBLETargetSurfaceList\", $ss);") ilrBLEEnvelopeSurfaceRemoveButton;
+ 				button -label "Clear All" -command ("string $ss[]=`textScrollList -q -ai ilrBLEEnvelopeSurfaceList`; ilrRemoveEnvelopeSurfaces(\"ilrBLETargetSurfaceList\", $ss);") ilrBLEEnvelopeSurfaceClearButton;
+
+	 		setParent ..;
+	 		
+ 		setParent ..;
+
+	setParent ..;
+
+	ilrUpdateBLE();
+}
+
+global proc ilrEditBakeLayer(string $layer)
+{
+	// Remove any existing UI to avoid duplicate element names
+	//
+	if(`window -query -exists ilrBLEEditWindow`) {
+		deleteUI ilrBLEEditWindow;
+	}
+
+	// Build the UI
+	//
+	string $oldParent = `setParent -query`;
+	setUITemplate -pushTemplate OptionsTemplate;
+
+	string $window = `window -title "Edit Bake Layer" -resizeToFitChildren true ilrBLEEditWindow`;
+	string $form = `formLayout`;
+	string $body = `columnLayout -rowSpacing 4`;
+
+	int $editable = true;
+	if ($layer == "TurtleDefaultBakeLayer") {
+		$editable = false;
+	}
+	
+	string $nameField = `textFieldGrp -label "Name" -text $layer -editable $editable ilrEditBakeLayerNameField`;
+	
+	int $ren = `getAttr ($layer + ".renderable")`;
+	string $renderableCheckBox = `checkBoxGrp -numberOfCheckBoxes 1	-label "" -label1 "Renderable" -value1 $ren ilrEditBakeLayerRenderableField`;
+
+	setParent $form;
+	string $buttonForm = `formLayout -parent $form`;
+
+	string $saveCmd = "setAttr " + $layer + ".renderable (`checkBoxGrp -q -value1 ilrEditBakeLayerRenderableField`); ";
+	if ($layer != "TurtleDefaultBakeLayer") {
+		$saveCmd += "rename " + $layer + " (`textFieldGrp -q -tx ilrEditBakeLayerNameField`); ";
+	}
+	$saveCmd += "ilrRebuildCurrentBakeLayerMenus();ilrUpdateBLE();ilrUpdateBakingTab();";
+	
+	string $saveButton = `button -label "Save" -command ($saveCmd + " deleteUI -window " + $window)`;
+	string $cancelButton = `button -label "Cancel" -command ("deleteUI -window " + $window)`;
+
+	formLayout -edit
+		-attachForm     $saveButton   "top"    0
+		-attachForm     $saveButton   "left"   0
+		-attachForm     $saveButton   "bottom" 0
+		-attachPosition $saveButton   "right"  2 50
+
+		-attachForm     $cancelButton "top"    0
+		-attachPosition $cancelButton "left"   2 50
+		-attachForm     $cancelButton "bottom" 0
+		-attachForm     $cancelButton "right"  0
+		$buttonForm;
+
+	formLayout -edit
+		-attachForm     $body         "top"    4
+		-attachForm     $body         "left"   4
+		-attachControl  $body         "bottom" 4 $buttonForm
+		-attachForm     $body         "right"  4
+
+		-attachNone     $buttonForm   "top"
+		-attachForm     $buttonForm   "left"   4
+		-attachForm     $buttonForm   "bottom" 4
+		-attachForm     $buttonForm   "right"  4
+		$form;
+
+	// Show the window
+	//
+	showWindow $window;
+
+	setUITemplate -popTemplate;
+	setParent $oldParent;
+}
+
+global proc ilrBakeLayerEditor()
+{
+	// Make sure the default nodes exists
+	//
+	ilrDefaultNodes(1);
+	
+	// Remove any existing UI to avoid duplicate element names
+	//
+	if(`window -query -exists ilrBLEMainWindow`) {
+		deleteUI ilrBLEMainWindow;
+	}
+	
+	// Build the UI
+	//
+	string $oldParent = `setParent -query`;
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	string $editor = `window -title "Turtle Bake Layer Editor" -resizeToFitChildren true  -height 650 -width 600 ilrBLEMainWindow`;
+
+	setParent $editor;
+
+	string $tablayout = `tabLayout -tabsVisible 0 -scrollable 1`;
+		columnLayout -adjustableColumn false "editortab";
+			ilrBLEBuildLayerMembershipUI();
+		setParent ..;
+	setParent ..;
+	
+	tabLayout -e -selectTab "editortab" $tablayout;
+
+	setUITemplate -popTemplate;
+
+	showWindow $editor;
+	
+	setParent $oldParent;
+}

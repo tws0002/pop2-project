@@ -1,0 +1,226 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Aug 15 1996
+//
+//  Description:
+//      This script initializes the Command line.  Initialization involves
+//		determining the initial Command line preferences, creating the UI
+//		and setting the initial visibility.
+//
+{
+	//   Declare referenced or returned globals.
+	//
+	global string $gCommandWindow;
+	global string $gCommandLineForm;
+	global string $gCommandLine;
+	global string $gCommandLineSourceButton;
+
+	int $iconSize = 22;		// Real size = 20x20, but with padding for down/hover = 22x22
+
+	//  Create a layout appropriate for the Command line.
+	// 
+	// QT_TODO - Get rid of the width flag once we fix the formLayout issue causing widget overlap
+	string $commandLineForm = `formLayout -parent $gCommandLineForm -width 500`;
+
+	string $commandLineType = "mel";
+	string $typeAnn = (uiRes("m_initCommandLine.kMELSourceToggleButtonAnn"));
+	int $hasPython = `exists python`;
+	if ($hasPython && `optionVar -exists commandLineSourceType`) {
+		// load the previous type	
+		$commandLineType = `optionVar -q commandLineSourceType`;
+		string $typeLabel = `labelFromCommandSourceType $commandLineType`;		
+		$gCommandLineSourceButton = `iconTextButton -style "textOnly" -label $typeLabel -annotation (uiRes("m_initCommandLine.kMELSourceToggleButtonAnn")) -height $iconSize -width 46 -command "toggleCommandLineInputSourceType"`;
+	}
+    else 
+    {
+		// or default to commandLineType (mel) if none was set
+		string $typeLabel = `labelFromCommandSourceType $commandLineType`;
+		optionVar -sv commandLineSourceType $commandLineType;
+		$gCommandLineSourceButton = `iconTextButton -style "textOnly" -label $typeLabel -annotation (uiRes("m_initCommandLine.kMELSourceToggleButtonAnn")) -height $iconSize -width 46 -command "toggleCommandLineInputSourceType"`;
+	}
+
+
+	string $enterMELCommandsAnnot = (uiRes("m_initCommandLine.kCmdLineAnnotMEL"));
+	string $enterPythonCommandsAnnot = (uiRes("m_initCommandLine.kCmdLineAnnotPython"));
+	string $cmdLineAnnot = ($commandLineType == "mel" ? $enterMELCommandsAnnot : $enterPythonCommandsAnnot);
+	string $cmdFeedbackAnnot = (uiRes("m_initCommandLine.kCmdFeedbackAnnot"));
+	int $holdFocus = `optionVar -query commandLineHoldFocus`;
+
+	//	Now actually create the Command line.  
+	//
+	$gCommandLine = `commandLine
+		-holdFocus $holdFocus 
+		-inputAnnotation $cmdLineAnnot
+		-outputAnnotation $cmdFeedbackAnnot
+		-sourceType $commandLineType`;
+
+	if(`optionVar -exists commandLineInputFieldWidth`)
+		paneLayout -e -ps 1 `optionVar -q commandLineInputFieldWidth` 100 $gCommandLine;
+
+	if(`optionVar -exists commandLineNumHistoryLines`)
+		commandLine -e -numberOfHistoryLines `optionVar -q commandLineNumHistoryLines` $gCommandLine;
+
+	//	The "show the Script Editor window" button.
+	//
+	string $iconButton = `symbolButton 
+		-image      "cmdWndIcon.png" 
+		-width $iconSize -height $iconSize
+		-annotation (uiRes("m_initCommandLine.kScriptEditorAnnot"))
+		-command    "ScriptEditor"`;
+	
+	int	$topSpacing = 1;
+	int	$bottomSpacing = 1;
+
+	//	Layout Command line contents.
+	// 
+	formLayout -edit
+		-attachForm	   $gCommandLineSourceButton "top"	0
+		-attachForm	   $gCommandLineSourceButton "left"	0
+		-attachForm	   $gCommandLineSourceButton "bottom" 0
+		-attachNone	   $gCommandLineSourceButton "right"
+
+		-attachForm    $gCommandLine "top"    0
+		-attachControl $gCommandLine "left"   0 $gCommandLineSourceButton
+		-attachForm    $gCommandLine "bottom" 0
+		-attachControl $gCommandLine "right"  4 $iconButton
+
+		-attachForm    $iconButton   "top"    $topSpacing
+		-attachNone    $iconButton   "left"
+		-attachForm    $iconButton   "bottom" $bottomSpacing
+		-attachForm    $iconButton   "right"  0
+		$commandLineForm;
+
+	//	Attach Command line to parent.
+	//
+	formLayout -edit
+		-attachForm $commandLineForm "top"    2
+		-attachForm $commandLineForm "bottom" 2
+		-attachForm $commandLineForm "right"  5
+		-attachForm $commandLineForm "left"   0
+		$gCommandLineForm;
+
+	setUIComponentStateCallback(
+		"Command Line", "commandLineVisibilityStateChange");
+		
+	//	Set the Command line's initial visibility.
+	//
+	setCommandLineVisible(`optionVar -query commandLineVisible`);
+}
+
+global proc string labelFromCommandSourceType(string $type) 
+//
+// Returns a label for the type of command which $type is.
+// Currently, $type can either be "mel" or "python"
+//
+{
+	string $lowerType = `tolower $type`;
+	string $label;
+
+	switch ($lowerType) {
+		case "mel":
+			$label = "MEL";
+			break;
+		case "python":
+			$label = "Python";
+			break;
+		default:
+			$label = $lowerType;
+			break;
+	}
+
+	return $label;
+}
+
+global proc toggleCommandLineInputSourceType()
+//
+// Toggles the command line input source type.
+//
+{
+	global string $gCommandLine;
+	global string $gCommandLineSourceButton;
+
+	int $hasPython = `exists python`;
+	if ($hasPython) {
+		string $curType = `commandLine -q -sourceType $gCommandLine`;
+		$curType = `tolower $curType`;
+		string $newType;
+		string $cmdLineAnnot;
+	
+		// get new type
+		switch ($curType) {
+			case "mel":
+				$newType = "python";
+				$cmdLineAnnot = (uiRes("m_initCommandLine.kCmdLineAnnotPython"));
+				break;
+			case "python":
+			default:
+				$newType = "mel";
+				$cmdLineAnnot = (uiRes("m_initCommandLine.kCmdLineAnnotMEL"));			
+				break;
+		}
+	
+		// set new type and annotation
+		commandLine -e -sourceType $newType -inputAnnotation $cmdLineAnnot $gCommandLine;
+	
+		// update button label
+		iconTextButton -e -label `labelFromCommandSourceType $newType` -width 46 $gCommandLineSourceButton;
+	
+		// update option var
+		optionVar -sv commandLineSourceType $newType;
+	}
+
+	// set focus to command line
+	setFocus $gCommandLine;
+}
+
+global proc int commandLineVisibilityStateChange(
+	int    $newState,
+	string $layout)
+//
+//	Description:
+//		This procedure is called whenever the visibility state of the 
+//		Command Line is changed.
+//
+//	Arguments:
+//		newState - The new visibile state of the Command Line.
+//
+//		layout - The parent layout for the Command Line.
+//
+//	Returns:
+//		true - If the change of state is to be allowed.
+//
+//		false - If the state change is rejected.
+//
+{
+	int $result = true;
+
+	//	Defer these commands because this proc is called when the visibility
+	//	state is about to change. This proc must return true to accept 
+	//	the state change. After this proc returns then restore the
+	//	panel focus and update the pref menu.
+	//
+	evalDeferred("restoreLastPanelWithFocus(); updatePrefsMenu();");
+
+	return $result;
+}

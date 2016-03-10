@@ -1,0 +1,740 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+// Script job ids
+//
+global int $greasePencilCloseWindowScriptJobId = -1;
+global int $greasePencilPreButtonChangeScriptJobId = -1;
+global int $greasePencilPostButtonChangeScriptJobId = -1;
+
+// Grease pencil prototype import/export code
+//
+
+// Returning true will allow the import/export buttons to be
+// added to the floating ui
+//
+proc int wantFileImportExport()
+{
+	return true;
+}
+
+proc string getGreasePencilImportExportFileFilters()
+{
+	string $archive = (uiRes("m_greasePencilContext.kArchive"));
+	return ( $archive + " (*.zip)" );
+}
+
+global proc importGreasePencilFrames()
+{
+	if (`currentCtx` != "greasePencilSuperContext")
+		setToolTo greasePencilSuperContext;
+
+	string $basicFilter = getGreasePencilImportExportFileFilters();
+	int $fileMode = 1;  // Single, existing file
+	string $okCaption = (uiRes("m_greasePencilContext.kOkImport"));
+	string $result[] = 
+		`fileDialog2 -fileFilter $basicFilter -fileMode $fileMode -dialogStyle 2 -okCaption $okCaption`;
+	string $fileName = $result[0];
+
+	if ( size($fileName) < 1 )
+		return;
+
+	greasePencilCtx -edit -importArchive $fileName greasePencilContext;
+}
+
+global proc exportGreasePencilFrames()
+{
+	if (`currentCtx` != "greasePencilSuperContext")
+		setToolTo greasePencilSuperContext;
+
+	string $basicFilter = getGreasePencilImportExportFileFilters();
+	int $fileMode = 0;  // Any file whether it exists or not
+	string $okCaption = (uiRes("m_greasePencilContext.kOkExport"));
+	string $result[] = 
+		`fileDialog2 -fileFilter $basicFilter -fileMode $fileMode -dialogStyle 2 -okCaption $okCaption`;
+	string $fileName = $result[0];
+
+	if ( size($fileName) < 1 )
+		return;
+
+	string $sequenceNode = `greasePencilCtx -query -sequenceNodeName greasePencilContext`;
+	if ( size($sequenceNode) < 1 )
+	{
+		warning  (uiRes("m_greasePencilContext.kGreaseExportError"));
+		return;
+	}
+
+	greasePencilCtx -edit -exportArchive $sequenceNode $fileName greasePencilContext;
+}
+
+// Grease pencil functions
+//
+
+proc addPopupMenuForGreasePencilButton(string $parent, string $postCmd)
+{
+	string $fullName = `popupMenu -parent $parent -postMenuCommand $postCmd`;
+	string $cmd = ($postCmd + " " + $fullName );
+	popupMenu -e -postMenuCommand $cmd $fullName;	
+}
+
+// Callback that is invoked when the file texture size layout is closed with
+// the OK button.  We set the file texture size to the setting the user
+// wants.
+global proc greasePencilSetFileTextureSize( string $setting )
+{
+	global string $size512String;
+	global string $size1024String;
+	global string $size2048String;
+
+	if ( $setting == $size512String )
+	{
+		greasePencilCtx -edit -fileTextureSize 512 greasePencilContext;
+	}
+	else if ( $setting == $size1024String )
+	{
+		greasePencilCtx -edit -fileTextureSize 1024 greasePencilContext;
+	}
+	else if ( $setting == $size2048String )
+	{
+		greasePencilCtx -edit -fileTextureSize 2048 greasePencilContext;
+	}
+}
+
+// Creates the file texture size layout
+ global proc greasePencilTextureSizeLayoutDialog()
+ {
+	global string $size512String;
+	global string $size1024String;
+	global string $size2048String;
+
+	$size512String =  (uiRes("m_greasePencilContext.kGreasePlaneFileTextureSize512"));
+	$size1024String =  (uiRes("m_greasePencilContext.kGreasePlaneFileTextureSize1024"));
+	$size2048String =  (uiRes("m_greasePencilContext.kGreasePlaneFileTextureSize2048"));
+
+	string $fileTextureSizeString = (uiRes("m_greasePencilContext.kGreasePlaneFileTextureSize"));
+	string $okButtonString = (uiRes("m_greasePencilContext.kGreasePlaneFileTextureOk"));
+	string $cancelButtonString = (uiRes("m_greasePencilContext.kGreasePlaneFileTextureCancel"));
+
+	int $spacer = 15;
+	int $top = 20;
+	int $edge = 20;
+	int $edge2 = 40;
+
+	string $form = `setParent -q`;
+	formLayout -e -width 140 $form;
+
+	string $sizePopup = `optionMenuGrp -label $fileTextureSizeString -columnWidth2 70 60 greasePencilFileTexturePopup`;
+		menuItem -label $size512String;
+		menuItem -label $size1024String;
+		menuItem -label $size2048String;
+
+	string $okButton = `button -label $okButtonString -width 65  
+		-command "string $v=`optionMenuGrp -query -value greasePencilFileTexturePopup` ; greasePencilSetFileTextureSize($v) ; layoutDialog -dismiss \"1\""`;
+	string $cancelButton = `button -label $cancelButtonString -width 65 
+		-command "layoutDialog -dismiss \"0\""`;
+
+	formLayout -edit
+		-attachForm		$sizePopup   "top"		$top
+		-attachForm		$sizePopup   "left"		$edge
+		-attachNone		$sizePopup   "bottom"   
+		-attachForm		$sizePopup   "right"	$edge
+        
+		-attachControl	$okButton  "top"		$spacer $sizePopup
+		-attachForm		$okButton  "left"		$edge2
+		-attachNone		$okButton  "bottom"
+		-attachNone		$okButton  "right"
+        
+		-attachControl	$cancelButton  "top"	$spacer $sizePopup
+		-attachControl	$cancelButton  "left"	$spacer $okButton
+		-attachNone		$cancelButton  "bottom"
+		-attachNone		$cancelButton  "right"
+	$form;
+ }
+
+global float $currentGreasePencilColorValue[];
+$currentGreasePencilColorValue[0] = 0.0;
+$currentGreasePencilColorValue[1] = 0.0;
+$currentGreasePencilColorValue[2] = 0.0;
+
+// Called when the user changes the color.  
+global proc greasePencilColorCallback()
+{
+	global float $currentGreasePencilColorValue[];
+
+	float $values[];
+	$values = `colorSliderGrp -query -rgbValue GreasePencilColorButton`;
+
+	// Has it changed -- there seems to be a bug where this callback
+	// is invoked twice.  We detect the change before creating the
+	// undo information.
+	int $i;
+	int $hasChanged = 0;
+	for ( $i = 0; $i < 3; $i++ )
+	{
+			float $a = abs($values[$i] - $currentGreasePencilColorValue[$i]);
+			if ( $a > .000001 )
+					$hasChanged = 1;
+	}
+	// Set the user color in the context if changed
+	if ( $hasChanged )
+	{
+		greasePencilHelper -edit -setColor $values[0] $values[1] $values[2] -contextName greasePencilContext;
+		$currentGreasePencilColorValue[0] = $values[0];
+		$currentGreasePencilColorValue[1] = $values[1];
+		$currentGreasePencilColorValue[2] = $values[2];
+	}
+}
+
+// Utility function for getting the index at a specific frame
+global proc int getGreasePencilIndexAtFrame( string $sequenceNodeName, float $frameNumber )
+{
+	if ( size($sequenceNodeName) < 1 )
+			return -1;
+
+	string $keyPlug = ( $sequenceNodeName + ".frame" );
+	int $indexArray[] = `getAttr -multiIndices $keyPlug`;
+	if ( size($indexArray) < 0 )
+			return -1;
+
+	int $i;
+	for ( $i in $indexArray )
+	{
+			string $timePlug = ( $sequenceNodeName + ".frame[" + string($i) + "]" + ".frameTime" );
+			if ( $frameNumber == `getAttr $timePlug` )
+					return $i;
+	}
+	return -1;
+}
+
+// Update helper functions
+//
+proc updateGreasePencilPalettePrePostButtons( string $sequenceNode )
+{
+	if ( size($sequenceNode) < 1 )
+		return;
+	if ( ! `window -exists greasePencilFloatingWindow` )
+		return;
+
+	int $preGhost = `getAttr ($sequenceNode+".preGhost")`;
+	int $postGhost = `getAttr ($sequenceNode+".postGhost")`;
+	iconTextCheckBox -edit -value $preGhost GreasePencilPreFrameButton;
+	iconTextCheckBox -edit -value $postGhost GreasePencilPostFrameButton;
+}
+
+global proc greasePencilPrePostButtonScriptJob()
+{
+	if ( ! `window -exists greasePencilFloatingWindow` )
+		return;
+	string $sequenceNode = `greasePencilCtx -query -sequenceNodeName greasePencilContext`;
+	updateGreasePencilPalettePrePostButtons( $sequenceNode );
+}
+
+proc removePrePostAttrChangeCallbacks()
+{
+	global int $greasePencilPreButtonChangeScriptJobId;
+	global int $greasePencilPostButtonChangeScriptJobId;
+
+	if ( $greasePencilPreButtonChangeScriptJobId >= 0 )
+	{
+		if ( `scriptJob -exists $greasePencilPreButtonChangeScriptJobId` )
+		{
+			scriptJob -kill $greasePencilPreButtonChangeScriptJobId;
+		}
+		$greasePencilPreButtonChangeScriptJobId = -1;
+	}
+	if ( $greasePencilPostButtonChangeScriptJobId >= 0 )
+	{
+		if ( `scriptJob -exists $greasePencilPostButtonChangeScriptJobId` )
+		{
+			scriptJob -kill $greasePencilPostButtonChangeScriptJobId;
+		}
+		$greasePencilPostButtonChangeScriptJobId = -1;
+	}
+}
+
+proc installPrePostAttrChangeCallbacks( string $sequenceNode )
+{
+	global int $greasePencilPreButtonChangeScriptJobId;
+	global int $greasePencilPostButtonChangeScriptJobId;
+
+	removePrePostAttrChangeCallbacks();
+
+	if ( size($sequenceNode) < 1 )
+		return;
+
+	string $prePlug = ($sequenceNode+".preGhost");
+	string $postPlug = ($sequenceNode+".postGhost");
+	$greasePencilPreButtonChangeScriptJobId = 
+		`scriptJob -parent greasePencilFloatingWindow -attributeChange $prePlug greasePencilPrePostButtonScriptJob`;
+	$greasePencilPostButtonChangeScriptJobId = 
+		`scriptJob -parent greasePencilFloatingWindow -attributeChange $postPlug greasePencilPrePostButtonScriptJob`;
+	
+	// Debug code to make sure script jobs are being cleaned up
+	// string $sa[] = `scriptJob -listJobs`;
+	// warning ( string(size($sa) ) );
+}
+
+// When a change has happened in the context, you call this function to
+// update the floating panel UI
+global proc updateGreasePencilPalette()
+{
+	global float $currentGreasePencilColorValue[];
+
+	if ( ! `window -exists greasePencilFloatingWindow` )
+		return;
+
+	int $canDraw = `greasePencilCtx -query -canDraw greasePencilContext`;
+
+	int $type = `optionVar -query greasePencilBrushType`;
+	int $v1 = ( $type == 1 ) ? true : false ;
+	int $v2 = ( $type == 2 ) ? true : false ;
+	int $v3 = ( $type == 3 ) ? true : false ;
+	int $v4 = ( $type == 4 ) ? true : false ;
+
+	string $sequenceNode = `greasePencilCtx -query -sequenceNodeName greasePencilContext`;
+	float $currentTime = `currentTime -query`;
+	int $canAddFrame = (0 > getGreasePencilIndexAtFrame($sequenceNode, $currentTime));
+
+	iconTextButton   -edit -enable $canAddFrame GreasePencilAddFrameButton;
+	iconTextButton   -edit -enable (!$canAddFrame) GreasePencilRemoveFrameButton;
+
+	// Button enable state
+	iconTextCheckBox -edit -enable $canDraw GreasePencilPencilButton;
+	iconTextCheckBox -edit -enable $canDraw GreasePencilMarkerButton;
+	iconTextCheckBox -edit -enable $canDraw GreasePencilSoftPencil;
+	colorSliderGrp   -edit -enable $canDraw GreasePencilColorButton;
+	iconTextCheckBox -edit -enable $canDraw GreasePencilEraseButton;
+	iconTextCheckBox -edit -enable $canDraw GreasePencilPreFrameButton;
+	iconTextCheckBox -edit -enable $canDraw GreasePencilPostFrameButton;
+	iconTextButton -edit -enable $canDraw GreasePencilExportFramesButton;
+
+	// Button up/down state
+	iconTextCheckBox -edit -value $v1 GreasePencilPencilButton;
+	iconTextCheckBox -edit -value $v2 GreasePencilMarkerButton;
+	iconTextCheckBox -edit -value $v3 GreasePencilSoftPencil;
+	iconTextCheckBox -edit -value $v4 GreasePencilEraseButton;
+	
+	if ( size($sequenceNode) > 0 )
+	{
+		updateGreasePencilPalettePrePostButtons( $sequenceNode );
+	}
+
+	// Color button state
+	float $values[];
+	$values = `greasePencilCtx -query -rgbcolor greasePencilContext`;
+	colorSliderGrp -edit -rgbValue $values[0] $values[1] $values[2] GreasePencilColorButton;
+	// Update the global setting
+	$currentGreasePencilColorValue[0] = $values[0];
+	$currentGreasePencilColorValue[1] = $values[1];
+	$currentGreasePencilColorValue[2] = $values[2];
+
+	installPrePostAttrChangeCallbacks( $sequenceNode );
+}
+
+// Create or edit a frame at a specific time
+global proc createOrEditGreasePencilFrame( int $atTime )
+{
+	if (`currentCtx` != "greasePencilSuperContext")
+		setToolTo greasePencilSuperContext;
+	greasePencilCtx -edit -createOrEditFrame $atTime greasePencilContext;
+	updateGreasePencilPalette();
+}
+
+// Create or edit a frame at the current time.
+global proc createOrEditGreasePencilFrameAtCurrentTime()
+{
+	int $currentTime = `currentTime -query`;
+	createOrEditGreasePencilFrame( $currentTime );
+	// Add the recent command
+	addToRecentCommandQueue "createOrEditGreasePencilFrameAtCurrentTime()" "CreateGreasePencilFrame";
+}
+
+// Remove the frame that is active at the current time
+global proc removeGreasePencilFrameAtCurrentTime()
+{
+	int $currentTime = `currentTime -query`;
+	if (`currentCtx` != "greasePencilSuperContext")
+		setToolTo greasePencilSuperContext;
+	greasePencilCtx -edit -removeFrame $currentTime greasePencilContext;
+	updateGreasePencilPalette();
+}
+
+// Utility function invoked by the context to remove the extra render nodes
+global proc removeGreasePencilFileTextureAndPlaceNode( string $fileTextureNodeName )
+{
+	if ( size($fileTextureNodeName) < 1 )
+		return;
+
+	string $connectedPlace2dTextures[] = `listConnections -destination true -type "place2dTexture" $fileTextureNodeName`;
+	if ( size($connectedPlace2dTextures) < 1 )
+		return;
+
+	delete $connectedPlace2dTextures[0] $fileTextureNodeName;
+}
+
+// Utility function for setting the pencil type
+global proc setGreasePencilType( int $type )
+{
+	if (`currentCtx` != "greasePencilSuperContext")
+		setToolTo greasePencilSuperContext;
+	optionVar -iv greasePencilBrushType $type;
+	greasePencilHelper -edit -brushType $type -contextName greasePencilContext;
+	updateGreasePencilPalette();
+}
+
+global proc closeGreasePencilWindowCallback()
+{
+	global string $gSelect;
+	if ( `window -exists greasePencilFloatingWindow` )
+	{
+		deleteUI -window greasePencilFloatingWindow;
+		setToolTo $gSelect;
+	}
+}
+
+global proc greasePencilSetGhostFrames( int $ghostFrames, string $attributeName )
+{
+	string $sequenceNode = `greasePencilCtx -query -sequenceNodeName greasePencilContext`;
+	if ( size($sequenceNode) < 1 )
+		return;
+
+	float $range[] = `attributeQuery -node $sequenceNode -range  $attributeName`;
+	if ( 2 == size($range) )
+	{
+		if ( ( $ghostFrames < $range[0] ) || ( $ghostFrames > $range[1] ) )
+		{
+			string $warningMessage =  (uiRes("m_greasePencilContext.kGhostFramesOutOfRange"));
+			warning ( $warningMessage + $range[0] + ":" + $range[1] );
+			return;
+		}
+	}
+	string $plug =  $sequenceNode + "." + $attributeName;
+	setAttr $plug $ghostFrames;
+}
+
+global proc greasePencilGhostPromptDoIt( string $intSlider, string $attributeName )
+{
+	if (`intSliderGrp -exists $intSlider`)
+	{
+		int $val = `intSliderGrp -q -value $intSlider`;
+		greasePencilSetGhostFrames( $val, $attributeName );
+	}
+	layoutDialog -dismiss "Ok";
+}
+
+global proc greasePencilGhostPromptUI( string $sequenceNode, string $attributeName )
+{
+	string $plug =  $sequenceNode + "." + $attributeName;
+	int $oldFrameValue = `getAttr $plug`;
+
+	string $okLabel = (uiRes("m_greasePencilContext.kOk"));
+	string $cancelLabel = (uiRes("m_greasePencilContext.kCancel"));
+	string $msgLabel = (uiRes("m_greasePencilContext.kNewShelfName"));
+
+	string $form = `setParent -q`;
+    formLayout -e -width 300 -height 50 $form;
+
+	string $textCtrl = `text -label $msgLabel`;
+
+	string $sliderCtrl = `intSliderGrp -label "" -field true -columnWidth 1 0 -value $oldFrameValue
+							-minValue 1 -maxValue 10 -fieldMinValue 1 -fieldMaxValue 10`;
+
+    string $okBtn = `button -label $okLabel -c ("greasePencilGhostPromptDoIt (\"" + $sliderCtrl + "\", \"" + $attributeName + "\")")`;
+    string $cancelBtn = `button -label $cancelLabel -c ("layoutDialog -dismiss \"Cancel\"")`;
+
+    int $spacer = 10;
+	int $largeSpacer = 16;
+
+    formLayout -edit
+        -attachForm				$textCtrl   "top"    $spacer
+        -attachForm				$textCtrl   "left"   $spacer
+        -attachNone				$textCtrl   "bottom"
+        -attachForm				$textCtrl   "right"  $spacer
+
+        -attachControl			$sliderCtrl   "top"    $spacer $textCtrl
+        -attachForm				$sliderCtrl   "left"   $spacer
+        -attachNone				$sliderCtrl   "bottom"
+        -attachForm				$sliderCtrl   "right"  $spacer
+
+        -attachControl			$okBtn  "top"    $largeSpacer $sliderCtrl
+        -attachForm				$okBtn  "left"   $spacer
+        -attachNone				$okBtn  "bottom"
+        -attachPosition			$okBtn  "right"  $spacer 50
+
+        -attachControl			$cancelBtn  "top"    $largeSpacer $sliderCtrl
+        -attachPosition			$cancelBtn  "left"   $spacer 50
+        -attachNone				$cancelBtn  "bottom"
+        -attachForm				$cancelBtn  "right" $spacer
+    $form;
+}
+
+global proc greasePencilGhostPrompt( string $attributeName )
+{
+	string $sequenceNode = `greasePencilCtx -query -sequenceNodeName greasePencilContext`;
+	if ( size($sequenceNode) < 1 )
+		return;
+
+	string $preTitle =  (uiRes("m_greasePencilContext.kPreDialogTitle"));
+	string $postTitle =  (uiRes("m_greasePencilContext.kPostDialogTitle"));
+	string $title;
+	if ( $attributeName == "preFrames" )
+		$title = $preTitle;
+	else
+		$title = $postTitle;
+
+	layoutDialog -title $title -uiScript ("greasePencilGhostPromptUI (\"" + $sequenceNode + "\", \"" + $attributeName + "\")");
+}
+
+proc int[] getGhostCheckState( string $attributeName )
+{
+	// The size of this array matches the number of quick menu items
+	int $state[] = { false, false, false, false, false };
+
+	string $sequenceNode = `greasePencilCtx -query -sequenceNodeName greasePencilContext`;
+	if ( size($sequenceNode) < 1 )
+		return $state;
+
+	string $plug =  $sequenceNode + "." + $attributeName;
+	int $ghostFrameValue = `getAttr $plug`;
+
+	// Between 1 and 4 currently
+	if ( ( $ghostFrameValue > 0 ) && ( $ghostFrameValue <= size($state) ) )
+	{
+		$state[$ghostFrameValue-1] = true;
+	}
+	else
+	{
+		$state[4] = true;	// Other
+	}
+
+	return $state;
+}
+
+global proc greasePencilPreGhostPopup( string $parent )
+{
+	setParent -menu $parent;
+	popupMenu -edit -deleteAllItems $parent;
+	int $state[] = getGhostCheckState( "preFrames" );
+	menuItem -label (uiRes("m_greasePencilContext.kPreGhostMenu1"))
+		-command ( "greasePencilSetGhostFrames( 1, \"preFrames\" )" )
+		-checkBox $state[0];
+	menuItem -label (uiRes("m_greasePencilContext.kPreGhostMenu2"))
+		-command ( "greasePencilSetGhostFrames( 2, \"preFrames\" )" )
+		-checkBox $state[1];
+	menuItem -label (uiRes("m_greasePencilContext.kPreGhostMenu3"))
+		-command ( "greasePencilSetGhostFrames( 3, \"preFrames\" )" )
+		-checkBox $state[2];
+	menuItem -label (uiRes("m_greasePencilContext.kPreGhostMenu4"))
+		-command ( "greasePencilSetGhostFrames( 4, \"preFrames\" )" )
+		-checkBox $state[3];
+	menuItem -label (uiRes("m_greasePencilContext.kPreGhostMenu"))
+		-command( "greasePencilGhostPrompt( \"preFrames\" )" )
+		-checkBox $state[4];
+}
+
+global proc greasePencilPostGhostPopup( string $parent )
+{
+	setParent -menu $parent;
+	popupMenu -edit -deleteAllItems $parent;
+	int $state[] = getGhostCheckState( "postFrames" );
+	menuItem -label (uiRes("m_greasePencilContext.kPostGhostMenu1"))
+		-command ( "greasePencilSetGhostFrames( 1, \"postFrames\" )" )
+		-checkBox $state[0];
+	menuItem -label (uiRes("m_greasePencilContext.kPostGhostMenu2"))
+		-command ( "greasePencilSetGhostFrames( 2, \"postFrames\" )" )
+		-checkBox $state[1];
+	menuItem -label (uiRes("m_greasePencilContext.kPostGhostMenu3"))
+		-command ( "greasePencilSetGhostFrames( 3, \"postFrames\" )" )
+		-checkBox $state[2];
+	menuItem -label (uiRes("m_greasePencilContext.kPostGhostMenu4"))
+		-command ( "greasePencilSetGhostFrames( 4, \"postFrames\" )" )
+		-checkBox $state[3];
+	menuItem -label (uiRes("m_greasePencilContext.kPostGhostMenu"))
+		-command( "greasePencilGhostPrompt( \"postFrames\" )" )
+		-checkBox $state[4];
+}
+
+proc int toggleGreasePencilGhosting( string $attributeName )
+{
+	string $sequenceNode = `greasePencilCtx -query -sequenceNodeName greasePencilContext`;
+	if ( size($sequenceNode) < 1 )
+		return -1;
+
+	string $plug =  $sequenceNode + $attributeName;
+	int $ghostOn = `getAttr $plug`;
+	int $result = ( $ghostOn ) ? false : true ;
+	setAttr $plug $result;
+	return $result;
+}
+
+global proc toggleGreasePencilPreFrameCount()
+{
+	toggleGreasePencilGhosting( ".preGhost" );
+}
+
+global proc toggleGreasePencilPostFrameCount()
+{
+	toggleGreasePencilGhosting( ".postGhost" );
+}
+
+// Main function for setting up the window
+global proc createGreasePencilWindow()
+{
+	if ( ! `window -exists greasePencilFloatingWindow` )
+	{
+		global int $greasePencilCloseWindowScriptJobId;
+
+		if ( $greasePencilCloseWindowScriptJobId < 0 )
+		{
+			$greasePencilCloseWindowScriptJobId = `scriptJob -e "deleteAll" "closeGreasePencilWindowCallback"`;
+		}
+
+		// Get the colours
+		float $values[] = `greasePencilCtx -query -rgb greasePencilContext`;
+		// Menu bar for file import/export prototype
+		int $w = wantFileImportExport() ? 440 : 370;
+
+		// Create the window
+		string $window = `window -title (uiRes("m_greasePencilContext.kGreasePencilWindowName"))
+				-widthHeight $w 42 
+				-titleBar 1
+				-titleBarMenu 1
+				-minimizeButton false
+				-maximizeButton false
+				-sizeable false
+				greasePencilFloatingWindow` ;
+			
+            int $nCol = wantFileImportExport() ? 12 : 10;
+            string $layout = `rowLayout -numberOfColumns $nCol
+    			-columnWidth 1 33 -columnWidth 2 33 -columnWidth 3 33 -columnWidth 4 33
+				-columnWidth 5 33 -columnWidth 6 56 -columnWidth 7 33 -columnWidth 8 33 
+				-columnWidth 9 33 -columnWidth 10 33`;
+
+			if ( wantFileImportExport() )
+			{
+				rowLayout -edit -columnWidth 11 33 -columnWidth 12 33 $layout;
+			}
+
+				iconTextButton -annotation (uiRes("m_greasePencilContext.kGreaseAddEditFrameButtonName")) 
+					-command  ("createOrEditGreasePencilFrameAtCurrentTime();" )
+					-image "greasePencilAddFrame.png" -selectionImage "greasePencilAddFramePress.png"
+					GreasePencilAddFrameButton;
+				iconTextButton -annotation (uiRes("m_greasePencilContext.kGreaseRemoveFrameButtonName")) 
+					-command ("removeGreasePencilFrameAtCurrentTime();" )
+					-image "greasePencilDeleteFrame.png" -selectionImage "greasePencilDeleteFramePress.png" 
+					GreasePencilRemoveFrameButton;
+
+				iconTextCheckBox -annotation (uiRes("m_greasePencilContext.kGreasePencilButtonName")) 
+					-changeCommand ("setGreasePencilType 1;")
+					-image1 "greasePencilPencil.png" -selectionImage "greasePencilPencilPress.png"
+					GreasePencilPencilButton;
+				iconTextCheckBox -annotation  (uiRes("m_greasePencilContext.kGreaseMarkerButtonName")) 
+					-changeCommand ("setGreasePencilType 2;")
+					-image1 "greasePencilMarker.png" -selectionImage "greasePencilMarkerPress.png"
+					GreasePencilMarkerButton;
+				iconTextCheckBox -annotation  (uiRes("m_greasePencilContext.kGreaseSoftPencilButtonName")) 
+					-changeCommand ("setGreasePencilType 3;")
+					-image1 "greasePencilSoftPencil.png" -selectionImage "greasePencilSoftPencilPress.png"
+					GreasePencilSoftPencil;
+				colorSliderGrp -columnWidth3 0 55 0 -label (uiRes("m_greasePencilContext.kGreaseColorButtonName"))
+					-annotation (uiRes("m_greasePencilContext.kGreaseColorButtonTooltip"))
+					-rgbValue $values[0] $values[1] $values[2] -changeCommand ("greasePencilColorCallback")
+					GreasePencilColorButton;
+
+				iconTextCheckBox -annotation  (uiRes("m_greasePencilContext.kGreaseEraserButtonName")) 
+					-changeCommand ("setGreasePencilType 4;")
+					-image1 "greasePencilEraser.png" -selectionImage "greasePencilEraserPress.png"
+					GreasePencilEraseButton;
+	
+				iconTextCheckBox -annotation (uiRes("m_greasePencilContext.kGreasePreFrameButtonName")) 
+					-changeCommand  ("toggleGreasePencilPreFrameCount();" )
+					-image1 "greasePencilPreGhostOff.png" -selectionImage "greasePencilPreGhostOn.png"
+					GreasePencilPreFrameButton;
+				iconTextCheckBox -annotation (uiRes("m_greasePencilContext.kGreasePostFrameButtonName")) 
+					-changeCommand ("toggleGreasePencilPostFrameCount();" )
+					-image1 "greasePencilPostGhostOff.png" -selectionImage "greasePencilPostGhostOn.png" 
+					GreasePencilPostFrameButton;
+				addPopupMenuForGreasePencilButton( "GreasePencilPreFrameButton", "greasePencilPreGhostPopup" );
+				addPopupMenuForGreasePencilButton( "GreasePencilPostFrameButton", "greasePencilPostGhostPopup" );
+
+				if ( wantFileImportExport() )
+				{
+					iconTextButton -annotation (uiRes("m_greasePencilContext.kGreaseImportFramesButtonName")) 
+						-command  ("importGreasePencilFrames();" )
+						-image "greasePencilImport.png" -selectionImage "greasePencilImport.png"
+						-version "2015"
+						GreasePencilImportFramesButton;				
+					iconTextButton -annotation (uiRes("m_greasePencilContext.kGreaseExportButtonName")) 
+						-command  ( "exportGreasePencilFrames()" )
+						-image "greasePencilExport.png" -selectionImage "greasePencilExport.png" 
+						-version "2015"
+						GreasePencilExportFramesButton;
+				}
+
+				iconTextButton -annotation (uiRes("m_greasePencilContext.kGreaseHelpButtonName")) 
+					-command  ("showHelp GreasePencil_toolbar;" )
+					-image "greasePencilHelpOff.png" -selectionImage "greasePencilHelpOn.png" 
+					GreasePencilHelpButton;
+
+		setParent ..;
+		showWindow $window;
+	}
+
+	// Put the tool in draw mode already
+	int $drawType = `optionVar -query greasePencilBrushType`;
+	setGreasePencilType( $drawType );
+}
+
+
+// Utility for setting the draw overrides on the poly shape. This stops the
+// poly plane from being modified by the user but it still shows up in
+// draw textured mode. In addition, we set the the display or hard edges only
+// as this hides the poly plane subdivisions when doing interactive creation
+// of other objects
+//
+global proc setGreasePencilDrawOverrides( string $polyPlaneName )
+{
+	if ( size($polyPlaneName) < 1 )
+		return;
+
+	string $outputConnections[] = `listConnections -shapes true -source false $polyPlaneName`; 
+	if (  size($outputConnections) > 0 )
+	{
+		string $polyPlaneShape = $outputConnections[0];
+		setAttr ( $polyPlaneShape + ".overrideEnabled" ) 1;
+		setAttr ( $polyPlaneShape + ".overrideDisplayType" ) 2;
+		// Use the display of hard edges so we can hide the plane subdivisions.
+		// The border is still shown though
+		setAttr ( $polyPlaneShape + ".displayEdges" ) 2;
+	}
+}
+
+// Create the greasePencilContext.
+//
+{
+	if (!`greasePencilCtx -exists greasePencilContext`)
+	{
+		rememberCtxSettings `greasePencilCtx greasePencilContext`;
+	}
+}
+
+

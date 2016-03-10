@@ -1,0 +1,151 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// provided at the time of installation or download, or which otherwise accompanies 
+
+//
+// Procedures for handling the hardware texture cache,
+// using the MEL command ilrHwTextureCacheCmd
+//
+
+global string $g_ilrHwBakeVisualizerTextureInputs[];
+
+proc ilrCreateHwBakeVisualizerTextureInputs()
+{
+	global string $g_ilrHwBakeVisualizerTextureInputs[];
+	$g_ilrHwBakeVisualizerTextureInputs[0]  = "color";
+	$g_ilrHwBakeVisualizerTextureInputs[1]  = "ambientColor";
+	$g_ilrHwBakeVisualizerTextureInputs[2]  = "incandescence";
+	$g_ilrHwBakeVisualizerTextureInputs[3]  = "lightMap";
+	$g_ilrHwBakeVisualizerTextureInputs[4]  = "specularColor";
+	$g_ilrHwBakeVisualizerTextureInputs[5]  = "heightMap";
+	$g_ilrHwBakeVisualizerTextureInputs[6]  = "normalMap";
+	$g_ilrHwBakeVisualizerTextureInputs[7]  = "lightABC";
+	$g_ilrHwBakeVisualizerTextureInputs[8]  = "lightDEF";
+	$g_ilrHwBakeVisualizerTextureInputs[9]  = "glightABC";
+	$g_ilrHwBakeVisualizerTextureInputs[10] = "glightDEF";
+	$g_ilrHwBakeVisualizerTextureInputs[11] = "blightABC";
+	$g_ilrHwBakeVisualizerTextureInputs[12] = "blightDEF";
+	$g_ilrHwBakeVisualizerTextureInputs[13] = "dirOccScaleValues";
+	$g_ilrHwBakeVisualizerTextureInputs[14] = "rnm1";
+	$g_ilrHwBakeVisualizerTextureInputs[15] = "rnm2";
+	$g_ilrHwBakeVisualizerTextureInputs[16] = "rnm3";
+}
+			
+proc ilrHwTextureCacheUpdateFileNode(string $node)
+{
+	string $file = `getAttr ($node + ".fileTextureName")`;
+	if (size($file)) {
+		string $rlayer = "";
+		string $glayer = "";
+		string $blayer = "";
+		string $alayer = "";
+
+		if (`attributeQuery -exists -node $node "ilrLayerR"`) {
+			$rlayer = `getAttr ($node + ".ilrLayerR")`;
+			$glayer = `getAttr ($node + ".ilrLayerG")`;
+			$blayer = `getAttr ($node + ".ilrLayerB")`;
+			$alayer = `getAttr ($node + ".ilrLayerA")`;
+		}
+		
+		string $cmd = "ilrHwTextureCacheCmd -update -texture \"" + $file + "\"";
+		$cmd += " -rlayer \"" + $rlayer + "\"";
+		$cmd += " -glayer \"" + $glayer + "\"";
+		$cmd += " -blayer \"" + $blayer + "\"";
+		$cmd += " -alayer \"" + $alayer + "\"";
+		eval($cmd);
+	}
+}
+
+global proc ilrHwTextureCacheUpdate(string $node)
+{
+	global string $g_ilrHwBakeVisualizerTextureInputs[];
+	if (size($g_ilrHwBakeVisualizerTextureInputs) == 0) {
+		ilrCreateHwBakeVisualizerTextureInputs();
+	}
+
+	for ($attr in $g_ilrHwBakeVisualizerTextureInputs)
+	{
+		if (`attributeExists $attr $node`)
+		{
+			string $items[] = `listConnections ($node + "." + $attr)`;
+			for ($item in $items)
+			{
+				string $type = `nodeType $item`;
+				if ($type == "file") {
+					ilrHwTextureCacheUpdateFileNode($item);
+				}
+				if ($type == "tripleShadingSwitch") {
+					string $switchInputs[] = `listConnections ($item+".input")`;
+					for($switchInput in $switchInputs) {
+						$type = `nodeType $switchInput`;
+						if ($type == "file") {
+							ilrHwTextureCacheUpdateFileNode($switchInput);						
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+global proc ilrHwTextureCacheUpdateAll()
+{
+	string $cmd = "ilrHwTextureCacheCmd -updateall";
+	eval($cmd);
+}
+
+global proc ilrHwTextureCacheClear()
+{
+	string $cmd = "ilrHwTextureCacheCmd -clear";
+	eval($cmd);
+}
+
+global proc AEilrHardwareTextureCacheNew(string $attr)
+{
+	setUITemplate -pst attributeEditorTemplate;
+	
+	columnLayout -columnAttach "both" 15 -rowSpacing 2 -columnWidth 200;
+	
+		button -label "Update Current Textures" -align "center" ilrHwTextureCacheUpdateBtn;
+		button -label "Update All Textures" -align "center" ilrHwTextureCacheUpdateAllBtn;
+		button -label "Clear All Textures" -align "center" ilrHwTextureCacheClearBtn;
+
+	setParent ..;
+	
+	setUITemplate -ppt;
+
+	AEilrHardwareTextureCacheReload($attr);
+}
+
+global proc AEilrHardwareTextureCacheReload(string $attr)
+{
+	string	$node;
+	string	$buffer[];
+	
+	tokenize($attr, ".", $buffer);
+	$node = $buffer[0];
+	
+	button -edit -command ("ilrHwTextureCacheUpdate " + $node) ilrHwTextureCacheUpdateBtn;
+	button -edit -command ("ilrHwTextureCacheUpdateAll") ilrHwTextureCacheUpdateAllBtn;
+	button -edit -command ("ilrHwTextureCacheClear") ilrHwTextureCacheClearBtn;
+}

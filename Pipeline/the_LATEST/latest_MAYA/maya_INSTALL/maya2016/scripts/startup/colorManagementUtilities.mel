@@ -1,0 +1,1127 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+// Creation Date:  May, 2013
+//
+// Description: Color Management Utilities
+//
+
+source "colorSpaceProcedures.mel";
+
+proc string colorManagementPolicyFileNameFromEnv()
+{
+    string $env = strip(getenv("MAYA_COLOR_MANAGEMENT_POLICY_FILE"));
+    $env = substituteAllString($env, "\\", "/");
+
+    return $env;
+}
+
+global proc int colorManagementPolicyLocked()
+{
+    if (colorManagementPolicyFileNameFromEnv() == "")
+    {
+        return 0;
+    }
+
+    string $env = strip(getenv("MAYA_COLOR_MANAGEMENT_POLICY_LOCK"));
+    return $env == "1";
+}
+
+// Purpose: Used to initialize the default values of the different
+//          color management option variables.
+//
+global proc initializeColorManagementOptionVars()
+{
+    optionVar -iv "colorManagementManagePots" 1;
+    if (! `optionVar -exists "colorManagementPolicyFileName"`)
+    {
+        // Initialize the policy file name at the first time.
+        // This user preference would not be updated when clicking
+        // "Restore to default."
+        optionVar -sv "colorManagementPolicyFileName" "";
+    }
+}
+
+// Purpose: Used to revert preferences to their default values.
+//
+global proc revertToColorManagementDefaults()
+{
+    if (!colorManagementPolicyLocked())
+    {
+        colorManagementPrefs -edit -policyFileName "";
+        colorManagementPrefs -edit -colorManagePots 1;
+        colorManagementPrefs -edit -ocioRulesEnabled 1;
+        colorManagementPrefs -restoreDefaults;
+    }
+}
+
+// Purpose: Create new versions of all of the color management option vars
+//          so that we can restore the state when Cancel is used in the
+//          preferences window. Be sure to use the colorManagementPrefs
+//          command for any preference setting in order to maintain the
+//          encapsulation of color management settings.
+//
+//          $mode = "save" to save a copy of the current pref optVars
+//                = "restore" to restore the values from the saved version
+//                = "delete" to delete the temporary option vars
+//
+//   1- When the User Preference window is opened, the 'save' case is called in order
+//      to save the current status of the preferences in temporary option variables. 
+//   2- When the window is closed with a save, the current status is saved becoming the 'final'
+//      status (e.g. preferences to preserve). The option variables is no longer needed.
+//      So the 'delete' case is called in order to remove all these option variables created to hold
+//      temporary preferences.
+//   3- When the window is closed with a cancel, the current status has to be reverted. First, the 
+//      'restore' case is called to revert preferences to values saved when the window was opened.
+//       Second, the 'delete' case is called to remove all those option variables.
+//
+//      In any case, all temporary option variables are removed, and only 'cancel' case uses them 
+//      to revert to the status before opening the User Preference window.
+//
+global proc colorManagementPrefsHoldCurrentState(string $mode)
+{
+    if ($mode == "save")
+    {
+        optionVar -iv "colorManagementManagePotsHold" `colorManagementPrefs -q -colorManagePots`;
+
+        // In policy lock mode, the Color Mgt settings can not be changed so nothing should be saved
+        // in the temporary policy file
+        if (!colorManagementPolicyLocked())
+        {
+            optionVar -sv "colorManagementPolicyFileNameHold" `colorManagementPrefs -q -policyFileName`;
+            string $tmpPolicyFileName = `internalVar -userTmpDir` + "tempPolicy.xml";
+            colorManagementPrefs -exportPolicy $tmpPolicyFileName;
+        }
+    }
+    else if ($mode == "restore")
+    {
+        colorManagementPrefs -edit -colorManagePots `optionVar -q colorManagementManagePotsHold`;
+
+        // In policy lock mode, the Color Mgt settings must not be restored
+        if (!colorManagementPolicyLocked())
+        {
+            string $tmpPolicyFileName = `internalVar -userTmpDir` + "tempPolicy.xml";
+            if (`file -q -exists $tmpPolicyFileName`)
+            {
+                colorManagementPrefs -loadPolicy $tmpPolicyFileName;
+                colorManagementPrefs -e -policyFileName `optionVar -q colorManagementPolicyFileNameHold`;
+            }
+        }
+    }
+    else
+    {
+        optionVar -remove "colorManagementManagePotsHold";
+        optionVar -remove "colorManagementPolicyFileNameHold";
+
+        string $tmpPolicyFileName = `internalVar -userTmpDir` + "tempPolicy.xml";
+        sysFile -delete $tmpPolicyFileName;
+    }
+}
+
+// Define all color management utilities strings in one place
+//
+proc colorManagementStrings()
+{
+    string $placeholder;
+
+    // Title
+    //
+    $placeholder = (uiRes("m_colorManagementUtilities.kColorManagement"));
+
+    // Button labels
+    //
+    $placeholder = (uiRes("m_colorManagementUtilities.kOk"));
+    $placeholder = (uiRes("m_colorManagementUtilities.kYes"));
+    $placeholder = (uiRes("m_colorManagementUtilities.kNo"));
+    $placeholder = (uiRes("m_colorManagementUtilities.kProceed"));
+    $placeholder = (uiRes("m_colorManagementUtilities.kCancel"));
+    $placeholder = (uiRes("m_colorManagementUtilities.kDisable"));
+    $placeholder = (uiRes("m_colorManagementUtilities.kUpdate"));
+    $placeholder = (uiRes("m_colorManagementUtilities.kExport"));
+
+    // Enable native color management dialog
+    //
+    $placeholder = (uiRes("m_colorManagementUtilities.kEnableNativeColorMgt"));
+    
+    // Missing color spaces dialog and message box
+    //
+    $placeholder = (uiRes("m_colorManagementUtilities.kMissingColorSpacesSingleLine1"));
+
+    $placeholder = (uiRes("m_colorManagementUtilities.kMissingColorSpacesAllLine1"));
+
+    $placeholder = (uiRes("m_colorManagementUtilities.kMissingColorSpacesMultipleLine1"));
+
+    $placeholder = (uiRes("m_colorManagementUtilities.kMissingColorSpacesLine2Dialog"));
+
+    $placeholder = (uiRes("m_colorManagementUtilities.kMissingColorSpacesLine2MessageBox"));
+        
+    $placeholder = (uiRes("m_colorManagementUtilities.kNodeHasMissingColorSpaces"));
+
+    // Missing rendering space, view transform, and output space dialogs
+    //
+    $placeholder = (uiRes("m_colorManagementUtilities.kMissingRenderingSpace"));
+
+    $placeholder = (uiRes("m_colorManagementUtilities.kMissingViewTransform"));
+
+    $placeholder = (uiRes("m_colorManagementUtilities.kMissingOutputTransform"));
+
+    $placeholder = (uiRes("m_colorManagementUtilities.kUseDefaultValue"));
+
+    $placeholder = (uiRes("m_colorManagementUtilities.kMismatchHappens"));
+
+    // Custom transform strings.
+    $placeholder = (uiRes("m_colorManagementUtilities.kAddCustomTransform"));
+}
+
+// Helper function to retrieve the local UI resource based on its key.
+//
+proc string getUiRes(string $key)
+{
+    return uiRes("m_colorManagementUtilities." + $key);
+}
+
+// Display a color management dialog window with a confirm and a cancel buttons.
+// Return 1 if the confirm button has been selected, 0 otherwise.
+//
+proc int colorMgtConfirmDialog(string $message, string $confirm, string $cancel)
+{
+    string $colorManagementTitle = getUiRes("kColorManagement");
+
+    string $opt = `confirmDialog -title $colorManagementTitle -icon "warning" -message $message -button $confirm -button $cancel -defaultButton $confirm -cancelButton $cancel -dismissString $cancel`;
+
+    return ($opt == $confirm);
+}
+
+// Display a color management message window with a single "Ok" button.
+//
+proc colorMgtMessageBox(string $message)
+{
+    string $colorManagementTitle = getUiRes("kColorManagement");
+    string $ok = getUiRes("kOk");
+
+    confirmDialog -title $colorManagementTitle -icon "warning" -message $message -button $ok -defaultButton $ok;
+}
+
+// Display a dialog window asking whether to enable the native color management mode or not.
+// Return 1 if "Yes" has been selected, 0 otherwise.
+//
+proc int enableNativeColorMgtDialog()
+{
+    return colorMgtConfirmDialog(getUiRes("kEnableNativeColorMgt"), getUiRes("kYes"), getUiRes("kNo"));
+}
+
+// Get the informational message indicating missing color spaces have been detected.
+//
+proc string getMissingColorSpacesMessage(int $numMissingColorSpaces, int $numColorSpaces)
+{
+    if ($numMissingColorSpaces == 1)
+    {
+        return getUiRes("kMissingColorSpacesSingleLine1");
+    }
+    else if ($numMissingColorSpaces == $numColorSpaces)
+    {
+        return getUiRes("kMissingColorSpacesAllLine1");
+    }
+
+    string $format = getUiRes("kMissingColorSpacesMultipleLine1");
+    string $numMissingColorSpacesStr = (string)$numMissingColorSpaces;
+    return `format -s $numMissingColorSpacesStr $format`;
+}
+
+// Display a warning for every node missing a color space, indicating the node
+// name and the missing color space name.
+proc displayMissingColorSpacePerNodeWarning(string $missingColorSpaceNodes[])
+{
+    for($missingColorSpaceNode in $missingColorSpaceNodes)
+    {
+        string $colorSpaceAttr = $missingColorSpaceNode + ".colorSpace";
+        string $colorSpace = `getAttr $colorSpaceAttr`;
+
+        string $format = getUiRes("kNodeHasMissingColorSpaces");
+        string $msg = `format -s $colorSpace -s $missingColorSpaceNode $format`;
+
+        // A non-empty but missing color space may occur because of missing
+        // dependencies, so we inform the user with a warning.  An empty
+        // color space input is categorically invalid, and would warrant
+        // greater user attention, but the MEL error command halts
+        // execution, which is inappropriate, so we keep such a case as a
+        // plain warning.
+        warning $msg;
+    }
+}
+
+// Get the list of distinct color space names from a list of nodes
+//
+proc string[] getUniqueColorSpaces(string $nodes[])
+{
+    string $colorSpaces[] = {};
+    for($node in $nodes)
+    {
+        string $colorSpaceAttr = ($node + ".colorSpace");
+        string $colorSpace = `getAttr $colorSpaceAttr`;
+        if ( !stringArrayContains($colorSpace, $colorSpaces) )
+        {
+            stringArrayInsertAtIndex(0, $colorSpaces, $colorSpace);
+        }
+    }
+    return $colorSpaces;
+}
+
+// Check the missing color space nodes from IBL nodes in the scene
+//
+proc checkIBLMissingColorSpace(string $missingColorSpaceNodes[], string $colorManagedNodes[])
+{
+    //  check Ibl nodes
+    string $lst[] = `colorManagementPrefs -query -inputSpaceNames`;
+    string $iblNodes[] = `ls -type "mentalrayIblShape"`;
+
+    for($iblNode in $iblNodes)
+    {
+        string $cmEnabledAttr = $iblNode + ".colorManagementEnabled";
+        int $cmEnabled = `getAttr $cmEnabledAttr`;
+
+        if($cmEnabled)
+        {
+            $colorManagedNodes[size($colorManagedNodes)] = $iblNode;            
+
+            string $clrSpaceAttr = $iblNode + ".colorSpace";
+            string $clrSpace = `getAttr $clrSpaceAttr`;
+
+            if(!stringArrayContains($clrSpace, $lst))
+            {
+                $missingColorSpaceNodes[size($missingColorSpaceNodes)] = $iblNode;
+            }
+        }
+    }   
+}
+
+// Display a dialog window indicating that missing color spaces have been
+// detected, and asking whether to proceed or cancel.
+//
+// This procedure is ONLY called during configuration changes, NOT for file
+// open.  Configuration changes are done by
+// changeColorMgtPrefsConfigFileEnable() and
+// changeColorMgtPrefsConfigFilePath().
+//
+// Return 1 if "Proceed" has been selected, 0 otherwise.
+//
+proc int postMissingColorSpacesValidationDialog(string $missingColorSpaceNodes[], string $colorManagedNodes[])
+{
+    string $missingColorSpaces[] = getUniqueColorSpaces($missingColorSpaceNodes);
+    string $colorSpaces[] = getUniqueColorSpaces($colorManagedNodes);
+
+    int $numMissingColorSpaces = size($missingColorSpaces);
+    int $numColorSpaces = size($colorSpaces);
+
+    if ($numMissingColorSpaces > 0)
+    {
+        string $line1 = getMissingColorSpacesMessage($numMissingColorSpaces, $numColorSpaces);
+        string $line2 = getUiRes("kMissingColorSpacesLine2Dialog");
+        string $message = ($line1 + "\n\n" + $line2);
+
+        displayMissingColorSpacePerNodeWarning($missingColorSpaceNodes);
+
+        return colorMgtConfirmDialog($message, getUiRes("kProceed"), getUiRes("kCancel"));
+    }
+    return 1;
+}
+
+// Display a message window indicating that missing color spaces have been detected.
+//
+proc postMissingColorSpacesMessageBox(string $missingColorSpaceNodes[], string $colorManagedNodes[])
+{
+    string $missingColorSpaces[] = getUniqueColorSpaces($missingColorSpaceNodes);
+    string $colorSpaces[] = getUniqueColorSpaces($colorManagedNodes);
+
+    int $numMissingColorSpaces = size($missingColorSpaces);
+    int $numColorSpaces = size($colorSpaces);
+
+    if ($numMissingColorSpaces > 0)
+    {
+        string $line1 = getMissingColorSpacesMessage($numMissingColorSpaces, $numColorSpaces);
+        string $line2 = getUiRes("kMissingColorSpacesLine2MessageBox");
+        string $message = ($line1 + "\n\n" + $line2);
+
+        displayMissingColorSpacePerNodeWarning($missingColorSpaceNodes);
+
+        colorMgtMessageBox($message);
+    }
+}
+
+// Display a dialog window indicating that a transform is missing,
+// and asking whether to proceed or disable.
+// Return 1 if the transform is valid or if "Proceed" has been selected, or 
+// 0 otherwise.
+//
+proc int postTransformValidationDialog(
+    string $loadedTransformName,
+    string $transformNames[],
+    string $transformName,
+    string $format1
+)
+{
+    if ( !stringArrayContains($loadedTransformName, $transformNames) )
+    {
+        string $line1 = `format -s $loadedTransformName $format1`;
+
+        string $format2 = getUiRes("kUseDefaultValue");
+        string $line2 = `format -s $transformName $format2`;
+
+        string $message = ($line1 + "\n\n" + $line2);
+
+        if ( ! colorMgtConfirmDialog($message, getUiRes("kProceed"), getUiRes("kDisable")))
+        {
+            colorManagementPrefs -edit -cmEnabled off;
+            return 0;
+        }
+    }
+    return 1;
+}
+
+// Display a dialog window indicating that the rendering space is missing,
+// and asking whether to proceed or disable.
+// Return 1 if the rendering space is valid or if "Proceed" has been selected, or 0 otherwise.
+//
+proc int postMissingRenderingSpaceValidationDialog()
+{
+    string $loadedRenderingSpaceName = `colorManagementPrefs -query -loadedRenderingSpaceName`;
+    string $renderingSpaceNames[] = `colorManagementPrefs -query -renderingSpaceNames`;
+    string $renderingSpaceName = `colorManagementPrefs -query -renderingSpaceName`;
+    string $fmt = getUiRes("kMissingRenderingSpace");
+
+    return postTransformValidationDialog(
+        $loadedRenderingSpaceName, $renderingSpaceNames, $renderingSpaceName, $fmt
+    );
+}
+
+// Display a dialog window indicating that the view transform is missing,
+// and asking whether to proceed or disable.
+// Return 1 if the view transform is valid or if "Proceed" has been selected, or 0 otherwise.
+//
+proc int postMissingViewTransformValidationDialog()
+{
+    string $loadedViewTransformName = `colorManagementPrefs -query -loadedViewTransformName`;
+    string $viewTransformNames[] = `colorManagementPrefs -query -viewTransformNames`;
+    string $viewTransformName = `colorManagementPrefs -query -viewTransformName`;
+    string $fmt = getUiRes("kMissingViewTransform");
+
+    return postTransformValidationDialog(
+        $loadedViewTransformName, $viewTransformNames, $viewTransformName, $fmt
+    );
+}
+
+// Display a dialog window indicating that the output transform is missing,
+// and asking whether to proceed or disable.
+// Return 1 if the output transform is valid or if "Proceed" has been selected, or 0 otherwise.
+//
+proc int postMissingOutputTransformValidationDialog()
+{
+    string $loadedOutputTransformName = `colorManagementPrefs -query -loadedOutputTransformName`;
+    string $outputTransformNames[] = `colorManagementPrefs -query -outputTransformNames`;
+    string $outputTransformName = `colorManagementPrefs -query -outputTransformName`;
+    string $fmt = getUiRes("kMissingOutputTransform");
+
+    return postTransformValidationDialog(
+        $loadedOutputTransformName, $outputTransformNames, $outputTransformName,
+        $fmt);
+}
+
+//
+// Color management utilities globals procedures
+//
+
+global string $gColorMgtColorManagedNodes[] = {};
+global string $gColorMgtNodesMissingColorSpaces[] = {};
+
+// Save/store the current list of nodes missing color spaces
+//
+global proc preCheckColorManagement()
+{
+    global string $gColorMgtColorManagedNodes[];
+    global string $gColorMgtNodesMissingColorSpaces[];
+
+    $gColorMgtColorManagedNodes = `colorManagementPrefs -query -colorManagedNodes`;
+    $gColorMgtNodesMissingColorSpaces = `colorManagementPrefs -query -missingColorSpaceNodes`;
+}
+
+// Compare the current list of nodes with missing color spaces with the one previously
+// stored, and display a message box if there are new missing color spaces.
+//
+global proc checkColorManagementMissingColorSpaces()
+{
+    global string $gColorMgtColorManagedNodes[];
+    global string $gColorMgtNodesMissingColorSpaces[];
+
+    string $prevColorManagedNodes[] = $gColorMgtColorManagedNodes;
+    string $prevNodesMissingColorSpaces[] = $gColorMgtNodesMissingColorSpaces;
+
+    string $currColorManagedNodes[] = `colorManagementPrefs -query -colorManagedNodes`;
+    string $currNodesMissingColorSpaces[] = `colorManagementPrefs -query -missingColorSpaceNodes`;
+
+    string $newColorManagedNodes[] = stringArrayRemove($prevColorManagedNodes, $currColorManagedNodes);
+    string $newNodesMissingColorSpaces[] = stringArrayRemove($prevNodesMissingColorSpaces, $currNodesMissingColorSpaces);
+
+    postMissingColorSpacesMessageBox($newNodesMissingColorSpaces, $newColorManagedNodes);
+
+    $gColorMgtNodesMissingColorSpaces = {};
+}
+
+// Checks if all color management settings are valid.
+// Verifies if the rendering space, view transform, and default input space names
+// are valid, and if there are no missing color spaces in the color managed nodes.
+//
+global proc checkColorManagementAllSettings()
+{
+    if (postMissingRenderingSpaceValidationDialog())
+    {
+        if (postMissingViewTransformValidationDialog())
+        {
+            postMissingOutputTransformValidationDialog();
+        }
+    }
+
+    checkColorManagementMissingColorSpaces();
+}
+
+// Browse and select an OCIO config file using a file dialog
+//
+global proc string browseConfigFilePathDialog(string $currConfigFilePath)
+{
+    string $configFilters = 
+        "OCIO config (*.ocio);;" +
+        "All Files (*.*)";
+
+    string $selectedConfigPath[] = `fileDialog2 -fileMode 1 -fileFilter $configFilters -selectFileFilter "All Color Transforms" -dir $currConfigFilePath`;
+
+    // Avoid that a cancel operation end up clearing the current selection
+    return (size($selectedConfigPath[0]) == 0) ? $currConfigFilePath : $selectedConfigPath[0];
+}
+
+// Browse and select a user transform path using a file dialog
+//
+global proc string browseUserTransformPathDialog()
+{
+    string $currUserTransformPath = `colorManagementCatalog -queryUserTransformPath`;
+
+    string $selectedUserTransformPath[] = `fileDialog2 -fileMode 3 -dir $currUserTransformPath`;
+
+    // Avoid that a cancel operation end up clearing the current selection
+    return (size($selectedUserTransformPath[0]) == 0) ? $currUserTransformPath : $selectedUserTransformPath[0];
+}
+
+// Browse and select a policy file path using a file dialog
+//
+global proc string browsePolicyFilePathDialog(int $isImportDialog)
+{
+    int $mode = 0;
+    string $configFilters = "xml (*.xml);;All Files (*.*)";
+    string $captionLabel = "";
+    string $fileName = `optionVar -q colorManagementPolicyFileName`;
+    if( $fileName == "" )
+    {
+        $fileName = `internalVar -userPrefDir`;
+    }
+
+    if ($isImportDialog == 1)
+    {
+        $mode = 1;
+        $captionLabel = (uiRes("m_colorManagementUtilities.kImportPolicy"));
+    }
+    else
+    {
+        $mode = 0;
+        $captionLabel = (uiRes("m_colorManagementUtilities.kExportPolicy"));
+    }
+
+    string $fileNames[] = `fileDialog2 -fileMode $mode -fileFilter $configFilters -caption $captionLabel -startingDirectory $fileName`;
+    return $fileNames[0];
+}
+
+// Change the config file enabled in the color management preferences
+// and check whether there are missing color spaces or not.
+global proc changeColorMgtPrefsConfigFileEnable(int $configFileEnabled)
+{
+    int $previousConfigEnabled = `colorManagementPrefs -query -cmConfigFileEnabled`;
+
+    if ( ! catch(`colorManagementPrefs -edit -cmConfigFileEnabled $configFileEnabled`))
+    {
+        // Check if there are missing color spaces upon a successful mode switch
+        string $missingColorSpaceNodes[] = `colorManagementPrefs -query -missingColorSpaceNodes`;
+        string $colorManagedNodes[] = `colorManagementPrefs -query -colorManagedNodes`;
+
+        checkIBLMissingColorSpace($missingColorSpaceNodes, $colorManagedNodes);
+
+        if ( ! postMissingColorSpacesValidationDialog($missingColorSpaceNodes, $colorManagedNodes))
+        {
+            // If the user decided to cancel, revert to the previous selection
+            colorManagementPrefs -edit -cmConfigFileEnabled $previousConfigEnabled;
+        }
+    }
+}
+
+// Change the config file path in the color management preferences
+// and check whether there are missing color spaces or not. Keep
+// browsing a new config file until a valid config file is selected
+// or the user decide to use the Maya native color management.
+global proc changeColorMgtPrefsConfigFilePath(string $configPath)
+{
+    string $previousConfigPath = `colorManagementPrefs -query -configFilePath`;
+
+    // Keep browsing for an OCIO config file until a valid file is selected,
+    // or the user decided to enable the Maya native color management.
+    while ( 1 )
+    {
+        if (catch(`colorManagementPrefs -edit -configFilePath $configPath`))
+        {
+            if (enableNativeColorMgtDialog())
+            {
+                // If the user decided to enable the Maya native color management,
+                // just disable the config file flag and move on.
+                changeColorMgtPrefsConfigFileEnable(0);
+                break;
+            }
+            else
+            {
+                // Otherwise keep browsing for another config file 
+                //   but keep displaying the faulty one
+                $configPath = browseConfigFilePathDialog($configPath);
+            }
+        }
+        else
+        {
+            break;
+        }
+    }
+
+    // If the OCIO config file is disabled, there is no need to check for the
+    // missing color spaces. If the config file was disabled via the 
+    // enableNativeColorMgtDialog call, changeColorMgtPrefsConfigFileEnable will
+    // perform the validation.
+    if (`colorManagementPrefs -q -cmConfigFileEnabled`)
+    {
+        // Check if there are missing color spaces upon a successful mode switch
+        string $colorManagedNodes[] = `colorManagementPrefs -query -colorManagedNodes`;
+        string $missingColorSpaceNodes[] = `colorManagementPrefs -query -missingColorSpaceNodes`;
+        checkIBLMissingColorSpace($missingColorSpaceNodes, $colorManagedNodes);
+        if ( ! postMissingColorSpacesValidationDialog($missingColorSpaceNodes, $colorManagedNodes))
+        {
+            // If the user decided to cancel, revert to the previous config file path
+            colorManagementPrefs -edit -configFilePath $previousConfigPath;
+        }
+    }
+
+    updateColorMgtPrefsOptionMenus();
+    updateRenderViewTransformSelMenu();
+}
+
+// Change the user transform path in the color management preferences.
+global proc changeColorMgtPrefsUserTransformPath(string $userTransformPath)
+{
+    string $prevUserTransformPath = `colorManagementCatalog -queryUserTransformPath`;
+
+    if (catch(`colorManagementCatalog -editUserTransformPath $userTransformPath`))
+    {
+        // If the new directory is refused by the command, revert to the previous path
+        // in order to keep valid preferences.
+        colorManagementCatalog -editUserTransformPath $prevUserTransformPath;
+    }
+}
+
+// Update the items of an option menu and set its initial selection
+//
+global proc updateOptionMenu(string $menuName, string $values[], string $selection)
+{
+    if ( !`optionMenuGrp -query -exists $menuName`)
+    {
+       return;
+    }
+
+    string $currentParent = `setParent -query`;
+
+    string $menuParent = `optionMenuGrp -query -parent $menuName`;
+    string $menu = ($menuParent + "|" + $menuName);
+    string $optMenu = ($menu + "|OptionMenu");
+
+    setParent -menu $optMenu;
+
+    // Remove existing entries
+    string $menuItems[] = `optionMenu -query -itemListShort $optMenu`;
+    for( $menuItem in $menuItems )
+    {
+       deleteUI -menuItem $menuItem;
+    }
+
+    // Fill the option menu with the new values
+    for($value in $values)
+    {
+        menuItem -label $value;
+    }
+
+    // No TODO support in Maya 2015.
+    // 
+    // TODO("HACK", "Workaround for SynColor issues.", "MAYA-42344");
+	int $renderingSpaceMenu =
+        ($menuName == "colorManagementRenderingSpaceOptionMenu");
+
+	// User transform addition menu entry.  Not available in OCIO mode.
+    int $nativeMode = !`colorManagementPrefs -q -cmConfigFileEnabled`;
+    string $addTransform = getUiRes("kAddCustomTransform");
+    int $enableAddTransform = $nativeMode && !$renderingSpaceMenu;
+	menuItem -enable $enableAddTransform -label $addTransform;
+
+    // Set the initial selection
+    if ( stringArrayContains($selection, $values) )
+    {
+        optionMenuGrp -edit -value $selection $menu ;
+    }
+    else
+    {
+        optionMenuGrp -edit -select 1 $menu ;
+    }
+
+    // Enable transform settings control under menu parent only in native mode.
+    string $transformSettings = ($menuParent + "|transformSettings");
+    if (`control -exists $transformSettings`) {
+        int $nativeMode = !`colorManagementPrefs -q -cmConfigFileEnabled`;
+        control -edit -enable $nativeMode $transformSettings;
+    }
+
+    setParent $currentParent;
+}
+
+// Update the 'rendering space', 'view transform', and 'default input color space' option menus.
+//
+global proc updateColorMgtPrefsOptionMenus()
+{
+    // Update rendering space menu
+    //
+    string $renderingSpaceNames[] = `colorManagementPrefs -q -renderingSpaceNames`; 
+    string $renderingSpaceName = `colorManagementPrefs -q -renderingSpaceName`;
+
+    updateOptionMenu( "colorManagementRenderingSpaceOptionMenu", $renderingSpaceNames, $renderingSpaceName );
+
+    // Update view transform menu
+    //
+    string $viewTransformNames[] = `colorManagementPrefs -q -viewTransformNames`; 
+    string $viewTransformName = `colorManagementPrefs -q -viewTransformName`;
+
+    updateOptionMenu( "colorManagementViewTransformOptionMenu", $viewTransformNames, $viewTransformName );
+
+    // Update output transform menu.
+    updateOutputTransformOptionMenu("colorManagementOutputTransformOptionMenu", 0);
+    updateOutputTransformOptionMenu("colorManagementOutputTransformForPlayblastOptionMenu", 1);
+}
+
+
+//
+// Purpose: Set the render view view transform on menu change.
+//
+global proc onRVViewTransformMenuChange()
+{
+    string $vtn = `optionMenu -q -v renderViewViewTransformSelOptionMenu`;
+	string $renderPanels[] = `getPanel -scriptType "renderWindowPanel"`;
+	if (size($renderPanels) > 0) {
+		renderWindowEditor -e -viewTransformName $vtn $renderPanels[0];
+	}
+}
+
+// Respond to global color management global enable change.
+global proc onRVColorMgtEnableChange()
+{
+	string $renderPanels[] = `getPanel -scriptType "renderWindowPanel"`;
+    if (size($renderPanels) > 0 && size(`renderWindowEditor -q -parent $renderPanels[0]`) != 0)
+    { 
+        int $cmEnabled = `colorManagementPrefs -query -cmEnabled`;
+
+        control -edit -enable $cmEnabled "renderViewViewTransformSelOptionMenu";
+
+        symbolCheckBox -e -value $cmEnabled -enable $cmEnabled
+            "renderViewEnableButton";
+
+        renderWindowEditor -edit -cmEnabled $cmEnabled $renderPanels[0];
+    }
+}
+
+
+// view transform menu update implementation
+proc updateViewTransformSelMenu(string $menu)
+{
+    string $editorViewTransformName = `colorManagementPrefs -q -viewTransformName`;
+
+    // Update the UI if displayed only
+
+    if ( !`optionMenu -q -exists $menu`)
+    {
+       return;
+    }
+
+    string $currentParent = `setParent -q`;
+
+    string $wsParent = (`optionMenu -q -parent $menu` + "|" + $menu);
+
+    setParent -menu $wsParent;
+
+    // Remove existing entries
+    //
+    string $existingMenuItems[] = `optionMenu -q -itemListLong $menu`;
+    string $menuItem;
+    for( $menuItem in $existingMenuItems )
+    {
+       deleteUI -menuItem $menuItem;
+    }
+
+    // Add new entries
+    //
+    string $viewTransformNames[] = `colorManagementPrefs -q -viewTransformNames`; 
+    int $i, $numNames = size($viewTransformNames);
+
+    if($numNames > 0)
+    {
+      for($i = 0 ; $i < $numNames ; $i++)
+        {
+          menuItem -label $viewTransformNames[$i];
+        }
+
+      optionMenu -e -v $editorViewTransformName $menu;
+    }
+
+    setParent $currentParent;    
+}
+
+//
+// Purpose: Add items to the View Transform Menu in the Render View
+//
+global proc updateRenderViewTransformSelMenu()
+{
+    // Update the model
+
+    string $editorViewTransformName = `colorManagementPrefs -q -viewTransformName`;
+    string $renderPanels[] = `getPanel -scriptType "renderWindowPanel"`;
+    if (size($renderPanels) > 0) {
+        renderWindowEditor -e -viewTransformName $editorViewTransformName $renderPanels[0];
+    }
+
+    updateViewTransformSelMenu("renderViewViewTransformSelOptionMenu");
+}
+
+//
+//  Respond to global color management global enable change.
+//
+global proc onUVEditorColorMgtEnabledChanged()
+{
+    if (`control -exists uvEditorViewTransformSelOptionMenu`
+        && `control -exists uvEditorEnableButton`)
+    {
+        int $cmEnabled = `colorManagementPrefs -query -cmEnabled`;
+        control -edit -enable $cmEnabled "uvEditorViewTransformSelOptionMenu";
+        symbolCheckBox -edit -value $cmEnabled -enable $cmEnabled "uvEditorEnableButton";
+    }
+}
+
+//
+// Purpose: Set the UV Editor view transform on menu change.
+//
+global proc onUVEditorColorMgtViewTransformChanged()
+{
+    updateViewTransformSelMenu("uvEditorViewTransformSelOptionMenu");
+}
+
+// Parameter outputTransformTarget: 0 is the value for renderer.
+//                                  1 is the value for playblast.
+global proc updateOutputTransformOptionMenu(string $menuName, int $outputTransformTarget)
+{
+    string $outputTransformName;
+    string $menuEntries[] = `colorManagementPrefs -q -outputTransformNames`;
+
+    string $target = ($outputTransformTarget ? "playblast" : "renderer");
+    $outputTransformName = `colorManagementPrefs -q -outputTransformName -outputTarget $target`;
+
+    // Append special menu entry to turn on output use view transform mode.
+    $menuEntries[size($menuEntries)] = (uiRes("m_colorManagementUtilities.kOutputUseViewTransform"));
+
+    updateOptionMenu($menuName, $menuEntries, $outputTransformName);
+
+    // If output use view transform mode is on, select the last menu entry.
+    if (`colorManagementPrefs -q -outputUseViewTransform -outputTarget $target`)
+    {
+        if (`optionMenuGrp -query -exists $menuName`)
+        {
+            int $nbEntries = size($menuEntries);
+            optionMenuGrp -edit -select $nbEntries $menuName;
+        }
+    }
+}
+
+// scriptJob callback executed when the output transform or output enabled
+// has changed.
+// Parameter outputTransformTarget: 0 is the value for renderer.
+//                                  1 is the value for play blast.
+global proc onColorMgtOutputChanged(
+    string $outputTransformMenu,
+    string $outputEnableCheckBox,
+    int $outputTransformTarget
+)
+{
+    // Update output transform option menu.
+    updateOutputTransformOptionMenu($outputTransformMenu, $outputTransformTarget);
+
+    if (`control -exists $outputEnableCheckBox`)
+    {
+        string $target = ($outputTransformTarget ? "playblast" : "renderer");
+        int $outputEnabled = `colorManagementPrefs -q -outputTransformEnabled -outputTarget $target`;
+
+        // Update output transform enable.
+        checkBoxGrp -e -value1 $outputEnabled $outputEnableCheckBox;
+    }
+}
+
+// Change command callback for the color management output transform enabled
+// check box
+global proc onColorMgtOutputEnabledCheckBoxChange(string $outputEnableCheckBox, int $outputTransformTarget)
+{
+    int $outputEnabled = `checkBoxGrp -query -value1 $outputEnableCheckBox`;
+    string $target = ($outputTransformTarget ? "playblast" : "renderer");
+    colorManagementPrefs -edit -popupOnError true -outputTarget $target -outputTransformEnabled $outputEnabled;
+}
+
+// Change command callback for the output transform option menu
+// Parameter outputTransformTarget: 0 is the value for renderer.
+//                                  1 is the value for play blast.
+global proc onColorMgtOutputTransformOptionMenuChange(
+    string $outputTransformMenu,
+    int $outputTransformTarget
+)
+{
+    // Next to last entry is special, and sets use view transform mode.
+    int $selection = `optionMenuGrp -query -select $outputTransformMenu`;
+    if ($selection == `optionMenuGrp -query -numberOfItems 
+        $outputTransformMenu` - 1)
+    {
+        string $target = ($outputTransformTarget ? "playblast" : "renderer");
+        colorManagementPrefs -edit -popupOnError true -outputUseViewTransform -outputTarget $target;
+        return;
+    }
+
+    // Not the next to last entry, do normal processing.
+    string $flag = "outputTransformName";
+    if ($outputTransformTarget == 1)    // Play blast
+    {
+        $flag = "outputTarget \"playblast\" -outputTransformName";
+    }
+
+    onColorMgtTransformOptionMenuChange(
+        $outputTransformMenu,
+        "output",
+        ("updateOutputTransformOptionMenu " + $outputTransformMenu + " " + $outputTransformTarget ),
+        $flag
+    );
+}
+
+// Create the output transform option menu and enable check box in the
+// current parent control.
+// Parameter outputTransformTarget: 0 is the value for renderer.
+//                                  1 is the value for play blast.
+global proc createOutputTransformUI(
+    string $outputTransformMenu,
+    string $outputEnableCheckBox,
+    int $outputTransformTarget
+)
+{
+    string $checkBoxName;
+    int $outputEnabled;
+    if($outputTransformTarget == 1)
+    {
+        $checkBoxName = (uiRes("m_colorManagementUtilities.kOutputTransformEnableForPlayblast"));
+        $outputEnabled = `colorManagementPrefs -q -outputTransformEnabled -outputTarget playblast`;
+    }
+    else
+    {
+        $checkBoxName = (uiRes("m_colorManagementUtilities.kOutputTransformEnableForRenderer"));
+        $outputEnabled = `colorManagementPrefs -q -outputTransformEnabled -outputTarget renderer`;
+    } 
+
+    // Enable/disable application of output transform.
+    string $changeCb =
+        ("onColorMgtOutputEnabledCheckBoxChange " + $outputEnableCheckBox + " " + $outputTransformTarget);
+    checkBoxGrp
+        -numberOfCheckBoxes 1
+        -columnWidth2 20 300
+        -label ""
+        -label1 $checkBoxName
+        -value1 $outputEnabled
+        -changeCommand $changeCb
+        $outputEnableCheckBox;
+
+    // Output transform
+    string $layout = `formLayout`;
+
+    $changeCb = "onColorMgtOutputTransformOptionMenuChange " + $outputTransformMenu + " " + $outputTransformTarget;
+
+    optionMenuGrp
+        -label (uiRes("m_colorManagementUtilities.kOutputTransform"))
+        -changeCommand $changeCb
+        $outputTransformMenu;
+
+    // Populate and set the initial selection for the output transform
+    // option menu.
+    updateOutputTransformOptionMenu($outputTransformMenu, $outputTransformTarget);
+
+    string $outputTarget = $outputTransformTarget ? "playblast" : "renderer";
+    createColorUserTransformSettings("outputTransformName", "output", $outputTarget);
+
+    setParent -menu ..;
+
+    formLayout -edit
+        -attachForm    $outputTransformMenu "left" 0
+        -attachControl transformSettings    "left" 0 $outputTransformMenu
+        $layout;
+
+    setParent ..;
+
+    string $outputChangedCb =
+        ("onColorMgtOutputChanged " + $outputTransformMenu + " " + 
+         $outputEnableCheckBox + " " + $outputTransformTarget);
+
+    scriptJob -event "colorMgtOutputChanged" $outputChangedCb;
+    scriptJob -event "colorMgtPrefsReloaded" $outputChangedCb;
+}
+
+proc setControlsEnableState(string $cmControls[], int $enable)
+{
+    string $cmControl;
+    for ($cmControl in $cmControls)
+    {
+        if (`control -exists $cmControl`)
+        {
+            control -edit -enable $enable $cmControl;
+        }
+    }
+}
+
+global proc enableColorMgtControls(string $cmControls[])
+{
+    int $cmEnabled = `colorManagementPrefs -q -cmEnabled`;
+    setControlsEnableState($cmControls, $cmEnabled);
+}
+
+global proc disableColorMgtControls(string $cmControls[])
+{
+    setControlsEnableState($cmControls, 0);
+}
+
+// Display a dialog window indicating that mismatch happens.
+// Return the clicked button name.
+//
+proc string postPolicyMismatchDialog()
+{
+    string $colorManagementTitle = getUiRes("kColorManagement");
+    string $message = getUiRes("kMismatchHappens");
+    string $update = getUiRes("kUpdate");
+    string $export = getUiRes("kExport");
+    string $cancel = getUiRes("kCancel");
+
+    string $opt = `confirmDialog -title $colorManagementTitle -icon "warning" -message $message -button $update -button $export -button $cancel -defaultButton $update -cancelButton $cancel -dismissString $cancel`;
+
+    return $opt;
+}
+
+global proc int policyMismatch()
+{
+    string $policyFileName = `colorManagementPrefs -query -policyFileName`;
+    if ($policyFileName == "")
+    {
+        return 0;
+    }
+
+    // If file does not exists, it would not be regarded as a situation of mismatch according to 
+    // the design.
+    // 
+    int $exists = `file -q -exists $policyFileName`;
+    if (0 == $exists)
+    {
+        return 0;
+    }
+
+    int $equals = `colorManagementPrefs -query -equalsToPolicyFile $policyFileName`;
+    return $equals == 0;
+}
+
+// Purpose: Create a warning dialog asking user whether to upate the policy file
+// or export a new one.
+//
+// Return:
+//          Return 1: Update or export a new policy file.
+//          Return 0: Do nothing.
+//
+global proc int colorManagementPolicyMismatchAction()
+{
+    string $update = getUiRes("kUpdate");
+    string $export = getUiRes("kExport");
+    string $cancel = getUiRes("kCancel");
+    string $fileName = "";
+
+    string $opt = postPolicyMismatchDialog();
+
+    if ($opt == $update)
+    {
+        // When user confirms, overwrite current color management settings into the policy file
+        // and then save preference.
+        $fileName = `colorManagementPrefs -query -policyFileName`;
+        if (catch(`colorManagementPrefs -exportPolicy $fileName`))
+        {
+            // Error occurs.
+            return 0;
+        }
+
+        return 1;
+    }
+    else if ($opt == $export)
+    {
+        $fileName = browsePolicyFilePathDialog(0);
+        if ($fileName == "")
+        {
+            return 0;
+        }
+
+        if (catch(`colorManagementPrefs -exportPolicy $fileName`))
+        {
+            // Error occurs.
+            return 0;
+        }
+
+        if (catch(`colorManagementPrefs -edit -policyFileName $fileName`))
+        {
+            // Error occurs.
+            return 0;
+        }
+
+        return 1;
+    }
+    else
+    {
+        // When user cancels, do nothing but close the confirm dialog.
+        return 0;
+    }
+}
+
+

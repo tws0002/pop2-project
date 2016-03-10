@@ -1,0 +1,760 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// Script:    dynRelEditorPane.mel
+//
+// SYNOPSIS
+//		Creates a panel that contains a dynamics relationship editor.
+//
+
+global int $gDynRelEditorPaneScriptJob;
+
+global proc dynRelEditorPane(string $panelName) {
+
+	global string $gMainPane;
+
+	if (! `scriptedPanelType -exists dynRelEdPanel`) {
+		scriptedPanelType 
+			-createCallback "createDynREPanel"
+			-addCallback "addDynREPanel" 
+			-removeCallback "removeDynREPanel"
+			dynRelEdPanel;
+
+		setParent $gMainPane;
+		scriptedPanel -unParent -type "dynRelEdPanel" $panelName;			
+	}
+}
+
+global proc buildDynREContextHelpItems(string $nameRoot, string $menuParent)
+//
+//  Description:
+//		Build context sensitive menu items
+//		
+//  Input Arguments:
+//		$nameRoot - name to use as the root of all item names
+//		$menuParent - the name of the parent of this menu
+//
+//  Return Value:
+//      None
+//
+{
+	menuItem -label (uiRes("m_dynRelEditorPane.kHelpOnDynamicRelationships"))
+		-enableCommandRepeat false
+		-command "showHelp DynamicRelationship";
+}
+
+proc string getShape( string $obj )
+{
+	string $relatives[] = `listRelatives -path -shapes $obj`;
+	if( size($relatives) <= 0)
+		return "";
+	return $relatives[0];
+}
+
+proc string getTransform( string $obj )
+{
+	string $relatives[] = `listRelatives -path -parent $obj`;
+	if( size($relatives) != 1)
+		return "";
+	return $relatives[0];
+}
+
+global proc int nucleusSolverFilterScript( string $name )
+//
+// Description:
+//		Script filter for nucleus solver objects. Only display
+//		objects from selected solver.
+//
+{
+	string $selectedSolver = `textField -q -text solverMenuSelection`;
+	if( $selectedSolver ==  `uiRes("m_dynRelEditorPane.kAll")` )
+		return true;
+
+	string $type = `nodeType $name`;
+	string $solver = "";
+	if( $type == "transform" || $type == "mesh") {
+		string $nCloth = findTypeInHistory($name, "nCloth",($type == "mesh"),1);
+		if( $nCloth != "" ) {
+			$solver = findTypeInHistory($nCloth, "nucleus", 1, 0);
+		}
+	}
+	else {
+		$solver = findTypeInHistory($name, "nucleus", 1, 0);
+	}
+	return ($solver == "" || $solver == $selectedSolver);
+}
+
+global proc createDynREPanel(string $whichPanel)
+{
+    outlinerEditor
+		-unParent
+		-mainListConnection worldList
+		-selectionConnection modelList
+		-highlightActive true
+		($whichPanel+"dynRelOutlinerEditor");
+
+	//	Add support for the Context Sensitive Help Menu.
+	//
+	addContextHelpProc $whichPanel "buildDynREContextHelpItems";
+}
+
+global proc addDynREPanel( string $whichPanel ) 
+{
+	global string $gDynRelEditor;
+	
+	string $outlineEd = ($whichPanel+"dynRelOutlinerEditor");
+	$gDynRelEditor = ($whichPanel+"dynRelEditor");
+	string $outlineEdForm = ($whichPanel + "OutlineEdForm");
+	string $dynRelEdForm = ($whichPanel + "DynRelEdForm");
+
+	// Create the "Display" and "Show" menus
+	source "createOutlinerPanelMenu.mel";
+	createOutlinerDisplayMenu( $outlineEd , true);
+	filterUICreateMenu($outlineEd, `setParent -query`);
+
+	string $edParent = `paneLayout 	
+							-configuration "vertical2" 
+							-paneSize 1 35 100 dynREPaneLayout`;
+							
+	formLayout -parent $edParent $outlineEdForm;
+	outlinerEditor -e -parent $outlineEdForm $outlineEd;
+	
+	formLayout -parent $edParent $dynRelEdForm;
+	treeView -parent $dynRelEdForm -numberOfButtons 0 $gDynRelEditor;
+	treeView -edit -selectCommand "setDynamicConnection" $gDynRelEditor;
+	
+	string $buttonForm = `formLayout`;
+	string $buttonFormTitle = `text -label (uiRes("m_dynRelEditorPane.kSelectionModes"))`;
+	string $buttonRow = `rowLayout -numberOfColumns 4 -columnWidth4 75 75 75 75`;
+	radioCollection ($gDynRelEditor + "ButtonCollection");
+	string $fieldsButton = `radioButton -label (uiRes("m_dynRelEditorPane.kFields")) -onCommand "refreshDynRelEdConnections" ($gDynRelEditor + "FieldButton")`;
+	radioButton -label (uiRes("m_dynRelEditorPane.kCollisions")) -onCommand "refreshDynRelEdConnections" ($gDynRelEditor + "CollisionButton");
+	radioButton -label (uiRes("m_dynRelEditorPane.kEmitters")) -onCommand "refreshDynRelEdConnections" ($gDynRelEditor + "EmitterButton");
+	radioButton -label (uiRes("m_dynRelEditorPane.kAll")) -onCommand "refreshDynRelEdConnections" ($gDynRelEditor + "AllButton");
+	
+	setParent ..; // $buttonForm
+
+	string $buttonSeparator = `separator -style "single"`;
+
+	formLayout -edit
+	    -attachForm     $buttonFormTitle     "top"   0
+	    -attachForm     $buttonFormTitle     "left"  0
+	    -attachNone  	$buttonFormTitle     "bottom"
+	    -attachNone 	$buttonFormTitle     "right"
+
+	    -attachControl  $buttonRow     "top" 0 $buttonFormTitle
+	    -attachForm     $buttonRow     "left"   0
+	    -attachNone     $buttonRow     "bottom"
+	    -attachNone     $buttonRow     "right"
+		
+		-attachControl  $buttonSeparator "top" 0 $buttonRow
+	    -attachForm		$buttonSeparator "left"   0
+	    -attachNone  	$buttonSeparator "bottom"
+	    -attachForm     $buttonSeparator "right"  0
+	$buttonForm;
+
+	radioButton -edit -select $fieldsButton;
+
+	formLayout -edit
+		-attachForm     $buttonForm     "top"   0
+	    -attachForm     $buttonForm     "left"  0
+	    -attachNone  	$buttonForm     "bottom"
+	    -attachForm 	$buttonForm     "right" 0
+		
+		-attachControl  $gDynRelEditor     "top" 0 $buttonForm
+	    -attachForm     $gDynRelEditor     "left"   0
+	    -attachForm     $gDynRelEditor     "bottom" 0
+	    -attachForm     $gDynRelEditor     "right"  0
+	$dynRelEdForm;
+	
+	global int $gDynRelEditorPaneScriptJob;
+	$gDynRelEditorPaneScriptJob = `scriptJob -compressUndo true -event "SelectionChanged" ("refreshDynRelEdSelection")`;
+
+	// Create nucleus solver drop-down
+	string $solverMenu = `rowLayout -parent $outlineEdForm -numberOfColumns 3 -columnWidth3 35 100 10`;
+	text -label (uiRes("m_dynRelEditorPane.kSolver")) -align "left";
+	textField -editable false solverMenuSelection;
+	iconTextButton -style "iconOnly" -image "Tree_Expanded_Down.png";
+	
+	popupMenu -parent $solverMenu -button 1 -postMenuCommand ("refreshSolverMenu " + $outlineEd) solverMenuGrp;
+
+	// Create reg exp filter field
+	string $filterField = filterUICreateField($outlineEd, $outlineEdForm);
+	
+	// create attach nucleus solver filter
+	if( !`itemFilter -exists nucleusFilter`) {
+		itemFilter
+			-byScript nucleusSolverFilterScript
+			nucleusFilter;
+	}
+	
+	formLayout -e
+		-attachForm $solverMenu "left" 0
+		-attachForm $solverMenu "top" 0
+		-attachNone $solverMenu "right"
+
+		-attachControl $filterField "top" 0 $solverMenu
+		-attachForm $filterField "left" 0
+		-attachForm $filterField "right" 0
+
+		-attachControl $outlineEd "top" 0 $filterField
+		-attachForm $outlineEd "left" 0
+		-attachForm $outlineEd "right" 0
+		-attachForm $outlineEd "bottom" 0
+	$outlineEdForm;
+	
+	refreshNucleusSolverFilter($outlineEd, "All");
+	refreshDynRelEdSelection();
+}
+	
+global proc removeDynREPanel(string $whichPanel)
+{
+	global int $gDynRelEditorPaneScriptJob;
+	scriptJob -kill $gDynRelEditorPaneScriptJob;
+
+		outlinerEditor -e -unParent 
+			($whichPanel+"dynRelOutlinerEditor");
+}
+
+global proc refreshSolverMenu(string $outliner)
+//
+// Description:
+//		Updates the option menu of nucleus solvers
+//		before it is displayed.
+//
+{	
+	popupMenu -e -deleteAllItems solverMenuGrp;
+
+	menuItem -parent solverMenuGrp -label (uiRes("m_dynRelEditorPane.kAll")) -command ("refreshNucleusSolverFilter " + $outliner + " All") allMenuItem;
+	string $nucleus[] = `ls -type nucleus`;
+	for( $solver in $nucleus ) {
+		menuItem -parent solverMenuGrp -label $solver -command ("refreshNucleusSolverFilter " + $outliner + " " + $solver) ($solver+"MenuItem");
+	}
+}
+
+global proc refreshNucleusSolverFilter(string $outliner, string $menuItem)
+//
+// Description:
+//		Updates the filter on the outliner when the selected
+//		nucleus solver changes.
+//
+{
+	if($menuItem == "All") {
+		textField -e -text (uiRes("m_dynRelEditorPane.kAll")) solverMenuSelection;
+		// Turn off the solver filter since we don't need it here
+		outlinerEditor -e -filter "" $outliner;
+	} else {
+		textField -e -text $menuItem solverMenuSelection;
+		// Turn on the solver filter since we need it here
+		outlinerEditor -e -filter "nucleusFilter" $outliner;
+	}
+	
+	// Get the list of all solvers
+	string $nucleus[] = `ls -type nucleus`;
+	// Only update the filter if there is more than one solver
+	if(size($nucleus) > 1) {
+		outlinerEditor -e -updateMainConnection $outliner;
+	}
+}
+
+proc int dynObjHasEmitter(string $obj,string $emitter)
+{
+	// assume $obj is the xform of a fluidShape, nParticle or particle
+	// assume emitter is a pointEmitter or fluidEmitter (or a plugin emitter derived from one of these)
+	string $objects[] =`listConnections ($emitter + ".seed")`;
+	string $object;
+	for( $object in $objects ) {
+		if( $obj == $object )
+		return 1;
+	}
+	return 0;
+}
+
+proc int dynObjHasField(string $obj,string $field)
+{
+	// assume $obj is the xform of a fluidShape, hairSystemShape. nParticle, nCloth or particle
+	// or it's connected to a rigidBody
+	// assume $field is a field or a fluidShape
+	$objects =`listConnections ($field + ".outputForce")`;
+	string $object;
+	for( $object in $objects ) {
+		if( $obj == $object )
+		return 1;
+	}
+	string $rigids[] = `listConnections -shapes true -type rigidBody ($obj + ".worldMatrix")`;
+	string $rigid;
+	for ($rigid in $rigids) {
+		for( $object in $objects ) {
+			if( $rigid == $object )
+			return 1;
+		}
+	}
+	return 0;
+
+}
+
+proc int isRigidBody(string $obj)
+{
+	if($obj != "") {
+		string $children[] = `listRelatives -path $obj`;
+		for($child in $children) {
+			$type = `nodeType $child`;					
+			if($type == "rigidBody") {
+				return 1;
+			}
+		}
+	}
+	return 0;
+}
+
+proc string isNCloth(string $obj)
+{
+	if($obj != "") {
+		string $children[] = `listRelatives -path $obj`;
+		for($child in $children) {
+			$type = `nodeType $child`;					
+			if($type == "nCloth") {
+				string $attr = ".outputMesh";
+				string $relatives[] = `listConnections ($child+$attr)`;
+				if(size($relatives) > 0)
+					return $relatives[0];
+			}
+		}
+	}
+	return "";
+}
+
+proc displayDynRelEdConnections(string $obj, string $selectionMode)
+//
+// Description:
+//		Adds all the possible connections of the specified selection mode type that the specified
+//		object may have to the list, and highlight the actual connections.
+//
+{
+	global string $gDynRelEditor;
+	string $type;
+	
+	// Get the object type so we know what types of connections to display
+	if(`isRigidBody $obj` == 1) {
+		$type = "rigidBody";
+	} else {
+		string $shape = getShape($obj);
+		if($shape != "") {
+			$type = `nodeType $shape`;
+		}
+	}
+	
+	if($selectionMode == ($gDynRelEditor + "FieldButton") || $selectionMode == ($gDynRelEditor + "AllButton")) {
+		// Add all fields to the list of possible connections
+		string $allFields[] = getAllFields();
+		for($field in $allFields) {
+			// Save the dynamic object name and the collider name together to keep the item unique
+			string $itemName = ($obj + " " + $field);
+			treeView -edit -addItem $itemName $obj $gDynRelEditor;
+			treeView -edit -displayLabel $itemName $field $gDynRelEditor;
+			
+			// Don't check for field connections if the object can be a rigid body
+			// but isn't - we know it won't have any
+			if($type == "rigidBody" || ($type != "mesh" && $type != "nurbsSurface")) {
+				// Check if the object is connected to this field and highlight it if it is
+				if(`dynObjHasField $obj $field` == 1) {
+					treeView -edit -selectItem $itemName true $gDynRelEditor;
+				}
+			}
+		}
+	}
+	
+	// Don't display collisions for nParticles, nCloths, or anything that is or could be a rigid body
+	if(($selectionMode == ($gDynRelEditor + "CollisionButton") || $selectionMode == ($gDynRelEditor + "AllButton")) && $type != "nParticle" && $type != "nCloth" && $type != "rigidBody" && $type != "mesh" && $type != "nurbsSurface") {
+		// Get the list of all the geometries that the object is colliding with
+		string $allObjColliders[];
+		string $colQueryList[] = `collision -q $obj`;
+		// Parse out the unwanted collision index that was included with each collider name
+		for($colString in $colQueryList) {
+			string $buffer[];
+			tokenize $colString " " $buffer;
+			int $index = size($allObjColliders);
+			// The collider name is the first string in the buffer
+			stringArrayInsertAtIndex($index, $allObjColliders, $buffer[0]);
+		}
+		
+		// Add all colliders to the list of possible connections
+		string $allColliders[] = getAllColliders();
+		for($collider in $allColliders) {
+			// Save the dynamic object name and the collider name together to keep the item unique
+			string $itemName = ($obj + " " + $collider);
+			treeView -edit -addItem $itemName $obj $gDynRelEditor;
+			treeView -edit -displayLabel $itemName $collider $gDynRelEditor;
+			
+			// Check if the object is colliding with this collider and highlight it if it does
+			if(`stringArrayContains $collider $allObjColliders` == 1) {
+				treeView -edit -selectItem $itemName true $gDynRelEditor;
+			}
+		}
+	}
+	
+	// Don't display emitters for hairSystems, nCloths, or anything that is or could be a rigid body
+	if(($selectionMode == ($gDynRelEditor + "EmitterButton") || $selectionMode == ($gDynRelEditor + "AllButton")) && $type != "hairSystem" && $type != "nCloth" && $type != "rigidBody" && $type != "mesh" && $type != "nurbsSurface") {
+		// Add all emitters to the list of possible connections
+		string $allEmitters[] = getAllEmitters();
+		for($emitter in $allEmitters) {
+			// Save the dynamic object name and the collider name together to keep the item unique
+			string $itemName = ($obj + " " + $emitter);
+			treeView -edit -addItem $itemName $obj $gDynRelEditor;
+			treeView -edit -displayLabel $itemName $emitter $gDynRelEditor;
+			
+			// Check if the object is connected to this emitter and highlight it if it is
+			if(`dynObjHasEmitter $obj $emitter` == 1) {
+				treeView -edit -selectItem $itemName true $gDynRelEditor;
+			}
+		}
+	}
+}
+
+proc int addToDynRelEdList(string $obj)
+//
+// Description:
+//		Adds the specified object to the dynamic relationships editor
+//		list and displays its connections.
+//
+{
+	global string $gDynRelEditor;
+	
+	// Only add the object to the list if it's not already on the list 
+	// or it is just one of the possible connections for another object
+	if(`treeView -q -itemExists $obj $gDynRelEditor` == 0 || `treeView -q -itemParent $obj $gDynRelEditor` != "") {
+		string $mesh = `isNCloth $obj`;
+		treeView -edit -addItem $obj "" $gDynRelEditor;
+		if($mesh != "") {
+			string $itemLabel = ($obj + " (" + $mesh + ")");
+			treeView -edit -displayLabel $obj $itemLabel $gDynRelEditor;
+		}
+		string $selectionMode = `radioCollection -q -select ($gDynRelEditor + "ButtonCollection")`;
+		displayDynRelEdConnections($obj, $selectionMode);
+		return 1;
+	}
+	return 0;
+}
+
+proc int handleNClothOrNRigid(string $obj)
+//
+// Description:
+//		Determine if the specified object is an nCloth or
+//		nRigid and determine the proper node to display it
+//		as on the right-hand side of the dynamic relationship
+//		editor
+//
+{
+	string $selectMe = "";
+
+	// find any associated nCloth/nRigid object
+	string $nObject = findTypeInHistory($obj, "nBase", 1, 1);
+	if( $nObject == "")
+		return 0;
+
+	// while nParticles do have meshes associated with them they dont need to be processed here
+	if(`nodeType $nObject` == "nParticle" ) {
+		return 0;
+	}
+
+	string $relatives[];
+	if(`nodeType $nObject` == "nCloth") {
+		// If this is an nCloth, select the nCloth object
+		$selectMe = getTransform($nObject);
+	} else if(`nodeType $nObject` == "nRigid") {
+		// If this is an nRigid, select the associated mesh
+		string $attr = ".inputMesh";
+		string $relatives[] = `listConnections ($nObject+$attr)`;
+		if(size($relatives) == 1)
+			$selectMe = $relatives[0];
+	}
+
+	if( $selectMe != "" ) {
+		int $added = `addToDynRelEdList $selectMe`;
+		return $added;
+	}
+	
+	return 0;
+}
+
+proc int handleSoftBody(string $obj)
+//
+// Description:
+//		Determine if the specified object is a soft body
+//		and find the soft body particle to display it as
+//		on the right-hand side of the dynamic relationship
+//		editor
+//
+{
+	if(`soft -q $obj` == 1) {
+		// If the object is a soft body, find and display connections
+		// for the soft body particle
+		string $children[] = `listRelatives -path $obj`;
+		for($child in $children)
+		{
+			$type = `nodeType $child`;
+			if($type == "transform") {
+				string $softBodyChildren[] = `listRelatives -path $child`;
+				for($softBodyChild in $softBodyChildren) {
+					$type = `nodeType $softBodyChild`;
+					if($type == "particle") {
+						int $added = `addToDynRelEdList $child`;
+						return $added;
+					}
+				}
+			}
+		}
+	}
+	
+	return 0;
+}
+
+global proc refreshDynRelEdSelection()
+//
+// Description:
+//		Updates the dynamic relationships editor when the selection in the
+//		outliner changes.
+//
+{
+	global string $gDynRelEditor;
+	
+	treeView -e -removeAll $gDynRelEditor;
+
+	string $selectedList[] = `ls -selection`;
+	for( $obj in $selectedList ) 
+	{
+		string $type = `nodeType $obj`;
+		if($type == "transform") {
+			// First, check if we're dealing with a particle, nParticle, fluid, or hair system
+			int $found = 0;
+			string $children[] = `listRelatives -path $obj`;
+			for($child in $children)
+			{
+				$type = `nodeType $child`;					
+				if($type == "particle" || $type == "fluidShape" || $type == "hairSystem" || $type == "nParticle" || $type == "rigidBody") {
+					addToDynRelEdList($obj);
+					$found = 1;
+					break;
+				}
+			}
+			if(!$found) {
+				// Then check if we're dealing with a nCloth/nRigid object and handle it if we are
+				if(`handleNClothOrNRigid $obj` == 0) { 
+					// Then check if we're dealing with a soft body and handle it if we are
+					if(`handleSoftBody $obj` == 0) {
+						// Finally, check if the object can be a rigid body (i.e. is a mesh or nurbs surface) or actually is one
+						for($child in $children)
+						{
+							$type = `nodeType $child`;
+							if($type == "mesh" || $type == "nurbsSurface") {
+								// Only display if auto-create rigid bodies is set and the object's parent is not a rigid body
+								string $parent = getTransform($obj);
+								if(`dynPref -q -autoCreate` == 1 && `isRigidBody $parent` == 0) {
+									addToDynRelEdList($obj);
+									break;
+								}
+							}
+						}	
+					}
+				}
+			}
+		}
+	}
+}
+
+global proc refreshDynRelEdConnections()
+//
+// Description:
+//		Updates the dynamic relationships editor when the selection mode
+//		(i.e. Field, Collisions, Emitters, or All) changes.
+//
+{
+	global string $gDynRelEditor;
+	
+	// Keep track of all the currently displayed objects
+	string $allTreeItems[] = `treeView -q -children "" $gDynRelEditor`;
+	string $allParents[];
+	
+	for($item in $allTreeItems) {
+		if(`treeView -q -itemParent $item $gDynRelEditor` == "") {
+			int $insertIndex = size($allParents);
+			stringArrayInsertAtIndex($insertIndex, $allParents, $item);
+		}
+	}
+	
+	// Clear the connections list
+	treeView -e -removeAll $gDynRelEditor;
+	
+	// Re-insert all the objects and display the appropriate connections
+	for($parent in $allParents) {
+		addToDynRelEdList($parent);
+	}
+}
+
+global proc int setDynamicConnection(string $itemName, int $clickedState)
+//
+// Description:
+//		The callback that is called on currently and newly selected items
+//		in the tree view when any item is clicked. Establishes and deletes
+//		connections	between specific dynamic objects and fields/colliders/
+//		emitters as necessary.
+//
+{
+	global string $gDynRelEditor;
+	global string $gCurrDynConnections[];
+	
+	// If clickedState is equal to 1, we know that this item has not
+	// yet been selected (i.e. it is currently not connected to the 
+	// dynamic object it is listed under)
+	if($clickedState) {
+		// Only treeView items that are in the list of possible
+		// connections to an object are processed (i.e. no root nodes)
+		if(`treeView -q -itemParent $itemName $gDynRelEditor` != "") {
+			// Separate the dynamic object name from the field/collider/emitter name
+			string $buffer[];
+			tokenize $itemName " " $buffer;
+			string $obj = $buffer[0];
+			string $item = $buffer[1];
+			
+			// Determine whether the item is a field, collider, or emitter
+			string $type = `nodeType $item`;
+			if(`endsWith $type "Field"` == 1 || $type == "fluidShape") {
+				$type = "field";
+			} else if(`endsWith $type "Emitter"` == 1) {
+				$type = "emitter";
+			} else {
+				// If not a field or emitter, just assume it's a collider
+				$type = "collision";
+			}
+			
+			// If there is no connection, we want to create one
+			if($type == "field") {
+				connectDynamic -fields $item $obj;
+			} else if($type == "emitter") {
+				connectDynamic -emitters $item $obj;
+			} else {
+				connectDynamic -collisions $item $obj;
+			}
+			
+			// Clicking on a newly selected item will still trigger 
+			// an attempted deselect of currently selected items, so
+			// clear the list that gets created in the search for the
+			// user-selected item (see details below)
+			clear $gCurrDynConnections;
+			
+			// A callback return of 1 here will cause the item to
+			// be selected in the tree view
+			return 1;
+		} else {
+			// Clicking on a root node will still trigger an 
+			// attempted deselect of currently selected items, 
+			// so clear the list that gets created in the search 
+			// for the user-selected item (see details below)
+			clear $gCurrDynConnections;
+			
+			// A callback return of 0 here will prevent the item
+			// from being selected in the tree view
+			return 0;
+		}
+	} else {
+		// If clickedState is equal to 0, we know that the item is
+		// currently selected (i.e. it is connected to the dynamic object),
+		// so we have to find out if the user specifically clicked on this
+		// item, since that means the connection between the object and this
+		// item is to be deleted. We do this by keeping track of all the items
+		// that come through this path (as the tree view attempts to deselect
+		// all currently selected items). If an item is repeated, that is the one
+		// that the user selected.
+		if(`stringArrayContains $itemName $gCurrDynConnections` == 1) {
+			// Separate the dynamic object name from the field/collider/emitter name
+			string $buffer[];
+			tokenize $itemName " " $buffer;
+			string $obj = $buffer[0];
+			string $item = $buffer[1];
+			
+			// Determine whether the item is a field, collider, or emitter
+			string $type = `nodeType $item`;
+			if(`endsWith $type "Field"` == 1 || $type == "fluidShape") {
+				$type = "field";
+			} else if(`endsWith $type "Emitter"` == 1) {
+				$type = "emitter";
+			} else {
+				// If not a field or emitter, just assume it's a collider
+				$type = "collision";
+			}
+			
+			// If there is a connection, we want to delete it
+			if($type == "field") {
+				connectDynamic -delete -fields $item $obj;
+			} else if($type == "emitter") {
+				connectDynamic -delete -emitters $item $obj;
+			} else {
+				connectDynamic -delete -collisions $item $obj;
+			}
+			
+			// We found the user-selected item, so clear the list
+			clear $gCurrDynConnections;
+			
+			// A callback return of 1 here will cause the item to
+			// be deselected in the tree view
+			return 1;
+		} else {
+			// Add this item to the tracking list
+			stringArrayInsertAtIndex(size($gCurrDynConnections), $gCurrDynConnections, $itemName);
+			
+			// A callback return of 0 here will prevent the item
+			// from being deselected in the tree view
+			return 0;
+		}
+	}
+}
+
+global proc string[] getAllFields()
+{
+	string $fields[] = `ls -type field`;
+	string $fluids[] = `ls -type fluidShape`; 
+	string $fluid;
+	for ($fluid in $fluids) {
+		$fields[size($fields)] = $fluid;
+	}	
+	return $fields;
+}
+
+global proc string[] getAllEmitters()
+{
+	string $emitters[] = `ls -type pointEmitter`;
+	return $emitters;
+}
+
+global proc string[] getAllColliders()
+{
+	string $connectors[] = `ls -type geoConnector`;
+	string $connector;
+	string $colliders[];
+	for ($connector in $connectors) {
+		string $geom[] = `listConnections -shapes true ($connector + ".owner")`;
+		if(size($geom) > 0) {
+			$colliders[size($colliders)] = $geom[0];
+		}
+	}	
+	return $colliders;	
+}

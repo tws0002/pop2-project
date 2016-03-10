@@ -1,0 +1,1784 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  22 Aug 2000
+//
+//  Description:
+//		This script creates the Toolbox.
+//
+
+global proc buildConfigurationPopupMenu(string $menu)
+//
+//	Description:
+//		Create the menu items of pane layout configurations.
+//
+//	Arguments:
+//		parent - The parent control for the popup menu.
+//
+{
+	setParent -m $menu;
+
+	if( `menu -q -ni $menu` > 0 ) {
+		return;
+	}
+
+	menuItem -label (localizedPanelLabel("Single Pane"))
+		-annotation (getRunTimeCommandAnnotation("SingleViewArrangement"))
+		-command ("SingleViewArrangement");
+
+	menuItem -label (localizedPanelLabel("Two Panes Side by Side"))
+		-annotation (getRunTimeCommandAnnotation("TwoSideBySideViewArrangement"))
+		-command ("TwoSideBySideViewArrangement");
+
+	menuItem -label (localizedPanelLabel("Two Panes Stacked"))
+		-annotation (getRunTimeCommandAnnotation("TwoStackedViewArrangement"))
+		-command ("TwoStackedViewArrangement");
+
+	menuItem -label (localizedPanelLabel("Three Panes Split Top"))
+		-annotation (getRunTimeCommandAnnotation("ThreeTopSplitViewArrangement"))
+		-command ("ThreeTopSplitViewArrangement");
+
+	menuItem -label (localizedPanelLabel("Three Panes Split Left"))
+		-annotation (getRunTimeCommandAnnotation("ThreeLeftSplitViewArrangement"))
+		-command ("ThreeLeftSplitViewArrangement");
+
+	menuItem -label (localizedPanelLabel("Three Panes Split Bottom"))
+		-annotation (getRunTimeCommandAnnotation("ThreeBottomSplitViewArrangement"))
+		-command ("ThreeBottomSplitViewArrangement");
+
+	menuItem -label (localizedPanelLabel("Three Panes Split Right"))
+		-annotation (getRunTimeCommandAnnotation("ThreeRightSplitViewArrangement"))
+		-command ("ThreeRightSplitViewArrangement");
+
+	menuItem -label (localizedPanelLabel("Four Panes"))
+		-annotation (getRunTimeCommandAnnotation("FourViewArrangement"))
+		-command ("FourViewArrangement");
+
+	//	Add an item for saving the current layout.
+	//
+	menuItem -divider true;
+	
+	menuItem -label (uiRes("m_toolbox.kSaveCurrentLayout")) -command ("toolboxSaveCurrentLayout");
+}
+
+proc createConfigurationPopupMenu(string $parent)
+//
+//	Description:
+//		Create a popup menu containing pane layout configurations.
+//
+//	Arguments:
+//		parent - The parent control for the popup menu.
+//
+{
+	//
+	//	Add popup menu containing names of panel configurations.
+	//
+	string $menu = `popupMenu -parent $parent -button 3`; 
+	popupMenu -e -postMenuCommand ("buildConfigurationPopupMenu(\"" + $menu + "\")") -postMenuCommandOnce true $menu;
+}
+
+proc string getQuickButtonImage(string $label)
+//
+//	Description:
+//		Return the image associated with the specified configuration label.
+//
+//	Arguments:
+//		$label - The panel configuration label.
+//
+//	Returns:
+//		The image associated with the panel configuration. May return an empty
+//		string.
+//
+{
+	string $result = "", $panelConfiguration;
+	
+	$panelConfiguration = `getPanel -configWithLabel $label`;
+	
+	if ("" != $panelConfiguration) {
+		$result = `panelConfiguration -query -image $panelConfiguration`;
+		if ("" == $result) {
+			$result = `panelConfiguration -query -defaultImage $panelConfiguration`;
+		}
+	}
+
+	return $result;	
+}
+
+proc setQuickButtonImage(string $label, string $image)
+//
+//	Description:
+//		Set the image for the panel configuration specified by the label
+//		argument.
+//
+//		If the image argument is an empty string then the panel configuration
+//		will revert to using the default image.
+//
+//	Arguments:
+//		$label - The panel configuration label.
+//
+//		$image - The new image.
+//
+{
+	string $panelConfiguration, $defaultImage;
+
+	$panelConfiguration = `getPanel -configWithLabel $label`;
+
+	if ("" != $panelConfiguration) {
+		$defaultImage = `panelConfiguration -query -defaultImage $panelConfiguration`;
+		if ($image == $defaultImage) {
+			$image = "";
+		}
+		panelConfiguration -edit -image $image $panelConfiguration;
+
+	} else {
+		string $error = (uiRes("m_toolbox.kPanelConfigError"));
+		error (`format -s $label $error`);
+	}
+}
+
+proc createToolbox(string $parent)
+//
+//	Description:
+//		Create the Toolbox.
+//
+//	Arguments:
+//		parent - The parent layout for the Panel Toolbox.
+//
+{
+	global string $gSelect;
+
+	global int    $kNumberOfQuickLayoutButtons = 6;
+
+	global int    $kQuickLayoutInfoArrayElementSize = 3;
+	global int    $kImageIndex      = 0;
+	global int    $kCommandIndex    = 1;
+	global int    $kAnnotationIndex = 2;
+
+	global int    $kContentFrameSize  = 16;
+
+	global string $gToolBox;
+	global string $gSelect;
+	global string $gLasso;
+	global string $gPaintSelect;
+	global string $gRotate;
+	global string $gScale;
+	global string $gNonSacredToolWidget;
+	global string $gCurrentSacredTool;
+	
+	global string $gQuickButtonArray[];
+
+	string $toolBox;
+
+	string $contentForm, $contentFrameArray[4], $contentDropArrow, $popupMenu;
+	string $savedLayoutsPopupMenu, $layout, $layoutArray[], $layoutName;
+	string $quickLayoutsForm , $quickLayoutsForm;
+	string $quickDropDownArray[];
+	int    $index;
+
+	int $iconSize = 36;		// Real size = 32x32, but with padding for down/hover = 36x36
+
+	// ----------------------------------------------------------------------
+	//
+	//	The tools, eg. Select, Move, Rotate, Scale, etc.
+	//	
+	setParent $parent;
+
+	$toolBox = `frameLayout
+		-borderVisible false
+		-marginWidth 2
+		-labelVisible  false
+		-collapse      false
+		-collapsable   false`;
+	
+	$gToolBox = `flowLayout -vertical`;
+
+	//	Get the tool collection.
+	//
+	if (!`toolCollection -exists toolCluster`) {
+		toolCollection -global true toolCluster;
+	}
+
+	//	Create the tool buttons.
+	//
+	toolButton
+		-doubleClickCommand  toolPropertyWindow 
+		-tool                $gSelect
+		-image1              "aselect.png"
+		-width $iconSize -height $iconSize
+		selectTool;
+	
+	toolButton
+		-doubleClickCommand  toolPropertyWindow 
+		-tool                $gLasso
+		-image1              "lassoSelect.png"
+		-width $iconSize -height $iconSize
+		lassoTool;
+	
+	toolButton
+		-doubleClickCommand  toolPropertyWindow 
+		-tool                $gPaintSelect
+		-image1              "artSelect.png"
+		-width $iconSize -height $iconSize
+		paintSelectTool;
+	
+   	toolButton
+		-doubleClickCommand  toolPropertyWindow
+		-tool                moveSuperContext
+		-image1              "move_M.png"
+		-width $iconSize -height $iconSize
+		moveTool;
+
+	toolButton
+		-doubleClickCommand  toolPropertyWindow
+		-tool                $gRotate 
+		-image1              "rotate_M.png"
+		-width $iconSize -height $iconSize
+		rotateTool;
+
+	toolButton
+		-doubleClickCommand  toolPropertyWindow
+		-tool                $gScale 
+		-image1              "scale_M.png"
+		-width $iconSize -height $iconSize
+		scaleTool;
+
+
+	$gNonSacredToolWidget = `toolButton
+		-doubleClickCommand toolPropertyWindow lastNonSacredTool`;
+
+	//	Select the current tool.
+	//
+	if (`toolButton -exists selectTool`) {
+		setToolTo $gSelect;
+		$gCurrentSacredTool = $gSelect;
+	}
+
+	separator -h 10 -w $iconSize -style "shelf" -hr true;
+	
+	// ----------------------------------------------------------------------
+	//
+	//	Create the panel control area.
+	//
+
+	// ----------------------------------------------------------------------
+	//
+	//	Quick layout access controls.
+	//
+	//	A group of controls that allows the user to quickly switch between
+	//	saved panel layouts.
+	//
+	//	There are a limited number of these quick access controls but each
+	//	can be set to show any saved layout.
+	//
+
+	for ($index = 0; $index < $kNumberOfQuickLayoutButtons; $index ++) {
+		$buttonName = "quickLayout" + $index;
+		$gQuickButtonArray[$index] = `iconTextButton
+			-image1 "vacantCell.png" -width $iconSize -height $iconSize $buttonName`;
+	}
+
+	//	Add popup menus to the quick layout buttons.
+	//
+	for ($index = 0; $index < $kNumberOfQuickLayoutButtons; $index ++) {
+		$popupMenu = `popupMenu -parent $gQuickButtonArray[$index] -button 3`; 
+		popupMenu -edit
+			-postMenuCommand ("toolboxCreateQuickLayoutPopupMenuItems " 
+				+ $popupMenu + " " + $index)
+			$popupMenu;
+	}
+
+	// ----------------------------------------------------------------------
+	//
+	//	Panel configuration and content.
+	//	
+	//	A group of controls that mirror the current panel
+	//	configuration in the main Maya window. By clicking on one of the
+	//	panel buttons the user will be presented with a popup menu of 
+	//	panel names. Selecting an item from the popup menu will show that
+	//	panel in the corresponding position in the main window.
+	//
+	
+	setParent $gToolBox;
+	
+	$contentForm = `formLayout ToolboxConfigurationForm`;
+
+	$contentFrameArray[0] = `tabLayout -tabsVisible false -borderStyle "full" 
+		-width $kContentFrameSize -height $kContentFrameSize ToolboxContentFrame0`;
+	string $contentButton1 = `iconTextStaticLabel -image1 "dropArrowSmall.png" -width 10 -height 8 panelContentButton1`;
+	setParent ..;
+
+	$contentFrameArray[1] = `tabLayout -tabsVisible false -borderStyle "full" 
+		-width $kContentFrameSize -height $kContentFrameSize ToolboxContentFrame1`;
+	string $contentButton2 = `iconTextStaticLabel -image1 "dropArrowSmall.png" -width 10 -height 8 panelContentButton2`;
+	setParent ..;
+
+	$contentFrameArray[2] = `tabLayout -tabsVisible false -borderStyle "full"
+		-width $kContentFrameSize -height $kContentFrameSize ToolboxContentFrame2`;
+	string $contentButton3 = `iconTextStaticLabel -image1 "dropArrowSmall.png" -width 10 -height 8 panelContentButton3`;
+
+	setParent ..;
+
+	$contentFrameArray[3] = `tabLayout -tabsVisible false -borderStyle "full" 
+		-width $kContentFrameSize -height $kContentFrameSize ToolboxContentFrame3`;
+	string $contentButton4 = `iconTextStaticLabel -image1 "dropArrowSmall.png" -width 10 -height 8 panelContentButton4`;
+	setParent ..;
+
+	//
+	//	Add popup menus containing names of panels to the panel content frames.
+	//
+	for ($index = 0; $index < size($contentFrameArray); $index++) {
+		$popupMenu = `popupMenu -parent $contentFrameArray[$index] -button 1`;
+		popupMenu -edit
+			-postMenuCommand ("toolboxCreatePanelContentPopupMenuItems " 
+				+ $popupMenu + " " + $index)
+			$popupMenu;
+	}
+
+	//	Create menu items for configuration popup menu.
+	//	If we create just one popup menu for the parent form,
+	//	the popup works but the special "right-click" cursor
+	//	does not necessarily show. So we assign a popup to the buttons.
+	//
+	createConfigurationPopupMenu($contentButton1);
+	createConfigurationPopupMenu($contentButton2);
+	createConfigurationPopupMenu($contentButton3);
+	createConfigurationPopupMenu($contentButton4);
+
+	setParent $parent;
+	
+	string $MayaNewsURL;
+	string $mayaIconButton;
+    int $iconSizeHeight = $iconSize;
+	$MayaNewsURL = (uiRes("m_toolbox.kMayaNewsURL"));
+	$mayaIconButton = `iconTextButton
+		-image1 "mayaIcon.png" -width $iconSize -height $iconSizeHeight
+		-command ("showHelp -absolute \"" + $MayaNewsURL + "\"") mayaWebButton`;
+	// ----------------------------------------------------------------------
+	//
+	//	Top level attachments.
+	//
+	formLayout -edit
+		-attachForm     	$toolBox            "top"    0
+		-attachForm     	$toolBox            "left"   0
+		-attachControl     	$toolBox            "bottom" 0 $mayaIconButton
+		-attachNone     	$toolBox            "right"
+
+		-attachNone $mayaIconButton "top"
+
+		-attachForm $mayaIconButton "left"	 1
+		-attachForm $mayaIconButton "right"	 1
+		-attachForm $mayaIconButton "bottom" 2 
+		$parent;
+
+	//
+	//	Get the quick layout button preferences. Create defaults if necessary.
+	//
+	if (!`optionVar -exists quickPanelButtonLayout`) {
+		optionVar
+			-stringValueAppend quickPanelButtonLayout (localizedPanelLabel("Single Perspective View"))
+			-stringValueAppend quickPanelButtonLayout (localizedPanelLabel("Four View"))
+			-stringValueAppend quickPanelButtonLayout (localizedPanelLabel("Persp/Outliner"))
+			-stringValueAppend quickPanelButtonLayout (localizedPanelLabel("Persp/Graph"));
+
+		optionVar
+			-stringValueAppend quickPanelButtonLayout (localizedPanelLabel("Hypershade/Persp"));
+
+		optionVar
+			-stringValueAppend quickPanelButtonLayout (localizedPanelLabel("Persp/Graph/Hypergraph"));			
+	}
+}
+
+proc updatePaneConfiguration(string $configuration)
+//
+//	Description:
+//		Update the configuration buttons. Given the configuration argument
+//		arrange the buttons so that they match the arrangement.
+//
+//	Arguments:
+//		configuration - A pane configuration. Valid values are the same as 
+//		                those accepted by the 'paneLayout -edit -configuration'
+//		                command.
+//
+//		                Values currently handled are:
+//
+//		                    single
+//		                    vertical2
+//		                    horizontal2
+//		                    top3
+//		                    left3
+//		                    bottom3
+//		                    right3
+//		                    quad
+//
+{
+	global int $kContentFrameSize;
+
+	if ("" == $configuration) {
+		string $errorDisplay = (uiRes("m_toolbox.kArgumentError"));
+		error -showLineNumber true ($errorDisplay);
+		return;
+	}
+
+	string $formLayout = "ToolboxConfigurationForm";
+
+	//	Reset the attachments before setting the correct ones. This fixes up a 
+	//	widget postion negotiation problem on Motif.
+	//
+	int $offset = 1;
+	formLayout -edit
+		-attachForm     ToolboxContentFrame0 "top"    0
+		-attachForm     ToolboxContentFrame0 "left"   $offset
+		-attachNone     ToolboxContentFrame0 "bottom"
+		-attachNone     ToolboxContentFrame0 "right"
+
+		-attachForm     ToolboxContentFrame1 "top"    0
+		-attachForm     ToolboxContentFrame1 "left"   $offset
+		-attachNone     ToolboxContentFrame1 "bottom"
+		-attachNone     ToolboxContentFrame1 "right"
+
+		-attachForm     ToolboxContentFrame2 "top"    0
+		-attachForm     ToolboxContentFrame2 "left"   $offset
+		-attachNone     ToolboxContentFrame2 "bottom"
+		-attachNone     ToolboxContentFrame2 "right"
+
+		-attachForm     ToolboxContentFrame3 "top"    0
+		-attachForm     ToolboxContentFrame3 "left"   $offset
+		-attachNone     ToolboxContentFrame3 "bottom"
+		-attachNone     ToolboxContentFrame3 "right"
+		$formLayout;
+
+	switch ($configuration) {
+		case "single":
+			tabLayout -edit -visible true  -width (2 * $kContentFrameSize) -height (2 * $kContentFrameSize) ToolboxContentFrame0;
+			tabLayout -edit -visible false ToolboxContentFrame1;
+			tabLayout -edit -visible false ToolboxContentFrame2;
+			tabLayout -edit -visible false ToolboxContentFrame3;
+			formLayout -edit
+				-attachForm     ToolboxContentFrame0 "top"    0
+				-attachForm     ToolboxContentFrame0 "left"   $offset
+				-attachNone     ToolboxContentFrame0 "bottom"
+				-attachNone     ToolboxContentFrame0 "right"
+
+				-attachNone     ToolboxContentFrame1 "top"
+				-attachNone     ToolboxContentFrame1 "left"
+				-attachNone     ToolboxContentFrame1 "bottom"
+				-attachNone     ToolboxContentFrame1 "right"
+
+				-attachNone     ToolboxContentFrame2 "top"
+				-attachNone     ToolboxContentFrame2 "left"
+				-attachNone     ToolboxContentFrame2 "bottom"
+				-attachNone     ToolboxContentFrame2 "right"
+
+				-attachNone     ToolboxContentFrame3 "top"
+				-attachNone     ToolboxContentFrame3 "left"
+				-attachNone     ToolboxContentFrame3 "bottom"
+				-attachNone     ToolboxContentFrame3 "right"
+				$formLayout; 
+			break;
+
+		case "vertical2":
+			tabLayout -edit -visible true  -width $kContentFrameSize -height (2 * $kContentFrameSize) ToolboxContentFrame0;
+			tabLayout -edit -visible true  -width $kContentFrameSize -height (2 * $kContentFrameSize) ToolboxContentFrame1;
+			tabLayout -edit -visible false ToolboxContentFrame2;
+			tabLayout -edit -visible false ToolboxContentFrame3;
+			formLayout -edit
+				-attachForm     ToolboxContentFrame0 "top"    0
+				-attachForm     ToolboxContentFrame0 "left"   $offset
+				-attachNone     ToolboxContentFrame0 "bottom"
+				-attachNone     ToolboxContentFrame0 "right"
+
+				-attachForm     ToolboxContentFrame1 "top"    0
+				-attachForm     ToolboxContentFrame1 "left"   ($offset + $kContentFrameSize)
+				-attachNone     ToolboxContentFrame1 "bottom"
+				-attachNone     ToolboxContentFrame1 "right"
+
+				-attachNone     ToolboxContentFrame2 "top"
+				-attachNone     ToolboxContentFrame2 "left"
+				-attachNone     ToolboxContentFrame2 "bottom"
+				-attachNone     ToolboxContentFrame2 "right"
+
+				-attachNone     ToolboxContentFrame3 "top"
+				-attachNone     ToolboxContentFrame3 "left"
+				-attachNone     ToolboxContentFrame3 "bottom"
+				-attachNone     ToolboxContentFrame3 "right"
+				$formLayout; 
+			break;
+
+		case "horizontal2":
+			tabLayout -edit -visible true  -width (2 * $kContentFrameSize) -height $kContentFrameSize ToolboxContentFrame0;
+			tabLayout -edit -visible true  -width (2 * $kContentFrameSize) -height $kContentFrameSize ToolboxContentFrame1;
+			tabLayout -edit -visible false ToolboxContentFrame2;
+			tabLayout -edit -visible false ToolboxContentFrame3;
+			formLayout -edit
+				-attachForm     ToolboxContentFrame0 "top"    0
+				-attachForm     ToolboxContentFrame0 "left"   $offset
+				-attachNone     ToolboxContentFrame0 "bottom"
+				-attachNone     ToolboxContentFrame0 "right"
+
+				-attachForm     ToolboxContentFrame1 "top"    $kContentFrameSize
+				-attachForm     ToolboxContentFrame1 "left"   $offset
+				-attachNone     ToolboxContentFrame1 "bottom"
+				-attachNone     ToolboxContentFrame1 "right"
+
+				-attachNone     ToolboxContentFrame2 "top"
+				-attachNone     ToolboxContentFrame2 "left"
+				-attachNone     ToolboxContentFrame2 "bottom"
+				-attachNone     ToolboxContentFrame2 "right"
+
+				-attachNone     ToolboxContentFrame3 "top"
+				-attachNone     ToolboxContentFrame3 "left"
+				-attachNone     ToolboxContentFrame3 "bottom"
+				-attachNone     ToolboxContentFrame3 "right"
+				$formLayout;
+			break;
+
+		case "top3":
+			tabLayout -edit -visible true  -width $kContentFrameSize -height $kContentFrameSize ToolboxContentFrame0;
+			tabLayout -edit -visible true  -width $kContentFrameSize -height $kContentFrameSize ToolboxContentFrame1;
+			tabLayout -edit -visible true  -width (2 * $kContentFrameSize) -height $kContentFrameSize ToolboxContentFrame2;
+			tabLayout -edit -visible false ToolboxContentFrame3;
+			formLayout -edit
+				-attachForm     ToolboxContentFrame0 "top"    0
+				-attachForm     ToolboxContentFrame0 "left"   $offset
+				-attachNone     ToolboxContentFrame0 "bottom"
+				-attachNone     ToolboxContentFrame0 "right"
+
+				-attachForm     ToolboxContentFrame1 "top"    0
+				-attachForm     ToolboxContentFrame1 "left"   ($offset + $kContentFrameSize)
+				-attachNone     ToolboxContentFrame1 "bottom"
+				-attachNone     ToolboxContentFrame1 "right"
+
+				-attachForm     ToolboxContentFrame2 "top"    $kContentFrameSize
+				-attachForm     ToolboxContentFrame2 "left"   $offset
+				-attachNone     ToolboxContentFrame2 "bottom"
+				-attachNone     ToolboxContentFrame2 "right"
+
+				-attachNone     ToolboxContentFrame3 "top"
+				-attachNone     ToolboxContentFrame3 "left"
+				-attachNone     ToolboxContentFrame3 "bottom"
+				-attachNone     ToolboxContentFrame3 "right"
+				$formLayout;
+			break;
+
+		case "left3": 
+			tabLayout -edit -visible true  -width $kContentFrameSize -height $kContentFrameSize ToolboxContentFrame0;
+			tabLayout -edit -visible true  -width $kContentFrameSize -height (2 * $kContentFrameSize) ToolboxContentFrame1;
+			tabLayout -edit -visible true  -width $kContentFrameSize -height $kContentFrameSize ToolboxContentFrame2;
+			tabLayout -edit -visible false ToolboxContentFrame3;
+			formLayout -edit
+				-attachForm     ToolboxContentFrame0 "top"    0
+				-attachForm     ToolboxContentFrame0 "left"   $offset
+				-attachNone     ToolboxContentFrame0 "bottom"
+				-attachNone     ToolboxContentFrame0 "right"
+
+				-attachForm     ToolboxContentFrame1 "top"    0
+				-attachForm     ToolboxContentFrame1 "left"   ($offset + $kContentFrameSize)
+				-attachNone     ToolboxContentFrame1 "bottom"
+				-attachNone     ToolboxContentFrame1 "right"
+
+				-attachForm     ToolboxContentFrame2 "top"    $kContentFrameSize
+				-attachForm     ToolboxContentFrame2 "left"   $offset
+				-attachNone     ToolboxContentFrame2 "bottom"
+				-attachNone     ToolboxContentFrame2 "right"
+
+				-attachNone     ToolboxContentFrame3 "top"
+				-attachNone     ToolboxContentFrame3 "left"
+				-attachNone     ToolboxContentFrame3 "bottom"
+				-attachNone     ToolboxContentFrame3 "right"
+				$formLayout;
+			break;
+
+		case "bottom3": 
+			tabLayout -edit -visible true  -width (2 * $kContentFrameSize) -height $kContentFrameSize ToolboxContentFrame0;
+			tabLayout -edit -visible true  -width $kContentFrameSize -height $kContentFrameSize ToolboxContentFrame1;
+			tabLayout -edit -visible true  -width $kContentFrameSize -height $kContentFrameSize ToolboxContentFrame2;
+			tabLayout -edit -visible false ToolboxContentFrame3;
+			formLayout -edit
+				-attachForm     ToolboxContentFrame0 "top"    0
+				-attachForm     ToolboxContentFrame0 "left"   $offset
+				-attachNone     ToolboxContentFrame0 "bottom"
+				-attachNone     ToolboxContentFrame0 "right"
+
+				-attachForm     ToolboxContentFrame1 "top"    $kContentFrameSize
+				-attachForm     ToolboxContentFrame1 "left"   ($offset + $kContentFrameSize)
+				-attachNone     ToolboxContentFrame1 "bottom"
+				-attachNone     ToolboxContentFrame1 "right"
+
+				-attachForm     ToolboxContentFrame2 "top"    $kContentFrameSize
+				-attachForm     ToolboxContentFrame2 "left"   $offset
+				-attachNone     ToolboxContentFrame2 "bottom"
+				-attachNone     ToolboxContentFrame2 "right"
+
+				-attachNone     ToolboxContentFrame3 "top"
+				-attachNone     ToolboxContentFrame3 "left"
+				-attachNone     ToolboxContentFrame3 "bottom"
+				-attachNone     ToolboxContentFrame3 "right"
+				$formLayout;
+			break;
+
+		case "right3": 
+			tabLayout -edit -visible true  -width $kContentFrameSize -height (2 * $kContentFrameSize) ToolboxContentFrame0;
+			tabLayout -edit -visible true  -width $kContentFrameSize -height $kContentFrameSize ToolboxContentFrame1;
+			tabLayout -edit -visible true  -width $kContentFrameSize -height $kContentFrameSize ToolboxContentFrame2;
+			tabLayout -edit -visible false ToolboxContentFrame3;
+			formLayout -edit
+				-attachForm     ToolboxContentFrame0 "top"    0
+				-attachForm     ToolboxContentFrame0 "left"   $offset
+				-attachNone     ToolboxContentFrame0 "bottom"
+				-attachNone     ToolboxContentFrame0 "right"
+
+				-attachForm     ToolboxContentFrame1 "top"    0
+				-attachForm     ToolboxContentFrame1 "left"   ($offset + $kContentFrameSize)
+				-attachNone     ToolboxContentFrame1 "bottom"
+				-attachNone     ToolboxContentFrame1 "right"
+
+				-attachForm     ToolboxContentFrame2 "top"    $kContentFrameSize
+				-attachForm     ToolboxContentFrame2 "left"   ($offset + $kContentFrameSize)
+				-attachNone     ToolboxContentFrame2 "bottom"
+				-attachNone     ToolboxContentFrame2 "right"
+
+				-attachNone     ToolboxContentFrame3 "top"
+				-attachNone     ToolboxContentFrame3 "left"
+				-attachNone     ToolboxContentFrame3 "bottom"
+				-attachNone     ToolboxContentFrame3 "right"
+				$formLayout;
+			break;
+
+		case "horizontal3":
+			tabLayout -edit -visible true
+				-width  (2 * $kContentFrameSize)
+				-height (2 * $kContentFrameSize / 3)
+				ToolboxContentFrame0;
+			tabLayout -edit -visible true
+				-width  (2 * $kContentFrameSize)
+				-height (2 * $kContentFrameSize / 3)
+				ToolboxContentFrame1;
+			tabLayout -edit -visible true
+				-width  (2 * $kContentFrameSize)
+				-height (2 * $kContentFrameSize / 3)
+				ToolboxContentFrame2;
+			tabLayout -edit -visible false ToolboxContentFrame3;
+
+			formLayout -edit
+				-attachForm     ToolboxContentFrame0 "top"    0
+				-attachForm     ToolboxContentFrame0 "left"   $offset
+				-attachNone     ToolboxContentFrame0 "bottom"
+				-attachNone     ToolboxContentFrame0 "right"
+
+				-attachForm     ToolboxContentFrame1 "top"    (2 * $kContentFrameSize / 3)
+				-attachForm     ToolboxContentFrame1 "left"   $offset
+				-attachNone     ToolboxContentFrame1 "bottom"
+				-attachNone     ToolboxContentFrame1 "right"
+
+				-attachForm     ToolboxContentFrame2 "top"    (4 * $kContentFrameSize / 3)
+				-attachForm     ToolboxContentFrame2 "left"   $offset
+				-attachNone     ToolboxContentFrame2 "bottom"
+				-attachNone     ToolboxContentFrame2 "right"
+
+				-attachNone     ToolboxContentFrame3 "top"
+				-attachNone     ToolboxContentFrame3 "left"
+				-attachNone     ToolboxContentFrame3 "bottom"
+				-attachNone     ToolboxContentFrame3 "right"
+				$formLayout;
+			break;
+
+		case "vertical3":
+			tabLayout -edit -visible true
+				-width (2 * $kContentFrameSize / 3)
+				-height ($kContentFrameSize * 2)
+				ToolboxContentFrame0;
+			tabLayout -edit -visible true
+				-width (2 * $kContentFrameSize / 3)
+				-height ($kContentFrameSize * 2)
+				ToolboxContentFrame1;
+			tabLayout -edit -visible true
+				-width (2 * $kContentFrameSize / 3)
+				-height ($kContentFrameSize * 2)
+				ToolboxContentFrame2;
+			tabLayout -edit -visible false ToolboxContentFrame3;
+
+			formLayout -edit
+				-attachForm     ToolboxContentFrame0 "top"    0
+				-attachForm     ToolboxContentFrame0 "left"   $offset
+				-attachNone     ToolboxContentFrame0 "bottom"
+				-attachNone     ToolboxContentFrame0 "right"
+
+				-attachForm     ToolboxContentFrame1 "top"    0
+				-attachForm     ToolboxContentFrame1 "left"   ($offset + 2 * $kContentFrameSize / 3)
+				-attachNone     ToolboxContentFrame1 "bottom"
+				-attachNone     ToolboxContentFrame1 "right"
+
+				-attachForm     ToolboxContentFrame2 "top"    0
+				-attachForm     ToolboxContentFrame2 "left"   ($offset + 4 * $kContentFrameSize / 3)
+				-attachNone     ToolboxContentFrame2 "bottom"
+				-attachNone     ToolboxContentFrame2 "right"
+
+				-attachNone     ToolboxContentFrame3 "top"
+				-attachNone     ToolboxContentFrame3 "left"
+				-attachNone     ToolboxContentFrame3 "bottom"
+				-attachNone     ToolboxContentFrame3 "right"
+				$formLayout;
+			break;
+
+		case "quad":
+			tabLayout -edit -visible true  -width $kContentFrameSize -height $kContentFrameSize ToolboxContentFrame0;
+			tabLayout -edit -visible true  -width $kContentFrameSize -height $kContentFrameSize ToolboxContentFrame1;
+			tabLayout -edit -visible true  -width $kContentFrameSize -height $kContentFrameSize ToolboxContentFrame2;
+			tabLayout -edit -visible true  -width $kContentFrameSize -height $kContentFrameSize ToolboxContentFrame3;
+			formLayout -edit
+				-attachForm     ToolboxContentFrame0 "top"    0
+				-attachForm     ToolboxContentFrame0 "left"   $offset
+				-attachNone     ToolboxContentFrame0 "bottom"
+				-attachNone     ToolboxContentFrame0 "right"
+
+				-attachForm     ToolboxContentFrame1 "top"    0
+				-attachForm     ToolboxContentFrame1 "left"   ($offset + $kContentFrameSize)
+				-attachNone     ToolboxContentFrame1 "bottom"
+				-attachNone     ToolboxContentFrame1 "right"
+
+				-attachForm     ToolboxContentFrame2 "top"    $kContentFrameSize
+				-attachForm     ToolboxContentFrame2 "left"   ($offset + $kContentFrameSize)
+				-attachNone     ToolboxContentFrame2 "bottom"
+				-attachNone     ToolboxContentFrame2 "right"
+
+				-attachForm     ToolboxContentFrame3 "top"    $kContentFrameSize
+				-attachForm     ToolboxContentFrame3 "left"   $offset
+				-attachNone     ToolboxContentFrame3 "bottom"
+				-attachNone     ToolboxContentFrame3 "right"
+				$formLayout;
+			break;
+
+		case "top4":
+			tabLayout -edit -visible true
+				-width (2 * $kContentFrameSize / 3)
+				-height $kContentFrameSize
+				ToolboxContentFrame0;
+			tabLayout -edit -visible true
+				-width (2 * $kContentFrameSize / 3)
+				-height $kContentFrameSize
+				ToolboxContentFrame1;
+			tabLayout -edit -visible true
+				-width (2 * $kContentFrameSize / 3)
+				-height $kContentFrameSize
+				ToolboxContentFrame2;
+			tabLayout -edit -visible true
+				-width (2 * $kContentFrameSize)
+				-height $kContentFrameSize
+				ToolboxContentFrame3;
+			formLayout -edit
+				-attachForm     ToolboxContentFrame0 "top"    0
+				-attachForm     ToolboxContentFrame0 "left"   $offset
+				-attachNone     ToolboxContentFrame0 "bottom"
+				-attachNone     ToolboxContentFrame0 "right"
+
+				-attachForm     ToolboxContentFrame1 "top"    0
+				-attachForm     ToolboxContentFrame1 "left"   ($offset + 2 * $kContentFrameSize / 3)
+				-attachNone     ToolboxContentFrame1 "bottom"
+				-attachNone     ToolboxContentFrame1 "right"
+
+				-attachForm     ToolboxContentFrame2 "top"    0
+				-attachForm     ToolboxContentFrame2 "left"   ($offset + 4 * $kContentFrameSize / 3)
+				-attachNone     ToolboxContentFrame2 "bottom"
+				-attachNone     ToolboxContentFrame2 "right"
+
+				-attachForm     ToolboxContentFrame3 "top"    $kContentFrameSize
+				-attachForm     ToolboxContentFrame3 "left"   $offset
+				-attachNone     ToolboxContentFrame3 "bottom"
+				-attachNone     ToolboxContentFrame3 "right"
+				$formLayout;
+			break;
+
+		case "left4":
+			tabLayout -edit -visible true
+				-width  $kContentFrameSize
+				-height (2 * $kContentFrameSize / 3)
+				ToolboxContentFrame0;
+			tabLayout -edit -visible true
+				-width  $kContentFrameSize
+				-height (2 * $kContentFrameSize)
+				ToolboxContentFrame1;
+			tabLayout -edit -visible true
+				-width  $kContentFrameSize
+				-height (2 * $kContentFrameSize / 3)
+				ToolboxContentFrame2;
+			tabLayout -edit -visible true
+				-width  $kContentFrameSize
+				-height (2 * $kContentFrameSize / 3)
+				ToolboxContentFrame3;
+			formLayout -edit
+				-attachForm     ToolboxContentFrame0 "top"    0
+				-attachForm     ToolboxContentFrame0 "left"   $offset
+				-attachNone     ToolboxContentFrame0 "bottom"
+				-attachNone     ToolboxContentFrame0 "right"
+
+				-attachForm     ToolboxContentFrame1 "top"    0
+				-attachForm     ToolboxContentFrame1 "left"   ($offset + $kContentFrameSize)
+				-attachNone     ToolboxContentFrame1 "bottom"
+				-attachNone     ToolboxContentFrame1 "right"
+
+				-attachForm     ToolboxContentFrame2 "top"    (4 * $kContentFrameSize / 3)
+				-attachForm     ToolboxContentFrame2 "left"   $offset
+				-attachNone     ToolboxContentFrame2 "bottom"
+				-attachNone     ToolboxContentFrame2 "right"
+
+				-attachForm     ToolboxContentFrame3 "top"    (2 * $kContentFrameSize / 3)
+				-attachForm     ToolboxContentFrame3 "left"   $offset
+				-attachNone     ToolboxContentFrame3 "bottom"
+				-attachNone     ToolboxContentFrame3 "right"
+				$formLayout;
+			break;
+
+		case "bottom4":
+			tabLayout -edit -visible true
+				-width (2 * $kContentFrameSize)
+				-height $kContentFrameSize
+				ToolboxContentFrame0;
+			tabLayout -edit -visible true
+				-width (2 * $kContentFrameSize / 3)
+				-height $kContentFrameSize
+				ToolboxContentFrame1;
+			tabLayout -edit -visible true
+				-width (2 * $kContentFrameSize / 3)
+				-height $kContentFrameSize
+				ToolboxContentFrame2;
+			tabLayout -edit -visible true
+				-width (2 * $kContentFrameSize / 3)
+				-height $kContentFrameSize
+				ToolboxContentFrame3;
+			formLayout -edit
+				-attachForm     ToolboxContentFrame0 "top"    0
+				-attachForm     ToolboxContentFrame0 "left"   $offset
+				-attachNone     ToolboxContentFrame0 "bottom"
+				-attachNone     ToolboxContentFrame0 "right"
+
+				-attachForm     ToolboxContentFrame1 "top"    $kContentFrameSize
+				-attachForm     ToolboxContentFrame1 "left"   ($offset + 4 * $kContentFrameSize / 3)
+				-attachNone     ToolboxContentFrame1 "bottom"
+				-attachNone     ToolboxContentFrame1 "right"
+
+				-attachForm     ToolboxContentFrame2 "top"    $kContentFrameSize
+				-attachForm     ToolboxContentFrame2 "left"   ($offset + 2 * $kContentFrameSize / 3)
+				-attachNone     ToolboxContentFrame2 "bottom"
+				-attachNone     ToolboxContentFrame2 "right"
+
+				-attachForm     ToolboxContentFrame3 "top"    $kContentFrameSize
+				-attachForm     ToolboxContentFrame3 "left"   $offset
+				-attachNone     ToolboxContentFrame3 "bottom"
+				-attachNone     ToolboxContentFrame3 "right"
+				$formLayout;
+			break;
+
+		case "right4":
+			tabLayout -edit -visible true
+				-width  $kContentFrameSize
+				-height (2 * $kContentFrameSize)
+				ToolboxContentFrame0;
+			tabLayout -edit -visible true
+				-width  $kContentFrameSize
+				-height (2 * $kContentFrameSize / 3)
+				ToolboxContentFrame1;
+			tabLayout -edit -visible true
+				-width  $kContentFrameSize
+				-height (2 * $kContentFrameSize / 3)
+				ToolboxContentFrame2;
+			tabLayout -edit -visible true
+				-width  $kContentFrameSize
+				-height (2 * $kContentFrameSize / 3)
+				ToolboxContentFrame3;
+			formLayout -edit
+				-attachForm     ToolboxContentFrame0 "top"    0
+				-attachForm     ToolboxContentFrame0 "left"   $offset
+				-attachNone     ToolboxContentFrame0 "bottom"
+				-attachNone     ToolboxContentFrame0 "right"
+
+				-attachForm     ToolboxContentFrame1 "top"    0
+				-attachForm     ToolboxContentFrame1 "left"   ($offset + $kContentFrameSize)
+				-attachNone     ToolboxContentFrame1 "bottom"
+				-attachNone     ToolboxContentFrame1 "right"
+
+				-attachForm     ToolboxContentFrame2 "top"    (2 * $kContentFrameSize / 3)
+				-attachForm     ToolboxContentFrame2 "left"   ($offset + $kContentFrameSize)
+				-attachNone     ToolboxContentFrame2 "bottom"
+				-attachNone     ToolboxContentFrame2 "right"
+
+				-attachForm     ToolboxContentFrame3 "top"    (4 * $kContentFrameSize / 3)
+				-attachForm     ToolboxContentFrame3 "left"   ($offset + $kContentFrameSize)
+				-attachNone     ToolboxContentFrame3 "bottom"
+				-attachNone     ToolboxContentFrame3 "right"
+				$formLayout;
+			break;
+
+		case "horizontal4":
+			tabLayout -edit -visible true
+				-width  (2 * $kContentFrameSize)
+				-height ($kContentFrameSize / 2)
+				ToolboxContentFrame0;
+			tabLayout -edit -visible true
+				-width  (2 * $kContentFrameSize)
+				-height ($kContentFrameSize / 2)
+				ToolboxContentFrame1;
+			tabLayout -edit -visible true
+				-width  (2 * $kContentFrameSize)
+				-height ($kContentFrameSize / 2)
+				ToolboxContentFrame2;
+			tabLayout -edit -visible true
+				-width  (2 * $kContentFrameSize)
+				-height ($kContentFrameSize / 2)
+				ToolboxContentFrame3;
+
+			formLayout -edit
+				-attachForm     ToolboxContentFrame0 "top"    0
+				-attachForm     ToolboxContentFrame0 "left"   $offset
+				-attachNone     ToolboxContentFrame0 "bottom"
+				-attachNone     ToolboxContentFrame0 "right"
+
+				-attachForm     ToolboxContentFrame1 "top"    ($kContentFrameSize / 2)
+				-attachForm     ToolboxContentFrame1 "left"   $offset
+				-attachNone     ToolboxContentFrame1 "bottom"
+				-attachNone     ToolboxContentFrame1 "right"
+
+				-attachForm     ToolboxContentFrame2 "top"    $kContentFrameSize
+				-attachForm     ToolboxContentFrame2 "left"   $offset
+				-attachNone     ToolboxContentFrame2 "bottom"
+				-attachNone     ToolboxContentFrame2 "right"
+
+				-attachForm     ToolboxContentFrame3 "top"    (3 * $kContentFrameSize / 2)
+				-attachForm     ToolboxContentFrame3 "left"   $offset
+				-attachNone     ToolboxContentFrame3 "bottom"
+				-attachNone     ToolboxContentFrame3 "right"
+				$formLayout;
+			break;
+
+		case "vertical4":
+			tabLayout -edit -visible true
+				-width ($kContentFrameSize / 2)
+				-height ($kContentFrameSize * 2)
+				ToolboxContentFrame0;
+			tabLayout -edit -visible true
+				-width ($kContentFrameSize / 2)
+				-height ($kContentFrameSize * 2)
+				ToolboxContentFrame1;
+			tabLayout -edit -visible true
+				-width ($kContentFrameSize / 2)
+				-height ($kContentFrameSize * 2)
+				ToolboxContentFrame2;
+			tabLayout -edit -visible true
+				-width ($kContentFrameSize / 2)
+				-height ($kContentFrameSize * 2)
+				ToolboxContentFrame3;
+
+			formLayout -edit
+				-attachForm     ToolboxContentFrame0 "top"    0
+				-attachForm     ToolboxContentFrame0 "left"   $offset
+				-attachNone     ToolboxContentFrame0 "bottom"
+				-attachNone     ToolboxContentFrame0 "right"
+
+				-attachForm     ToolboxContentFrame1 "top"    0
+				-attachForm     ToolboxContentFrame1 "left"   ($offset + $kContentFrameSize / 2)
+				-attachNone     ToolboxContentFrame1 "bottom"
+				-attachNone     ToolboxContentFrame1 "right"
+
+				-attachForm     ToolboxContentFrame2 "top"    0
+				-attachForm     ToolboxContentFrame2 "left"   ($offset + $kContentFrameSize)
+				-attachNone     ToolboxContentFrame2 "bottom"
+				-attachNone     ToolboxContentFrame2 "right"
+
+				-attachForm     ToolboxContentFrame3 "top"    0
+				-attachForm     ToolboxContentFrame3 "left"   ($offset + 3 * $kContentFrameSize / 2)
+				-attachNone     ToolboxContentFrame3 "bottom"
+				-attachNone     ToolboxContentFrame3 "right"
+				$formLayout;
+			break;
+
+		default:
+			string $errDisplay = (uiRes("m_toolbox.kInvalidArgument"));
+			error -showLineNumber true (`format -s $configuration $errDisplay`);			
+			break;
+	}
+}
+
+global proc toolboxSaveCurrentLayout()
+//
+//	Description:
+//		This procedure is called when the user wants to save the current 
+//		layout configuration.
+//
+//		Set up a default image that corresponds to the current layout.
+//
+//		Prompt the user to enter a name for the layout.
+//
+{
+	global string $gMainPane;
+
+	string $image, $configuration, $panelConfiguration;
+
+	//	Determine the current panel configuration.
+	//
+	$configuration = `paneLayout -query -configuration $gMainPane`;
+
+	//	Get a default image that corresponds to the current panel configuration.
+	//
+	switch ($configuration) {
+		case "single":
+			$image = "defaultSingleLayout.png";
+			break;
+		case "horizontal2":
+			$image = "defaultTwoStackedLayout.png";
+			break;
+		case "vertical2":
+			$image = "defaultTwoSideBySideLayout.png";
+			break;
+		case "top3":
+			$image = "defaultThreeSplitTopLayout.png";
+			break;
+		case "left3":
+			$image = "defaultThreeSplitLeftLayout.png";
+			break;
+		case "bottom3":
+			$image = "defaultThreeSplitBottomLayout.png";
+			break;
+		case "right3":
+			$image = "defaultThreeSplitRightLayout.png";
+			break;
+		case "horizontal3":
+			$image = "defaultThreeStackedLayout.png";
+			break;
+		case "vertical3":
+			$image = "defaultThreeSideBySideLayout.png";
+			break;
+		case "quad":
+			$image = "defaultFourQuadLayout.png";
+			break;
+		case "top4":
+			$image = "defaultFourSplitTopLayout.png";
+			break;
+		case "left4":
+			$image = "defaultFourSplitLeftLayout.png";
+			break;
+		case "bottom4":
+			$image = "defaultFourSplitBottomLayout.png";
+			break;
+		case "right4":
+			$image = "defaultFourSplitRightLayout.png";
+			break;
+		case "horizontal4":
+			$image = "defaultFourStackedLayout.png";
+			break;
+		case "vertical4":
+			$image = "defaultFourSideBySideLayout.png";
+			break;
+		default:
+			$image = "vacantCell.png";
+			break;
+	}
+
+	//	Prompt the user for a name to save the current layout.
+	//	May return empty string.
+	//
+	string $layoutName = saveCurrentPanelLayout();
+
+	if ("" != $layoutName) {
+		//
+		//	Save the image as the default.
+		//
+		$panelConfiguration = `getPanel -configWithLabel $layoutName`;
+		if ("" != $panelConfiguration) {
+			panelConfiguration -edit -defaultImage $image $panelConfiguration;
+		}
+	}
+}
+
+global proc toolboxCreatePanelContentPopupMenuItems(
+	string $parent,
+	int    $panelIndex)
+//
+//	Description:
+//		This procedure is called when the panel content popup menu is
+//		about to be shown.
+//
+//		Delete all the items in the menu and add the names of all the
+//		panels.
+//
+//	Arguments:
+//		parent - The popup menu parent for the menu items that will be 
+//		         created in this procedure.
+//
+//		panelIndex - A 0-based index that specifies which panel in the
+//		             configuration will be replaced with the selected
+//		             panel. 0 is the top left panel and the indecies
+//		             increment clockwise around the panel configuration.
+//
+{
+	string $panels[], $visiblePanelArray[], $targetPanel;
+	string $label, $type, $command;
+	int    $enable, $index, $itemsPerDivider = 3;
+
+	//	Determine the target panel, ie. the panel that is to be swapped
+	//	out by the panel that was selected from the popup menu.
+	//
+	$visiblePanelArray = getVisiblePanels();
+	$targetPanel = $visiblePanelArray[$panelIndex];
+
+	//	Delete all the menu items in the popup menu.
+	//
+	popupMenu -edit -deleteAllItems $parent;
+
+	//	Be sure to set the parent for the menu items.
+	//
+	setParent -menu $parent;
+
+	//	Get a list of all the panels.
+	//
+	$panels = `getPanel -allPanels`;
+
+	//	This index will be used to insert menu item dividers.
+	//	Start counting at -4 because there are 4 model panels. When
+	//	the index becomes 0 then add the first separator. For the
+	//	rest of the panels add a separator every n panels, where
+	//	n is set by $itemsPerDivider.
+	//
+	$index = -4;
+
+	//	For each panel create a menu item in the popup menu.
+	//
+	//	Also set up the command for the menu item that will make panel 
+	//	correpsonding to the menu item visible in the main window.
+	//	
+	for ($panel in $panels) {
+		//
+		//	Get all the panel information, ie. it's label and type. Then
+		//	determine the command to attach to the menu item that will
+		//	show that panel.
+		//
+		$type = `getPanel -typeOf $panel`;
+		$label = `panel -query -label $panel`;
+
+		//	Don't use obsolete panel types
+		//	
+		if ($type == "scriptedPanel") {
+			string $scriptedType = `scriptedPanel -q -type $panel`;
+			if(`scriptedPanelType -q -obsolete $scriptedType`) {
+				continue;
+			}
+		}
+			
+		//	Skip the Multilister. As of Maya 4.0 there should be no user
+		//	interface for accessing this panel.
+		//
+		if ($label == localizedPanelLabel("Multilister")) {
+			continue;
+		}
+
+		$command = ($type + " -edit -replacePanel " 
+			+ $targetPanel + " " + $panel);
+
+		//	Add a separator after all the model panels and for every
+		//	$itemsPerDivider items after that.
+		//
+		if (0 == $index || ($index > 0 && 0 == ($index % $itemsPerDivider))) {
+			menuItem -divider true;
+		}
+
+		//	Determine if the panel is torn off. Disable the menu item if it is.
+		//
+		$enable = true;
+		if (`panel -query -tearOff $panel`) {
+			$enable = false;
+		}
+
+		//	Append to the command the procedure that will update the stated of
+		//	the Toolbox to reflect the change.
+		//
+		menuItem -label $label -enable $enable 
+			-command ($command + "; updateToolbox();");
+
+		$index++;
+	}
+}
+
+global proc toolboxCreateQuickLayoutPopupMenuItems(
+	string $parent,
+	int    $buttonIndex)
+//
+//	Description:
+//		This procedure is called when the quick panel popup menu is
+//		about to be shown.
+//
+//		Delete all the items in the menu and add the names of all the
+//		saved panel layouts. Also add an item that allows the user to
+//		change the image for the button.
+//
+//	Arguments:
+//		parent - The popup menu parent for the menu items that will be 
+//		         created in this procedure.
+//
+//		buttonIndex - A 0-based index corresponding to a quick access 
+//		              layout button.
+//
+{
+	string $layout, $layoutName, $layoutArray[];
+
+	//	Delete all the menu items in the popup menu.
+	//
+	popupMenu -edit -deleteAllItems $parent;
+
+	//	Set the parent for the menu items.
+	//
+	setParent -menu $parent;
+
+	//	Add menu items.
+	//
+	$layoutArray = `getPanel -allConfigs`;
+	for ($layout in $layoutArray) {
+		$layoutName = `panelConfiguration -query -label $layout`;
+		if (localizedPanelLabel("Current Layout") != $layoutName) {
+			menuItem -label $layoutName 
+				-command ("toolboxChangeQuickLayoutButton \"" + $layoutName 
+					+ "\" " + $buttonIndex);
+		}
+	}
+
+	//	Add an item that will save the current layout configuration.
+	//
+	menuItem -divider true;
+	menuItem -label (uiRes("m_toolbox.kSaveCurrent")) -command ("toolboxSaveCurrentLayout");
+	menuItem -label (uiRes("m_toolbox.kEditLayout")) -command ("PanelPreferencesWindow");
+
+	//	Add an item that will show a window allowing the user to change the
+	//	image on the quick access layout button.
+	//
+	menuItem -divider true;
+	menuItem -label (uiRes("m_toolbox.kChangeImage"))
+		-command ("toolboxCreateQuickLayoutImageEditor " + $buttonIndex);
+}
+
+global proc toolboxChangeQuickLayoutButton(
+	string $savedLayout,
+	int    $buttonIndex)
+//
+//	Description:
+//		This procedure is called whenever an item from a quick layout popup 
+//		menu is selected. Update the corresponding button so that it will
+//		now select the specified layout and show the appropriate image.
+//
+//	Arguments:
+//		savedLayout - The saved layout name.
+//
+//		buttonIndex - 0 based index identifying a quick access button.
+//
+{
+	string $layout, $layoutArray[], $image;
+
+	//	Determine the current values of the quick access buttons.
+	//
+	$layoutArray = `optionVar -query quickPanelButtonLayout`;
+
+	//	Set the new value for the appropriate button.
+	//
+	$layoutArray[$buttonIndex] = $savedLayout;
+
+	//	Save the new value (along with the old).
+	//
+	//	Note: Is there an easier way to set just one value of a string array
+	//	optionVar? The code below clears the entire pref array and then sets
+	//	all the values.
+	//
+	optionVar -clearArray quickPanelButtonLayout;
+	for ($layout in $layoutArray) {
+		optionVar -stringValueAppend quickPanelButtonLayout $layout;
+	}
+
+	setNamedPanelLayout($savedLayout);
+
+	updateToolbox();
+}
+
+global proc pickNewToolboxIcon()
+{
+    string $openStr = (uiRes("m_toolbox.kToolBoxPickIconCaption"));
+	string $cmd = ("fileDialog2 -caption \"" + $openStr + "\" -fileMode 1 ");
+    $cmd += (" -okCaption \"" + $openStr + "\"");
+    
+    string $filters = buildImageFileFilterList();
+    $cmd += (" -fileFilter \"" + $filters + "\"");	    
+    
+    string $workspace = `workspace -fn`;
+    string $startingDir = `setWorkingDirectory $workspace "image" "scene"`;
+    $cmd += (" -startingDirectory \"" + $startingDir + "\"");
+
+    string $file[] = `eval $cmd`;
+
+    if( size($file) > 0 && $file[0] != "" )
+    {        
+        string $path = fromNativePath($file[0]);
+	    toolboxBrowserCallback($path);
+    }
+}
+
+global proc toolboxCreateQuickLayoutImageEditor(int $buttonIndex)
+//
+//	Description:
+//		This procedure is called when the "Change Image..." menu item is
+//		selected from a quick access layout button's popup menu.
+//
+//		Show a window that allows the user to select a default image or
+//		browse for an image.
+//
+//	Arguments:
+//		buttonIndex - 0 based index identifying a quick access button.
+//
+{
+	string $window, $topForm, $bodyForm, $buttonForm;
+	string $browseButton, $saveButton, $cancelButton;
+	string $image, $tempImage, $configuration, $configurationArray[];
+
+	string $defaultImages[] = {
+		"defaultSingleLayout.png",
+		"defaultTwoSideBySideLayout.png",
+		"defaultTwoStackedLayout.png",
+		"defaultThreeSplitTopLayout.png",
+		"defaultThreeSplitLeftLayout.png",
+		"defaultThreeSplitBottomLayout.png",
+		"defaultThreeSplitRightLayout.png",
+		"defaultThreeStackedLayout.png",
+		"defaultThreeSideBySideLayout.png",
+		"defaultFourQuadLayout.png",
+		"defaultFourSplitTopLayout.png",
+		"defaultFourSplitLeftLayout.png",
+		"defaultFourSplitBottomLayout.png",
+		"defaultFourSplitRightLayout.png",
+		"defaultFourStackedLayout.png",
+		"defaultFourSideBySideLayout.png"
+		};
+
+	//	Delete the window if it already exists.
+	//
+	if (`window -exists QuickLayoutImageEditor`) {
+		deleteUI -window QuickLayoutImageEditor;
+	}
+
+	//	Get the array of quick access buttons.
+	//
+	$layoutArray = `optionVar -query quickPanelButtonLayout`;
+
+	//	Determine the current image value of the quick access button.
+	//
+	$image = getQuickButtonImage($layoutArray[$buttonIndex]);
+
+	//	Create the window and the top level layout.
+	//
+	$window = `window -title (uiRes("m_toolbox.kQuickLayoutImageEditor"))
+				-iconName (uiRes("m_toolbox.kEditImage")) QuickLayoutImageEditor`;
+
+	//	If a window pref doesn't exist then set a decent width. Otherwise, it will
+	//	come up a little narrow.
+	//
+	if (!`windowPref -exists QuickLayoutImageEditor`) {
+		window -edit -width 250 $window;
+	}
+
+	$topForm = `formLayout`;
+	
+	// ----------------------------------------------------------------------
+	//
+	//	Body.
+	//
+	setParent $topForm;
+	$bodyForm = `formLayout`;
+
+	$label = `text -label ($layoutArray[$buttonIndex])`;
+
+	//	Create an icon control to show the current image.
+	//
+	$icon = `iconTextStaticLabel -width 34 -height 34 -image1 $image
+		QuickLayoutImageEditorIcon`;
+
+	$scrollLayout = `scrollLayout -childResizable true`;
+	$list = `gridLayout -autoGrow true
+		-columnsResizable true
+		-allowEmptyCells false
+		-cellWidthHeight 40 40`;
+	
+	$configurationArray = `getPanel -allConfigs`;
+
+	//	Add menu items for the default panel configuration images.
+	//
+	for ($configuration in $configurationArray) {
+		$tempImage = `panelConfiguration -query -defaultImage $configuration`;
+
+		//	Don't list the image if it is the vacant cell image or a default
+		//	image.
+		//
+		if ("" != $tempImage && $tempImage != "vacantCell.png"
+			&& (0 == AWNumberOfOccurrencesInStringArray($tempImage, $defaultImages))) {
+			iconTextButton -parent $list -image1 $tempImage
+				-command ("iconTextStaticLabel -edit -image1 "
+					+ $tempImage + " " + $icon);
+		}
+	}
+	
+	for ($tempImage in $defaultImages) {
+		iconTextButton -parent $list -image1 $tempImage
+			-command ("iconTextStaticLabel -edit -image1 "
+				+ $tempImage + " " + $icon);
+	}
+
+	// ----------------------------------------------------------------------
+	//
+	//	Buttons.
+	//
+	setParent $topForm;
+	$buttonForm = `formLayout -parent $topForm`;
+
+	//	Save button.
+	//
+	$saveButton = `button -label (uiRes("m_toolbox.kSave"))
+		-command ("toolboxSaveQuickLayoutImage " + $buttonIndex
+			+ "; toolboxCloseQuickLayoutImageEditor()")
+		QuickLayoutImageEditorSaveButton`;
+
+	//	Browse button.
+	//	
+	$browseButton = `button -label (uiRes("m_toolbox.kBrowse"))
+		-command ("pickNewToolboxIcon") `;
+
+	//	Cancel button.
+	//
+	$cancelButton = `button -label (uiRes("m_toolbox.kCancel"))
+		-command ("toolboxCloseQuickLayoutImageEditor()")`;
+
+	formLayout -edit
+		-attachForm     $icon         "top"    0
+		-attachForm     $icon         "left"   0
+		-attachNone     $icon         "bottom"
+		-attachNone     $icon         "right"
+
+		-attachForm     $label        "top"    8
+		-attachControl  $label        "left"   6 $icon
+		-attachNone     $label        "bottom"
+		-attachNone     $label        "right"
+
+		-attachControl  $scrollLayout "top"    6 $icon
+		-attachForm     $scrollLayout "left"   0
+		-attachForm     $scrollLayout "bottom" 0
+		-attachForm     $scrollLayout "right"  0
+		$bodyForm;
+
+	formLayout -edit
+		-attachForm     $saveButton    "top"    0
+		-attachForm     $saveButton    "left"   0
+		-attachForm     $saveButton    "bottom" 0
+		-attachPosition $saveButton    "right"  2 33
+
+		-attachForm     $browseButton  "top"    0
+		-attachPosition $browseButton  "left"   2 33
+		-attachForm     $browseButton  "bottom" 0
+		-attachPosition $browseButton  "right"  2 67
+
+		-attachForm     $cancelButton  "top"    0
+		-attachPosition $cancelButton  "left"   2 67
+		-attachForm     $cancelButton  "bottom" 0
+		-attachForm     $cancelButton  "right"  0
+		$buttonForm;
+
+	formLayout -edit
+		-attachForm     $bodyForm      "top"    4
+		-attachForm     $bodyForm      "left"   4
+		-attachControl  $bodyForm      "bottom" 4 $buttonForm
+		-attachForm     $bodyForm      "right"  4
+
+		-attachNone     $buttonForm    "top"
+		-attachForm     $buttonForm    "left"   4
+		-attachForm     $buttonForm    "bottom" 4
+		-attachForm     $buttonForm    "right"  4
+		$topForm;
+
+	showWindow $window;
+}
+
+global proc toolboxCloseQuickLayoutImageEditor()
+//
+//	Description:
+//		Close and delete the Quick Layout Image Editor.
+//
+//		Call this method to close the window. Safe to call from a control
+//		within the window because it delays the deletion.
+//
+{
+	if (`window -exists QuickLayoutImageEditor`) {
+		evalDeferred("deleteUI -window QuickLayoutImageEditor");
+	}
+}
+
+global proc toolboxBrowserCallback(string $bitmap)
+//
+//	Description:
+//		This procedure is called when the bitmap browser is dismissed.
+//
+//		If a bitmap is selected then update the window to reflect the
+//		selection.
+//
+//	Arguments:
+//		$bitmap - The full path name of the bitmap selected. Or an empty
+//		          string if no file was selected.
+//
+//
+{
+	
+
+	if(`about -mac`){
+		iconTextStaticLabel -edit -image1 $bitmap QuickLayoutImageEditorIcon;
+	}else{
+		if ("" != $bitmap) {
+
+			//	Update the field with the image name.
+			//			
+			iconTextStaticLabel -edit -image1 $bitmap QuickLayoutImageEditorIcon;			
+		}
+	}
+}
+
+global proc toolboxSaveQuickLayoutImage(int $buttonIndex)
+//
+//	Description:
+//		This procedure is called when the Quick Layout Image Editor's Save
+//		button is pressed.
+//
+//		Save the image value.
+//
+{
+	string $layoutArray[], $saveLayoutArray[];
+	string $newImage, $item;
+	int    $found = false, $index, $layoutCount;
+
+	//	Get the image name from the field.
+	//
+	$newImage = `iconTextStaticLabel -query -image1 QuickLayoutImageEditorIcon`;
+
+	//	Determine the current values of the quick access buttons.
+	//
+	$layoutArray = `optionVar -query quickPanelButtonLayout`;
+
+	//	Set the new value for the appropriate button.
+	//
+	setQuickButtonImage($layoutArray[$buttonIndex], $newImage);
+
+	//	Update the Toolbox to reflect the image change.
+	//
+	updateToolbox();
+}
+
+global proc updateToolbox()
+//
+//	Description:
+//		This procedure will update the Toolbox to reflect the main
+//		window panel state and the quick layout button values.
+//
+//		Call this procedure whenever the panel configurations change or
+//		the values of the quick access buttons change.
+//		
+{
+	global string $gMainPane;
+
+	global int    $kQuickLayoutInfoArrayElementSize;
+	global int    $kImageIndex;
+	global int    $kCommandIndex;
+	global int    $kAnnotationIndex;
+
+	string $configuration, $annotation;
+	string $panelArray[], $childArray[];
+	global string $gQuickButtonArray[];
+
+	//	Get the panel configuration.
+	//
+	$configuration = `paneLayout -query -configuration $gMainPane`;
+
+	//	Update the panel configuration buttons.
+	//
+	updatePaneConfiguration($configuration);
+
+	//	Get the panel contents.
+	//
+	$panelArray = getVisiblePanels();
+
+	//	Apply the panel names to the annotations of the panel content 
+	//	buttons.
+	//
+	for ($index = 0; $index < size($panelArray); $index++) {
+
+		//	For some reason the label attached to model panels is not
+		//	always in sync with "view" of that panel. Switching perspective
+		//	or orthographic view in a model panel simply changes the camera
+		//	in that panel. Very common to get a model panel say it is the
+		//	Perspective View when in fact it is using an orthograpic camera.
+		//
+		//	The simply solution is to just call them all "Model View" 
+		//	regardless of the camera.
+		//
+		if (`modelPanel -exists $panelArray[$index]`) {
+			$annotation = (uiRes("m_toolbox.kModelView"));
+		} else if (`panel -exists $panelArray[$index]`) {
+			$annotation = `panel -query -label $panelArray[$index]`;
+		} else {
+			string $warnDisplay = (uiRes("m_toolbox.kPanelWarn"));
+			string $warn		= `format -s $panelArray[$index] $warnDisplay`;  
+			warning -showLineNumber true ($warn);
+			continue;
+		}
+
+		if (0 == $index) {
+			$childArray = `layout -query -childArray ToolboxContentFrame0`;
+		} else if (1 == $index) {
+			$childArray = `layout -query -childArray ToolboxContentFrame1`;
+		} else if (2 == $index) {
+			$childArray = `layout -query -childArray ToolboxContentFrame2`;
+		} else if (3 == $index) {
+			$childArray = `layout -query -childArray ToolboxContentFrame3`;
+		}
+
+		control -edit -annotation $annotation $childArray[0];
+	}
+
+	//	Update the quick layout buttons.
+	//
+	string $layoutArray[], $image;
+	$layoutArray = `optionVar -query quickPanelButtonLayout`;
+
+	$layoutIndex = 0;
+	for ($index = 0; $index < size($gQuickButtonArray); $index += 1) {
+		$image = getQuickButtonImage($layoutArray[$layoutIndex]);
+		if ("" == $image) {
+			$image = "vacantCell.png";
+		}
+		iconTextButton -edit
+			-annotation $layoutArray[$layoutIndex]
+			-command    ("setNamedPanelLayout \""
+			            + $layoutArray[$layoutIndex] 
+						+ "\"; updateToolbox()")
+			-image1     $image  
+			$gQuickButtonArray[$index];
+		$layoutIndex ++;
+	}
+}
+
+global proc string [] getVisiblePanels()
+//
+//	Description:
+//		Return a string array containing the names of the panels that are
+//		currently visible in the main window's panel layout.
+//
+//	Returns:
+//		A string array containing the visible panels. May return an empty
+//		array if you call this method before panels have been added to
+//		the main window pane layout.
+//
+{
+	global string $gMainPane;
+
+	string $visiblePanelArray[], $panel;
+	int    $visiblePanelCount, $index;
+
+	$visiblePanelCount = `paneLayout -query -numberOfVisiblePanes $gMainPane`;
+
+	for ($index = 0; $index < $visiblePanelCount; $index++) {
+		if (0 == $index) {
+			$panel = `paneLayout -query -pane1 $gMainPane`;
+			if ("" == $panel) {
+				//
+				//	If you call this procedure before panels have been added
+				//	to the pane layout then the first pane will have an 
+				//	empty panel.
+				//
+				//	In this case stop querying the panels and be sure to return
+				//	an empty string array result.
+				//
+				break;
+			}
+		} else if (1 == $index) {
+			$panel = `paneLayout -query -pane2 $gMainPane`;
+		} else if (2 == $index) {
+			$panel = `paneLayout -query -pane3 $gMainPane`;
+		} else if (3 == $index) {
+			$panel = `paneLayout -query -pane4 $gMainPane`;
+		} else {
+			string $error = (uiRes("m_toolbox.kVisiblePanelsError"));
+			error -showLineError true ($error);
+		}
+		
+		$visiblePanelArray[$index] = $panel;
+	}
+
+	return $visiblePanelArray;
+}
+
+global proc int toolboxVisibilityStateChange(
+	int    $newState,
+	string $layout)
+//
+//	Description:
+//		This procedure is called whenever the visibility state is changed.
+//
+//	Arguments:
+//		newState - The new visibile state.
+//
+//		layout - The parent layout.
+//
+//	Returns:
+//		true - If the change of state is to be allowed.
+//
+//		false - If the state change is rejected.
+//
+{
+	int $result = true;
+
+	//	Defer these commands because this proc is called when the visibility
+	//	state is about to change. This proc must return true to accept 
+	//	the state change. After this proc returns then restore the
+	//	panel focus and update the pref menu.
+	//
+	evalDeferred("restoreLastPanelWithFocus(); updatePrefsMenu();");
+
+	return $result;
+}
+
+//	Note that the following script block is not a procedure and will be
+//	executed when this script file is sourced.
+//
+{
+	global string $gToolboxForm;
+
+	//	Create the Toolbox.
+	//
+	createToolbox($gToolboxForm);
+
+	//	Update the Toolbox.
+	//
+	updateToolbox();
+
+	setUIComponentStateCallback(
+		"Tool Box", "toolboxVisibilityStateChange");
+
+	//	Set the Toolbox's initial visibility.
+	//
+	setToolboxVisible(`optionVar -query toolboxVisible`);
+}

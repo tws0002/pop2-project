@@ -1,0 +1,475 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  19 June 1997
+//
+//  Description:
+//      This script initializes the Channel box.  Initialization involves
+//		determining the initial Channel box preferences, creating the UI
+//		and setting the initial visibility.
+//
+
+global proc showChannelBox(int $show)
+//
+//	Description:
+//
+//		*** Obsolete ***
+//
+//		*** Use runTimeCommand ToggleChannels instead ***
+//	
+//	Arguments:
+//		show - True if the Channel Box should be shown, false if the Channel
+//		       Box should become hidden.
+//
+{
+	warning -showLineNumber true
+		(uiRes("m_initChannelBox.kShowChannelBox")) ;
+}
+
+global proc int channelBoxVisibilityStateChange(
+	int    $newState,
+	string $layout)
+//
+//	Description:
+//		This procedure is called whenever the visibility state of the 
+//		Channel Box is changed.
+//
+//	Arguments:
+//		newState - The new visibile state of the Channel Box.
+//
+//		layout - The parent layout for the Channel Box.
+//
+//	Returns:
+//		true - If the change of state is to be allowed.
+//
+//		false - If the state change is rejected.
+//
+{
+	int $result = true;
+
+	//	Defer these commands because this proc is called when the visibility
+	//	state is about to change. This proc must return true to accept 
+	//	the state change. After this proc returns then restore the
+	//	panel focus and update the pref menu.
+	//
+	evalDeferred("restoreLastPanelWithFocus(); updatePrefsMenu()");
+
+	return $result;
+}
+
+global int $gChannelFcurveEdSyncCallback = -1;
+
+//
+// If something is selected in the channel box, sync the fcurve editor display
+// to those channels.
+//
+global proc syncChannelBoxFcurveEd()
+{
+	string $selAttrs[] = `selectedChannelBoxPlugs`;
+	if (size($selAttrs) > 0) {
+		selectionConnection -e -clear graphEditor1FromOutliner;
+		for ($attr in $selAttrs) {
+			selectionConnection -e -select $attr graphEditor1FromOutliner;
+		}
+	}
+}
+
+//  Procedure Name:
+//	checkSpeedButton
+//
+//  Description Name;
+//	Sets the button which visualizes the current speed which is
+//	used for channel box sliders
+//
+//  Input Value:
+//	which speed is currently set 
+//
+//  Output Value:
+//	None
+// 
+global proc checkSpeedButton ( string $speed, int $useManips )
+{
+	switch ($speed){
+		case "slow":
+			channelBox -e -speed 0.1 mainChannelBox;
+			symbolButton -e 
+				-i "channelBoxSlow.png"
+			 	-c ("channelBoxSettings medium " + $useManips )
+				cbSpeedButton;
+			break;
+		case "medium":
+			channelBox -e -speed 1 mainChannelBox;
+			symbolButton -e 
+				-i "channelBoxMedium.png"
+			 	-c ("channelBoxSettings fast " + $useManips )
+				cbSpeedButton;
+			break;
+		case "fast":
+			channelBox -e -speed 10 mainChannelBox;
+			symbolButton -e 
+				-i "channelBoxFast.png"
+			 	-c ("channelBoxSettings slow " + $useManips )
+				cbSpeedButton;
+			break;
+		default:
+			symbolButton -e 
+				-i "channelBoxUnknownSpeed.png"
+			 	-c ("channelBoxSettings medium " + $useManips )
+				cbSpeedButton;
+			break;
+			
+	}
+}
+
+
+//  Procedure Name:
+//	checkManipButton
+//
+//  Description Name;
+//	Sets the button which visualize which manipType is
+//	used in the channel box.
+//
+//  Input Value:
+//	which manipType is currently used 
+//
+//  Output Value:
+//	None
+// 
+
+
+
+global proc checkManipButton ( int $state )
+{
+	switch ($state){
+		case 0:
+			symbolButton -e -i "channelBoxNoManips.png"
+			 	-c "channelBoxSettings useManips 1"
+				cbManipsButton;
+			break;
+		case 1:
+			symbolButton -e -i "channelBoxInvisibleManips.png"
+			 	-c "channelBoxSettings useManips 2"
+				cbManipsButton;
+			break;
+		case 2:
+			symbolButton -e -i "channelBoxUseManips.png"
+			 	-c "channelBoxSettings useManips 0"
+				cbManipsButton;
+			break;
+	}
+}
+
+//
+//  Procedure Name:
+//      setChannelLongName
+//
+//  Description:
+//		Sets the Channel box long/short name flag and also changes the
+//		width of the Channel box and sets the optionVar for this setting.
+//
+//  Input Arguments:
+//      state - 0 = short, 1 = nice, 2 = long
+//
+//  Return Value:
+//      None.
+//
+global proc setChannelLongName( int $state )
+{
+	global string	$gChannelBoxName;
+	global int    	$gChannelsWidth;
+
+	int $width;
+
+	//	Query the current "name" state of the Channel box.
+	//
+	int $longNames = `channelBox -query -longNames $gChannelBoxName`;
+	int $niceNames = `channelBox -query -niceNames $gChannelBoxName`;
+
+	//	Check for a change.
+	//
+	if ($niceNames && $state == 1) return;
+	if (!$niceNames && $longNames && $state == 2) return;
+	if (!$niceNames && !$longNames && $state == 0) return;
+
+	if( $state == 2 ) {
+		$width = 180;
+		channelBox -e -ln true -nn false $gChannelBoxName;
+		optionVar -iv channelsLongName 2;
+
+	} else if( $state == 1 ) {
+		$width = 180;
+		channelBox -e -ln true -nn true $gChannelBoxName;
+		optionVar -iv channelsLongName 1;
+
+	} else {
+		$width = 140;
+		channelBox -e -ln false -nn false $gChannelBoxName;
+		optionVar -iv channelsLongName 0;
+	}
+
+	setChannelsWidth($width);
+}
+
+global proc initChannelBoxButtons()
+//
+//	Handle initializing the icons at the top of the channel box
+//
+{
+	//	Get the current channel box settings to set
+	//	the buttons at the top of the channelbox to
+	//	the appropriate values
+	//
+	string $manipType = `channelBox -q -useManips mainChannelBox`;
+	int $useManips;
+	switch ($manipType){
+	  case "none":
+		$useManips = 0;
+		break;
+	  case "invisible":
+		$useManips = 1;
+		break;
+	  default:
+		$useManips = 2;
+		break;
+	}
+	float $speed = `channelBox -q -speed mainChannelBox`;
+	string $speedMode;
+	if ($speed == 0.1) {
+		$speedMode = "slow";
+	} else if ($speed == 1.0) {
+		$speedMode = "medium";
+	} else if ($speed == 10.0) {
+		$speedMode = "fast";
+	} else {
+		$speedMode = "unknown";
+	}
+		
+	int $hyperbolic = `channelBox -q -hyperbolic mainChannelBox`;
+
+	//	Update the buttons
+	//
+	symbolButton -edit
+		-enable true
+		cbManipsButton;
+	checkManipButton ($useManips);
+
+	symbolButton -edit
+		-enable ( $useManips == 1 )
+		cbSpeedButton;
+	checkSpeedButton $speedMode $useManips;
+
+	symbolCheckBox -edit
+		-v $hyperbolic
+		-enable ( $useManips == 1 )
+		cbHyperbolicButton;
+}
+
+global proc channelBoxSettings( string $cmd, int $state )
+//
+//	Handle updating the icons at the top of the channel
+//	box when menu entries are selected in the popup menu
+{
+	switch( $cmd ) {
+		case "slow":
+			checkSpeedButton "slow" $state;
+			break;
+		case "medium":
+			checkSpeedButton "medium" $state;
+			break;
+		case "fast":
+			checkSpeedButton "fast" $state;
+			break;
+		case "hyperbolic":
+			channelBox -e -hyperbolic $state mainChannelBox;
+			symbolCheckBox -e -v $state cbHyperbolicButton;
+			break;
+		case "showNamespace":
+			channelBox -e -showNamespace $state mainChannelBox;
+			break;
+		case "useManips":
+			checkManipButton ($state);
+
+			if ( $state == 0 ) {
+				//
+				//	Manips are off - disable the speed settings
+				//
+				symbolButton -e -enable false cbSpeedButton;
+				symbolCheckBox -e -enable false cbHyperbolicButton;
+				channelBox -e -useManips "none" mainChannelBox;
+
+			} else if( $state == 1 ) {
+				//
+				//	Manips are invisible only - enable the speed settings
+				//
+				symbolButton -e -enable true cbSpeedButton;
+				symbolCheckBox -e -enable true cbHyperbolicButton;
+				channelBox -e -useManips "invisible" mainChannelBox;
+
+			} else {
+				//
+				//	Manips are standard - disable the speed settings
+				//
+				symbolButton -e -enable false cbSpeedButton;
+				symbolCheckBox -e -enable false cbHyperbolicButton;
+				channelBox -e -useManips "standard" mainChannelBox;
+			}
+			break;
+	}
+}
+
+global proc buildChannelObjectMenu( string $parent ) {
+//
+//	Builds a menu with the last 20 items on the selection
+//	list, and allows the user to switch which objects
+//	values are being shown.  In effect, it switches
+//	the lead object, by "adding" it to the selection
+//	list, which places it last in the selection list
+//
+	setParent -m $parent;
+	menu -e -dai $parent;
+	int $size;
+			
+	string $sel[] = `ls -sl -tail 10`;
+	$size = `size( $sel )`;
+
+	if( `isTrue SomethingSelected` ) {
+		menuItem -l $sel[ $size-1 ] -c ( "select -add " + $sel[ $size-1 ]);
+		menuItem -ob true -c ( "select -add "+$sel[$size-1]+"; editSelected" );
+		menuItem -d true;
+
+		for($i = $size-2; $i >= 0; $i--) {
+			menuItem -l $sel[ $i ] -c ( "select -add " + $sel[ $i ] );
+			menuItem -ob true -c ( "select -add "+$sel[$i]+"; editSelected" );
+		}
+	} else {
+		menuItem -label (uiRes("m_initChannelBox.kNothingSelected"));
+	}
+}
+
+// Now, the main script to be executed.  Not that this is NOT a proc.
+//
+{
+	//   Declare referenced or returned globals.
+	//
+	global string $gChannelBoxName;
+	global string $gChannelBoxForm;
+
+	//  Determine values of option variables
+	//
+	int $channelsLongName = `optionVar -query channelsLongName`;
+	int $precision = `optionVar -q channelsPrecision`;
+	int $numWidth = `optionVar -q channelsFieldWidth`;
+
+	//	Create a menu bar layout for the Channel box.
+	//
+	string $menuBarLayout = `menuBarLayout`;
+
+	string $columnName;
+	int $nSections;
+
+	// Add a menu to the menuBarLayout at the top of the
+	// channel box.  NOTE: can't make this menu a tearoff,
+	// as it dynamically updates based on channels selected
+	// in the channel box.
+	//
+	string $menu = `menu -label (uiRes("m_initChannelBox.kChannels"))
+				-familyImage "menuIconChannels.png"`;
+		menu -edit -pmc ("generateChannelMenu " + $menu + " 0" ) $menu;
+    setParent -m ..;
+
+	$menu = `menu -label (uiRes("m_initChannelBox.kEdit")) -allowOptionBoxes 1`;
+		menu -edit -pmc ("generateCBEditMenu " + $menu + " 0" ) $menu;
+    setParent -m ..;
+
+    $menu = `menu -label (uiRes("m_initChannelBox.kObject")) 
+		-aob true
+		-familyImage "menuIconObject.png"`;
+        menu -e -pmc ( "buildChannelObjectMenu " + $menu ) $menu;
+    setParent -m ..;
+
+    $menu = `menu -label (uiRes("m_initChannelBox.kShow")) 
+		-aob true cbShowMenu`;
+        menu -e -pmc ( "generateChannelShowMenu " + $menu ) $menu;
+    setParent -m ..;
+
+	//  Build the Channel box, with a frame layout around it.
+	//
+	string $boxName = `frameLayout 
+		-labelVisible  false
+		-collapsable   false
+		-collapse      false
+		-marginHeight  1
+		-marginWidth   1`;
+	//	Create the Channel box.
+	//
+	$gChannelBoxName = "mainChannelBox";
+	channelBox -st true
+		-longNames ($channelsLongName==2)
+		-niceNames ($channelsLongName==1)
+		-precision $precision
+		-fieldWidth $numWidth
+		$gChannelBoxName;
+
+	if (`optionVar -exists cbContainerAtTop`) {
+		int $atTop = `optionVar -q cbContainerAtTop`;
+		channelBox -edit -containerAtTop $atTop $gChannelBoxName;
+	}
+
+
+	
+	// Add the Channels menu as an RMB popup for the whole channel box.
+	//
+	eval ("source generateChannelMenu");
+	$menu = `popupMenu -parent $gChannelBoxName`;
+	menu -edit -postMenuCommand ( "generateChannelMenu " + $menu + " 1" ) $menu;
+	// Add the Edit menu as a Ctrl+RMB popup for the whole channel box.
+	//
+	$menu = `popupMenu -ctrlModifier 1 -allowOptionBoxes 1
+		-parent $gChannelBoxName`;
+	menu -edit -postMenuCommand ( "generateCBEditMenu " + $menu + " 1" ) $menu;
+
+	setParent ..;
+
+	//	Layout the separator, Channel box and the buttons.
+	//
+	formLayout -edit
+		-attachForm    $menuBarLayout "top"    0
+		-attachForm    $menuBarLayout "left"   0
+		-attachForm	   $menuBarLayout "bottom" 0 
+		-attachForm    $menuBarLayout "right"  0
+		$gChannelBoxForm;
+
+	initChannelBoxButtons();
+
+	// If the fcurve editor is to be sync'd with the channel box, set up a
+	// scriptJob to do the updates.
+	//
+	global int $gChannelFcurveEdSyncCallback;
+	if (`optionVar -q setKeyframeWhich` == 1) {
+		if ($gChannelFcurveEdSyncCallback < 0) {
+			// The same code exists in toggleChannelBoxGraphEdSync()
+			$gChannelFcurveEdSyncCallback = `scriptJob -event "ChannelBoxLabelSelected" syncChannelBoxFcurveEd`;
+		}
+	}
+}
+

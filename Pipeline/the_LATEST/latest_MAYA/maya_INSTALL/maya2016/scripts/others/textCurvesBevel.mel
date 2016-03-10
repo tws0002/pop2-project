@@ -1,0 +1,184 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//
+//  Description:
+//      Create text with history feeding into bevel node
+//
+
+global proc textCurvesBevel(string $font,
+							string $textString )
+
+{
+	// reimplement functionality in these command calls:
+	//
+	//   performTextCurves
+	//   performBevelPlus
+	//
+	// We don't want to call these functions directly as they create
+	// the text curves that we do not want to expose - the curve
+	// information has to be piped directly from the text node to the
+	// bevel node to allow variable numbers of curves to be supported.
+
+	// replace any \ by \\ and " by \" in the string so that the command will
+	// create the \ and " as well
+	//
+	string $totalText = substituteAllString( $textString, "\\", "\\\\" );
+	$totalText = substituteAllString( $totalText, "\"", "\\\"" );
+
+	// create text node and pass in text and font attribute values
+	string $textNode = evalEcho("createNode makeTextCurves -n \"textForBevel#\"");
+	evalEcho("setAttr -type \"string\" " + $textNode + ".text \"" + $totalText + "\";");
+	evalEcho("setAttr -type \"string\" " + $textNode + ".font \"" + $font + "\";");
+
+	// create bevel node and the two profile curves
+	string $bevelNode = evalEcho("createNode bevelPlus");
+	string $innerStyleCurveNode = evalEcho("createNode styleCurve -n \"innerStyleCurve#\"");
+	string $outerStyleCurveNode = evalEcho("createNode styleCurve -n \"outerStyleCurve#\"");
+
+	// set style curve attributes
+	int $outerBevelCurve = `optionVar -q outerStyleBevelCurve`;
+	evalEcho("setAttr " + $outerStyleCurveNode + ".style " + $outerBevelCurve + ";");
+
+	int $sameAsOuter = `optionVar -q innerStyleSameAsOuter`;
+	if($sameAsOuter) {
+		evalEcho("setAttr " + $innerStyleCurveNode + ".style " + $outerBevelCurve + ";");
+	} else {
+		int $innerBevelCurve = `optionVar -q innerStyleBevelCurve`;
+		evalEcho("setAttr " + $innerStyleCurveNode + ".style " + $innerBevelCurve + ";");
+	}
+
+
+	// get bevel attributes
+	float $bevelPlusWidth = `optionVar -q bevelPlusWidth` ;	
+	float $bevelPlusDepth = `optionVar -q bevelPlusDepth` ;
+	float $bevelPlusExtrudeHt = `optionVar -q bevelPlusExtrudeHeight` ;
+	int $bevelPlusCaps = `optionVar -q bevelPlusCaps` ;
+	int $bevelPlusInsideCurves = `optionVar -q bevelPlusInsideCurves` ;	
+	int $bevelPlusSides = `optionVar -q bevelPlusNSides` ;
+	float $tol = `optionVar -q bevelPlusTolerance` ;
+	if( `optionVar -q bevelPlusUseGlobalTol` ) {
+		$tol = `optionVar -q positionalTolerance`;
+	}
+
+	// and set bevel attributes
+	evalEcho("setAttr " + $bevelNode + ".width " + $bevelPlusWidth + ";");
+	evalEcho("setAttr " + $bevelNode + ".depth " + $bevelPlusDepth + ";");
+	evalEcho("setAttr " + $bevelNode + ".extrudeDepth " + $bevelPlusExtrudeHt + ";");
+	evalEcho("setAttr " + $bevelNode + ".capSides " + $bevelPlusCaps + ";");
+	evalEcho("setAttr " + $bevelNode + ".numberOfSides " + $bevelPlusSides + ";");
+	evalEcho("setAttr " + $bevelNode + ".tolerance " + $tol + ";");
+	evalEcho("setAttr " + $bevelNode + ".bevelInside " + $bevelPlusInsideCurves + ";");
+
+	// normalsOutwards always true (for >=v7.0 files)
+	evalEcho("setAttr " + $bevelNode + ".normalsOutwards true");
+
+	// Note: the tolerance attribute is only used for planarTrim when
+	// the output of bevel is NURBS, so we do not need to set it here
+
+	// get all the poly tessellation attributes
+	int $pFormat = `optionVar -q bevelPlusPolyFormat`;
+	int $pCount = `optionVar -q bevelPlusPolyCount`;
+	int $pUseChordRatio = `optionVar -q bevelPlusPolyUseChordRatio`;
+	float $pChordRatio = `optionVar -q bevelPlusPolyChordRatio`;
+	int $pUseChordHeight = `optionVar -q bevelPlusPolyUseChordHeight`;
+	float $pChordHeight = `optionVar -q bevelPlusPolyChordHeight`;
+	int $pTypeU = `optionVar -q bevelPlusPolyTypeU`;
+	int $pNumberU = `optionVar -q bevelPlusPolyNumberU`;
+	int $pTypeV = `optionVar -q bevelPlusPolyTypeV`;
+	int $pNumberV = `optionVar -q bevelPlusPolyNumberV`;
+
+	// disable chord height settings. These settings cause the poly
+	// mesh to have non-quad faces, which is undesirable and also
+	// causes problems with bevel caps
+	evalEcho("setAttr " + $bevelNode + ".polyOutUseChordHeight false");
+	evalEcho("setAttr " + $bevelNode + ".polyOutUseChordHeightRatio false");
+
+	// Ok this part is brutal. Text created on Windows and Mac is
+	// ordered so the outer boundary is always the first curve in the
+	// letter, and the orientation of the curve determines it's
+	// nesting. However on Linux the curves are generated in seemingly
+	// random order. We tell the node about this here so it knows
+	// whether to rely on the curve order to determine nesting and
+	// outer boundaries. If it cannot rely on the curve order the node
+	// will attempt to determine the nesting for itself.
+	if(`about -linux`) {
+		evalEcho("setAttr " + $bevelNode + ".orderedCurves false");
+	} else {
+		evalEcho("setAttr " + $bevelNode + ".orderedCurves true");
+	}
+
+	// create final output mesh node
+	string $meshNode = evalEcho("createNode mesh");
+
+	// connect all inputs to bevel node, including the array of curves from the text node
+	string $cmd;
+	$cmd += ("connectAttr " + $textNode + ".outputCurve "     + $bevelNode + ".inputCurves;\n");
+	$cmd += ("connectAttr " + $textNode + ".count "           + $bevelNode + ".count;\n");
+	$cmd += ("connectAttr " + $textNode + ".position "        + $bevelNode + ".position;\n");
+	$cmd += ("connectAttr " + $innerStyleCurveNode + ".outCurve " + $bevelNode + ".innerStyleCurve;\n");
+	$cmd += ("connectAttr " + $outerStyleCurveNode + ".outCurve " + $bevelNode + ".outerStyleCurve;\n");
+
+	// connect the bevel node to the final mesh
+	$cmd += ("connectAttr " + $bevelNode + ".outputPoly " + $meshNode + ".inMesh;\n");
+
+	// connect the final mesh to the initial shading group
+	$cmd += ("sets -edit -forceElement initialShadingGroup " + $meshNode + ";\n");
+
+	// and position the pivot appropriately
+	$cmd += ("CenterPivot;\n");
+	
+	// select the poly object for cleanup
+	$cmd += ("select " + $meshNode + ";\n");
+	
+	// do other bevellish stuff  (from performBevelPlus)
+	string $errorCheck = " int $intArr[] = `polyEvaluate -v`; ";
+	$errorCheck += "int $numVerts = 0; ";
+	$errorCheck += "if (size($intArr) > 0) $numVerts = $intArr[0]; ";
+	$errorCheck += "if ($numVerts > 0) { ";
+	$cmd += $errorCheck;
+	
+	//select all faces with 0 map area and more than 4 sides - these
+	//will be the caps
+	//see polyCleanupArgList.mel for a complete list of the arguments
+	$cmd = $cmd + "polyCleanupArgList 3 { \"0\",\"2\",\"1\",\"0\",";
+	$cmd = $cmd + "\"1\",\"0\",\"0\",\"0\",\"0\",\"1e-005\",\"0\",\"";
+	$cmd = $cmd + "1e-005\",\"1\",\"0\",\"0\",\"-1\",\"0\" };\n";
+	$cmd = $cmd + "polyProjection -ch 1 -type Planar -ibd off -icx 0.5 ";
+	$cmd = $cmd + "-icy 0.5 -ra 0 -isu 1 -isv 1 -md z ;\n";
+	$cmd = $cmd + "select -r `listConnections -t \"shape\"`;\n";
+	
+	$cmd = $cmd + "};\n";
+	
+	// finally switch back to object mode
+	$cmd = $cmd + "changeSelectMode -object;\n";
+	
+	// let it rip
+	evalEcho $cmd;
+	
+	// leave text node selected on the assumption the user will want
+	// to work with the text attributes first
+	select $textNode;
+	
+	return;
+}

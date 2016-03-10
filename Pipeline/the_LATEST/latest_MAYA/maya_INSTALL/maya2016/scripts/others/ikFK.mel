@@ -1,0 +1,681 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  06 Sept 2000
+//
+//  Description:
+//		IK/FK switching
+//
+
+proc string[] appendArray(string $a[], string $b[]) 
+//
+//	Description:
+//		Appends the contents of $b onto $a
+//
+{
+	string $combined[] = $a;
+	int $nA = size($combined);
+
+	int $nB = size($b);
+
+	for ($ii = 0; $ii < $nB; $ii++) {
+		$combined[$nA++] = $b[$ii];
+	}
+
+	return $combined;
+}
+
+proc string[] makeUnique(string $a[]) 
+//
+//	Description:
+//		Returns a unique string array in alphabetical order.
+//
+{
+	string $sorted[] = sort($a);
+
+	int $index = 0;
+	string $newArray[];
+
+	int $nItems = size($sorted);
+	if ($nItems > 0) {
+		$newArray[$index++] = $sorted[0];
+	}
+
+	for ($ii = 1; $ii < $nItems; $ii++) {
+		if ($sorted[$ii] != $sorted[$ii-1]) {
+			$newArray[$index++] = $sorted[$ii];
+		}
+	}
+
+	return $newArray;
+}
+
+proc setCharacterValue(string $obj)
+//
+//	Description:
+//
+{
+	string $expanded[] = `listAnimatable $obj`;
+	string $item;
+	
+	for ($item in $expanded) {
+		string $cnx[] = 
+			`listConnections -d false -s true -p true -type "character" $item`;
+
+		if (size($cnx) > 0) {
+			setAttr $cnx[0] `getAttr $item`;
+		}
+	}
+}
+
+proc string[] getCurvesFromList(string $node, string $attrs[])
+//
+//	Description:
+//		Gets all of the animCurves for the node that are
+//		connected to the specified list of attributes.
+//
+{
+	string $animCurves[] = 
+		`listConnections -s on -p on -type "animCurve" $node`;
+
+	//	Check and see if there is a character involved as well.
+	//
+	string $ch[] = `listConnections -s on -d off -p on -type "character" $node`;
+	if (size($ch)) {
+		string $charCurves[] = 
+			`listConnections -s on -p on -type "animCurve" $ch`;
+		$animCurves = appendArray($animCurves, $charCurves);
+	}
+
+	string $retList[];
+
+	int $index = 0;
+	string $curve;
+	for ($curve in $animCurves) {
+		string $plug[] = `listConnections -d on -p on $curve`;
+
+		int $okToAdd = false;
+		string $testAttr;
+		for ($testAttr in $attrs) {
+			if (size(`match $testAttr $plug[0]`) > 0) {
+				$okToAdd = true;
+				break;
+			}
+		}
+
+		if ($okToAdd) {
+			string $buff[];
+			tokenize $curve "." $buff;
+			$retList[$index++] = $buff[0];
+		}
+	}
+
+	return $retList;
+}
+
+proc 
+verifyIKFKConnections(string $handle, string $joints[], string $constrained[]) 
+//
+//	Description:
+//		Makes sure that all of the anim curve connected to the joints
+//		are connected to the enable anim curve on the ikHandle.
+//
+//		This will work on animCurves with a direct connection to the
+//		passed joints, or animCurves on an object that is constrained
+//		with a poleVector, orient. point, or scale constraint.
+//
+{
+	//	Get the anim curve for the ikHandle enable.
+	//
+	string $enable[] = `listConnections -t "animCurve" ($handle+".ikBlend")`;
+	if (size($enable) == 0) {
+		//	There may be a character here, so check the connection for
+		//	a character.
+		//
+		string $character[] = 
+		`listConnections -t "character" -s on -d off -p on ($handle+".ikBlend")`;
+
+		if (size($character) > 0) {
+			$enable = `listConnections -t "animCurve" $character[0]`;
+		}
+
+		if (size($enable) == 0) {
+		    string $warnMsg = (uiRes("m_ikFK.kNoKeysSet"));
+			warning (`format -s $handle $warnMsg`);
+			return;
+		}
+	}
+
+	string $outAttr = ($enable[0]+".osr");
+
+	string $attrs[] = {	".rotate", ".translate", ".scale", 
+						".poleVector", ".offset", ".roll", ".twist"};
+	string $curves[] = getCurvesFromList($handle, $attrs);
+	string $t;
+	for ($t in $curves) {
+		if (!size(`listConnections -d off -s on ($t+".isr")`)) {
+			connectAttr $outAttr ($t+".isr");
+			setAttr ($t+".stippleReverse") false;
+		}
+	}
+
+	string $item;
+	for ($item in $joints) {
+		if (size(`ls ($item+".solverEnable")`)) {
+			// In 5.0, the solverEnable attribute name was switched to
+			// ikBlend. 
+			//
+			if (`isConnected ($handle+".ikBlend") ($item+".solverEnable")`) {
+				disconnectAttr ($handle+".ikBlend") ($item+".solverEnable");
+			}
+			setAttr -k off ($item+".solverEnable");
+		}
+
+		if (size(`ls ($item+".ikBlend")`) == 0) {
+			addAttr -ln ikBlend -at double $item;
+			setAttr -k on ($item+".ikBlend");
+		}
+
+		if (!size(`listConnections -d off -s on ($item+".ikBlend")`)) {
+			connectAttr ($handle+".ikBlend") ($item+".ikBlend");
+		}
+
+		string $attrs[] = 
+			{".rotate", ".translate", ".scale", ".preferredAngle"};
+
+		string $curves[] = getCurvesFromList($item, $attrs);
+		string $curveItem;
+		for ($curveItem in $curves) {
+			if (!size(`listConnections -d off -s on ($curveItem+".isr")`)) {
+				connectAttr $outAttr ($curveItem+".isr");
+				setAttr ($curveItem+".stippleReverse") true;
+			}
+		}
+	}
+
+	string $item;
+	for ($item in $constrained) {
+		string $buff[];
+		tokenize $item "." $buff;
+
+		string $object = $buff[0];
+		string $attrs[];
+		$attrs[0] = $buff[1];
+
+		if (size(`ls ($object+".ikBlend")`) == 0) {
+			addAttr -ln ikBlend -at double $object;
+			setAttr -k on ($object+".ikBlend");
+		}
+
+		if (!size(`listConnections -d off -s on ($object+".ikBlend")`)) {
+			connectAttr ($handle+".ikBlend") ($object+".ikBlend");
+		}
+
+		string $curves[] = getCurvesFromList($object, $attrs);
+		string $curveItem;
+		for ($curveItem in $curves) {
+			if (!size(`listConnections -d off -s on ($curveItem+".isr")`)) {
+				connectAttr $outAttr ($curveItem+".isr");
+				setAttr ($curveItem+".stippleReverse") false;
+			}
+		}
+	}
+
+	//	Mark the .osr attribute dirty to rebuild the stipple array.
+	//
+	dgdirty $outAttr;
+}
+
+proc keyPreferredAngles(string $joints[]) 
+//
+//	Description:
+//		Makes sure that the preferred angles are keyable and sets the
+//		keys on the preferred angles with step tangents.
+//
+{
+	//	$gSetIKFKStepTangentList is used by doSetKeyframeArgList
+	//	for keeping track of which attributes should have step tangents
+	//
+	global string $gSetIKFKStepTangentList[];
+
+	string $j;
+	for ($j in $joints) {
+		string $attr = ($j+".preferredAngle");
+
+		if (!`referenceQuery -isNodeReferenced $j` && !`getAttr -k $attr`) {
+			setAttr -k on $attr;
+		}
+
+		setKeyframe -ott step $attr;
+		setCharacterValue($attr);
+
+		int $index = size($gSetIKFKStepTangentList);
+		$gSetIKFKStepTangentList[$index++] = ($attr+"X");
+		$gSetIKFKStepTangentList[$index++] = ($attr+"Y");
+		$gSetIKFKStepTangentList[$index++] = ($attr+"Z");
+	}
+}
+
+proc string[] setConstrainedObjectKeys(string $attrs[], int $constraint)
+//
+//	Description:
+//		Sets the keys on the constrained objects.
+//
+//		The $constraint int is as follows:
+//			0	: 	poleVector
+//			1	: 	point
+//			2	: 	orient
+//			3	: 	scale
+//
+//		An array containing a list of the keyed attributes is returned.
+//
+{
+	int $nKeyed = 0;
+	string $keyed[];
+
+	string $item;
+	for ($item in $attrs) {
+		string $cList[] = 
+			`listConnections -s true -d false -p true -c true $item`;
+
+		int $ii = 0;
+		int $nItems = size($cList);
+		for ($ii = 0; $ii < $nItems; $ii+=2) {
+			//	Since we asked for both sides of the connection,
+			//	this first item is the plug on the constraint node
+			//	and the second item is the source plug.
+			//
+			switch ($constraint) {
+				case 0:
+				case 1:
+					if (size(`match "targetTranslate" $cList[$ii]`)) {
+						setKeyframe $cList[$ii+1];
+						setCharacterValue($cList[$ii+1]);
+						$keyed[$nKeyed++] = $cList[$ii+1];
+					}
+					break;
+				case 2:
+					if (size(`match "targetRotate" $cList[$ii]`) &&
+						!size(`match "targetRotateOrder" $cList[$ii]`)) {
+						setKeyframe $cList[$ii+1];
+						setCharacterValue($cList[$ii+1]);
+						$keyed[$nKeyed++] = $cList[$ii+1];
+					}
+					break;
+				case 3:
+					if (size(`match "targetScale" $cList[$ii]`)) {
+						setKeyframe $cList[$ii+1];
+						setCharacterValue($cList[$ii+1]);
+						$keyed[$nKeyed++] = $cList[$ii+1];
+					}
+					break;
+				default:
+					break;
+			}
+
+			if (size(`match "targetWeight" $cList[$ii]`)) {
+				setKeyframe $cList[$ii+1];
+				setCharacterValue($cList[$ii+1]);
+				$keyed[$nKeyed++] = $cList[$ii+1];
+			}
+		}
+	}
+
+	return $keyed;
+}
+
+proc string[] setConstraintKeys(string $attrs[]) 
+//
+//	Description:
+//		Set the pole vector keys. The case to consider is when there
+//		is a poleVector constraint. Since the poleVector constraint could
+//		be made of several objects, keys will need to get set for all
+//		of those objects and their weights.
+//
+//		The only supported constraints are:
+//			* poleVector
+//			* point
+//			* orient
+//			* scale
+//
+//		A list of the keyed constraint and constrained object attributes 
+//		is returned.
+//
+{
+	global string $gSetIKFKStepTangentList[];
+
+	int $nPV = 0;
+	string $pvNodes[];
+
+	int $nOrient = 0;
+	string $orientNodes[];
+
+	int $nPoint = 0;
+	string $pointNodes[];
+
+	int $nScale = 0;
+	string $scaleNodes[];
+
+	string $item;
+	for ($item in $attrs) {
+		string $connected[] = 
+			makeUnique(`listConnections -s true -d false $item`);
+
+		if (size($connected) == 0 || 
+			size(`ls -type animCurve $connected[0]`) ||
+			size(`ls -type character $connected[0]`)) {
+			//	A check to see if this is a ikBlend attribute. If
+			//	so then it should be added to the gSetIKFKStepTangentList
+			//	array. This array is used by doSetKeyframeArgList to
+			//	ensure step tangents are properly being set.
+			//
+			string $buf[];
+			tokenize $item "." $buf;
+			if ($buf[1] == "ikBlend" || $buf[1] == "ikb") {
+				$gSetIKFKStepTangentList[`size($gSetIKFKStepTangentList)`] = $item;
+				setKeyframe -ott clamped $item;
+			} else {
+				setKeyframe $item;
+			}
+			setCharacterValue($item);
+
+		} else if (size(`ls -type poleVectorConstraint $connected[0]`)) {
+			$pvNodes[$nPV++] = $connected[0];
+		} else if (size(`ls -type pointConstraint $connected[0]`)) {
+			$pointNodes[$nPoint++] = $connected[0];
+		} else if (size(`ls -type scaleConstraint $connected[0]`)) {
+			$scaleNodes[$nScale++] = $connected[0];
+		} else if (size(`ls -type orientConstraint $connected[0]`)) {
+			$orientNodes[$nOrient++] = $connected[0];
+		} else {
+			//	Do nothing. This is a case not handled here.
+			//
+			continue;
+		}
+	}
+
+	if ($nPV > 1) $pvNodes = makeUnique($pvNodes);
+	if ($nPoint > 1) $pointNodes = makeUnique($pointNodes);
+	if ($nOrient > 1) $orientNodes = makeUnique($orientNodes);
+	if ($nScale > 1) $scaleNodes = makeUnique($scaleNodes);
+
+	string $keyed[] = setConstrainedObjectKeys($pvNodes, 0);
+	$keyed = appendArray($keyed, setConstrainedObjectKeys($pointNodes, 1));
+	$keyed = appendArray($keyed, setConstrainedObjectKeys($orientNodes, 2));
+	return (appendArray($keyed, setConstrainedObjectKeys($scaleNodes, 3)));
+}
+
+proc setPreviousEnableKey(string $handle, int $state) 
+//
+//	Description:
+//		Finds the previous ikBlend key and sets it to the specified 
+//		$state.
+//
+{
+	string $attr = ($handle + ".ikBlend");
+	if (size(`ls $attr`) == 0) {
+		return;
+	}
+
+	string $ac[] = 
+		`listConnections -s true -d false -type animCurve $attr`;
+	
+	if (size($ac) == 0) {
+		//	See if a character is involved.
+		//
+		string $c[] = 
+			`listConnections -c 1 -p 1 -s 1 -d 0 -type character $attr`;
+		if (size($c) > 0) {
+			$ac = `listConnections -s 1 -d 0 -type animCurve $c[1]`;
+		}
+	}
+
+	if (size($ac) > 0) {
+		string $enableCurve = $ac[0];
+		float $t = `currentTime -q`;
+		float $lastKey = `findKeyframe -which previous $attr`;
+
+		if ($lastKey < $t) {
+			setKeyframe -v $state -t $lastKey $attr;
+		}
+	}
+}
+
+proc setHandleAndJointKeys(string $handle, int $mode)
+//
+//	Description:
+//		Sets the IK/FK keys for the given handle and associated
+//		joint chain.
+//		See the ikFK method for a description of the modes.
+//
+//		There are some cases that must be considered:
+//		1. Simple Case: Just an ikHandle
+//		2. Constraint: The ikHandle is point constrained, so key
+//						
+//
+{
+	int $ikFKSetting = `getAttr ($handle+".ikBlend")`;
+
+	//	Pole vectors are often constrained, so detect that case
+	//	and set a key on the constraining object.
+	//
+	string $handleAttrs[] = `listAnimatable $handle`;
+	string $toKey[];
+	string $pv[];
+	string $ikCtrls[];
+
+	string $joints[] = `ikHandle -q -jl $handle`;
+	if (size($joints) > 0) {
+		setKeyframe -at rotate $joints;
+		string $item;
+		for ($item in $joints) {
+			setCharacterValue($item+".r");
+		}
+
+		setKeyframe -at translate $joints[0];
+		setCharacterValue($joints[0]+".t");
+
+		//	Check to see if the preferred angles are keyable, if
+		//	not, then make them keyable.
+		//
+		keyPreferredAngles($joints);
+	}
+
+	//	The ikHandle keyframe setting code must be after the joint setting
+	//	code, otherwise there are some strange results.
+	//
+	setAttr ($handle+".ikBlend") $ikFKSetting;
+
+	int $ii = 0;
+	int $pvIndex = 0;
+	int $ctrlIndex = 0;
+	int $keyIndex = 0;
+	int $nItems = size($handleAttrs);
+	for ($ii = 0; $ii < $nItems; $ii++) {
+		if (size(`match "poleVector" $handleAttrs[$ii]`) > 0) {
+			$pv[$pvIndex++] = $handleAttrs[$ii];
+		} else if (	(size(`match "translate" $handleAttrs[$ii]`) > 0) ||
+					(size(`match "rotate" $handleAttrs[$ii]`) > 0) ||
+					(size(`match "scale" $handleAttrs[$ii]`) > 0)) {
+			$toKey[$keyIndex++] = $handleAttrs[$ii];
+		} else {
+			$ikCtrls[$ctrlIndex++] = $handleAttrs[$ii];
+		}
+	}
+
+	//	If there are constraints on these objects, set a key on the 
+	//	constraining object.
+	//
+	string $cKeys[] = setConstraintKeys($toKey);
+	$cKeys = appendArray($cKeys, setConstraintKeys($ikCtrls));
+	
+	string $item;
+	for ($item in $toKey) {
+		setCharacterValue($item);
+	}
+
+	//	Now handle the poleVectors. The case to consider is when there
+	//	is a poleVector constraint. Since the poleVector constraint could
+	//	be made of several objects, keys will need to get set for all
+	//	of those objects and their weights.
+	//
+	$cKeys = appendArray($cKeys, setConstraintKeys($pv));
+
+	//	Handle the other attributes on the ikHandle. They should be keyed
+	//	last, since with a character, they may trigger an IK eval, which would
+	//	produce the wrong result.
+	//
+	for ($item in $ikCtrls) {
+		setCharacterValue($item);
+	}
+
+	if (size($joints) > 0) {
+		verifyIKFKConnections($handle, $joints, $cKeys);
+	}
+
+	if ($mode == 1 && !$ikFKSetting) {
+		setPreviousEnableKey($handle, $ikFKSetting);
+	} else if ($mode == 2 && $ikFKSetting != 0) {
+		setPreviousEnableKey($handle, $ikFKSetting);
+	} else if ($mode == 3) {
+		setPreviousEnableKey($handle, $ikFKSetting);
+	}
+}
+
+proc string[] setObjectKeysIfSpecial(string $object, int $mode)
+//
+//	Description:
+//		Sets keys on the given objects as well as returns an array containing
+//		the handles involved (if any).
+//
+{
+	string $affected[];
+
+	string $attrName;
+	if (size(`ls ($object+".ikBlend")`)) {
+		$attrName = ".ikBlend";
+	} else if (size(`ls ($object+".solverEnable")`)) {
+		$attrName = ".solverEnable";
+	}
+	if (size($attrName)) {
+		string $cnx[] = `listConnections -d 0 ($object+$attrName)`;
+
+		//	This only makes sense if an ikHandle is at the other end of the 
+		//	object.
+		//
+		if (size($cnx) > 0) {
+			$affected = `ls -type "ikHandle" $cnx`;
+
+			//	Set the translate keys on the special object.
+			//
+			setKeyframe -at translate $object;
+		}
+	}
+
+	return $affected;
+}
+
+global proc ikFK(int $mode, string $sl[])
+//
+//	Description:
+//		A proc to set the IK and FK keys on a joint chain. The assumption
+//		is that every joint in the chain should be keyed.
+//
+//		There are different modes for testing purposes:
+//			$mode = 0: 	Just set keys at the current time.
+//			$mode = 1: 	Set the current keys and if FK, find the previous IK enable
+//						key and if it is on, set it to be off.
+//			$mode = 2: 	Set the current key and if IK, find the previous IK enable
+//						key and if it is off, set it to be on.
+//			$mode = 3:	A combination of 1 & 2.
+//
+{
+	string $selected;
+
+	if ($mode < 0 || $mode > 3) {
+	    print ((uiRes("m_ikFK.kJustSetKeys")));
+	    string $errMsg = (uiRes("m_ikFK.kNotAValidMode"));
+		error(`format -s $mode $errMsg`);
+	}
+
+	for ($selected in $sl) {
+		//	First check for non-handles and non-joints that have a 
+		//	a special .ikBlend attribute.
+		//
+		if (size(`ls -type "joint" -type "ikHandle" $selected`) == 0) {
+			string $toKey[] = setObjectKeysIfSpecial($selected, $mode);
+			$sl = appendArray($sl, $toKey);
+		}
+	}
+
+	$sl = makeUnique($sl);
+
+	int $counter = 0;
+	int $foundJoints = false;
+	for ($selected in $sl) {
+		if (size(`ls -type ikHandle $selected`) > 0) {
+			setHandleAndJointKeys($selected, $mode);
+			$counter++;			
+		} else if (size(`ls -type joint $selected`) > 0) {
+			$foundJoints = true;
+			int $found = false;
+			string $handle;
+			string $handles[] = `ls -type ikHandle`;
+
+			string $h;
+			for ($h in $handles) {
+				string $joints[] = `ikHandle -q -jl $h`;
+
+				int $nJoints = size($joints);
+				$joints[$nJoints] = `ikHandle -q -sj $h`;
+				string $j;
+
+				for ($j in $joints) {
+					if (size(`match $selected $j`) > 0 &&
+						size(`match ($selected+"|") $j`) == 0) {
+						$handle = $h;
+						$found = true;
+						break;
+					}
+				}
+
+				if ($found) {
+					break;
+				} 
+			}
+
+			if ($found) {
+				setHandleAndJointKeys($handle, $mode);
+				$counter++;
+			}
+		} 
+	} 
+	
+	if (0 == $counter) {
+		if ($foundJoints) {
+			warning((uiRes("m_ikFK.kNoJointsInIKChain")));
+		} else {
+			error((uiRes("m_ikFK.kAJointOrHandle")));
+		}
+	}
+}

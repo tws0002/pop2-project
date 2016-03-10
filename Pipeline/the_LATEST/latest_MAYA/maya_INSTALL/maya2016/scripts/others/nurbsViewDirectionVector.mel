@@ -1,0 +1,145 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+//
+//
+// Creation Date: April 15 1998.
+//
+//  Description:
+//  This script returns the active camera view direction as a float[].  The
+//  vector is normalized.
+//
+//
+//<doc>
+//<name nurbsViewDirectionVector>
+//
+//<synopsis>
+//		float[] nurbsViewDirectionVector( int $onlyOrtho )
+//
+//<description>
+//      Get the current camera view direction as a normalized vector.
+//      If $onlyOrtho flag is set to true, this is done for the orthogonal
+//      cameras only; the perspective cameras get the default up direction
+//      returned as the result.
+//
+//
+//<flags>
+//		int $onlyOrtho - do this only for ortho windows
+//
+//<returns>
+//		float[3] - the normalized view direction
+//
+//
+//<related camera viewLookAt roll track tumble viewCamera>
+//
+//<examples>
+//	nurbsViewDirectionVector(0);
+//
+//</doc>
+
+global proc float[] nurbsViewDirectionVector( int $onlyOrtho )
+//
+//  Description :
+//      Get the current camera view direction as a normalized vector.
+//      If $onlyOrtho flag is set to true, this is done for the orthogonal
+//      cameras only; the perspective cameras get the default up direction
+//      returned as the result.
+//
+{
+    float $result[];
+
+    string $isitYup = `upAxis -q -ax`;
+    if( "y" == $isitYup ) {
+		$result[0] = 0.0 ;
+		$result[1] = 1.0 ;
+		$result[2] = 0.0 ;
+	}
+	else {
+		$result[0] = 0.0 ;
+		$result[1] = 0.0 ;
+		$result[2] = 1.0 ;
+	}
+
+	string $forTheWarning = "Failed to compute active camera view direction." +
+							"  Using the default (" + $result[0] + "," +
+							$result[1] + "," + $result[2] + ")";
+
+    // get the current camera view.
+    //
+    string $cameraName ;
+	if( catch( $cameraName = `lookThru -q` ) ) {
+		warning $forTheWarning;
+		return $result ;
+	}
+
+	if( $onlyOrtho && !`camera -q -o $cameraName` ) {
+		// Don't do anything for perspective cameras...
+		return $result;
+	}
+
+    float $coiDistance = 0.0 ;
+	if( catch( $coiDistance = `camera -q -coi $cameraName` )) {
+		warning $forTheWarning;
+		return $result ;
+	}
+
+	// save the selection list because createNode changes it.
+	// Later, we need this to restore the selection list.
+	string $selectionList[] = `ls -sl`;
+
+    string $ppm ;
+	if( catch($ppm = `createNode pointMatrixMult`) ) {
+		warning $forTheWarning;
+		select -r $selectionList;
+		return $result ;
+	}
+
+	// restore the selection list
+	//
+	select -r $selectionList;
+
+	// compute the view direction.
+	//
+    setAttr ($ppm +".inPoint") -type double3 0.0 0.0 (-$coiDistance) ;
+    setAttr ($ppm +".vectorMultiply") true ;
+    connectAttr ($cameraName+".worldMatrix[0]") ($ppm+".inMatrix") ;
+    float $coi[] = `getAttr ($ppm+".output")` ;
+    delete $ppm ;
+
+    // fill up the result.
+    //
+    int $i ;
+	float $sum = 0;
+    for( $i = 0 ; $i < 3 ; $i++ ) {
+		$sum += ($coi[$i] * $coi[$i]);
+        $result[$i] = $coi[$i];
+    }
+
+	if( $sum > 0 ) {
+		$sum = -1.0/sqrt($sum);
+		for( $i = 0 ; $i < 3 ; $i++ ) {
+			$result[$i] = $result[$i] * $sum;
+		}
+	}
+    return $result ;
+}
+

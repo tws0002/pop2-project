@@ -1,0 +1,203 @@
+// Copyright (C) 1997-2013 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+/**
+ * @file xgmSplineGuideTools.mel
+ * @brief Contains tools for working with spline guides.
+ *
+ * <b>CONFIDENTIAL INFORMATION: This software is the confidential and
+ * proprietary information of Walt Disney Animation Studios ("WDAS").
+ * This software may not be used, disclosed, reproduced or distributed
+ * for any purpose without prior written authorization and license
+ * from WDAS. Reproduction of any section of this software must include
+ * this legend and all copyright notices.
+ * Copyright Disney Enterprises, Inc. All rights reserved.</b>
+ *
+ * @author Thomas V Thompson II
+ *
+ * @version Created 06/12/09
+ */
+
+/** 
+ * Normalize cvs for selected guides using maya's rebuildCurve functionality.
+ */
+global proc xgmNormalizeGuides()
+{
+    string $originalSelection[] = `ls -sl`;
+
+    // Convert the guides to curves, hide, lock length
+    xgmCreateCurvesFromGuides 1 1;
+    string $guideCurves[] = xgmSelectedCurves( 1 );    
+    int $totalGuides = `size $guideCurves`;
+    if ( $totalGuides == 0 ) {
+        warning( (uiRes("m_xgmSplineGuideTools.kPleaseSelectGuidesToNormalize")) );
+        return;
+    }
+    
+    // Iterate through each guide curve to normalize
+    string $newCurve[];
+    for ( $i = 0; $i < $totalGuides; $i++ ) {
+
+        // Get the spans of the original guide curve, will keep the span
+        string $curve = $guideCurves[$i];
+        int $spans = `getAttr ( $curve + ".spans" )`;
+
+        // Normalize the guide curves by rebuilding them
+        $newCurve = `rebuildCurve -rebuildType 0 -constructionHistory 0
+                                  -degree 2 -spans $spans
+                                  -replaceOriginal false $curve`; 
+
+        // Delete the old guide curves and rename the rebuilt curves
+        // This is a workaround for the in-place rebuildCurve, which does not 
+        // work in maya...
+        string $parent[] = `listTransforms $curve`;
+        string $curveNode = $parent[0];
+        string $groups[] = `listRelatives -parent $curveNode`;
+
+        delete $curveNode;
+        rename $newCurve[0] $curveNode;
+        parent $parent[0] $groups[0];
+    }
+
+    select -replace $guideCurves;
+
+    // Changed curves back to guides
+    xgmSelectedCurvesToGuidesByName;
+
+    // Restore the orignal selection - the selected guides
+    select -r $originalSelection;   
+}
+
+
+/**
+ * Change the CV count for a collection of guides. The guides will be rebuilt
+ * to uniform cv spacing and to the given cv count. This is done using
+ * maya's rebuildCurve functionality.
+ */
+global proc xgmChangeCVCount( int $newCount )
+{
+    if ( $newCount < 3 ) return;
+    
+    string $originalSelection[] = `ls -sl`;
+    string $guides[] = xgmSelectedGuideShapes( "Spline", 1 );
+    if ( size($guides) == 0 ) {
+        warning( (uiRes("m_xgmSplineGuideTools.kPleaseSelectGuidesToModify1")) );
+        return;
+    }
+    select -r $guides;
+
+    // Convert the guides to curves, hide, lock length
+    xgmCreateCurvesFromGuides 1 1;
+    string $guideCurves[] = xgmSelectedCurves( 1 );    
+    int $totalGuides = `size $guideCurves`;
+
+    // Modify the Cv count for the guide fixing shape later
+    xgmSetGuideCVCount -c $newCount $guides;
+        
+    // Iterate through each guide curve to rebuild
+    string $newCurve[];
+    for ( $i = 0; $i < $totalGuides; $i++ ) {
+
+        // Get the spans of the original guide curve, 
+        string $curve = $guideCurves[$i];
+        int $spans = `getAttr ( $curve + ".spans" )`;
+        int $degree = `getAttr ( $curve + ".degree" )`;
+        int $currentCount = $spans + $degree;
+
+        if ( $currentCount != $newCount ) {
+            // Normalize the guide curves by rebuilding them
+            int $newSpans = $newCount - 2;
+            $newCurve = `rebuildCurve -rebuildType 0 -constructionHistory 0
+                                      -degree 2 -spans $newSpans
+                                      -replaceOriginal false $curve`; 
+
+            // Delete the old guide curves and rename the rebuilt
+            // curves This is a workaround for the in-place
+            // rebuildCurve, which does not work in maya...
+            string $parent[] = `listTransforms $curve`;
+            string $curveNode = $parent[0];
+            string $groups[] = `listRelatives -parent $curveNode`;
+            
+            delete $curveNode;
+            rename $newCurve[0] $curveNode;
+            parent $parent[0] $groups[0];
+        }
+    }
+
+    select -replace $guideCurves;
+
+    // Changed curves back to guides
+    xgmSelectedCurvesToGuidesByName;
+
+    // Restore the orignal selection
+    select -r $guides;   
+}
+
+
+/**
+ * Set the length of a guide.
+ */
+global proc xgmSetGuideLength( float $length )
+{
+    if ( $length < 0.001 ) {
+        error((uiRes("m_xgmSplineGuideTools.kYouCanTSetTheGuidesLengthAnythingLessThan")));
+        return;
+    }
+    // Get the selected guides
+    string $guides[] = xgmSelectedGuides("Spline",1);
+
+    if ( size($guides) == 0 ) {
+        warning((uiRes("m_xgmSplineGuideTools.kPleaseSelectGuidesToModify2")));
+        return;
+    }
+
+    string $guide;
+    for ( $guide in $guides ) {
+        float $cvs[] = xgmGuidePositions( $guide, 0, 9999 );
+        int $numCVs = size($cvs)/3;
+        float $vec[];
+        float $clen = 0.0;
+        int $i, $k=0;
+        for ( $i=1; $i<$numCVs; $i++ ) {
+            int $j = $i*3;
+            $vec[0] = $cvs[$j] - $cvs[$k];
+            $vec[1] = $cvs[$j+1] - $cvs[$k+1];
+            $vec[2] = $cvs[$j+2] - $cvs[$k+2];
+            float $vlen = sqrt(pow($vec[0],2)+
+                               pow($vec[1],2)+
+                               pow($vec[2],2));
+            $clen += $vlen;
+            $k = $j;
+        }
+        float $scale = $length / $clen;
+        float $v[3];
+        for ( $i=1; $i<$numCVs; $i++ ) {
+            int $j = $i*3;
+            $vec[0] = $cvs[$j] - $cvs[0];
+            $vec[1] = $cvs[$j+1] - $cvs[1];
+            $vec[2] = $cvs[$j+2] - $cvs[2];
+            $v[0] = $vec[0] * $scale - $vec[0];
+            $v[1] = $vec[1] * $scale - $vec[1];
+            $v[2] = $vec[2] * $scale - $vec[2];
+            move -r $v[0] $v[1] $v[2] ( $guide + ".vtx["+$i+"]");
+        }
+    }
+}

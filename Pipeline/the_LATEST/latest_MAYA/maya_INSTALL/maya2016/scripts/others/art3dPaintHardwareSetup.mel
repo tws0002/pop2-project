@@ -1,0 +1,269 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+proc string getMaterialInfo( string $messagePlug )
+//
+//	Description:
+//		Return the materialInfo node for a given plug
+//
+{
+	string $connections[] = `listConnections $messagePlug`;
+	for ( $item in $connections ) {
+		if (`objectType $item` == "materialInfo") 
+			return $item;
+	}
+	return "";	
+}
+
+
+proc disconnectInfoTexture( string $matInfo )
+//
+//	Description:
+//		Break the connection between the materialInfo node
+//		and the current texture used for hardware display
+//
+{
+	// We need to break all connection because we want to ensure the
+	// texture being displayed has a multi index of zero.
+	//
+	// Note: the connections are broken from back to front because
+	// breaking a connection at the end of the multi will not affect
+	// the connections at the start of the multi.
+	string $connections[];
+	$connections = `listConnections -connections true ($matInfo+".texture")`;
+	if ( size($connections) < 2 ) return;
+
+	for ($i = size($connections); $i > 0; $i -= 2) {
+		disconnectAttr ($connections[$i-1]+".message") $connections[$i-2];
+	}
+}
+
+
+proc connectInfoTexture(
+	string	$shape,
+	string	$shader,
+	string 	$matInfo
+)
+//
+//	Description:
+//		Make the connection between the materialInfo node
+//		and the texture which should be used for HW display
+//
+{
+	// get the name of the active paint attribute
+	//
+	string $paintAttr = eval("art3dPaintCtx -q -painttxtattrname `currentCtx`"); 
+
+	string $textures[];
+	string $shaderSG[];
+
+	string $multipleShadersWarning = (uiRes("m_art3dPaintHardwareSetup.kCannotPaintMultipleShaders"));
+	
+	if(  "displacement" == $paintAttr)
+	{
+ 		if( $shader == defaultShaderName() )
+		{
+ 			$shaderSG = `listConnections ($shader + ".outColor")`;
+			if( size( $shaderSG ) == 2 ) // default
+			{
+				$textures = `listConnections ($shaderSG[1] + ".displacementShader")`;
+			}
+			else if ( size( $shaderSG ) == 1 )
+			{
+				$textures = `listConnections ($shaderSG[0] + ".displacementShader")`;
+				
+			}
+			else
+			{
+				warning $multipleShadersWarning;			
+			}
+ 		}
+		else
+ 		{
+ 			$shaderSG = `listConnections ($shader + ".outColor")`;			
+			if( size( $shaderSG ) == 1 )
+			{
+				$textures = `listConnections ($shaderSG[0] + ".displacementShader")`;
+			}
+			else
+			{
+				warning $multipleShadersWarning;
+			}
+		}
+	}
+	else
+	{
+		$textures = `listConnections ($shader + "." + $paintAttr)`;
+	}
+
+	if ( size( $textures ) == 0 ) return; 	
+
+	// if there is a bump connected to this channel, 
+	// skip over it to get the actual texture
+	string $type = `objectType $textures[0]`;
+
+	if ($type == "bump2d" || $type == "bump3d") {
+		string $bump = $textures[0];
+		$textures  = `listConnections -s true -d false ($bump + ".bumpValue")`;
+	}
+	else if ($type == "displacementShader" ) {
+		// if there is a displacement shader connected to this channel, 
+		// skip over it to get the actual texture
+
+		string $disp = $textures[0];
+		$textures  = `listConnections -s true -d false ($disp + ".displacement")`;
+	}
+	if ( size( $textures ) == 0 ) return; 	
+	string $texture = $textures[0];
+		
+	// finally, connect the texture to the materialInfo node
+	connectAttr ($texture + ".message") ($matInfo + ".texture[0]");
+}
+
+
+global proc art3dPaintHardwareSetup()
+// 
+//	Description:
+// 		For each surface, find its shader and the corresponding
+// 		materialInfo and first disconnect whatever is there
+// 		and then connect the correct thing.
+//
+{
+	//  get the active surfaces from the paint color 
+	//  context and initialize the global tables
+	// 
+	string  $shapeList[];
+	string  $shapeNames = eval("art3dPaintCtx -q -shapenames `currentCtx`");
+	int		$numbShapes  = `tokenize $shapeNames $shapeList`;
+
+	string  $paintAttr = eval("art3dPaintCtx -q -painttxtattrname `currentCtx`");
+
+	// first make sure that the connections to material nodes 
+	// are not valid any more. If they are valid then do not do anything
+	// 
+	string $matInfoArray[];
+	string $shapeArray[];
+	string $shaderArray[];
+	string $shaderSG[];
+
+	int	   $matInfoIdx = 0;
+	for ( $shape in $shapeList ) {
+		if ( $shape == "" ) continue;
+
+		// find the shading engine for this node
+		// 
+		string $sEng[] = `listConnections -d true -t "shadingEngine" $shape`;
+		$sEng = stringArrayRemoveDuplicates($sEng);
+		
+		int    $sEngSize = size( $sEng );		
+
+		if ( $sEngSize ==  0 ) continue;  // ERROR 
+		int $engCount = 0;
+		
+		// Each shape may be linked to many shading engines,
+		// Update textures associated with each of them.
+		//
+		for( $engCount = 0; $engCount < $sEngSize; $engCount++ ) {
+			string $shadingEng = $sEng[$engCount];			
+
+			// now find the correspondig shader  
+			// 
+			string  $shaderConn[] = `listConnections ($shadingEng + ".surfaceShader")`;
+			string  $shader = $shaderConn[0];
+			
+			
+			// now we can find the materialInfo node 
+			// 
+			string	$messagePlug  = $shader + ".message";
+			string 	$materialInfo = getMaterialInfo( $messagePlug );
+
+			// make sure that this is the first time 
+			int $foundMaterial = 0;
+			for ( $mat in $matInfoArray ) {
+				if ( $mat == $materialInfo ) $foundMaterial = 1;
+			}
+			if ( $foundMaterial == 1 ) continue;
+
+			// process the matrial node
+			string $currHardText[] = `listConnections ($materialInfo + ".texture[0]")`;	
+			
+			string $currShaderText[];
+			if(  "displacement" == $paintAttr)
+			{
+ 				if( $shader == defaultShaderName() )
+				{
+ 					$shaderSG = `listConnections ($shader + ".outColor")`;
+					if( size( $shaderSG ) == 2 ) // default
+					{
+						$currShaderText = `listConnections ($shaderSG[1] + ".displacementShader")`;
+					}
+					else if( size( $shaderSG ) == 1 )
+					{
+						$currShaderText = `listConnections ($shaderSG[0] + ".displacementShader")`;
+					}
+					else
+					{
+						warning( uiRes("m_art3dPaintHardwareSetup.kCannotPaintMultipleShaders") );
+					}
+				}
+				else
+ 				{
+ 					$shaderSG = `listConnections ($shader + ".outColor")`;
+					if( size( $shaderSG ) == 1 )
+					{
+						$currShaderText = `listConnections ($shaderSG[0] + ".displacementShader")`;
+					}
+					else
+					{
+						warning( uiRes("m_art3dPaintHardwareSetup.kCannotPaintMultipleShaders") );
+					}
+ 				}
+			}
+			else
+			{
+				$currShaderText = `listConnections ($shader + "." + $paintAttr)`;
+			}
+
+
+			if ( $currHardText[0] != $currShaderText[0] ) {
+				$matInfoArray[$matInfoIdx] = $materialInfo;
+				$shapeArray[$matInfoIdx]  = $shape;
+				$shaderArray[$matInfoIdx] = $shader;
+				$matInfoIdx ++;
+
+				// disconnect
+				disconnectInfoTexture( $materialInfo );
+			}
+		}
+	}
+	// check if there is anthing to do
+	int $matInfoSize = size($matInfoArray);
+	if ( $matInfoSize == 0 ) return;
+
+	// connect the nodes to the matInfo nodes on the list
+	for ( $index = 0; $index < size($matInfoArray); $index++ ) {
+		string $shapeNode = $shapeArray[$index];
+		string $matInfoNode = $matInfoArray[$index];
+		string $shaderNode  = $shaderArray[$index];
+		
+		connectInfoTexture( $shapeNode, $shaderNode, $matInfoNode );
+	}
+}

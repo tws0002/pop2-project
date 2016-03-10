@@ -1,0 +1,220 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Procedure Name:
+//	AEaddDynRampClothCollision
+//
+//  Description Name;
+//	Creates the attribute editor controls for the ramp widget
+//	for dynamic attributes. Heavily based and dependent on the
+//	original AEaddDynRampControl.
+//
+//	There are three differences between this and AEaddDynRampControl
+// 	1. It creates the UI if the object is a cloth collision object,
+//	   i.e. dynamic attribute collisionOffset exists
+//      2. The ramp can go over 1
+//	3. It allows the ramp to be created on multiple types of objects
+//
+//      The functionality of hiding and only creation on demand is
+//	located in the AEmakeDynRampClothCollisionInteractiveReplace proc.
+//
+//  Input Value:
+//	nodeName 
+//
+//  Output Value:
+//	None
+// 
+
+global proc AEmakeDynRampClothCollisionInteractiveNew (string $nodeAttr)
+{
+	// Ensure script sources
+	//
+	if( !`exists AEmakeCompactRamp` || !`exists AEmakeLargeRamp` )
+	{
+		source AEaddRampControl.mel;
+	}
+
+	// Only create the UI if the attribute exists (dynamicAttr support)
+	//
+	int $attrExists = `objExists $nodeAttr`;
+	if( !$attrExists ) return;
+
+	string $buffer[];
+	tokenize($nodeAttr, ".", $buffer);
+	string $node = $buffer[0];
+
+	// Check if the object is cloth collision object, i.e. with collisionOffset attr
+	//
+	string $nodeCollAttr = $node + ".collisionOffset";
+	int $isCollisionObj = `objExists $nodeCollAttr`;
+
+	if( !$isCollisionObj ) return;
+	
+	// Make sure this object is still connected to a cloth solver.
+	//
+	string $plugs[] = `listConnections -d 1 -type "cpClothSolver" $nodeCollAttr`;
+	$isCollisionObj = ( size($plugs) > 0 );
+	if( !$isCollisionObj ) return;
+
+	// For AEmakeLargeRamp (($rampDrawMethod < 1) || ($rampDrawMethod > 2)),
+	// we wish to encapsulate the UI within a frameLayout, do so here.
+	//
+	// NOTE: We specifically do *not* use `editorTemplate -beginLayout/endLayout`
+	// because we wish to control the visibility of the layout.
+	//
+	int $rampDrawMethod = 0;
+	if( `optionVar -exists "gradientControlDrawMethod"` ){
+		$rampDrawMethod = `optionVar -q "gradientControlDrawMethod"`;
+	}
+	int $subBlock = (($rampDrawMethod < 1) || ($rampDrawMethod > 2));
+	if( $subBlock )
+	{
+		setUITemplate -pst attributeEditorTemplate;
+		string $buffer[];
+		tokenize($nodeAttr, ".", $buffer);
+		string $node = $buffer[0];
+		string $attr = $buffer[1];
+		string $nodeType = `nodeType $node`;
+		string $rampName = $attr + "Ramp" + $nodeType;
+		string $rampTitle = nodeTypeNiceName($attr);
+		frameLayout -label $rampTitle -collapse false -vis true ($rampName + "Frame");
+	}
+
+	switch( $rampDrawMethod )
+	{
+	case 1:
+		eval( "AEmakeCompactRamp( \"" + $nodeAttr + "\",0,0,0,true )" );
+		break;
+	case 2:
+		eval( "AEmakeCompactRamp( \"" + $nodeAttr + "\",1,0,0,true )" );
+		break;
+	case 3:
+		eval( "AEmakeLargeRamp( \"" + $nodeAttr + "\",0,0,0,0,true )" );
+		break;
+	case 4:
+		eval( "AEmakeLargeRamp( \"" + $nodeAttr + "\",1,0,0,0,true )" );
+		break;
+	default:
+		eval( "AEmakeLargeRamp( \"" + $nodeAttr + "\",1,1,0,0,true )" );
+		break;
+	}
+
+	if( $subBlock )
+	{
+		setUITemplate -ppt;
+	}
+}
+
+global proc AEmakeDynRampClothCollisionInteractiveReplace (string $nodeAttr)
+{
+	string $buffer[];
+	tokenize($nodeAttr, ".", $buffer);
+	string $node = $buffer[0];
+	string $attr = $buffer[1];
+	string $nodeType = `nodeType $node`;
+
+	string $rampName = $attr + "Ramp";
+
+	// Check for existence of attribute
+	//
+	int $attrExists = `objExists $nodeAttr`;
+
+	// Check if the object is cloth collision object
+	//
+	string $nodeCollAttr = $node + ".collisionOffset";
+	int $isCollisionObj = `objExists $nodeCollAttr`;
+
+	if( $isCollisionObj ){
+		// Make sure this object is still connected to a cloth solver.
+		//
+		string $plugs[] = `listConnections -d 1 -type "cpClothSolver" $nodeCollAttr`;
+		$isCollisionObj = ( size($plugs) > 0 );
+	}
+
+	// Check for existence of UI
+	//
+	string $frameName = $rampName + $nodeType + "Frame";
+	string $formName = $rampName + "Form";
+	string $textName = $rampName + "Label";
+	int $uiExists = `frameLayout -q -exists $frameName`;
+
+	// Now execute based on state
+	//
+	if( $uiExists && $attrExists && $isCollisionObj )
+	{
+		// Show the ramp control
+		//
+		formLayout -e -vis true $formName;
+
+		// Show the text label
+		//
+		if( `text -q -exists $textName` ) text -e -vis true $textName;
+		if( `frameLayout -q -exists $frameName` ) frameLayout -e -vis true $frameName;
+
+		gradientControl -edit -at $nodeAttr $rampName;
+		if( `objExists ($nodeAttr +"Input")` ){
+			attrEnumOptionMenuGrp -edit -at ($nodeAttr + "Input") ($rampName + "Input");
+		}
+		if( `objExists ($nodeAttr +"InputScale")` ){
+			attrFieldSliderGrp -edit -at ($nodeAttr + "InputScale") ($rampName + "InputScale");
+		}
+		if( `objExists ($nodeAttr +"InputBias")` ){
+			attrFieldSliderGrp -edit -at ($nodeAttr + "InputBias") ($rampName + "InputBias");
+		}
+	}
+	else if( $uiExists && (!$attrExists || !$isCollisionObj) )
+	{
+		// Hide the ramp control
+		//
+		formLayout -e -vis false $formName;
+		
+		// Hide the text label
+		//
+		if( `text -q -exists $textName` ) text -e -vis false $textName;
+		if( `frameLayout -q -exists $frameName` ) frameLayout -e -vis false $frameName;
+	}
+	else if( !$uiExists && $attrExists && $isCollisionObj )
+	{
+		// Create the UI
+		//
+		AEmakeDynRampClothCollisionInteractiveNew( $nodeAttr );
+	} else {
+	}
+
+	// In the case of (!$uiExists && !$attrExists) there is nothing to be done.
+	//
+}
+
+global proc AEaddDynRampClothCollision( string $rampName )
+{
+	int $rampDrawMethod = 0;
+	if( `optionVar -exists "gradientControlDrawMethod"` ){
+		$rampDrawMethod = `optionVar -q "gradientControlDrawMethod"`;
+	}
+
+	editorTemplate -callCustom "AEmakeDynRampClothCollisionInteractiveNew" 
+			"AEmakeDynRampClothCollisionInteractiveReplace" $rampName;
+
+	editorTemplate -suppress ($rampName + "Input");
+	editorTemplate -suppress ($rampName + "InputBias");
+	editorTemplate -suppress ($rampName + "InputScale");
+}

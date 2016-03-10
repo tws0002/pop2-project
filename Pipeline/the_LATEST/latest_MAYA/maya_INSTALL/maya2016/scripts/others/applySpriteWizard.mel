@@ -1,0 +1,1143 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  ====================== applySpriteWizard ======================
+//
+//  SYNOPSIS
+//      Apply sprite hardware rendering to a particle shape.
+//
+//  INPUT ARGUMENTS
+//
+//      string $particleShape   The name of the particle shape. Must be the shape.
+//		string $imageName		The name of the base image
+//		int $startImage 		The first image frame to use
+//		int $endImage			The end image frame to use
+
+global proc int applySpriteWizard(
+						string $particleShape,
+						string $imageName,
+						int $startImage, 
+						int $endImage,
+						int $animationOption, 
+						int $imageSelection,
+						int $cycle,
+						float $cycleLength,
+						int $invert )
+{
+	// Set sprite rendering attributes in the particle object
+	//
+	select -r $particleShape;
+	setAttr ($particleShape+".particleRenderType") 5;
+	setAttr ($particleShape+".depthSort") 1;
+
+	//
+	// Use the existing sprite file texture, if it exists.
+	// Otherwise, create a new one.
+	//
+	string $fileTex = "";
+	$fileTex = particleSpriteFileTexture( $particleShape );
+	if( $fileTex == "" )
+	{
+		// Make a shader
+		//
+		string $lambert = `shadingNode -asShader lambert`;
+		string $lambertSG   = $lambert + "SG";
+		sets -renderable true -noSurfaceShader true -empty -name $lambertSG;
+		connectAttr -f ($lambert+".outColor") ($lambertSG+".surfaceShader");
+
+		$fileTex = `shadingNode -asTexture file`;
+		string $placeTex = `shadingNode -asUtility place2dTexture`;
+		connectAttr -f ($placeTex+".coverage") ($fileTex+".coverage");
+		connectAttr -f ($placeTex+".translateFrame")
+			($fileTex+".translateFrame");
+		connectAttr -f ($placeTex+".rotateFrame") ($fileTex+".rotateFrame");
+		connectAttr -f ($placeTex+".mirrorU") ($fileTex+".mirrorU");
+		connectAttr -f ($placeTex+".mirrorV") ($fileTex+".mirrorV");
+		connectAttr -f ($placeTex+".stagger") ($fileTex+".stagger");
+		connectAttr -f ($placeTex+".wrapU") ($fileTex+".wrapU");
+		connectAttr -f ($placeTex+".wrapV") ($fileTex+".wrapV");
+		connectAttr -f ($placeTex+".repeatUV") ($fileTex+".repeatUV");
+		connectAttr -f ($placeTex+".offset") ($fileTex+".offset");
+		connectAttr -f ($placeTex+".rotateUV") ($fileTex+".rotateUV");
+		connectAttr -f ($placeTex+".noiseUV") ($fileTex+".noiseUV");
+		connectAttr -f ($placeTex+".vertexUvOne") ($fileTex+".vertexUvOne");
+		connectAttr -f ($placeTex+".vertexUvTwo") ($fileTex+".vertexUvTwo");
+		connectAttr -f ($placeTex+".vertexUvThree") ($fileTex+".vertexUvThree");
+		connectAttr -f ($placeTex+".vertexCameraOne") ($fileTex+".vertexCameraOne");
+		connectAttr ($placeTex+".outUV") ($fileTex+".uv");
+		connectAttr ($placeTex+".outUvFilterSize")
+			($fileTex+".uvFilterSize");
+
+		// Hook the file texture to the color. Also automatically
+		// hook up transparency.
+		//
+		connectAttr -f ($fileTex+".outColor") ($lambert+".color");
+		connectAttr -f ($fileTex+".outTransparency") ($lambert+".transparency");
+
+		// Assign the shader.
+		//
+		sets -e -forceElement $lambertSG $particleShape;
+	}
+
+	// Assign the source image.
+	// We use whatever is the default path.
+	// Enable frame extension and hardware texture cycling.
+	//
+	string $currentFileName = `getAttr ($fileTex+".fileTextureName")`;
+	int $currentUSE = `getAttr ($fileTex+".useFrameExtension")`;
+	int $currentUHTC = `getAttr ($fileTex+".useHardwareTextureCycling")`;
+	int $currentSCE = `getAttr ($fileTex+".startCycleExtension")`;
+	int $currentECE = `getAttr ($fileTex+".endCycleExtension")`;
+
+	if( $currentFileName != $imageName )
+	{
+		setAttr -type "string" ($fileTex+".fileTextureName") $imageName;
+	}
+	if( $currentUSE != 1 )
+	{
+		setAttr ($fileTex+".useFrameExtension") 1;
+	}
+	if( $currentUHTC != 1 )
+	{
+		setAttr ($fileTex+".useHardwareTextureCycling") 1;
+	}
+	if( $currentSCE != $startImage )
+	{
+		setAttr ($fileTex+".startCycleExtension") $startImage;
+	}
+	if( $currentECE != $endImage )
+	{
+		setAttr ($fileTex+".endCycleExtension")   $endImage;
+	}
+
+	//
+	// If there is only one image in the sequence, turn OFF useFrameExtension
+	// and useHardwareTextureCycling.
+	//
+	if( $startImage == $endImage )
+	{
+		setAttr ($fileTex+".useFrameExtension") 0;
+		setAttr ($fileTex+".useHardwareTextureCycling") 0;
+	}
+
+	// Set expression on frameExtension to force file load and reset random generator
+	//
+	string $frameExtensionDrivers[] =
+		`listConnections -plugs false -source true -destination false
+		($fileTex+".frameExtension")`;
+
+	if( size( $frameExtensionDrivers ) > 0 )
+	{
+		string $frameExtensionExpr[] =
+			`ls -type expression $frameExtensionDrivers`;
+
+		if( size( $frameExtensionExpr ) > 0 )
+		{
+			delete $frameExtensionExpr;
+		}
+
+		$frameExtensionDrivers =
+			`listConnections -shapes true -plugs true
+			-source true -destination false
+			($fileTex+".frameExtension")`;
+		if( size( $frameExtensionDrivers ) > 0 )
+		{
+			disconnectAttr
+				$frameExtensionDrivers[0] ($fileTex+".frameExtension");
+		}
+	}
+
+	expression -s "if (frame <= 1) seed(1);\n\nint $start = startCycleExtension;\nint $end =   endCycleExtension;\nif (frame <= $end-$start+1)\n\tframeExtension = $start + frame - 1;\nelse\n\tframeExtension = $end;"  -o $fileTex -ae 1 -uc all ;
+
+	//
+	// Add the needed attributes and set up the
+	// expressions.
+	//
+	addAttributesForExpressions( $particleShape );
+	setAttr ($particleShape+".SpriteAnimation") $animationOption;
+
+	// If particles live forever, the animation option won't work.
+	// Switch them to "constant" to that the user can see their animation.
+	//
+	int $lifespanMode = `getAttr ($particleShape+".lifespanMode")`;
+	if (0 == $lifespanMode) {
+		setAttr ($particleShape+".lifespanMode") 1;
+	}
+
+	setAttr ($particleShape+".SpriteStartOption") $imageSelection;
+	setAttr ($particleShape+".SpriteCyclePattern") $cycle;
+	setAttr ($particleShape+".SpriteCycleLength") $cycleLength;
+	setAttr ($particleShape+".SpriteInvertCycle") $invert;
+
+	string $expressions[] =
+		createSpriteExpressions( $particleShape, $fileTex );
+
+	dynExpression -r -s $expressions[0] $particleShape;
+	dynExpression -c -s $expressions[1] $particleShape;
+	
+	string $msg = (uiRes("m_applySpriteWizard.kSetupParticleSprite")) ;
+	print `format -stringArg $particleShape $msg` ;
+		
+	$msg = (uiRes("m_applySpriteWizard.kImage")) ;
+	print `format -stringArg $imageName $msg` ;
+
+	$msg = (uiRes("m_applySpriteWizard.kSpriteImageStart")) ;
+	print `format -stringArg $startImage -stringArg $endImage $msg` ;
+
+	select `listRelatives -parent $particleShape`;
+	return 0;
+}
+
+global proc addAttributesForExpressions( string $particleShape )
+{
+	string $attrWrnFmt = (uiRes("m_applySpriteWizard.kAttrWrn"));
+	string $doubleArray = (uiRes("m_applySpriteWizard.kDoubleArray"));
+	string $numeric = (uiRes("m_applySpriteWizard.kNumeric"));
+	string $numericOrBoolean = (uiRes("m_applySpriteWizard.kNumericOrBoolean"));
+	//
+	// First, we will add the scalar attributes.
+	//
+	if( `attributeQuery -exists -node $particleShape "spriteTwist"` == 0 )
+	{
+		addAttr -k 1 -is true -ln "spriteTwist" 
+			-at "float" -min -180 -max 180 -dv 0.0 
+			$particleShape;
+	}
+	if( `attributeQuery -exists -node $particleShape "spriteScaleX"` == 0 )
+	{
+		addAttr -k 1 -is true -ln "spriteScaleX" -dv 1.0 $particleShape;
+	}
+	if( `attributeQuery -exists -node $particleShape "spriteScaleY"` == 0 )
+	{
+		addAttr -k 1 -is true -ln "spriteScaleY" -dv 1.0 $particleShape;
+	}
+	if( `attributeQuery -exists -node $particleShape "spriteNum"` == 0 )
+	{
+		addAttr -k 1 -is true -ln "spriteNum" -at long -dv 1 $particleShape;
+	}
+	if( `attributeQuery -exists -node $particleShape "useLighting"` == 0 )
+	{
+		addAttr -k 1 -is true -ln "useLighting" -at bool -dv false $particleShape;
+	}
+
+
+
+	//
+	// The "ShowSpriteHelp" attribute is a special attribute.
+	// It is hooked up to a scriptJob that will display a
+	// help window whenever this attribute is changed.
+	//
+//	if( `attributeQuery -exists -node $particleShape ShowSpriteHelp` == 0 )
+//	{
+//		addAttr -ln "ShowSpriteHelp" -at short -min 0 -max 0 -dv 0 $particleShape;
+//	}
+	// scriptJob -attributeChange ($particleShape+".ShowSpriteHelp") "showSpriteHelp";
+	// addSpriteHelpScriptNode();
+
+	//
+	// The "__ApplySprite__" attribute marks this particle object
+	// as having this script run on it, setting up some smart
+	// presets for particle sprite animation.  It is used by the
+	// sprite wizard to identify particles that have already
+	// been set up by the wizard.
+	//
+	if( `attributeQuery -exists -node $particleShape "__ApplySprite__"` == 0 )
+	{
+		addAttr -ln "__ApplySprite__" -at message $particleShape;
+	}
+
+	//
+	// The "SpriteAnimation" attribute controls whether or
+	// not the sprites used for each particle will change over
+	// the lifespan of the particles.  A value of 0 means that
+	// whatever sprite is chosen for each particle at the time
+	// of its birth will be the sprite used for the entire life
+	// of the particles.
+	//
+	if( `attributeQuery -exists -node $particleShape SpriteAnimation` == 0 ) {
+		addAttr -k 1 -ln "SpriteAnimation" -at enum -enumName "off:on" -dv 0 $particleShape;
+	}
+	else
+	{
+		if( ( `getAttr -type ($particleShape+".SpriteAnimation")` != "short" ) &&
+		    ( `getAttr -type ($particleShape+".SpriteAnimation")` != "long" ) &&
+		    ( `getAttr -type ($particleShape+".SpriteAnimation")` != "enum" ) &&
+		    ( `getAttr -type ($particleShape+".SpriteAnimation")` != "float" ) &&
+		    ( `getAttr -type ($particleShape+".SpriteAnimation")` != "double" ) )
+		{
+			warning(`format -s (uiRes("m_applySpriteWizard.kSpriteAnimation")) -s $numeric $attrWrnFmt`);
+		}
+	}
+
+	//
+	// The "SpriteStartOption" attribute tells the expressions
+	// how to determine the initial sprite to use for each
+	// particles.  The values are as follows:
+	//
+	//     0:  Use the first sprite in the sequence.
+	//     1:  Use the particle's "particleId" value as the starting
+	//         index.  This value will be "wrapped" to be a value
+	//         within the valid range of indices.
+	//     2:  Choose a random index from the range of valid indices.
+	//     3:  Use the value of the "startIndexPP" per-particle
+	//         attribute.  It is then the user's responsibility to
+	//         set this value sometime BEFORE the creation expression
+	//         gets called.  This could either be put at the top of
+	//         the creation expression or use a ramp.
+	//     4:  Use the value of the "SpriteNumRamp" per-particle
+	//         attribute.  This attribute will be set up to use
+	//         a ramp by this script.  The user can then edit the
+	//         ramp to control the animation of the "SpriteNumPP"
+	//         attribute.
+	//
+	if( `attributeQuery -exists -node $particleShape SpriteStartOption` == 0 )
+	{
+		addAttr -k 1 -ln "SpriteStartOption" -at enum
+				-enumName "first:particleId:random:custom:ramp" -dv 0 $particleShape;
+	}
+	else
+	{
+		if( ( `getAttr -type ($particleShape+".SpriteStartOption")` != "short" ) &&
+		    ( `getAttr -type ($particleShape+".SpriteStartOption")` != "long" ) &&
+		    ( `getAttr -type ($particleShape+".SpriteStartOption")` != "enum" ) &&
+		    ( `getAttr -type ($particleShape+".SpriteStartOption")` != "float" ) &&
+		    ( `getAttr -type ($particleShape+".SpriteStartOption")` != "double" ) )
+		{
+			warning(`format -s (uiRes("m_applySpriteWizard.kSpriteStartOption")) -s $numeric $attrWrnFmt`);
+		}
+	}
+
+	//
+	// The "SpriteCyclePattern" attribute controls how the sprites
+	// animate over the lifespan of the particles.  This is only used
+	// if the "SpriteAnimation" attribute is set to 1.  The values
+	// are as follows:
+	//
+	//     0:  Linearly increasing sprite index.
+	//
+	//        1--|     /
+	//           |    /
+	//           |   /
+	//           |  /
+	//           | /
+	//        0--|/_______________________
+	//        
+	//     1:  Ease-In/Ease-Out increasing sprite index.
+	//                               _____
+	//        1--|                ___/
+	//           |              _/
+	//           |             / 
+	//           |            |
+	//           |          _/
+	//           |      ___/
+	//        0--|_____/______________________
+	//        
+	//     2:  Linear increasing followed by linear decrease.
+	//
+	//        1--|     /\
+	//           |    /  \
+	//           |   /    \
+	//           |  /      \
+	//           | /        \
+	//        0--|/__________\____________
+	//        
+	//     3:  Ease-In/Ease-Out increase and decrease.
+	//                             ________
+	//        1--|              __/        \__
+	//           |            _/              \_
+	//           |           /                  \
+	//           |          |                    |
+	//           |        _/                      \_
+	//           |     __/                          \__
+	//        0--|____/                                \____
+	//        
+	// This is relative to the starting index for each particle.
+	// If a particle started with an index half way through the
+	// range of sprites and the "SpriteCyclePattern" attribute is
+	// 0, then the animation on the sprite would look like this:
+	//
+	//        1--|  /
+	//           | /
+	//           |/
+	//           |     /
+	//           |    /
+	//        0--|___/____________________
+	//        
+	if( `attributeQuery -exists -node $particleShape SpriteCyclePattern` == 0 )
+	{
+		addAttr -k 1-ln "SpriteCyclePattern" -at enum
+			-enumName "linearUp:easeUp:linearUpDown:easeUpDown:custom:ramp" -dv 0 $particleShape;
+	}
+	else
+	{
+		if( ( `getAttr -type ($particleShape+".SpriteCyclePattern")` != "short" ) &&
+		    ( `getAttr -type ($particleShape+".SpriteCyclePattern")` != "long" ) &&
+		    ( `getAttr -type ($particleShape+".SpriteCyclePattern")` != "enum" ) &&
+		    ( `getAttr -type ($particleShape+".SpriteCyclePattern")` != "float" ) &&
+		    ( `getAttr -type ($particleShape+".SpriteCyclePattern")` != "double" ) )
+		{
+			warning(`format -s (uiRes("m_applySpriteWizard.kSpriteCyclePattern")) -s $numeric $attrWrnFmt`);
+		}
+	}
+
+	//
+	// The "SpriteCycleLength" attribute controls how fast the
+	// sprite animation occurs for each particle.  A value of
+	// 0 will make the cycle happen once over the lifespan of
+	// each particle.  Any value greater than 0 will make the
+	// cycle happen once in that many frames and repeat until
+	// the particle dies.  For example, if a particle's lifespan
+	// was 60 frames, and the "SpriteCycleLength" was 30, then
+	// the cycle, as defined by the "SpriteCyclePattern" attribute,
+	// would happen twice over the particle's lifespan, like this:
+	//
+	//        1--|     /     /
+	//           |    /     /
+	//           |   /     /
+	//           |  /     /
+	//           | /     /
+	//        0--|/_____/_________________
+	//        
+	if( `attributeQuery -exists -node $particleShape SpriteCycleLength` == 0 )
+	{
+		addAttr -k 1 -ln "SpriteCycleLength" -at double -min 0 -dv 0 $particleShape;
+	}
+	else
+	{
+		if( ( `getAttr -type ($particleShape+".SpriteCycleLength")` != "short" ) &&
+		    ( `getAttr -type ($particleShape+".SpriteCycleLength")` != "long" ) &&
+		    ( `getAttr -type ($particleShape+".SpriteCycleLength")` != "float" ) &&
+		    ( `getAttr -type ($particleShape+".SpriteCycleLength")` != "double" ) )
+		{
+			warning(`format -s (uiRes("m_applySpriteWizard.kSpriteCycleLength")) -s $numeric $attrWrnFmt`);
+		}
+	}
+
+	//
+	// The "SpriteInvertCycle" attribute tells the expressions
+	// whether to invert the animation "SpriteCyclePattern"
+	// attribute.  For instance, if the "SpriteCyclePattern"
+	// attribute is 3 and the "SpriteInvertCycle" attribute is
+	// TRUE, then the resulting cycle shape would be:
+	//            ____                                  ____
+	//        1--|    \__                            __/
+	//           |       \_                        _/
+	//           |         \                      /
+	//           |          |                    |
+	//           |           \_                _/
+	//           |             \__          __/
+	//        0--|                \________/
+	//
+	if( `attributeQuery -exists -node $particleShape SpriteInvertCycle` == 0 )
+	{
+		addAttr -ln "SpriteInvertCycle" -at bool -dv false $particleShape;
+	}
+	else
+	{
+		if( ( `getAttr -type ($particleShape+".SpriteInvertCycle")` != "short" ) &&
+		    ( `getAttr -type ($particleShape+".SpriteInvertCycle")` != "long" ) &&
+		    ( `getAttr -type ($particleShape+".SpriteInvertCycle")` != "float" ) &&
+		    ( `getAttr -type ($particleShape+".SpriteInvertCycle")` != "double" ) &&
+		    ( `getAttr -type ($particleShape+".SpriteInvertCycle")` != "bool" ) )
+		{
+			warning(`format -s (uiRes("m_applySpriteWizard.kSpriteInvertCycle")) -s $numericOrBoolean $attrWrnFmt`);
+		}
+	}
+
+	//
+	// Now we add the per-particle attributes.
+	//
+
+	//
+	// The "ageNormalized" attribute automatically gets computed
+	// by the particle shape to be the ratio of each particle's
+	// current age to its lifespan.
+	//
+	if( `attributeQuery -exists -node $particleShape ageNormalized` == 0 )
+	{
+		addAttr -ln ageNormalized -dt doubleArray $particleShape;
+	}
+	else
+	{
+		if( `getAttr -type ($particleShape+".ageNormalized")`
+			!= "doubleArray" )
+		{
+			warning(`format -s (uiRes("m_applySpriteWizard.kAgeNormalized")) -s $doubleArray $attrWrnFmt`);
+		}
+	}
+	if( `attributeQuery -exists -node $particleShape ageNormalized0` == 0 )
+	{
+		addAttr -ln ageNormalized0 -dt doubleArray $particleShape;
+	}
+	else
+	{
+		if( `getAttr -type ($particleShape+".ageNormalized0")`
+			!= "doubleArray" )
+		{
+			warning(`format -s (uiRes("m_applySpriteWizard.kAgeNormalizedO")) -s $doubleArray $attrWrnFmt`);
+		}
+	}
+
+	//
+	// The "spriteNumPP" attribute is the attribute that
+	// tells the hardware rendering which sprite to use.
+	// This is 1-based, meaning that a value of 1 will mean
+	// to use the first sprite in the sprite range.
+	//
+	if( `attributeQuery -exists -node $particleShape spriteNumPP` == 0 )
+	{
+		addAttr -ln spriteNumPP -dt doubleArray $particleShape;
+	}
+	else
+	{
+		if( `getAttr -type ($particleShape+".spriteNumPP")`
+			!= "doubleArray" )
+		{
+			warning(`format -s (uiRes("m_applySpriteWizard.kSpriteNumPP")) -s $doubleArray $attrWrnFmt`);
+		}
+	}
+	if( `attributeQuery -exists -node $particleShape spriteNumPP0` == 0 )
+	{
+		addAttr -ln spriteNumPP0 -dt doubleArray $particleShape;
+	}
+	else
+	{
+		if( `getAttr -type ($particleShape+".spriteNumPP0")`
+			!= "doubleArray" )
+		{
+			warning(`format -s (uiRes("m_applySpriteWizard.kSpriteNumPPO")) -s $doubleArray $attrWrnFmt`);
+		}
+	}
+
+	//
+	// The "startIndexPP" attribute is used to determine the
+	// sprite that each particle gets when it is created.  It
+	// is then used in the runtime expression to control the
+	// shape of the animation.
+	//
+	if( `attributeQuery -exists -node $particleShape startIndexPP` == 0 )
+	{
+		addAttr -ln startIndexPP -dt doubleArray $particleShape;
+	}
+	else
+	{
+		if( `getAttr -type ($particleShape+".startIndexPP")`
+			!= "doubleArray" )
+		{
+			warning(`format -s (uiRes("m_applySpriteWizard.kStartIndexPP")) -s $doubleArray $attrWrnFmt`);
+		}
+	}
+	if( `attributeQuery -exists -node $particleShape startIndexPP0` == 0 )
+	{
+		addAttr -ln startIndexPP0 -dt doubleArray $particleShape;
+	}
+	else
+	{
+		if( `getAttr -type ($particleShape+".startIndexPP0")`
+			!= "doubleArray" )
+		{
+			warning(`format -s (uiRes("m_applySpriteWizard.kStartIndexPPO")) -s $doubleArray $attrWrnFmt`);
+		}
+	}
+
+	//
+	// The "spriteNumRamp" attribute is used if the user
+	// chooses to control the sprite animation using a ramp
+	// a default ramp will be set up to drive this attribute.
+	//
+	if( `attributeQuery -exists -node $particleShape spriteNumRamp` == 0 )
+	{
+		addAttr -ln spriteNumRamp -dt doubleArray $particleShape;
+	}
+	else
+	{
+		if( `getAttr -type ($particleShape+".spriteNumRamp")`
+			!= "doubleArray" )
+		{
+			warning(`format -s (uiRes("m_applySpriteWizard.kSpriteNumRamp")) -s $doubleArray $attrWrnFmt`);
+		}
+	}
+	if( `attributeQuery -exists -node $particleShape spriteNumRamp0` == 0 )
+	{
+		addAttr -ln spriteNumRamp0 -dt doubleArray $particleShape;
+	}
+	else
+	{
+		if( `getAttr -type ($particleShape+".spriteNumRamp0")`
+			!= "doubleArray" )
+		{
+			warning(`format -s (uiRes("m_applySpriteWizard.kSpriteNumRampO")) -s $doubleArray $attrWrnFmt`);
+		}
+	}
+
+	//
+	// The "spriteNumRampU" attribute is added to allow the user to
+	// decide the U-position in the ramp that drives the "spriteNumRamp"
+	// attribute to get the value for "spriteNumRamp".  No animation
+	// is put into this attribute by default.  The V-position of this
+	// ramp is always based on the particles' age and lifespan, so
+	// that the entire ramp will be used exactly once over each
+	// particle's lifespan.
+	//
+	if( `attributeQuery -exists -node $particleShape spriteNumRampU` == 0 )
+	{
+		addAttr -ln spriteNumRampU -dt doubleArray $particleShape;
+	}
+	else
+	{
+		if( `getAttr -type ($particleShape+".spriteNumRampU")`
+			!= "doubleArray" )
+		{
+			warning(`format -s (uiRes("m_applySpriteWizard.kSpriteNumRampU")) -s $doubleArray $attrWrnFmt`);
+		}
+	}
+	if( `attributeQuery -exists -node $particleShape spriteNumRampU0` == 0 )
+	{
+		addAttr -ln spriteNumRampU0 -dt doubleArray $particleShape;
+	}
+	else
+	{
+		if( `getAttr -type ($particleShape+".spriteNumRampU0")`
+			!= "doubleArray" )
+		{
+			warning(`format -s (uiRes("m_applySpriteWizard.kSpriteNumRampUO")) -s $doubleArray $attrWrnFmt`);
+		}
+	}
+
+	//
+	// If the "spriteNumRamp" attribute is not already driven
+	// by a a ramp, then create a ramp to drive it.
+	//
+	int $needNewRamp = 1;
+	string $drivingRamp[] = `listConnections -source true -destination false
+		-plugs false -shapes true ($particleShape+".spriteNumRamp")`;
+	if( size( $drivingRamp ) > 0 )
+	{
+		string $ramps[] = `ls -type arrayMapper $drivingRamp`;
+		if( size( $ramps ) == 0 )
+		{
+			disconnectAttr
+				$drivingRamp[0] ($particleShape+"spriteNumRamp");
+		}
+		else
+		{
+			$needNewRamp = 0;
+		}
+	}
+	if( $needNewRamp == 1 )
+	{
+		//
+		// Now attach a new ramp to the "spriteNumRamp" attribute, using
+		// the "spriteNumRampU" attribute to drive the U-position in the
+		// ramp.
+		//
+		string $spriteNumRamp = `shadingNode -asTexture ramp`;
+		$spriteNumRamp = `rename $spriteNumRamp "spriteNumRamp#"`;
+		removeMultiInstance -break true ($spriteNumRamp+".colorEntryList[2]");
+		setAttr ($spriteNumRamp+".colorEntryList[0].position") 0;
+		setAttr ($spriteNumRamp+".colorEntryList[1].position") 1;
+		setAttr ($spriteNumRamp+".colorEntryList[0].color") -type double3 0 0 0;
+		setAttr ($spriteNumRamp+".colorEntryList[1].color") -type double3 1 1 1;
+
+		string $arrayMappers[] = `arrayMapper -target $particleShape
+			-destAttr spriteNumRamp -inputU spriteNumRampU
+			-inputV ageNormalized -mapTo $spriteNumRamp`;
+		rename $arrayMappers[0] "spriteNumRampMapper#";
+	}
+}
+
+global proc string[] createSpriteExpressions( string $particleShape, string $fileTexture )
+//
+// Add the expressions needed to control the sprites
+// to the particle shape.  Any expressions that were there
+// before are not deleted.  The new expressions are
+// appended to the string AFTER the existing expressions.
+// Any expressions that were added to this particle
+// shape from previous calls to applySprite() will be
+// removed and replaced.
+//
+{
+	string $runtimeExpression = `dynExpression -q -r -s $particleShape`;
+	string $creationExpression = `dynExpression -q -c -s $particleShape`;
+
+	string $creationExpressionToInsert = "";
+	string $runtimeExpressionToInsert = "";
+
+	$creationExpressionToInsert += "// __ApplySprite_Start_Tag__\n";
+	$creationExpressionToInsert += "//\n";
+	$creationExpressionToInsert += "// Do not delete the tag above.  It is used to properly\n";
+	$creationExpressionToInsert += "// replace this expression if the applySprite() script\n";
+	$creationExpressionToInsert += "// is executed again.\n";
+	$creationExpressionToInsert += "//\n";
+	$creationExpressionToInsert += "int $firstImageNumber = "+$fileTexture+".startCycleExtension;\n";
+	$creationExpressionToInsert += "int $lastImageNumber = "+$fileTexture+".endCycleExtension;\n";
+	$creationExpressionToInsert += "int $imageCount = $lastImageNumber - $firstImageNumber + 1;\n";
+	$creationExpressionToInsert += "int $one_based_start = 1;\n";
+	$creationExpressionToInsert += "\n";
+	$creationExpressionToInsert += "if( SpriteAnimation == 0 )\n";
+	$creationExpressionToInsert += "//\n";
+	$creationExpressionToInsert += "// Fixed SpriteNumPP\n";
+	$creationExpressionToInsert += "//\n";
+	$creationExpressionToInsert += "{\n";
+	$creationExpressionToInsert += "\t//\n";
+	$creationExpressionToInsert += "\t// Use the first image in the sequence\n";
+	$creationExpressionToInsert += "\t//\n";
+	$creationExpressionToInsert += "\tif( SpriteStartOption == 0 )\n";
+	$creationExpressionToInsert += "\t{\n";
+	$creationExpressionToInsert += "\t\tspriteNumPP = $one_based_start;\n";
+	$creationExpressionToInsert += "\t}\n";
+	$creationExpressionToInsert += "\t//\n";
+	$creationExpressionToInsert += "\t// Use the particle's ID value ( MOD imageCount )\n";
+	$creationExpressionToInsert += "\t//\n";
+	$creationExpressionToInsert += "\telse if( SpriteStartOption == 1 )\n";
+	$creationExpressionToInsert += "\t{\n";
+	$creationExpressionToInsert += "\t\tspriteNumPP = $one_based_start + ( particleId % $imageCount );\n";
+	$creationExpressionToInsert += "\t}\n";
+	$creationExpressionToInsert += "\t//\n";
+	$creationExpressionToInsert += "\t// Random\n";
+	$creationExpressionToInsert += "\t//\n";
+	$creationExpressionToInsert += "\telse if( SpriteStartOption == 2 )\n";
+	$creationExpressionToInsert += "\t{\n";
+	$creationExpressionToInsert += "\t\tint $s = rand( $imageCount + 0.99 ) + $one_based_start;\n";
+	$creationExpressionToInsert += "\t\tspriteNumPP = $s;\n";
+	$creationExpressionToInsert += "\t}\n";
+	$creationExpressionToInsert += "\telse if( SpriteStartOption == 3 )\n";
+	$creationExpressionToInsert += "\t//\n";
+	$creationExpressionToInsert += "\t// Custom Start: If your sprites are not animated\n";
+	$creationExpressionToInsert += "\t//\n";
+	$creationExpressionToInsert += "\t{\n";
+	$creationExpressionToInsert += "\t\t//\n";
+	$creationExpressionToInsert += "\t\t// Put your own expressions to set spriteNumPP here.\n";
+	$creationExpressionToInsert += "\t\t//\n";
+	$creationExpressionToInsert += "\t\tspriteNumPP = 1;\n";
+	$creationExpressionToInsert += "\t}\n";
+	$creationExpressionToInsert += "\t//\n";
+	$creationExpressionToInsert += "\t// Ramp, spriteNumRamp\n";
+	$creationExpressionToInsert += "\t//\n";
+	$creationExpressionToInsert += "\telse if( SpriteStartOption == 4 )\n";
+	$creationExpressionToInsert += "\t{\n";
+	$creationExpressionToInsert += "\t\tfloat $rampValue = spriteNumRamp;\n";
+	$creationExpressionToInsert += "\t\tif( SpriteInvertCycle == 1 )\n";
+	$creationExpressionToInsert += "\t\t{\n";
+	$creationExpressionToInsert += "\t\t\t$rampValue = 1.0 - $rampValue;\n";
+	$creationExpressionToInsert += "\t\t\twhile( $rampValue < 0 )\n";
+	$creationExpressionToInsert += "\t\t\t{\n";
+	$creationExpressionToInsert += "\t\t\t\t$rampValue = $rampValue + 1.0;\n";
+	$creationExpressionToInsert += "\t\t\t}\n";
+	$creationExpressionToInsert += "\t\t\tif( $rampValue > 1.0 )\n";
+	$creationExpressionToInsert += "\t\t\t{\n";
+	$creationExpressionToInsert += "\t\t\t\t$rampValue = $rampValue % 1.0;\n";
+	$creationExpressionToInsert += "\t\t\t}\n";
+	$creationExpressionToInsert += "\t\t}\n";
+	$creationExpressionToInsert += "\t\tint $s = $one_based_start + ( $rampValue * ( $imageCount - 0.01 ) );\n";
+	$creationExpressionToInsert += "\t\tspriteNumPP = $s;\n";
+	$creationExpressionToInsert += "\t}\n";
+	$creationExpressionToInsert += "}\n";
+	$creationExpressionToInsert += "else if( SpriteAnimation == 1 )\n";
+	$creationExpressionToInsert += "//\n";
+	$creationExpressionToInsert += "// Cycle SpriteNumPP\n";
+	$creationExpressionToInsert += "//\n";
+	$creationExpressionToInsert += "{\n";
+	$creationExpressionToInsert += "\t//\n";
+	$creationExpressionToInsert += "\t// Use the first\/last image in the sequence\n";
+	$creationExpressionToInsert += "\t//\n";
+	$creationExpressionToInsert += "\tif( SpriteStartOption == 0 )\n";
+	$creationExpressionToInsert += "\t{\n";
+	$creationExpressionToInsert += "\t\tif( SpriteInvertCycle == 1 )\n";
+	$creationExpressionToInsert += "\t\t{\n";
+	$creationExpressionToInsert += "\t\t\tspriteNumPP = $imageCount;\n";
+	$creationExpressionToInsert += "\t\t}\n";
+	$creationExpressionToInsert += "\t\telse\n";
+	$creationExpressionToInsert += "\t\t{\n";
+	$creationExpressionToInsert += "\t\t\tspriteNumPP = $one_based_start;\n";
+	$creationExpressionToInsert += "\t\t}\n";
+	$creationExpressionToInsert += "\t}\n";
+	$creationExpressionToInsert += "\t//\n";
+	$creationExpressionToInsert += "\t// Use the particle's ID value ( MOD imageCount )\n";
+	$creationExpressionToInsert += "\t//\n";
+	$creationExpressionToInsert += "\telse if( SpriteStartOption == 1 )\n";
+	$creationExpressionToInsert += "\t{\n";
+	$creationExpressionToInsert += "\t\tspriteNumPP = $one_based_start + ( particleId % $imageCount );\n";
+	$creationExpressionToInsert += "\t}\n";
+	$creationExpressionToInsert += "\t//\n";
+	$creationExpressionToInsert += "\t// Random\n";
+	$creationExpressionToInsert += "\t//\n";
+	$creationExpressionToInsert += "\telse if( SpriteStartOption == 2 )\n";
+	$creationExpressionToInsert += "\t{\n";
+	$creationExpressionToInsert += "\t\tint $s = rand( $imageCount - 0.01 ) + $one_based_start;\n";
+	$creationExpressionToInsert += "\t\tspriteNumPP = $s;\n";
+	$creationExpressionToInsert += "\t}\n";
+	$creationExpressionToInsert += "\t//\n";
+	$creationExpressionToInsert += "\t// Custom Start: if your sprites are animated\n";
+	$creationExpressionToInsert += "\t//\n";
+	$creationExpressionToInsert += "\telse if( SpriteStartOption == 3 )\n";
+	$creationExpressionToInsert += "\t{\n";
+	$creationExpressionToInsert += "\t\t//\n";
+	$creationExpressionToInsert += "\t\t// Put your own expressions to set spriteNumPP here .\n";
+	$creationExpressionToInsert += "\t\t//\n";
+	$creationExpressionToInsert += "\t\tspriteNumPP = 1;\n";
+	$creationExpressionToInsert += "\t}\n";
+	$creationExpressionToInsert += "\t//\n";
+	$creationExpressionToInsert += "\t// Ramp, spriteNumRamp\n";
+	$creationExpressionToInsert += "\t//\n";
+	$creationExpressionToInsert += "\telse if( SpriteStartOption == 4 )\n";
+	$creationExpressionToInsert += "\t{\n";
+	$creationExpressionToInsert += "\t\tfloat $rampValue = spriteNumRamp;\n";
+	$creationExpressionToInsert += "\t\tif( SpriteInvertCycle == 1 )\n";
+	$creationExpressionToInsert += "\t\t{\n";
+	$creationExpressionToInsert += "\t\t\t$rampValue = 1.0 - $rampValue;\n";
+	$creationExpressionToInsert += "\t\t\twhile( $rampValue < 0 )\n";
+	$creationExpressionToInsert += "\t\t\t{\n";
+	$creationExpressionToInsert += "\t\t\t\t$rampValue = $rampValue + 1.0;\n";
+	$creationExpressionToInsert += "\t\t\t}\n";
+	$creationExpressionToInsert += "\t\t\tif( $rampValue > 1.0 )\n";
+	$creationExpressionToInsert += "\t\t\t{\n";
+	$creationExpressionToInsert += "\t\t\t\t$rampValue = $rampValue % 1.0;\n";
+	$creationExpressionToInsert += "\t\t\t}\n";
+	$creationExpressionToInsert += "\t\t}\n";
+	$creationExpressionToInsert += "\t\tint $s = $one_based_start + ( $rampValue * ( $imageCount - 0.01 ) );\n";
+	$creationExpressionToInsert += "\t\tspriteNumPP = $s;\n";
+	$creationExpressionToInsert += "\t}\n";
+	$creationExpressionToInsert += "}\n";
+	$creationExpressionToInsert += "\n";
+	$creationExpressionToInsert += "//\n";
+	$creationExpressionToInsert += "// Copy the spriteIndexPP value into startNumPP so that we can use that\n";
+	$creationExpressionToInsert += "// value in the runtime expression.\n";
+	$creationExpressionToInsert += "//\n";
+	$creationExpressionToInsert += "startIndexPP = spriteNumPP;\n";
+	$creationExpressionToInsert += "\n";
+	$creationExpressionToInsert += "//\n";
+	$creationExpressionToInsert += "// Do not delete the tag below.  It is used to properly\n";
+	$creationExpressionToInsert += "// replace this expression if the applySprite() script\n";
+	$creationExpressionToInsert += "// is executed again.\n";
+	$creationExpressionToInsert += "//\n";
+	$creationExpressionToInsert += "// __ApplySprite_End_Tag__\n";
+	$creationExpressionToInsert += "\n";
+
+	$runtimeExpressionToInsert += "// __ApplySprite_Start_Tag__\n";
+	$runtimeExpressionToInsert += "//\n";
+	$runtimeExpressionToInsert += "// Do not delete the tag above.  It is used to properly\n";
+	$runtimeExpressionToInsert += "// replace this expression if the applySprite() script\n";
+	$runtimeExpressionToInsert += "// is executed again.\n";
+	$runtimeExpressionToInsert += "//\n";
+	$runtimeExpressionToInsert += "int $firstImageNumber = "+$fileTexture+".startCycleExtension;\n";
+	$runtimeExpressionToInsert += "int $lastImageNumber = "+$fileTexture+".endCycleExtension;\n";
+	$runtimeExpressionToInsert += "int $imageCount = $lastImageNumber - $firstImageNumber + 1;\n";
+	$runtimeExpressionToInsert += "int $one_based_start = 1;\n";
+	$runtimeExpressionToInsert += "\n";
+	$runtimeExpressionToInsert += "if( SpriteAnimation == 1 )\n";
+	$runtimeExpressionToInsert += "{\n";
+	$runtimeExpressionToInsert += "\t// If particles live forever, the animation option won't work.\n";
+	$runtimeExpressionToInsert += "\t// Switch them to constant so that the user can see their animation.\n";
+	$runtimeExpressionToInsert += "\t//\n";
+	$runtimeExpressionToInsert += ("\tif ("+$particleShape+".lifespanMode == 0) {\n");
+	$runtimeExpressionToInsert += ("\t\t"+$particleShape+".lifespanMode = 1;\n");
+	$runtimeExpressionToInsert += "\t}\n";
+	$runtimeExpressionToInsert += "\n";
+	$runtimeExpressionToInsert += "\tif ( SpriteCyclePattern < 4 )\n";
+	$runtimeExpressionToInsert += "\t{\n";
+	$runtimeExpressionToInsert += "\t\t//\n";
+	$runtimeExpressionToInsert += "\t\t// Find out how far into the cycle function to offset the lookup, based\n";
+	$runtimeExpressionToInsert += "\t\t// on the startIndexPP of this particle.\n";
+	$runtimeExpressionToInsert += "\t\t//\n";
+	$runtimeExpressionToInsert += "\t\tfloat $startIndexPPRatio = 0;\n";
+	$runtimeExpressionToInsert += "\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t$startIndexPPRatio = ( startIndexPP - $one_based_start ) / ( $imageCount );\n";
+	$runtimeExpressionToInsert += "\n";
+	$runtimeExpressionToInsert += "\t\t\t//\n";
+	$runtimeExpressionToInsert += "\t\t\t// If the cycle function starts off moving in the negative direction, we move the offset\n";
+	$runtimeExpressionToInsert += "\t\t\t// forward a little bit to allow the first value to not immediately change as its value\n";
+	$runtimeExpressionToInsert += "\t\t\t// crosses down to the next smaller integer.\n";
+	$runtimeExpressionToInsert += "\t\t\t//\n";
+	$runtimeExpressionToInsert += "\t\t\tif( SpriteInvertCycle == 1 )\n";
+	$runtimeExpressionToInsert += "\t\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t\t$startIndexPPRatio = ( startIndexPP + 1 - $one_based_start ) / ( $imageCount );\n";
+	$runtimeExpressionToInsert += "\t\t\t}\n";
+	$runtimeExpressionToInsert += "\n";
+	$runtimeExpressionToInsert += "\t\t\t//\n";
+	$runtimeExpressionToInsert += "\t\t\t// Adjust the offset into the cycle function so that it starts at the same place\n";
+	$runtimeExpressionToInsert += "\t\t\t// as the startIndexPP would be in the function.\n";
+	$runtimeExpressionToInsert += "\t\t\t//\n";
+	$runtimeExpressionToInsert += "\t\t\tif( SpriteCyclePattern == 0 )\n";
+	$runtimeExpressionToInsert += "\t\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t\t$startIndexPPRatio = $startIndexPPRatio;\n";
+	$runtimeExpressionToInsert += "\t\t\t}\n";
+	$runtimeExpressionToInsert += "\t\t\telse if( SpriteCyclePattern == 1 )\n";
+	$runtimeExpressionToInsert += "\t\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t\tfloat $ts = ( ( $startIndexPPRatio * 2.0 ) - 1.0 );\n";
+	$runtimeExpressionToInsert += "\t\t\t\tfloat $ac = acos( $ts );\n";
+	$runtimeExpressionToInsert += "\t\t\t\t$nv = ( 3.14159 - $ac ) / 3.14159;\n";
+	$runtimeExpressionToInsert += "\t\t\t\t$startIndexPPRatio = $nv;\n";
+	$runtimeExpressionToInsert += "\t\t\t}\n";
+	$runtimeExpressionToInsert += "\t\t\telse if( SpriteCyclePattern == 2 )\n";
+	$runtimeExpressionToInsert += "\t\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t\t$startIndexPPRatio = $startIndexPPRatio / 2.0;\n";
+	$runtimeExpressionToInsert += "\t\t\t}\n";
+	$runtimeExpressionToInsert += "\t\t\telse if( SpriteCyclePattern == 3 )\n";
+	$runtimeExpressionToInsert += "\t\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t\tfloat $ts = ( ( $startIndexPPRatio * 2.0 ) - 1.0 );\n";
+	$runtimeExpressionToInsert += "\t\t\t\tfloat $ac = acos( $ts );\n";
+	$runtimeExpressionToInsert += "\t\t\t\t$nv = ( 3.14159 - $ac ) / 3.14159;\n";
+	$runtimeExpressionToInsert += "\t\t\t\t$startIndexPPRatio = $nv / 2.0;\n";
+	$runtimeExpressionToInsert += "\t\t\t}\n";
+	$runtimeExpressionToInsert += "\t\t}\n";
+	$runtimeExpressionToInsert += "\n";
+	$runtimeExpressionToInsert += "\t\t//\n";
+	$runtimeExpressionToInsert += "\t\t// Compute the value to use to access the curve function for the given cycle option.\n";
+	$runtimeExpressionToInsert += "\t\t//\n";
+	$runtimeExpressionToInsert += "\t\tfloat $a = 0;\n";
+	$runtimeExpressionToInsert += "\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\tif( SpriteCycleLength <= 0 )\n";
+	$runtimeExpressionToInsert += "\t\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t\tif( SpriteInvertCycle == 0 )\n";
+	$runtimeExpressionToInsert += "\t\t\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t\t\t$a = ( ageNormalized + $startIndexPPRatio ) % 1.0;\n";
+	$runtimeExpressionToInsert += "\t\t\t\t}\n";
+	$runtimeExpressionToInsert += "\t\t\t\telse\n";
+	$runtimeExpressionToInsert += "\t\t\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t\t\t$a = ( $startIndexPPRatio - ageNormalized );\n";
+	$runtimeExpressionToInsert += "\t\t\t\t\twhile( $a < 0 )\n";
+	$runtimeExpressionToInsert += "\t\t\t\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t\t\t\t$a = $a + 1.0;\n";
+	$runtimeExpressionToInsert += "\t\t\t\t\t}\n";
+	$runtimeExpressionToInsert += "\t\t\t\t}\n";
+	$runtimeExpressionToInsert += "\t\t\t}\n";
+	$runtimeExpressionToInsert += "\t\t\telse\n";
+	$runtimeExpressionToInsert += "\t\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t\tfloat $fps = 30.0;\n";
+	$runtimeExpressionToInsert += "\t\t\t\tstring $timeUnit = `currentUnit -q -time`;\n";
+	$runtimeExpressionToInsert += "\t\t\t\tif( $timeUnit == \"film\")\n";
+	$runtimeExpressionToInsert += "\t\t\t\t\t$fps = 24.0;\n";
+	$runtimeExpressionToInsert += "\t\t\t\telse if( $timeUnit == \"ntsc\")\n";
+	$runtimeExpressionToInsert += "\t\t\t\t\t$fps = 30.0;\n";
+	$runtimeExpressionToInsert += "\t\t\t\telse if( $timeUnit == \"pal\")\n";
+	$runtimeExpressionToInsert += "\t\t\t\t\t$fps = 25.0;\n";
+	$runtimeExpressionToInsert += "\t\t\t\telse if( $timeUnit == \"game\")\n";
+	$runtimeExpressionToInsert += "\t\t\t\t\t$fps = 15.0;\n";
+	$runtimeExpressionToInsert += "\t\t\t\telse if( $timeUnit == \"palf\")\n";
+	$runtimeExpressionToInsert += "\t\t\t\t\t$fps = 50.0;\n";
+	$runtimeExpressionToInsert += "\t\t\t\telse if( $timeUnit == \"ntscf\")\n";
+	$runtimeExpressionToInsert += "\t\t\t\t\t$fsp = 60.0;\n";
+	$runtimeExpressionToInsert += "\n";
+	$runtimeExpressionToInsert += "\t\t\t\tfloat $age = age;\n";
+	$runtimeExpressionToInsert += "\t\t\t\tfloat $ageFrames = $age * $fps;\n";
+	$runtimeExpressionToInsert += "\t\t\t\tif( SpriteInvertCycle == 0 )\n";
+	$runtimeExpressionToInsert += "\t\t\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t\t\t$a = ( ( $ageFrames / SpriteCycleLength ) + $startIndexPPRatio ) % 1.0;\n";
+	$runtimeExpressionToInsert += "\t\t\t\t}\n";
+	$runtimeExpressionToInsert += "\t\t\t\telse\n";
+	$runtimeExpressionToInsert += "\t\t\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t\t\t$a = ( $startIndexPPRatio - ( $ageFrames / SpriteCycleLength ) );\n";
+	$runtimeExpressionToInsert += "\t\t\t\t\twhile( $a < 0 )\n";
+	$runtimeExpressionToInsert += "\t\t\t\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t\t\t\t$a = $a + 1.0;\n";
+	$runtimeExpressionToInsert += "\t\t\t\t\t}\n";
+	$runtimeExpressionToInsert += "\t\t\t\t}\n";
+	$runtimeExpressionToInsert += "\t\t\t}\n";
+	$runtimeExpressionToInsert += "\n";
+	$runtimeExpressionToInsert += "\t\t\tif( ( SpriteCyclePattern == 2 ) ||\n";
+	$runtimeExpressionToInsert += "\t\t\t    ( SpriteCyclePattern == 3 ) )\n";
+	$runtimeExpressionToInsert += "\t\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t\t$a = $a * 2.0;\n";
+	$runtimeExpressionToInsert += "\t\t\t}\n";
+	$runtimeExpressionToInsert += "\t\t}\n";
+	$runtimeExpressionToInsert += "\n";
+	$runtimeExpressionToInsert += "\t\t//\n";
+	$runtimeExpressionToInsert += "\t\t// Compute value from $a and the curve representing the desired cycle option.\n";
+	$runtimeExpressionToInsert += "\t\t//\n";
+	$runtimeExpressionToInsert += "\t\tfloat $v = 0;\n";
+	$runtimeExpressionToInsert += "\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t//\n";
+	$runtimeExpressionToInsert += "\t\t\t// Linearly increasing.\n";
+	$runtimeExpressionToInsert += "\t\t\t//\n";
+	$runtimeExpressionToInsert += "\t\t\tif( SpriteCyclePattern == 0 )\n";
+	$runtimeExpressionToInsert += "\t\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t\t$v = 1.0 - abs( 1.0 -$a );\n";
+	$runtimeExpressionToInsert += "\t\t\t}\n";
+	$runtimeExpressionToInsert += "\t\t\t//\n";
+	$runtimeExpressionToInsert += "\t\t\t// Linearly decreasing.\n";
+	$runtimeExpressionToInsert += "\t\t\t//\n";
+	$runtimeExpressionToInsert += "\t\t\telse if( SpriteCyclePattern == 1 )\n";
+	$runtimeExpressionToInsert += "\t\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t\tfloat $ta = ( $a + 1.0 ) * 3.14159;\n";
+	$runtimeExpressionToInsert += "\t\t\t\tfloat $nv = ( cos( $ta ) + 1.0 ) / 2.0;\n";
+	$runtimeExpressionToInsert += "\t\t\t\t$v = $nv;\n";
+	$runtimeExpressionToInsert += "\t\t\t}\n";
+	$runtimeExpressionToInsert += "\t\t\t//\n";
+	$runtimeExpressionToInsert += "\t\t\t// Linearly increasing, then decreasing.\n";
+	$runtimeExpressionToInsert += "\t\t\t//\n";
+	$runtimeExpressionToInsert += "\t\t\telse if( SpriteCyclePattern == 2 )\n";
+	$runtimeExpressionToInsert += "\t\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t\t$v = 1.0 - abs( 1.0 -$a );\n";
+	$runtimeExpressionToInsert += "\t\t\t}\n";
+	$runtimeExpressionToInsert += "\t\t\t//\n";
+	$runtimeExpressionToInsert += "\t\t\t// Linearly decreasing, then increasing.\n";
+	$runtimeExpressionToInsert += "\t\t\t//\n";
+	$runtimeExpressionToInsert += "\t\t\telse if( SpriteCyclePattern == 3 )\n";
+	$runtimeExpressionToInsert += "\t\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t\tfloat $ta = ( $a + 1.0 ) * 3.14159;\n";
+	$runtimeExpressionToInsert += "\t\t\t\tfloat $nv = ( cos( $ta ) + 1.0 ) / 2.0;\n";
+	$runtimeExpressionToInsert += "\t\t\t\t$v = $nv;\n";
+	$runtimeExpressionToInsert += "\t\t\t}\n";
+	$runtimeExpressionToInsert += "\t\t}\n";
+	$runtimeExpressionToInsert += "\n";
+	$runtimeExpressionToInsert += "\t\t//\n";
+	$runtimeExpressionToInsert += "\t\t// Now scale $v by the number of images in the set to\n";
+	$runtimeExpressionToInsert += "\t\t// get the index.  Add one to this since the images\n";
+	$runtimeExpressionToInsert += "\t\t// for the sprite rendering are considered to be\n";
+	$runtimeExpressionToInsert += "\t\t// one-based.  We actually scale by just under the\n";
+	$runtimeExpressionToInsert += "\t\t// image count.  Since this is converted to an integer,\n";
+	$runtimeExpressionToInsert += "\t\t// this gives the last image equal time in the cycle.\n";
+	$runtimeExpressionToInsert += "\t\t//\n";
+	$runtimeExpressionToInsert += "\t\tint $finalIndex = $one_based_start + ( $v * ( $imageCount - 0.01 ) );\n";
+	$runtimeExpressionToInsert += "\n";
+	$runtimeExpressionToInsert += "\t\t//\n";
+	$runtimeExpressionToInsert += "\t\t// Assign the index.\n";
+	$runtimeExpressionToInsert += "\t\t//\n";
+	$runtimeExpressionToInsert += "\t\tspriteNumPP = $finalIndex;\n";
+	$runtimeExpressionToInsert += "\t}\n";
+	$runtimeExpressionToInsert += " 	else if( SpriteCyclePattern == 4 )\n";
+	$runtimeExpressionToInsert += " 	{\n";
+	$runtimeExpressionToInsert += " 		//\n";
+	$runtimeExpressionToInsert += " 		// Custom Cycle\n";	
+	$runtimeExpressionToInsert += " 		// Put your own expression for spriteNumPP here.\n";
+	$runtimeExpressionToInsert += " 		//\n";
+	$runtimeExpressionToInsert += " 	}\n";
+	$runtimeExpressionToInsert += "\telse if( SpriteCyclePattern == 5 )\n";
+	$runtimeExpressionToInsert += "\t{\n";
+	$runtimeExpressionToInsert += "\t\tfloat $rampValue = spriteNumRamp;\n";
+	$runtimeExpressionToInsert += "\t\tif( SpriteInvertCycle == 1 )\n";
+	$runtimeExpressionToInsert += "\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t$rampValue = 1.0 - $rampValue;\n";
+	$runtimeExpressionToInsert += "\t\t\twhile( $rampValue < 0 )\n";
+	$runtimeExpressionToInsert += "\t\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t\t$rampValue = $rampValue + 1.0;\n";
+	$runtimeExpressionToInsert += "\t\t\t}\n";
+	$runtimeExpressionToInsert += "\t\t\tif( $rampValue > 1.0 )\n";
+	$runtimeExpressionToInsert += "\t\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t\t$rampValue = $rampValue % 1.0;\n";
+	$runtimeExpressionToInsert += "\t\t\t}\n";
+	$runtimeExpressionToInsert += "\t\t}\n";
+	$runtimeExpressionToInsert += "\t\tint $s = $one_based_start + ( $rampValue * ( $imageCount - 0.01 ) );\n";
+	$runtimeExpressionToInsert += "\t\tif ( SpriteStartOption != 4)\n";
+	$runtimeExpressionToInsert += "\t\t{\n";
+	$runtimeExpressionToInsert += "\t\t\t// offset the particles by the start frame\n";
+	$runtimeExpressionToInsert += "\t\t\t//\n";
+    $runtimeExpressionToInsert += "\t\t\t$s += ( startIndexPP - $one_based_start );\n";
+	$runtimeExpressionToInsert += "\t\t\tif ($s >= $imageCount ) $s -= $imageCount;\n";
+	$runtimeExpressionToInsert += "\t\t}\n";
+	$runtimeExpressionToInsert += "\t\tspriteNumPP = $s;\n";
+	$runtimeExpressionToInsert += "\t}\n";
+	$runtimeExpressionToInsert += "}\n";
+	$runtimeExpressionToInsert += "\n";
+	$runtimeExpressionToInsert += "//\n";
+	$runtimeExpressionToInsert += "// Do not delete the tag below.  It is used to properly\n";
+	$runtimeExpressionToInsert += "// replace this expression if the applySprite() script\n";
+	$runtimeExpressionToInsert += "// is executed again.\n";
+	$runtimeExpressionToInsert += "//\n";
+	$runtimeExpressionToInsert += "// __ApplySprite_End_Tag__\n";
+
+	string $tagMatch =
+		"// __ApplySprite_Start_Tag__.*__ApplySprite_End_Tag__";
+
+	if( `match $tagMatch $creationExpression` != "" )
+	{
+		$creationExpression = `substitute
+			$tagMatch
+			$creationExpression
+			$creationExpressionToInsert`;
+	}
+	else
+	{
+		int $ces = size( $creationExpression );
+		if( $ces > 0 && `substring $creationExpression $ces $ces` != "\n" )
+		{
+			$creationExpression += "\n";
+		}
+
+		$creationExpression += $creationExpressionToInsert;
+	}
+
+	if( `match $tagMatch $runtimeExpression` != "" )
+	{
+		$runtimeExpression = `substitute
+			$tagMatch
+			$runtimeExpression
+			$runtimeExpressionToInsert`;
+	}
+	else
+	{
+		int $res = size( $runtimeExpression );
+		if( $res > 0 && `substring $runtimeExpression $res $res` != "\n" )
+		{
+			$runtimeExpression += "\n";
+		}
+
+		$runtimeExpression += $runtimeExpressionToInsert;
+	}
+
+	string $returnValue[] =
+	{
+		$runtimeExpression,
+		$creationExpression
+	};
+
+	return $returnValue;
+}
+
+global proc addSpriteHelpScriptNode()
+{
+	string $scriptNodes[] = `ls -type script`;
+	int $foundNode = 0;
+	int $s;
+	for( $s = 0; $s < size( $scriptNodes ); $s ++ )
+	{
+		if( `attributeQuery -exists -node $scriptNodes[$s] "__spriteHelpNode__"` == 1 )
+		{
+			$foundNode = 1;
+		}
+	}
+
+	if( $foundNode == 0 )
+	{
+		string $script = "";
+		$script += "//\n";
+		$script += "// This node initializes the sprite help window\n";
+		$script += "// when the file is opened.\n";
+		$script += "//\n";
+		$script += "string $spriteParticles[];\n";
+		$script += "clear( $spriteParticles );\n";
+		$script += "string $particles[] = `ls -type particle`;\n";
+		$script += "int $p;\n";
+		$script += "for( $p = 0; $p < size( $particles ); $p ++ )\n";
+		$script += "{\n";
+		$script += "	if( `attributeQuery -exists -node $particles[$p] \"ShowSpriteHelp\"` == 1 )\n";
+		$script += "	{\n";
+		$script += "		// scriptJob -attributeChange ($particles[$p]+\".ShowSpriteHelp\") \"showSpriteHelp()\";\n";
+		$script += "	}\n";
+		$script += "}\n";
+		$script += "\n";
+
+		string $scriptNode = `scriptNode -beforeScript $script -scriptType 1 -name "SpriteHelpScript"`;
+		addAttr -at message -ln "__spriteHelpNode__" $scriptNode;
+	}
+}

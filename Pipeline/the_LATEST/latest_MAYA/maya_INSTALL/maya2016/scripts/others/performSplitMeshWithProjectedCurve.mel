@@ -1,0 +1,164 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+proc setOptionVars (int	$forceFactorySettings)
+{
+	if ($forceFactorySettings || !`optionVar -exists "splitPolyWithCurveOperation"`) 
+	{
+		optionVar -intValue "splitPolyWithCurveOperation" 1;
+	}
+}
+
+global proc performSplitMeshWithProjectedCurveSetup (string $parent, int $forceFactorySettings)
+{
+	setOptionVars($forceFactorySettings);
+	setParent $parent;
+
+	int $selection = `optionVar -q "splitPolyWithCurveOperation"`;
+	if ($selection < 1 || $selection > 2)
+	{
+		$selection = 1;
+	}
+
+	radioButtonGrp -edit -select $selection splitMeshWithProjectedCurveOperation;
+}
+
+global proc performSplitMeshWithProjectedCurveCallback (string $parent, int $doIt)
+{
+	setParent $parent;
+	
+	int $operation = `radioButtonGrp -q -select splitMeshWithProjectedCurveOperation`;
+	optionVar -intValue "splitPolyWithCurveOperation" $operation;
+
+	if ($doIt) 
+	{
+		performSplitMeshWithProjectedCurve 0;
+		addToRecentCommandQueue "performSplitMeshWithProjectedCurve 0" "SplitMeshWithProjectedCurve";
+	}
+}
+
+global proc splitMeshWithProjectedCurveOptions()
+{
+	global int $gOptionBoxTemplateFrameSpacing;
+	
+	string $layout = getOptionBox();
+	setParent $layout;
+
+	setUITemplate -pushTemplate OptionBoxTemplate;
+
+	string $commandName = "performSplitMeshWithProjectedCurve";
+	string $callback = ($commandName + "Callback");
+	string $setup = ($commandName + "Setup");
+
+	// Form layout
+	string $parent = `formLayout splitMeshWithProjectedCurveOptions`;
+		// Settings frame
+		string $settingsFrame = 
+		`frameLayout -label (uiRes("m_performSplitMeshWithProjectedCurve.kSettingsFrame"))`;
+			columnLayout;
+				radioButtonGrp -numberOfRadioButtons 2 -vertical
+					-label ""
+					-label1 (uiRes("m_performSplitMeshWithProjectedCurve.kJustSplit"))
+					-label2 (uiRes("m_performSplitMeshWithProjectedCurve.kSplitAndSeparate"))
+					splitMeshWithProjectedCurveOperation;
+			setParent ..; // columnLayout
+		setParent $parent; // frameLayout
+	setParent ..; // formLayout
+
+	// Attach frame to form layout
+	formLayout -e
+		-af $settingsFrame "top" $gOptionBoxTemplateFrameSpacing
+		-af $settingsFrame "left" $gOptionBoxTemplateFrameSpacing
+		-af $settingsFrame "right" $gOptionBoxTemplateFrameSpacing
+		-an $settingsFrame "bottom"
+	$parent;
+
+	setUITemplate -popTemplate;
+
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit -label (uiRes("m_performSplitMeshWithProjectedCurve.kApplyButton")) -command ($callback + " " + $parent + " " + 1) $applyBtn;
+
+	string $applyCloseBtn = getOptionBoxApplyAndCloseBtn();
+	button -edit -label (uiRes("m_performSplitMeshWithProjectedCurve.kApplyAndCloseButton")) $applyCloseBtn;
+
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit -command ($callback + " " + $parent + " " + 0 + "; hideOptionBox") $saveBtn;
+
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit -command ($setup + " " + $parent + " " + 1) $resetBtn;
+
+	setOptionBoxTitle( (uiRes("m_performSplitMeshWithProjectedCurve.kSplitMeshWithCurveOptions")) );
+
+	setOptionBoxHelpTag("SplitMeshWithProjectedCurve");
+
+	eval (($setup + " " + $parent + " " + 0));
+
+	showOptionBox();
+}
+
+proc string assembleCmd()
+{
+	global int $gSelectMeshesBit;
+	global int $gSelectNurbsCurvesBit;
+
+	string $meshList[] = `filterExpand -ex true -sm $gSelectMeshesBit`;
+	string $curveList[] = `filterExpand -ex true -sm $gSelectNurbsCurvesBit`;
+
+	if (0 < `size $meshList` && 0 < `size $curveList`)
+	{
+		string $cmd = ("polySplit");
+		
+		int $detachEdges = `optionVar -q "splitPolyWithCurveOperation"`;
+		$cmd += (" -detachEdges " + (1 != $detachEdges));
+
+		for ($curve in $curveList)
+		{
+			$cmd += (" -projectedCurve " + $curve);
+		}
+		$cmd += (" " + $meshList[0]);
+
+		return $cmd;
+	}
+
+	return "";
+}
+
+global proc string performSplitMeshWithProjectedCurve(int $operation)
+{
+	string $cmd="";
+
+	switch ($operation) 
+	{
+		case 0:
+			string $cmd = `assembleCmd`;
+			eval($cmd);
+			break;
+
+		case 1:
+			splitMeshWithProjectedCurveOptions();
+			break;
+
+		case 2:
+			$cmd = "performSplitMeshWithProjectedCurve 0";
+			break;
+	}
+	return $cmd;
+}

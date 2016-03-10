@@ -1,0 +1,144 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//
+//
+global proc float[] getIKFKJointRotations(string $handle)
+//
+//	Description:
+//		When switching from IK to FK, set the joint rotations so they
+//		do not jump.
+//
+{
+	string $joints[] = `ikHandle -q -jl $handle`;
+	string $j;
+
+	float $rot[];
+	int $rotIndex = 0;
+
+	for ($j in $joints) {
+		float $r[] = `getAttr ($j+".r")`;
+		$rot[$rotIndex++] = $r[0];
+		$rot[$rotIndex++] = $r[1];
+		$rot[$rotIndex++] = $r[2];
+	}
+
+	return $rot;
+}
+
+global proc setIKFKJointRotations(string $handle, float $rot[]) 
+{
+	string $joints[] = `ikHandle -q -jl $handle`;
+	string $j;
+
+	int $rotIndex = 0;
+	for ($j in $joints) {
+		setAttr ($j+".r") $rot[$rotIndex++] $rot[$rotIndex++] $rot[$rotIndex++];
+	}
+}
+
+
+global proc updateIKFKState()
+//
+//
+{
+	int $oldMode = `optionVar -q ikFKSwitchState`;
+	int $ikFKSetting = (! $oldMode);
+	optionVar -intValue ikFKSwitchState $ikFKSetting;
+	if (`menuItem -exists ikFKStateItem`) {
+		menuItem -edit -checkBox $ikFKSetting ikFKStateItem;
+	}
+	int $count;
+
+	string $sel[] = `ls -sl`;
+	string $handles[] = `ls -sl -type "ikHandle"`;
+	string $jointList[] = `ls -sl -type "joint"`;
+	if (size($sel) != (size($handles)+size($jointList))) {
+		// check if any of the selected objects are connected to fk/ik
+		//
+		for ($obj in $sel) {
+			string $attrName;
+			if (size(`ls ($obj+".ikBlend")`)) {
+				$attrName = ".ikBlend";
+			} else if (size(`ls ($obj+".solverEnable")`)) {
+				$attrName = ".solverEnable";
+			}
+			if (size($attrName)) {
+				string $cnx[] = `listConnections -d 0 ($obj+$attrName)`;
+				
+				//	This only makes sense if an ikHandle is at the other end of the 
+				//	object.
+				//
+				if (size($cnx) > 0 && (nodeType($cnx[0]) == "ikHandle")) {
+					$handles[size($handles)] = $cnx[0];
+				}
+			}
+		}
+	}
+	
+	if (size($handles) > 0) {
+		string $h;
+		for ($h in $handles) {
+			float $rot[] = getIKFKJointRotations($h);
+			setAttr ($h + ".ikBlend") $ikFKSetting;
+			setIKFKJointRotations($h, $rot);
+			$count++;
+		}
+	}
+
+	if (size($jointList) > 0) {
+		int $found = false;
+		string $handle;
+		string $handles[] = `ls -type ikHandle`;
+
+		string $h;
+		for ($h in $handles) {
+			string $joints[] = `ikHandle -q -jl $h`;
+
+			int $nJoints = size($joints);
+			$joints[$nJoints] = `ikHandle -q -sj $h`;
+			string $j;
+
+			for ($j in $joints) {
+				string $sj;
+				for ($sj in $jointList) {
+					if (size(`match $sj $j`) > 0 &&
+						size(`match ($sj+"|") $j`) == 0) {
+						float $rot[] = getIKFKJointRotations($h);
+						setAttr ($h + ".ikBlend") $ikFKSetting;
+						setIKFKJointRotations($h, $rot);
+						$count++;
+					}
+				}
+			}
+		}
+	}
+	if ($count == 1) {
+		print((uiRes("m_updateIKFKState.kUpdatedOneHandle")));
+	} else if ($count > 1) {
+	    string $printMsg = (uiRes("m_updateIKFKState.kUpdatedHandles"));
+		print(`format -s $count $printMsg`);
+	} else {
+		error((uiRes("m_updateIKFKState.kSelectAHandle")));
+	}
+}

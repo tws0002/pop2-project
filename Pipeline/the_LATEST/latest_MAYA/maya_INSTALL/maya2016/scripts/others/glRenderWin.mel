@@ -1,0 +1,1368 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Description:
+//      Create the 'Hardware Render Buffer' window.
+//
+//	Contents
+//		resizeBufferRW()		Resize the render buffer and widow.
+//		setMenuStateRW()		Enable/disable size buttons.
+//		glResizePort()			Resize the render buffer and widow (user access).
+//		scaleBufMenuRW()		Callback for the pulldown scale menu.
+//		displayTimelineRW()		Set the visibility of the shelf tool.
+//		playbackRW()			Callback for the playback buttons.
+//		playbackScriptJobRW()	Script job for playback buttons.
+//		resChangedScriptJobRW()	Script job for resolution attribute changes.
+//		updateCameraMenuRW()	Update the camera pulldown menu.
+//
+//		flipbookRW()			Callback to setup for flipbook.
+//		updateFlipbookMenuRW()	Update the flipbook pulldown menu.
+//		clearFlipbookMenuRW()   Callback for the clear flipbook menu option.
+//		setFlipbookFlagsRW()    Callback for the set flipbook flags option.
+//		runFlipbookRW()			Callback for a flipbook menu item.
+//		flipbookOptionMenuRW(); Build the Flipbook option menu.
+//		buildHardwareRenderBuffContextHelpItems() Creates context sensitive
+//								menu items for the hardware render buffer.
+//
+//		createWinRW()			Create the window and all components..
+//		registerRW()			Register callbacks with the ui widgets.
+//		updateWinRW()			Update the window to match current render states.
+//		glRenderWin()			Main entry point.
+//
+
+
+global int		$glWinCameraCount     = 4;
+global int		$glRenderBufferWidth  = 646;
+global int		$glRenderBufferHeight = 485;
+global float	$glRenderBufferAspect = 1.33;
+global float	$glRenderBufferScale  = 1.0;
+global string	$glRenderBufferWin;
+global string	$glFlipbookOptions    = "";
+
+// Global variables to store the menu items after the window is closed
+global string $glHWBufferItemCallbacks[];
+global string $glHWBufferItemLabels[];
+
+// Must be sorted from high to low.
+global float $glHWrenderScales[] = {1., .7, .5, .3, .1};
+
+global proc doGlRender()
+{
+	int $multipass = `getAttr defaultHardwareRenderGlobals.multiPassRendering`;
+	if ($multipass != 0) {
+		string $sl[] = `ls -sl`;
+		if (size($sl) > 0) {
+			warning (uiRes("m_glRenderWin.kStayOnScreen"));
+		}
+	}
+	glRender -renderFrame hardwareRenderView;
+}
+
+
+//  ========== isSizeOkayRW ==========
+//
+//  Description:
+//		Check if the given viewport dimensions make the
+//		window to big to fit on the screen.
+//
+
+proc int  isSizeOkayRW( int $width, int $height, float $scale )
+{
+	int		$w = $scale * $width;
+	int		$h = $scale * $height;
+
+	if (($w < 100) || ($w > 1100) || ($h < 100) || ($h > 825))
+		return 0;
+	return 1;
+}
+
+
+
+//  ========== setMenuStateRW ==========
+//
+//  Description:
+//		Enable/disable the menu buttons as needed. This
+//		is to prevent the user from sizing the window
+//		too big or too small.
+//
+
+proc  setMenuStateRW()
+{
+	global int		$glRenderBufferWidth;
+	global int		$glRenderBufferHeight;
+	global float	$glHWrenderScales[];
+
+	int	$state;
+
+	setParent glRenderWindow;
+
+	for ($i = 0; $i < size($glHWrenderScales) ; $i++)
+	{
+		$state = isSizeOkayRW($glRenderBufferWidth, $glRenderBufferHeight,
+							  $glHWrenderScales[$i]);
+		menuItem -e -enable $state ("scaleItem"+$i);
+	}
+}
+
+
+
+//  ========== findGoodSizeRW ==========
+//
+//  Description:
+//		Find a good window size for the current buffer selection.
+//		If the current scale is okay, then use it, otherwise
+//		find the largest scale that is valid.
+//
+
+proc  findGoodSizeRW()
+{
+	global int		$glRenderBufferWidth;
+	global int		$glRenderBufferHeight;
+	global float	$glRenderBufferScale;
+	global float	$glHWrenderScales[];
+
+	setParent glRenderWindow;
+
+	if (isSizeOkayRW($glRenderBufferWidth, $glRenderBufferHeight,
+					 $glRenderBufferScale ))
+	{
+		return;
+	}
+
+	for ($i = 0; $i < size($glHWrenderScales) ; $i++)
+	{
+		if (isSizeOkayRW($glRenderBufferWidth, $glRenderBufferHeight,
+						 $glHWrenderScales[$i]))
+		{
+			$glRenderBufferScale = $glHWrenderScales[$i];
+			menuItem -e -rb true -enable true ("scaleItem"+$i);
+			break;
+		}
+	}
+
+	// Now enable/disable the menu buttons for the valid sizes.
+	//
+	setMenuStateRW();
+}
+
+
+
+//  ========== resizeBufferRW ==========
+//
+//  Description:
+//		Resize the render buffer and window. The size is
+//		read from global variables.
+//
+
+global proc  resizeBufferRW( float $scale )
+{
+	// Check if new scale set.
+	//
+	if ($scale > 0.0)
+	{
+		global float	$glRenderBufferScale;
+
+		$glRenderBufferScale = $scale;
+	}
+	else
+	{
+		// Make sure the window is a good size. If the window is
+		// too big, or too small, resize it. Then dim the menu
+		// items that would create bad window sizes.
+		//
+		findGoodSizeRW();
+	}
+
+
+	// Render layout minimum size.
+	//
+	int		$minWidth  = 323;
+	int		$minHeight = 200;
+
+
+	// Set view pane to image size.
+	global int		$glRenderBufferWidth;
+	global int		$glRenderBufferHeight;
+	global float	$glRenderBufferAspect;
+	global float	$glRenderBufferScale;
+
+
+	//
+	// GG: need to add 4 to each side for frameLayout border.
+	//
+	int		$margin = 4;
+	int		$fudgeW = $margin;
+	int		$fudgeH = $margin;
+
+	// Set the image output resolution in the hardware render manager.
+	//
+	glRender -e -imageSize $glRenderBufferWidth $glRenderBufferHeight $glRenderBufferAspect;
+
+
+	// Set the viewport size for rendering.
+	//
+	int  $imageWidth  = $glRenderBufferScale * $glRenderBufferWidth + 0.5;
+	int  $imageHeight = $glRenderBufferScale * $glRenderBufferHeight + 0.5;
+
+	glRender -e -viewport $imageWidth $imageHeight $glRenderBufferAspect;
+
+
+	// Now make the window a little bigger to accomodate errors
+	// in the elf widget hierarchy.
+	//
+	int  $frameWidth  = $imageWidth + $fudgeW;
+	int  $frameHeight = $imageHeight + $fudgeH;
+
+	// Make sure window does not get too small.
+	//
+	int  $marginWidth  = 4;
+	int  $marginHeight = 4;
+
+	if (($frameWidth + (2 * $marginWidth)) < $minWidth)
+	{
+		$marginWidth = (($minWidth - $frameWidth) / 2.0) + 0.5;
+	}
+
+	if (($frameHeight + (2 * $marginHeight)) < $minHeight)
+	{
+		$marginHeight = (($minHeight - $frameHeight) / 2.0) + 0.5;
+	}
+
+	// Set view panel to the new image size.
+	//
+	setParent glRenderWindow;
+
+	formLayout -e
+		-width ($imageWidth + 2*$marginWidth)
+		-height ($imageHeight + 2*$marginHeight)
+		viewLyt;
+
+	formLayout -e
+		-af viewFrame left $marginWidth
+		-af viewFrame top  $marginHeight
+		viewLyt;
+
+	frameLayout -e
+		-width $frameWidth
+		-height $frameHeight
+		viewFrame;
+
+	// I now need to set both the width and
+	// height on the window directly. (12/17/96)
+	//
+	int		$width = $frameWidth + (2 * $marginWidth);
+	int		$height = $frameHeight + 30 + (2 * $marginHeight);
+
+	if (`menuItem -q -checkBox timelineItem`)
+	{
+		int	$x = `formLayout -q -height timeLineLyt`;
+
+		$height = $height + `formLayout -q -height timeLineLyt`;
+	}
+
+	window -e -widthHeight $width $height glRenderWindow;
+
+	// Enable/disable the menu buttons for the
+	// current buffer size.
+	//
+	setMenuStateRW();
+
+
+}  // resizeBufferRW //
+
+
+
+//  ========== glResizePort ==========
+//
+//  Description:
+//		Resize the render buffer and window. This is a hidden
+//		access method to resize the render port to an arbitrary
+//		size.
+//
+
+global proc  glResizePort( int $width, int $height )
+{
+	global int		$glRenderBufferWidth;
+	global int		$glRenderBufferHeight;
+
+	$glRenderBufferWidth = $width;
+	$glRenderBufferHeight = $height;
+
+	resizeBufferRW( 0.0 );
+}
+
+
+//  ========== scaleBufMenuRW ==========
+//
+//  Description:
+//		Callback for the buffer scale pulldown menu.
+//		Also sets the scale option menu.
+//
+
+global proc scaleBufMenuRW( string $win, int $scale )
+{
+	global float	$glHWrenderScales[];
+
+	setParent $win;
+	resizeBufferRW($glHWrenderScales[$scale]);
+}
+
+global proc flipbookOptionMenuRW()
+{
+	global string $glRenderBufferWin;
+	setParent $glRenderBufferWin;
+
+	if(`about -mac`)
+	{
+		menuItem -p flipbookMenu
+		    -label (uiRes("m_glRenderWin.kClearFlipbookMenu"))
+			-c "evalDeferred(\"clearFlipbookMenuRW\")"
+			clearFlipbookItem;
+	}else{
+		menuItem -p flipbookMenu
+		-label (uiRes("m_glRenderWin.kOptions"))
+		-subMenu true
+		flipbookOptionsItem;
+
+		menuItem -label (uiRes("m_glRenderWin.kClearFlipbookMenu2"))
+			-c "evalDeferred(\"clearFlipbookMenuRW\")"
+			clearFlipbookItem;
+
+		menuItem -label (uiRes("m_glRenderWin.kFlipbookFlags"))
+			-c "setFlipbookFlagsRW"
+			flipbookFlagsItem;
+
+		setParent -menu ..;
+	}
+}
+
+global proc updateFlipbookMenuRW(string $label, string $cbArgList)
+{
+	global string $glRenderBufferWin;
+	global string $glHWBufferItemCallbacks[];
+	global string $glHWBufferItemLabels[];
+	setParent $glRenderBufferWin;
+
+	int $i, $j;
+	int $numCurrFlipbooks = size($glHWBufferItemLabels);
+	for ($i = 0 ; $i<$numCurrFlipbooks ; $i++ )
+	{
+		// If the item is already there, just move it up
+		if ($label == $glHWBufferItemLabels[$i])
+			break;
+	}
+
+	// Item was not found, make some room
+	if ($i >= $numCurrFlipbooks)
+	{
+		$numCurrFlipbooks++;
+		if ($numCurrFlipbooks > 10) $numCurrFlipbooks = 10;
+		string $flipBookFmt = (uiRes("m_glRenderWin.kFlipBookFmt"));
+		print `format -s $numCurrFlipbooks $flipBookFmt`;
+	}
+	else
+		$numCurrFlipbooks = $i+1;
+
+	// Move all the items by one slot, to free up one space
+	for ($i = $numCurrFlipbooks-1 ; $i > 0 ; $i-- )
+	{
+		$glHWBufferItemCallbacks[$i] = $glHWBufferItemCallbacks[$i-1];
+		$glHWBufferItemLabels[$i]    = $glHWBufferItemLabels[$i-1];
+	}
+
+	// Add the new item
+	$glHWBufferItemLabels[0] = $label;
+	$glHWBufferItemCallbacks[0] = ("runFlipbookRW " + $cbArgList);
+
+	// Delete the old menu and rebuild, with the new item on top.
+	menu -e -dai flipbookMenu;
+
+	for ($i = 0 ; $i < $numCurrFlipbooks ; $i++)
+		menuItem -p flipbookMenu
+			-label $glHWBufferItemLabels[$i] -c $glHWBufferItemCallbacks[$i];
+
+	flipbookOptionMenuRW();
+}
+
+//  ========== flipbookRW ==========
+//
+//  Description:
+//		Called when the user has competed a render sequence.  Set up
+//		to allow the user to run fcheck to see the sequence.
+//
+
+global proc  flipbookRW( string $image,
+						 int $fs, int $fe, int $fi, int $rate,
+						 string $path, string $filename )
+{
+	// Build a label for the pulldown menu item.  It will be the
+	// <imageName>.<startFrame>-<endFrame>
+	//
+	string $label = $image + "." + $fs + "-" + $fe;
+	string $fullName = $path;
+	if (substring($path, size($path), size($path)) != "/")
+		$fullName = $fullName + "/";
+
+	$fullName = "\"" + $fullName + $filename + "\"";
+	string $rateString;
+	switch ($rate)
+	{
+		case 24: $rateString = "film ";
+				 break;
+		case 30: $rateString = "ntsc ";
+				 break;
+		case 25: $rateString = "pal";
+				 break;
+		default:
+				$rateString = "none";
+				break;
+	}
+
+	string $argList = $fs + " " + $fe + " " + $fi + " " + $rateString + " ";
+	$argList = $argList + $fullName;
+
+	updateFlipbookMenuRW($label, $argList);
+}
+
+
+//  ========== clearFlipbookMenuRW ==========
+//
+//  Description:
+//		Callback for Flipbook->Options->Clear Flipbook Menu.
+//		Clear the menu, then remake the options menu items.
+//
+
+global proc clearFlipbookMenuRW()
+{
+	global string $glHWBufferItemCallbacks[];
+	global string $glHWBufferItemLabels[];
+
+	menu -e -dai flipbookMenu;
+	clear $glHWBufferItemCallbacks;
+	clear $glHWBufferItemLabels;
+
+	flipbookOptionMenuRW();
+}
+
+
+
+//  ========== FFokBtnRW ==========
+//
+//  Description:
+//		This is the callback for the OK button in the
+//		flipbook options dialog. It saves the new flags
+//		in the global flags variable.
+//
+
+global proc FFokBtnRW( string $win )
+{
+	global string	$glFlipbookOptions;
+
+	setParent $win;
+	$glFlipbookOptions = `textField -q -text flipbookFlagsTF`;
+	window -e -vis 0 $win;
+}
+
+
+
+//  ========== FFcancelBtnRW ==========
+//
+//  Description:
+//		This is the callback for the Cancel button in the
+//		flipbook options dialog. It restores the fcheck flags
+//		into the textfield.
+//
+
+global proc FFcancelBtnRW( string $win )
+{
+	global string	$glFlipbookOptions;
+
+	setParent $win;
+	textField -e -text $glFlipbookOptions flipbookFlagsTF;
+	window -e -vis 0 $win;
+}
+
+
+
+//  ========== setFlipbookFlagsRW ==========
+//
+//  Description:
+//		This is the callback for Flipbook->Options->Flipbook Flags .
+//		It brings up a dialog for the user to set additional flags.
+//
+
+global proc setFlipbookFlagsRW()
+{
+	if (!`window -exists flipbookFlagsWin`)
+	{
+    	window
+        	-title (uiRes("m_glRenderWin.kFlipbookOptions"))
+			-retain
+			-widthHeight 420 130
+        	flipbookFlagsWin;
+
+    	frameLayout
+			-borderVisible false
+			-collapsable false
+			-labelVisible false
+			-marginHeight 2
+        	flipbookFlagsFL;
+
+		formLayout
+			-numberOfDivisions 100
+			flipBookFlagsF;
+
+		text
+			-label (uiRes("m_glRenderWin.kSetAnyOptionsForFcheckExcept"))
+			-align "left"
+			text1RW;
+
+		text
+			-label (uiRes("m_glRenderWin.kSetToTheFrameRangeIncrement"))
+			-align "left"
+			text2RW;
+
+		text
+			-label (uiRes("m_glRenderWin.kOptions2"))
+			-align "left"
+			optionsTextRW;
+
+		textField
+			-width 280
+			-text ""
+			flipbookFlagsTF;
+
+		button
+			-label (uiRes("m_glRenderWin.kOK"))
+			-height 26
+			-command "FFokBtnRW flipbookFlagsWin"
+			flipbookFlagsOKBtn;
+
+		button
+			-label (uiRes("m_glRenderWin.kCancel"))
+			-height 26
+			-command "FFcancelBtnRW flipbookFlagsWin"
+			flipbookFlagsCancelBtn;
+
+		formLayout -e
+			-af text1RW top 0
+			-af text1RW left 20
+			-ac text2RW top 0 text1RW
+			-af text2RW left 20
+			-ac optionsTextRW top 10 text2RW
+			-af optionsTextRW left 20
+			-ac flipbookFlagsTF top 8 text2RW
+			-ac flipbookFlagsTF left 4 optionsTextRW
+			-af flipbookFlagsTF right 20
+			-af flipbookFlagsOKBtn left 10
+			-ap flipbookFlagsOKBtn right 5 50
+			-af flipbookFlagsOKBtn bottom 10
+			-af flipbookFlagsCancelBtn right 10
+			-ap flipbookFlagsCancelBtn left 5 50
+			-af flipbookFlagsCancelBtn bottom 10
+			flipBookFlagsF;
+	}
+
+	showWindow flipbookFlagsWin;
+}
+
+
+//  ========== runFlipbookRW ==========
+//
+//  Description:
+//		This is the callback for the Flipbook menu items.
+//		It will execute fcheck with the arguments supplied.
+//
+
+global proc runFlipbookRW( int $fs, int $fe, int $fi,
+							string $rate,
+							string $filename)
+{
+	global string	$glFlipbookOptions = "";
+
+	string $cmd;
+    	$cmd = "fcheck ";
+    if(`about -mac`) {
+		// running fcheck directly assumes bundle format, 2 parameter setup
+    	$cmd = $cmd + "Fcheck -r " + $rate;
+    	$cmd = $cmd + " -n " + $fs  + " " + $fe + " " + $fi;
+   	}
+	else {
+    	$cmd = $cmd + "-n " + $fs  + " " + $fe + " " + $fi;
+    	$cmd = $cmd + " -r " + $rate;
+	}
+
+	if (size($glFlipbookOptions) > 0)
+		$cmd = $cmd + " " + $glFlipbookOptions + " ";
+	$cmd = $cmd + " \"" + $filename + "\"";
+
+	string $resultFmt = (uiRes("m_glRenderWin.kResultFmt"));
+	print `format -s (uiRes("s_TcommandLineStrings.rCommandLineResultStr"))
+		-s $cmd $resultFmt`;
+
+	if (`about -nt` || `about -mac`)
+	{
+		eval ($cmd);
+	} else {
+		system($cmd+">/dev/null 2>&1");  // linux
+	}
+}
+
+
+//  ========== displayTimelineRW ==========
+//
+//  SYNOPSIS
+//		Toggle the display of the timeline tool.
+//
+
+global proc displayTimelineRW( string $win, int $visible )
+{
+
+	if ($visible)
+	{
+		formLayout -e -vis true ($win+"|workLyt|timeLineLyt");
+		setParent ($win+"|workLyt");
+		formLayout -e -ac viewLyt bottom 0 timeLineLyt ($win+"|workLyt");
+	}
+	else
+	{
+		formLayout -e -vis false ($win+"|workLyt|timeLineLyt");
+		setParent ($win+"|workLyt");
+		formLayout -e -af viewLyt bottom 0 ($win+"|workLyt");
+	}
+
+
+	// Force the window to resize correctly.
+	//
+	resizeBufferRW( 0.0 );
+}
+
+//  ========== playbackRW ==========
+//
+//  Description:
+//		Callback for the playback buttons. Controls playing forward,
+//		backward, etc. Mimic the same behavior as the timeSlider
+//		buttons in the main window.
+//
+
+global proc  playbackRW( string $win, int $mode )
+{
+	setParent $win;
+
+	switch ($mode)
+	{
+		case 1 :	// Rewind
+		{
+			currentTime -edit `playbackOptions -query -min`;
+		} break;
+
+
+		case 2 :	// Step backward
+		{
+			float	$by   = `playbackOptions -query -by`;
+			float	$curr = `currentTime -query`;
+			float	$min  = `playbackOptions -query -min`;
+
+			if (($curr - $by) >= $min)
+			{
+				currentTime -edit ($curr - $by);
+			}
+		} break;
+
+
+		case 3 :	// Play backward
+		{
+			if ((`play -query -state` == 1) && (`play -query -forward` == 0))
+			{
+				// Stop playback. Let the script job reset the button images.
+				//
+				play -state off;
+			}
+			else
+			{
+				if (`currentTime -q` <= `playbackOptions -q -min`)
+				{
+					currentTime -e `playbackOptions -q -max`;
+				}
+
+				symbolButton -edit -image "timestop.png"
+					-annotation (uiRes("m_glRenderWin.kStopPlaybackAnnot"))  playBwdBtn;
+
+				if (`symbolButton -q -i playFwdBtn` != "timeplay.png")
+				{
+					symbolButton -edit -image "timeplay.png"
+						-annotation (uiRes("m_glRenderWin.kPlayForwardAnnot"))  playFwdBtn;
+				}
+
+				play -forward off;
+			}
+		} break;
+
+
+		case 4 :	// Play forward
+		{
+			if ((`play -query -state` == 1) && (`play -query -forward` == 1))
+			{
+				// Stop playback. Let the script job reset the button images.
+				//
+				play -state off;
+			}
+			else
+			{
+				if (`currentTime -q` >= `playbackOptions -q -max`)
+				{
+					currentTime -e `playbackOptions -q -min`;
+				}
+
+				symbolButton -edit -image "timestop.png"
+					-annotation (uiRes("m_glRenderWin.kStopPlayback2Annot"))  playFwdBtn;
+
+				if (`symbolButton -q -i playBwdBtn` != "timerev.png")
+				{
+					symbolButton -edit -image "timerev.png"
+						-annotation (uiRes("m_glRenderWin.kPlayBackwardsAnnot"))  playBwdBtn;
+				}
+
+				play -forward on;
+			}
+		} break;
+
+
+		case 5 :
+		{
+			float	$by   = `playbackOptions -query -by`;
+			float	$curr = `currentTime -query`;
+			float	$max  = `playbackOptions -query -max`;
+
+			if (($curr + $by) <= $max)
+			{
+				currentTime -edit ($curr + $by);
+			}
+		} break;
+
+
+		case 6 :
+		{
+			currentTime -edit `playbackOptions -query -max`;
+		} break;
+	}
+}  // playbackRW //
+
+
+
+//  ========== playbackScriptJobRW ==========
+//
+//  Description:
+//		Make sure that the buttons are in sync with the current
+//		playback mode. This script job gets called whenever the
+//		playback state changes. BUG: this script actually only
+//		gets called when playback stops.
+//
+
+global proc  playbackScriptJobRW( string $win )
+{
+	if (!`window -q -visible $win`) return;
+
+	if (`play -query -state` == 0)
+	{
+		setParent $win;
+
+		if (`symbolButton -q -i playBwdBtn` != "timerev.png")
+		{
+			symbolButton -edit -image "timerev.png"
+				-annotation (uiRes("m_glRenderWin.kPlayBackwards2Annot"))  playBwdBtn;
+		}
+
+		if (`symbolButton -q -i playFwdBtn` != "timeplay.png")
+		{
+			symbolButton -edit -image "timeplay.png"
+				-annotation (uiRes("m_glRenderWin.kPlayForward2Annot"))  playFwdBtn;
+		}
+	}
+}  // playbackScriptJobRW //
+
+
+
+//  ========== resChangedScriptJobRW ==========
+//
+//  Description
+//		This proc gets called whenever the resolution attribute
+//		on the hwRenderGlobals node changes. This proc is
+//		used to resize the hardware render window to make sure
+//		its in sync with the attribute value.
+//
+
+global proc  resChangedScriptJobRW( string $win )
+{
+	// Get the name of the hardware render globals node.
+	//
+	string  $hwNodes[] = `ls -type hwRenderGlobals`;
+	if (size( $hwNodes ) == 0) return;
+
+
+	// Get the new resolution values.
+	//
+	string	$hwRes = `getAttr ($hwNodes[0]+".resolution")`;
+	string  $tokenAry[];
+	int		$width, $height;
+	float	$aspect;
+
+	tokenize( $hwRes, " ", $tokenAry );
+	$width = $tokenAry[1];
+	$height = $tokenAry[2];
+	$aspect = $tokenAry[3];
+
+
+	// Store the new values in the global variables for the
+	// scripts to use. Then call the resize proc.
+	//
+	global int		$glRenderBufferWidth;
+	global int		$glRenderBufferHeight;
+	global float	$glRenderBufferAspect;
+
+	$glRenderBufferWidth = $width;
+	$glRenderBufferHeight = $height;
+	$glRenderBufferAspect = $aspect;
+
+	resizeBufferRW( 0.0 );
+}  // resChangedScriptJobRW //
+
+
+
+//  ========== updateCameraMenuRW ==========
+//
+//  Description:
+//		Update the camera pulldown menu. Use the camera shape
+//		name as the label.
+//
+
+global proc  updateCameraMenuRW( string $win )
+{
+	setParent $win;
+
+	// Get the current list of cameras in the scene. The ls command
+	// returns shape names. Prune this list to return the parent
+	// transform name.
+	//
+	string	$cameraShapeAry[] = `ls -cameras`;
+	int		$cameraShapeCnt = size( $cameraShapeAry );
+	string	$cameraNameAry[] = `ls -long -cameras`;
+	int		$cameraNameCnt = $cameraShapeCnt;
+	string  $orig_cameraNameAry[];
+
+	for ($i = 0; $i < $cameraNameCnt; $i++)
+	{
+		string	$words[];
+
+		$orig_cameraNameAry[$i] = $cameraNameAry[$i];
+		tokenize( $cameraNameAry[$i], "|", $words );
+		string $tmpStr = $words[size( $words ) - 2];
+		if (stringArrayContains( $tmpStr, $cameraNameAry ) == 0)
+		{
+			$orig_cameraNameAry[$i] = $tmpStr;
+		}
+		$cameraNameAry[$i] = $tmpStr;
+	}
+
+
+	// Rebuild the camera pulldown menu as needed to match
+	// the current list of available cameras.
+	//
+	global int	$glWinCameraCount;
+	$glWinCameraCount = `menu -q -ni cameraMenu`;
+	int			$i, $loopCnt, $doCase;
+	int			$camCnt = $cameraNameCnt;
+	string		$activeCamera = `glRenderEditor -q -vcn hardwareRenderView`;
+
+
+	if ($glWinCameraCount == $camCnt)
+	{
+		$loopCnt = $glWinCameraCount;
+		$doCase = 0;
+	}
+	else if ($glWinCameraCount < $camCnt)
+	{
+		$loopCnt = $glWinCameraCount;
+		$doCase = 1;
+	}
+	else
+	{
+		$loopCnt = $camCnt;
+		$doCase = 2;
+	}
+
+	// Update existing button labels and callback actions.
+	//
+	for ($i = 0; $i < $loopCnt; $i++)
+	{
+		string	$btnName = "glCameraItem"+$i;
+		string	$btnLbl = `menuItem -q -label $btnName`;
+
+		if ($btnLbl != $orig_cameraNameAry[$i])
+		{
+			menuItem -e
+				-label $orig_cameraNameAry[$i]
+				-cl glCameraCluster
+				-c ("glRenderEditor -e -lookThru "+$cameraShapeAry[$i]+" hardwareRenderView")
+				$btnName;
+		}
+
+		menuItem -e -rb ($activeCamera == $cameraShapeAry[$i] ? true : false) $btnName;
+	}
+
+
+	// Add buttons to camera menu for new cameras.
+	//
+	if ($doCase == 1)
+	{
+		for ($i = $loopCnt; $i < $camCnt; $i++)
+		{
+			global int	$glWinCameraCount;
+			string		$btnName = "glCameraItem"+$glWinCameraCount;
+
+			$glWinCameraCount++;
+
+			menuItem
+				-p cameraMenu
+				-label $orig_cameraNameAry[$i]
+				-rb ($activeCamera == $cameraShapeAry[$i] ? true : false)
+				-cl glCameraCluster
+				-c ("glRenderEditor -e -lookThru "+$cameraShapeAry[$i]+" hardwareRenderView")
+				$btnName;
+		}
+	}
+
+
+	// Delete extra buttons from camera menu.
+	//
+	if ($doCase == 2)
+	{
+		setParent -menu cameraMenu;
+
+		for ($i = $glWinCameraCount; $i > $loopCnt; $i--)
+		{
+			global int	$glWinCameraCount;
+			$glWinCameraCount--;
+			string	$btnName = "glCameraItem"+$glWinCameraCount;
+			deleteUI -menuItem $btnName;
+		}
+	}
+}  // updateCameraMenuRW //
+
+//  ========== buildHardfwareRenderBuffContextHelpItems ===========
+//
+//  SYNOPSIS
+//		Build context sensitive menu items for the
+//		hardware render buffer window.
+//
+//  Input Arguments:
+//		$nameRoot - name to use as the root of all item names
+//		$menuParent - the name of the parent of this menu
+//
+global proc buildHardwareRenderBuffContextHelpItems(string $nameRoot, string $menuParent)
+{
+	menuItem -label (uiRes("m_glRenderWin.kHelpOnHardwareRenderBuffer"))
+		-enableCommandRepeat false
+		-command "showHelp HardwareRenderBuffer";
+}
+
+//  ========== createMenuRW ==========
+//
+//  SYNOPSIS
+//		Create the menu and all the menu items.
+//
+
+proc  createMenuRW( string $parent )
+{
+	global string $glHWBufferItemCallbacks[];
+	global string $glHWBufferItemLabels[];
+	global float  $glHWrenderScales[];
+	// Create the menubar.
+	//
+	menu -p $parent
+		-label (uiRes("m_glRenderWin.kFile"))
+		-familyImage "menuIconFile.png"
+		glFileMenu;
+		menuItem -label (uiRes("m_glRenderWin.kClose"))  -c ("window -e -vis 0 glRenderWindow") closeWinItem;
+		setParent -menu ..;
+
+	menu -p $parent
+		-label (uiRes("m_glRenderWin.kRender"))
+		-familyImage "menuIconRender.png"
+		renderMenu;
+		menuItem -label (uiRes("m_glRenderWin.kAttributes"))  -c "editRenderGlobalsRW";
+		menuItem -label (uiRes("m_glRenderWin.kTestRender"))  -c "glRender -renderFrame hardwareRenderView" renderFrameItem;
+
+		menuItem -label (uiRes("m_glRenderWin.kRenderSequence"))  -c "glRender -renderSequence hardwareRenderView" renderSeqItem;
+		menuItem -label (uiRes("m_glRenderWin.kScaleBuffer"))  -sm true bufferScaleItem;
+			radioMenuItemCollection hwBufferScaleCluster;
+			for ($i = 0; $i < size($glHWrenderScales) ; $i++)
+			{
+				string $label = (($glHWrenderScales[$i]*100)+" %");
+				menuItem -label $label -rb false
+					-c ("scaleBufMenuRW "+$parent+" "+$i) ("scaleItem"+$i);
+			}
+			menuItem -e -rb true scaleItem0;
+			setParent -menu ..;
+		menuItem -label (localizedUIComponentLabel("Time Slider"))  -checkBox on -c ("displayTimelineRW " +$parent+ " #1") timelineItem;
+
+		if( "" != `getenv MAYA_OFFSCREEN_HRB` )
+		{
+			menuItem -label (uiRes("m_glRenderWin.kRenderOffscreen"))  -enable true
+					 -checkBox off -c ("glRender -e -os #1") renderOffscreenItem;
+		}
+		setParent -menu ..;
+
+	menu -p $parent
+		-label (uiRes("m_glRenderWin.kCameras"))
+		-pmc ("updateCameraMenuRW "+$parent)
+		-familyImage "menuIconView.png"
+		cameraMenu;
+		radioMenuItemCollection glCameraCluster;
+		menuItem -label (uiRes("m_glRenderWin.kCamera1"))  -rb false glCameraItem0;
+		menuItem -label (uiRes("m_glRenderWin.kCamera2"))  -rb false glCameraItem1;
+		menuItem -label (uiRes("m_glRenderWin.kCamera3"))  -rb false glCameraItem2;
+		menuItem -label (uiRes("m_glRenderWin.kCamera4"))  -rb false glCameraItem3;
+		setParent -menu ..;
+
+	menu -p $parent
+		-label (uiRes("m_glRenderWin.kFlipbooks"))
+		-familyImage "menuIconFlipbooks.png"
+		flipbookMenu;
+
+	// Add menus from previous runs if any
+	int $numCurrFlipbooks = size($glHWBufferItemLabels);
+	for ($i = 0 ; $i < $numCurrFlipbooks ; $i++)
+	{
+		menuItem -p flipbookMenu
+			-label $glHWBufferItemLabels[$i] -c $glHWBufferItemCallbacks[$i];
+	}
+	flipbookOptionMenuRW();
+
+		setParent -menu ..;
+	//	Adds support for the Context Sensitive Help Menu.
+	//
+
+	doHelpMenu($parent,$parent+"|workLyt");
+}
+
+//  ========== createWinRW ==========
+//
+//  SYNOPSIS
+//		Create the window and all the controls.
+//
+
+proc  createWinRW( string $win )
+{
+	setUITemplate -pst NONE;
+
+	//	Adds support for the Context Sensitive Help Menu.
+	//
+	addContextHelpProc $win "buildHardwareRenderBuffContextHelpItems";
+
+	// Create window and base container widgets.
+	//
+	string $title = (uiRes("m_glRenderWin.kHardwareRenderBuffer")) ;
+	window
+		-title $title
+		-menuBar true
+		-minimizeButton false
+		-maximizeButton false
+		-retain
+		-sizeable false
+		-resizeToFitChildren true
+		-topLeftCorner 270 560
+		$win;
+
+	string $parent;
+	global string $glRenderMenLayout;
+
+	// Create the menubar.
+	//
+	setParent $win;
+	createMenuRW( $win );
+	$parent = $win;
+
+
+	formLayout -nd 100 workLyt;
+	// Create the timeline.
+	//
+	setParent ($parent+"|workLyt");
+	formLayout timeLineLyt;
+		frameLayout -lv false timeFrameLyt;
+		formLayout -e
+			-af timeFrameLyt top 4
+			-af timeFrameLyt left 4
+			-af timeFrameLyt right 4
+			-af timeFrameLyt bottom 4
+			timeLineLyt;
+
+			formLayout timelineLyt;
+				rowLayout
+					-numberOfColumns 7
+					-columnWidth 1 30
+					-columnWidth 2 30
+					-columnWidth 3 30
+					-columnWidth 4 30
+					-columnWidth 5 30
+					-columnWidth 6 30
+					-columnWidth 7 30
+					playbackRow;
+				formLayout -e
+					-ap playbackRow left -90 50
+					-af playbackRow bottom 4
+					timelineLyt;
+
+					symbolButton
+						-image "timerew.png"
+						-annotation (uiRes("m_glRenderWin.kGoToStartOfPlaybackRangeAnnot"))
+						startFrameBtn;
+
+					symbolButton
+						-image "timeend.png"
+						-annotation (uiRes("m_glRenderWin.kStepBackOneFrameAnnot"))
+						stepBwdBtn;
+
+					symbolButton
+						-image "timerev.png"
+						-annotation (uiRes("m_glRenderWin.kPlayBackwards3Annot"))
+						playBwdBtn;
+
+					symbolButton
+						-image "rvRender.png"
+						-annotation (uiRes("m_glRenderWin.kTestRenderStartTestRenderAnnot"))
+						testRenderBtn;
+
+					symbolButton
+						-image "timeplay.png"
+						-annotation (uiRes("m_glRenderWin.kPlayForward3Annot"))
+						playFwdBtn;
+
+					symbolButton
+						-image "timestart.png"
+						-annotation (uiRes("m_glRenderWin.kStepForwardOneFrameAnnot"))
+						stepFwdBtn;
+
+					symbolButton
+						-image "timefwd.png"
+						-annotation (uiRes("m_glRenderWin.kGoToEndOfPlaybackRangeAnnot"))
+						endFrameBtn;
+				setParent ..;
+
+				floatField
+					-w 65
+					-pre 0
+					-annotation (uiRes("m_glRenderWin.kPlaybackStartTimeSetTheStartAnnot"))
+					timeMinFld;
+				formLayout -e
+					-af timeMinFld bottom 0
+					-af timeMinFld left 2
+					timelineLyt;
+
+				floatField
+					-w 65
+					-pre 0
+					-annotation (uiRes("m_glRenderWin.kPlaybackEndTimeSetTheEndTimeAnnot"))
+					timeMaxFld;
+				formLayout -e
+					-af timeMaxFld bottom 0
+					-af timeMaxFld right 2
+					timelineLyt;
+
+				frameLayout -lv false -bv true -cl false -cll false timeFrameLyt;
+				formLayout -e
+					-af timeFrameLyt left 0
+					-af timeFrameLyt top 0
+					-af timeFrameLyt right 0
+					-ac timeFrameLyt bottom 6 playbackRow
+					timelineLyt;
+
+					timePort
+						-h 26
+						//-annotation _L10N( kSelectTheFrameForTheTestAnnot, "Select the frame for the test render" )
+						timeSld;
+				setParent ..;
+			setParent ..;
+		setParent ..;
+	setParent ..;
+
+
+	// Create the OpenGL render buffer.
+	//
+	setParent ($parent+"|workLyt");
+	formLayout viewLyt;
+		frameLayout
+			-collapse false
+			-collapsable false
+			-labelVisible false
+			viewFrame;
+
+			glRenderEditor hardwareRenderView;
+
+		setParent ..;
+	setParent ..;
+
+
+	// Attach the shelf, timeline, and viewframe to
+	// parent form and to each other as needed.
+	//
+	setParent ($parent+"|workLyt");
+	formLayout -e
+		-af timeLineLyt left	0
+		-af timeLineLyt right	0
+		-af timeLineLyt bottom	0
+
+		-af viewLyt left		0
+		-af viewLyt top			0
+		-af viewLyt right		0
+		-ac viewLyt bottom		0 timeLineLyt
+		($parent+"|workLyt");
+
+	setUITemplate -ppt;
+}  // createWinRW //
+
+
+
+//  ========== registerRW ==========
+//
+//  Description:
+//		Register the callbacks on the widgets.
+//
+
+proc  registerRW( string $win )
+{
+	setParent $win;
+
+	// Toolbar
+	//
+	symbolButton -e -c "doGlRender" testRenderBtn;
+
+	// Timeline
+	//
+	if (`isTrue "AnimationExists"` && `exists initTimeSlider`)
+	{
+		symbolButton -e -c ("playbackRW "+$win+" 1") startFrameBtn;
+		symbolButton -e -c ("playbackRW "+$win+" 2") stepBwdBtn;
+		symbolButton -e -c ("playbackRW "+$win+" 3") playBwdBtn;
+		symbolButton -e -c ("playbackRW "+$win+" 4") playFwdBtn;
+		symbolButton -e -c ("playbackRW "+$win+" 5") stepFwdBtn;
+		symbolButton -e -c ("playbackRW "+$win+" 6") endFrameBtn;
+
+		scriptJob -protected -parent $win -conditionChange playingBack ("playbackScriptJobRW "+$win);
+	}
+	else
+	{
+		symbolButton -e -enable false startFrameBtn;
+		symbolButton -e -enable false stepBwdBtn;
+		symbolButton -e -enable false playBwdBtn;
+		symbolButton -e -enable false playFwdBtn;
+		symbolButton -e -enable false stepFwdBtn;
+		symbolButton -e -enable false endFrameBtn;
+	}
+
+	floatField -e -cc "playbackOptions -min #1; glRender -e -frameStart #1" timeMinFld;
+	floatField -e -cc "playbackOptions -max #1; glRender -e -frameEnd #1" timeMaxFld;
+
+
+	// Register with glRender to call flipbookRW when a render
+	// sequence is finished, so a menu item will be created and
+	// relevant data can be saved to allow the user to see the
+	// rendered sequence with fcheck.
+	//
+	glRender -e -fc "flipbookRW";
+
+	// Register a scriptJob for the resolution attribute changes.
+	//
+	string  $hwNodesAry[] = `ls -type hwRenderGlobals`;
+	int		$hwNodesCnt = size( $hwNodesAry );
+
+	if ($hwNodesCnt)
+	{
+		scriptJob -protected -parent $win -attributeChange ($hwNodesAry[0]+".resolution") ("resChangedScriptJobRW "+$win);
+	}
+}  // registerRW //
+
+
+//  ========== updateWinRW ==========
+//
+//  Description:
+//		Update the ui controls to match the current render
+//		state. For example, set the timeline slider to the
+//		current frame range.
+//
+
+global proc  updateWinRW( string $win )
+{
+	setParent $win;
+
+	// Set frame min/max to current frame range.
+	//
+	int	$fs = `playbackOptions -q -min`;
+	int	$fe = `playbackOptions -q -max`;
+
+	glRender -e -frameStart $fs;
+	glRender -e -frameEnd $fe;
+
+	floatField -e -v $fs timeMinFld;
+	floatField -e -v $fe timeMaxFld;
+}
+
+
+//  ========== glRenderWin ==========
+//
+//  SYNOPSIS
+//		Main entry point. Must be last procedure in file.
+//
+
+global proc int  glRenderWin()
+{
+	global string $glRenderBufferWin;
+
+	string	$win = "glRenderWindow";
+	$glRenderBufferWin = $win;
+
+	int		$firstTime = 0;
+
+	if (!`licenseCheck -mode  "edit" -typ "complete"`) {
+		warning (uiRes("m_glRenderWin.kLicense"));
+		return 1;
+	}
+
+	if (! `window -exists $win`)
+	{
+		createWinRW( $win );
+		registerRW( $win );
+	}
+
+	updateWinRW( $win );
+	showWindow( $win );
+
+	// For now, resize the window whenever it is posted because the
+	// scriptJob fails on File->New. This call can be removed when
+	// that bug is fixed (79322).
+	//
+	resChangedScriptJobRW( $win );
+
+	return( 1 );
+
+}  // glRenderWin //

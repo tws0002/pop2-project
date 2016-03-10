@@ -1,0 +1,234 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Procedure Name:
+//      createViewport20OptionsUI
+//
+//  Description:
+//      Creates the UI in the "Hardware Renderer 2.0 Settings"
+//		window, accessed via the option box in Renderer->Viewport 2.0
+//		in the model panel menu.
+//
+
+// Load presets for the hardwareRenderingGlobals node.
+global proc loadHardwareRenderingGlobalsPresets( string $name )
+{
+	nodePreset -load "hardwareRenderingGlobals" $name;
+
+	updateObjTypeFilterToCheckBox();
+}
+
+// Remove presets for the hardwareRenderingGlobals node.
+global proc removePreferredHardwareRenderingGlobalsPresets()
+{
+	optionVar -remove ("mayaHardware2" + "hardwareRenderingGlobals" + "PreferredPreset");
+}
+
+// Set preferred presets for the hardwareRenderingGlobals node.
+global proc setPreferredHardwareRenderingGlobalsPreset( string $name )
+{
+	optionVar -stringValue ("mayaHardware2" + "hardwareRenderingGlobals" + "PreferredPreset") $name;
+}
+
+// Revert all the settings to the defaults
+global proc hardwareRenderingGlobalsRevertToDefault()
+{
+	// Save selection, because the createNode commands will change it.
+	string $sel[] = `ls -sl`;
+
+	// Create a new node of the hardwareRenderingGlobals type,
+	// which will have default attribute values, and copy them
+	// over to the hardwareRenderingGlobals node.
+	//
+	string $node = "hardwareRenderingGlobals";
+	string $type = `nodeType $node`;
+	string $default = `createNode $type`;
+	copyNode $default $node;
+	delete $default;
+
+	select -noExpand $sel;
+
+	createObjectTypeFilters(0);
+	resetObjFilterToDefault();
+}
+
+global proc buildViewport20HelpMenu()
+{
+	setParent Viewport20OptionsWindow;
+	menu -edit -deleteAllItems viewport20OptionsHelpMenu;
+	setParent -menu viewport20OptionsHelpMenu;
+
+	string $helpTag = "Viewport20RendererDisplay";
+	string $windowName = "Viewport20OptionsWindow";
+	string $title = `window -query -title $windowName`;
+	string $msg = (uiRes("m_createViewport20OptionsUI.kHelpOn"));
+
+	menuItem -label `format -s $title $msg`
+		-command ("showHelp " + $helpTag);
+}
+
+global proc buildHardwareRenderingGlobalsPresetsMenu()
+{
+	//
+	// Description:
+	//	This procedure builds the Presets menu in the Hardware Renderer 2.0 Settings window.
+	//
+	setParent Viewport20OptionsWindow;
+	menu -edit -deleteAllItems viewport20OptionsPresetsMenu;
+	setParent -menu viewport20OptionsPresetsMenu;
+
+    //------------------
+    // Save Preset
+    //------------------
+
+	menuItem -label (uiRes("m_createViewport20OptionsUI.kSaveSettingsAsPreset"))
+        -command "saveNodePresetDialog(stringToStringArray(\"hardwareRenderingGlobals\", \" \"), stringToStringArray(\" \", \" \"))";
+
+    //------------------
+    // Load Preset
+    //------------------
+	string $presetArray[] = `nodePreset -list "hardwareRenderingGlobals"`;
+
+	menuItem -label (uiRes("m_createViewport20OptionsUI.kLoadPreset")) -subMenu true;
+
+	menuItem -label (uiRes("m_createViewport20OptionsUI.kDefaultSettings")) -command "hardwareRenderingGlobalsRevertToDefault";
+
+	menuItem -divider true;
+
+	// Add a menu item for each available preset.
+	//
+	int $i;
+	for ($i = 0; $i < size($presetArray); $i++)
+	{
+		menuItem -label $presetArray[$i]
+			-command ("loadHardwareRenderingGlobalsPresets \"" + $presetArray[$i] + "\"" );
+	}
+	setParent -menu ..; // from Load Preset menu
+
+
+    //------------------
+    // Delete Preset
+    //------------------
+	menuItem -label (uiRes("m_createViewport20OptionsUI.kDeletePreset")) -subMenu true;
+
+	if (size($presetArray) == 0)
+	{
+		menuItem -label (uiRes("m_createViewport20OptionsUI.kNoPresetsCurrentlyExist")) -enable false;
+	}
+	else
+	{
+		// Add a menu item to be able to delete each available preset.
+		//
+		for ($i = 0; $i < size($presetArray); $i++)
+		{
+			menuItem -label $presetArray[$i]
+                -command ( "nodePresetConfirmDeleteDialog { \"hardwareRenderingGlobals\", \"" + $presetArray[$i] + "\" }" );
+		}
+	}
+	setParent -menu ..; // from Delete Preset menu
+
+	menuItem -label (uiRes("m_createViewport20OptionsUI.kSetPreferredPreset")) -subMenu true;
+
+	int $preferredPresetExists = false;
+	string $preferredPresetName;
+	string $preferredPresetOptVar = ("mayaHardware2" + "hardwareRenderingGlobals" + "PreferredPreset");
+
+	if (`optionVar -exists $preferredPresetOptVar`)
+	{
+		$preferredPresetExists = true;
+		$preferredPresetName = `optionVar -query $preferredPresetOptVar`;
+	}
+
+	menuItem -label (uiRes("m_createViewport20OptionsUI.kPreferredDefaultSettings")) -checkBox (!$preferredPresetExists)
+		-command "removePreferredHardwareRenderingGlobalsPresets";
+
+	menuItem -divider true;
+
+	// Add a menu item to be able to set each available preset as your
+	// preferred preset (to which render globals will be initialized
+	// when you create a new file).
+	//
+	int $checkBoxValue;
+
+	for ($i = 0; $i < size($presetArray); $i++)
+	{
+		$checkBoxValue = false;
+		if ($preferredPresetExists)
+		{
+			$checkBoxValue = ($presetArray[$i] == $preferredPresetName);
+		}
+		menuItem -label $presetArray[$i] -checkBox $checkBoxValue
+			-command ("setPreferredHardwareRenderingGlobalsPreset " + $presetArray[$i]);
+	}
+	setParent -menu ..; // from Set Preferred Preset menu
+}
+
+global proc collapseHwFogTab()
+{
+	string $frameLayouts[] = `lsUI -type frameLayout -long`;
+	string $frameLayout;
+	for ($frameLayout in $frameLayouts)
+	{
+		if (`startsWith $frameLayout "Viewport20OptionsWindow"`)
+		{
+			string $label = `frameLayout -q -label $frameLayout`;
+			if ($label == uiRes("m_createMayaHardware2GlobalsTab.kHwFogOptions"))
+			{
+				frameLayout -e -collapse true $frameLayout;
+			}
+		}
+	}		
+}
+
+global proc createViewport20OptionsUI()
+{
+	string $windowName = "Viewport20OptionsWindow";
+	// If the window exists already, just show it.
+	//
+	if (`window -exists $windowName`) {
+		showWindow $windowName;
+		return;
+	}
+	
+	string $prefDir = `internalVar -userPrefDir`;
+    string $totalString = $prefDir + "windowPrefs.mel";
+
+	string $windowTitle = (uiRes("m_createViewport20OptionsUI.kHardwareRenderer2Settings"));
+	window -menuBar true -title $windowTitle -retain $windowName;
+
+	menu -label (uiRes("m_createViewport20OptionsUI.kPresets"))
+		-postMenuCommand "buildHardwareRenderingGlobalsPresetsMenu"
+    	viewport20OptionsPresetsMenu;
+	menu -label (uiRes("m_createViewport20OptionsUI.kHelp"))
+		-postMenuCommand "buildViewport20HelpMenu"
+		viewport20OptionsHelpMenu;
+	
+	createAETabInWindow("hardwareRenderingGlobals", $windowName);
+	
+	if (!`exists $totalString`) {
+			window -edit -widthHeight 456 670 -topLeftCorner 220 220
+					$windowName;
+    } 
+    
+    // Collapse Hardware Fog Tab if open "Renderer->Viewport 2.0 Option Box".
+    collapseHwFogTab();
+}

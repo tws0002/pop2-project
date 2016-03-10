@@ -1,0 +1,128 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//	Procedure Name:
+//		gotoHikStancePose
+//
+//	Description:
+//		Restore a dagPose which stores the stance position of a skeleton
+//      hierarchy for full-body ik.
+//
+//	Return Value:
+//		none
+//
+proc
+string findRefNode(string $obj)
+//
+// Return the name of the parent transform above the effectors.
+//
+{
+	string $result = "";
+	string $handles[] = `listConnections -type hikHandle $obj`;
+	if (size($handles) > 0) {
+		string $effs[] = `listConnections -type hikEffector $handles[0]`;
+		if (size($effs) > 0) {
+			for ($eff in $effs) {
+				string $parent[] = `listRelatives -p $eff`;
+				if (size($parent) > 0) {
+					$result = $parent[0];
+					break;
+				}
+			}
+		}
+	}
+	return $result;
+}
+
+
+proc
+int assumeTheStancePose(string $obj)
+{
+	string $hikPose = `characterize -q -stancePose $obj`;
+	if (size($hikPose) == 0) {
+		return 0;
+	}
+
+	// find the reference node above the effectors
+	//
+	string $refNode = findRefNode($obj);
+	int $hasRefNode = (size($refNode) > 0);
+	float $translate[];
+	float $rotate[];
+	float $scale[];	
+	
+	if ($hasRefNode) {
+		// set the reference node transformation to identity
+		//
+		$translate = `getAttr ($refNode+".t")`;
+		$rotate = `getAttr ($refNode+".r")`;
+		$scale = `getAttr ($refNode+".s")`;
+		setAttr -type "double3" ($refNode+".t") 0 0 0;
+		setAttr -type "double3" ($refNode+".r") 0 0 0;
+		setAttr -type "double3" ($refNode+".s") 1.0 1.0 1.0;
+	}
+	
+	dagPose -restore -global -name $hikPose;
+
+	if ($hasRefNode) {
+		// restore the reference node transformation
+		//
+		setAttr -type "double3" ($refNode+".t") $translate[0] $translate[1] $translate[2];
+		setAttr -type "double3" ($refNode+".r") $rotate[0] $rotate[1] $rotate[2];
+		setAttr -type "double3" ($refNode+".s") $scale[0] $scale[1] $scale[2];
+	}
+
+	return 1;
+}
+
+global proc
+gotoHikStancePose()
+{
+	string $sl[] = `ls -sl -type joint -type hikEffector`;
+	if (size($sl) == 0) {
+		error( (uiRes("m_gotoHikStancePose.kSelectAJointInFBIK")));
+	}
+
+	int $count = 0;
+	for ($obj in $sl) {
+	    string $hikHandle[] = `listConnections -type hikHandle $obj`;
+	    if(size($hikHandle) < 1)
+	        continue;
+	    
+	    string $hikHandleActivatePlug = $hikHandle[0] + ".activate";
+	    setAttr $hikHandleActivatePlug 0;
+		if (nodeType($obj) == "hikEffector") {
+			string $jt[] = `listConnections -type joint ($obj+".joint")`;
+			if (size($jt) > 0) {
+				$count += assumeTheStancePose($jt[0]);
+			}
+		} else {
+			$count += assumeTheStancePose($obj);
+		}
+		setAttr $hikHandleActivatePlug 1;
+	}
+
+	if ($count == 0) {
+		error( (uiRes("m_gotoHikStancePose.kNoStancePose")));
+	}
+}

@@ -1,0 +1,201 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Creation Date:  July 16, 1997
+//
+//  Procedure Name:
+//  AEreplaceNonNumericMulti
+//
+//  Description Name;
+//  Replaces the appropriate controls for a non-numeric multi
+//
+//  Input Value:
+//  node (name)
+//
+//  Output Value:
+//  None
+//
+  
+//
+// This procedure connects the given control to the new array element
+// The "Delete" button's command is updated.
+global proc AEreplaceNonNumericMultiReconnectControl(
+	string $nodeName, 
+	string $attributeName,
+	string $cc,
+	string $attributeTypeProc,
+	string $uiName,
+	int $elementIndex)
+{
+
+	if ($elementIndex == -1) return;
+
+	int $isUserDefinedCompound = ( $attributeTypeProc == "AEreplaceCompound" );
+
+	if( $isUserDefinedCompound == 0 )
+	{
+		setUITemplate -pst attributeEditorMultiTemplate;
+
+		//	Controls are in a row layout.
+		//	The first child of the row layout is the control that we are looking for
+		string $childControls[] = `rowLayout -query -childArray $uiName`;
+
+		string $plugName = ($nodeName+"."+$attributeName+"["+$elementIndex+"]");
+		string $cmd = ($attributeTypeProc + " \""
+				+ $childControls[0] + "\" \""
+				+ $plugName + "\" "
+				+ $cc);
+		eval($cmd);
+
+		//	Delete button
+		symbolButton -e -command ("AEremoveMultiElement " + $plugName) $childControls[1];
+
+		setUITemplate -ppt;
+	}
+	else
+	{
+		string $plugName = ($nodeName+"."+$attributeName+"["+$elementIndex+"]");
+		string $cmd = ($attributeTypeProc + " \""
+				+ $uiName + "\" \""
+				+ $plugName + "\" "
+				+ $cc);
+		eval($cmd);
+	}
+}
+
+global proc AEreplaceNonNumericMulti(	string	$frameName,
+										string	$nodeName,
+										string	$attributeName,
+										string	$changedCommand,
+										string	$attributeTypeProc,
+										int		$elementIndexString[])
+{
+	global int $gMaxNonNumericMultis;
+
+	string	$plugName, $attrName, $controlName, $cmd;
+
+	// build the changedCommand
+	//
+	string	$cc = "\"\"";
+	if ($changedCommand != "") {
+		$cc = ("("+$changedCommand+" \""+$nodeName+"\")");
+	}
+	
+	// The frame layout contains a single column layout.
+	//
+	string $children[] = `frameLayout -q -ca $frameName`;
+	string $columnName = $children[0];
+
+	setParent $columnName;
+
+	// hide the column while we're modifying the controls inside it
+	//
+	columnLayout -e -vis false $columnName;
+
+	// get the number of controls currently in the columnLayout
+	string $currentRows[] = `columnLayout -q -ca $columnName`;
+
+	// The first control a row layout whose 2nd children is "Add New Item" button
+	// Change the button command
+	if( size($currentRows) > 0 )
+	{
+		setParent $currentRows[0];
+			string $rowChildren[] = `rowLayout -query -childArray $currentRows[0]`;
+			if( size($rowChildren) > 1 )
+				button -e -command ("AEnewNonNumericMultiAddNewItem(\"" + $nodeName+"\",\""+$attributeName + "\")") $rowChildren[1];
+		setParent ..;
+	}
+
+	int $numCurrentControls = size($currentRows) - 1;
+	
+	// We don't display more than $gMaxNonNumericMultis items.
+	// If there are 2 more than that, then
+	// it is because we are displaying the "too big" message.
+	// Delete it...
+	//
+	if ( $numCurrentControls == $gMaxNonNumericMultis + 2 ){
+		deleteUI $currentRows[$gMaxNonNumericMultis]
+		         $currentRows[$gMaxNonNumericMultis+1];
+		$numCurrentControls = $gMaxNonNumericMultis;
+	}
+
+	// get the number of controls needed by the new elements
+	//
+	int		$numElements = size($elementIndexString);
+	
+	// if there are more than twenty elements, clip them.
+	//
+	int $tooBig = 0;
+	if ( $numElements > $gMaxNonNumericMultis ){
+		$tooBig = $numElements - $gMaxNonNumericMultis;
+		$numElements = $gMaxNonNumericMultis;
+	}
+
+	// if we have more elements than we have controls, we'll 
+	// need to build more, otherwise we'll have to delete
+	// the extra controls no longer needed
+	//
+	if ($numElements >= $numCurrentControls) {
+
+		// reconnect the controls that we can
+		//
+		for ( $i = 0; $i < $numCurrentControls; $i++ ) {
+			AEreplaceNonNumericMultiReconnectControl(
+				$nodeName, $attributeName, $cc, $attributeTypeProc, 
+				$currentRows[$i+1], $elementIndexString[$i] );
+		}
+
+		// and now create the extra controls that we need
+		//
+		string $newCommand = `substitute "replace" $attributeTypeProc "new"`;
+		for ( $i = $numCurrentControls; $i < $numElements; $i++ ) {
+			AEnewNonNumericMultiCreateNewControl(
+				$nodeName, $attributeName, $cc, $newCommand, $elementIndexString[$i]);
+		}
+
+	} else {
+
+		// reconnect the controls that we can
+		//
+		for ( $i = 0; $i < $numElements; $i++ ) {
+			AEreplaceNonNumericMultiReconnectControl(
+				$nodeName, $attributeName, $cc, $attributeTypeProc, 
+				$currentRows[$i+1], $elementIndexString[$i] );
+		}
+
+		// and delete the extra controls
+		//
+		for ( $i = $numElements; $i < $numCurrentControls; $i++ ) {
+			deleteUI $currentRows[$i+1];
+		}
+	}
+	
+	// if there are elements that we cannot display, tell the user
+	//
+	if ( $tooBig > 0 ){
+		string $fmt = (uiRes("m_AEreplaceNonNumericMulti.kInsufficientRoom"));
+		text -l `format -s $tooBig $fmt`;
+	}
+
+	columnLayout -e -vis true $columnName;
+
+}
