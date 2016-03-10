@@ -1,0 +1,244 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  2005
+//
+// Description: paint the value of a given attribute on a given object with the texture paint tool
+//	
+
+global string $gPaintAttrOnObjCleanupCmd = "";
+global int $g3dPaintDeferEval = 1;
+
+global proc paintAttrOnObjCleanupCallback( string $sg, string $material, string $mesh, string $obj, string $savedShadeGroup )
+{
+	global string $gPaintAttrOnObjCleanupCmd;
+	
+	if( $savedShadeGroup != ""  && objExists( $obj )){
+		string $sel[] = `ls -sl`;
+		select -r $obj;
+		hyperShade -assign $savedShadeGroup;
+		select -r $sel;
+	} else {
+		if( objExists( $mesh ) ){
+			delete $mesh;
+		}
+		if( objExists( $obj )){
+			setAttr ($obj + ".visibility") true;
+		}
+	}
+	if( objExists( $sg ) ){
+		delete $sg;
+	}
+	if( objExists( $material ) ){
+		delete $material;
+	}
+	// deregisters itself when called
+	$gPaintAttrOnObjCleanupCmd = "";
+}
+
+global proc doPaintAttributeOnObject( string $attr, string $obj, string $objTform, float $shading )
+{
+	global string $gPaintAttrOnObjCleanupCmd;
+
+	string $type = nodeType($obj);
+	int $isMesh = $type == "mesh";
+	
+	string $attrCon = `connectionInfo -sfd $attr`;
+	$material = `shadingNode -asShader -name "paintAttrShader#" "lambert"`;
+	$shading = 1.0-$shading;
+	if( $shading < 0 ){
+		$shading = 0.0;
+	}
+
+	// The following relies on a current "artifact" where white incandescence
+	// will remove the effect of lighting from hardware texture display 
+	// The true rendered effect would instead simply wash out the textures.
+	setAttr ($material + ".incandescence") $shading $shading $shading;
+
+	// create shading group
+	$sg = `sets -renderable true 
+			-noSurfaceShader true -empty -name ($material + "SG")`;
+			defaultNavigation
+			-connectToExisting
+			-source $material
+			-destination $sg;
+
+	string $savedShadeGroup = "";
+	string $shadObj = "";
+	if( $isMesh ){
+		// We create a second mesh to visualize painting because the base
+		// mesh may have multiple shader assignments.
+		$shadObj = `createNode "mesh"`;
+		connectAttr ($obj + ".outMesh") ($shadObj + ".inMesh");
+		string $tforms[] = listTransforms( $shadObj );
+		$shadObj = `rename $tforms[0] "paintAttrPoly#"`;	
+		parent -r $shadObj $objTform;
+		setAttr ($obj + ".visibility") false;
+	} else {
+		// cache the shading group currently assigned to the object
+		$shadObj = $obj; 
+		string $outCon = ($obj + ".instObjGroups[0]");
+		string $shadeCons[] = `listConnections -d 1 -sh 1 -type "shadingEngine" $outCon`;
+		if( size( $shadeCons ) < 1 ){
+			string $noShaderMessage = (uiRes("m_paintAttributeOnObject.kPaintAttrNoShaderAssigned"));
+			warning( `format -s $obj $noShaderMessage` );
+			return;
+		}
+		$savedShadeGroup = $shadeCons[0];
+		$shadeCons = `connectionInfo -dfs $outCon`;
+		disconnectAttr $outCon $shadeCons[0]; 
+		// select object so that new shader is assigned to it
+		select -r $obj;
+	} 
+
+	hyperShade -assign $sg;
+	string $type = `getAttr -type $attr`;
+	int $isColor = ($type == "float3");
+	string $textureAttr = "color";
+	if( $isColor ){
+		float $curVal[] = `getAttr $attr`;
+		setAttr ($material + ".color") $curVal[0] $curVal[1] $curVal[2];
+	} else {
+		$textureAttr = "diffuse";
+		float $curVal = `getAttr $attr`;
+		setAttr ($material + ".diffuse") $curVal;
+	}
+
+	int $reconnect = true;
+	if( size( $attrCon ) > 0 ){
+		string $con[] = `listConnections -d 1 $attr`;
+		connectAttr $attrCon ($material + "." + $textureAttr );
+		if( nodeType( $con[0] ) == "file" ){
+			$reconnect = false;
+		} else {
+			string $message = (uiRes("m_paintAttributeOnObject.kConvertingToFileTexture"));	
+			print( `format -s $con[0] $message` );
+		}
+	}
+	if( !exists( "art3dPaintAssignFileTextureNow" ) ){
+		source art3dPaintCallback.mel;
+		source art3dPaintToolScript.mel ;
+	}
+	//	enter the 3d paint tool and assign file textures to 
+	//	the color channel of the shader.
+	//	
+	int $updateFlags = 0 ;
+	string $toolName = "art3dPaintHairToonContext" ;
+	if( ! `art3dPaintCtx -exists $toolName` ) {
+		$updateFlags = 1 ; // we want to update the flags only for one session of Maya.
+	}
+	art3dPaintHairAndToonToolScript(4, 
+									// ** If you change the tool name here, do not forget to update  ********
+									// ** its usage in other functions in this mel file. *****
+									$toolName
+									);
+	if( $updateFlags )
+	{
+		art3dPaintCtx -e -saveonstroke true $toolName ;
+		art3dPaintCtx -e -extendFillColor true $toolName ;
+	}
+	
+	art3dPaintAssignFileTextures( $textureAttr );
+	
+	if( $textureAttr == "color" ){
+		art3dPaintCtx -e -painttxtattr  "Color" `currentCtx`;
+	} else {
+		art3dPaintCtx -e -painttxtattr  "Diffuse" `currentCtx`;
+	}
+	art3dPaintAssignFileTextureNow;
+	
+
+	if( $reconnect ){	
+		string $colorCon = `connectionInfo -sfd ($material + "." + $textureAttr)`;
+	//	if( !$isColor ){
+	//		$colorCon = `substitute "outColor" $colorCon "outAlpha"`;
+	//	}
+		connectAttr -f $colorCon $attr;
+
+		// Set uv wrap off on the texture placement node to avoid leak at edges
+		// (Another option might be to delete the placement node altogether)
+		string $cons[] = `listConnections -d 1 ($material + "." + $textureAttr)`;
+		$cons = `listConnections ($cons[0] + ".uvCoord")`;
+		if( size( $cons ) > 0 ){
+			string $texPlace = $cons[0];
+			setAttr ($texPlace + ".wrapU") 0;
+			setAttr ($texPlace + ".wrapV") 0;
+		}
+	}
+	//	It would be more elegant to have a script job on ToolChanged,
+	//  but we want to have the cleanup happen immediately on tool exit
+	//  the 3dpaint too cleanup callback will check if this command
+	//  string is set, and eval it if it is
+
+	$gPaintAttrOnObjCleanupCmd = ("paintAttrOnObjCleanupCallback " 
+			+ $sg + " "
+			+ $material + " \""
+			+ $shadObj + "\" "
+			+ $obj + " \""
+			+ $savedShadeGroup + "\"");
+
+}
+
+global proc paintAttributeOnObject( string $attr, string $obj, float $shading )
+{
+	global int $g3dPaintDeferEval;
+	
+	string $doesNotExistWarning = (uiRes("m_paintAttributeOnObject.kPaintAttrObjDoesNotExist"));
+	if( !objExists($attr) ){	
+		warning( `format -s $attr $doesNotExistWarning`);
+		return;
+	}
+	if( !objExists($obj) ){
+		warning( `format -s $obj $doesNotExistWarning`);
+		return;
+	}
+	string $objTform;
+	if( "transform" == nodeType($obj) ){
+		$objTform = $obj;
+		string $shapes[] = `ls -dag -shapes $obj`;
+		$obj = $shapes[0];
+	} else {	
+		string $tforms[] = listTransforms($obj);
+		$objTform = $tforms[0];
+	}
+	string $type = nodeType($obj);
+	if( $type != "mesh" && $type != "nurbsSurface" && $type != "subdiv"  ){
+		string $notSurfaceGeomWarning = (uiRes("m_paintAttributeOnObject.kPaintAttrNotSurfaceGeom"));
+		warning( `format -s $obj $notSurfaceGeomWarning` );
+		return;
+	}
+	if( `currentCtx` == "art3dPaintHairToonContext" )
+	{
+		// force context switch to trigger callback if were are currently
+		// editing a texture.
+		setToolTo selectSuperContext;
+	}
+	// Defer evaluation so that callbacks from previous calls to this routine
+	// evaluate before this call.
+	string $paintCmd = ("doPaintAttributeOnObject "+$attr+" "+$obj+" "+$objTform+" "+$shading );
+	if ($g3dPaintDeferEval) {
+		evalDeferred( $paintCmd );
+	} else {
+		eval( $paintCmd );
+	}
+}

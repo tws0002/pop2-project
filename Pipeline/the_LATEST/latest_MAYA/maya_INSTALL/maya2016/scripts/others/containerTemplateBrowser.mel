@@ -1,0 +1,347 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+//  Procedure Name:  containerTemplateBrowser
+//
+//  Description Name;
+//	  This procedure provides a browser interface for container templates.
+//
+//  Calling format:
+//
+//      String      callbackCmd Callback on successful selection of a template
+//		String		customized action name for button and window title
+//                  (use only if default action associated with the mode is not
+//                  suitable, pass empty string to use default)
+//		Int			The browser mode (see filebrowser.mel): 
+//						0 for read.
+//						1 for write. (export)
+//                      Note: The following filebrowser modes are not supported:
+//						2 (NOT SUPPORTED) for write without paths. (file save)
+//						4 (NOT SUPPORTED) directories have meaning when used with the
+//							action button.
+//  Return Value:
+//      Done through the callback provided. The callback has the following
+//		parameters:
+//			String		templateFile The file path specified by the user.
+//			String		templateName Name of template selected
+//
+//		If the user wishes to provide more parameters to the callback they
+//		may do so providing that the last two parameters are the ones given
+//		above (i.e. these parameters are the last in the list)
+//
+
+proc debugPrint(string $msg)
+{
+    print ($msg + "\n");
+}
+
+
+proc doErrorDialog(string $msg)
+{
+    string $ok = (uiRes("m_containerTemplateBrowser.kConfirmOkay"));
+    confirmDialog -message $msg -button $ok -defaultButton $ok;
+    error($msg);
+}
+
+proc int doConfirmContinueDialog(string $msg)
+{
+    string $continue = (uiRes("m_containerTemplateBrowser.kConfirmContinue"));
+    string $cancel = (uiRes("m_containerTemplateBrowser.kConfirmCancel"));
+    string $response = `confirmDialog -message $msg -button $continue -button $cancel -defaultButton $cancel`;
+    if ($response == $continue) 
+    {
+       return true;
+    }
+    return false;
+}
+
+
+// This return checks if a file is located in a directory
+// on the template search path.  
+
+proc int isFileOnSearchPath(string $fileName)
+{
+    string $sPath[] = `containerTemplate -q -searchPath`;
+    int $i;
+    for ($i=0; $i<size($sPath); $i++)
+    {
+        if (startsWith($fileName, $sPath[$i]))
+        {
+            return true;
+        } 
+    }
+    return false;
+}
+
+// This check is to avoid saving a template name that looks
+// like a package.  We are not supporting this from the 
+// UI at this time.
+
+proc int doPackageCheck(string $templateName)
+{
+    string $tokens[];
+    int $numTokens = tokenize($templateName, ".", $tokens);
+    if ($numTokens > 1)
+    {
+        string $fmt = (uiRes("m_containerTemplateBrowser.kSavePackageUnsupported"));
+        string $msg = `format -stringArg $templateName $fmt`;
+        doErrorDialog($msg);
+        return false;
+    }
+    return true;
+}
+
+proc int doSearchPathConfirmDialog()
+{
+    // We ask the user if they want to proceed with the save operation.
+
+    string $fmt = (uiRes("m_containerTemplateBrowser.kSaveSearchPath"));
+    string $searchPathList[] = `containerTemplate -q -searchPath`;
+    string $searchPathJoined = stringArrayToString($searchPathList,"\n"); 
+    string $msg = `format -stringArg $searchPathJoined $fmt`;
+
+    // Put up the confirm box and return the answer
+    $status = doConfirmContinueDialog($msg);
+    return $status;
+}
+
+proc int doForceLoadConfirmDialog(string $templateName)
+{
+    // We ask the user if they want to proceed with a load 
+    // when the template already exists but from another file.
+
+    string $fmt = (uiRes("m_containerTemplateBrowser.kForceLoadConfirm"));
+    string $currFile = `containerTemplate -q -fileName $templateName`;
+    string $msg = `format -stringArg $templateName -stringArg $currFile $fmt`;
+
+    // Put up the confirm box and return the answer
+    $status = doConfirmContinueDialog($msg);
+    return $status;
+}
+
+
+// Validation for template read access 
+
+proc int templateOpenValidate(string $fileName, string $template)
+{
+    int $status = 0;
+
+    // Check if file is on the template search path. 
+    if (!isFileOnSearchPath($fileName))
+    {
+        if (!doSearchPathConfirmDialog())
+        {
+           return false;
+        }
+    }
+ 
+	if (size($template) > 0)
+    {
+        // Check if template matching this name and file is already
+        // loaded.  If so, we're done. 
+        string $matches[] = `containerTemplate -q -templateList -matchFile $fileName -matchName $template`;
+        if (size($matches) > 0)
+        {
+            return true;
+        }
+
+        // Now check if a template matching this name exists from some
+        // other file. In this case it might represent another file or 
+        // another package. However make the user confirm that they want 
+        // to load the file. 
+        $matches = `containerTemplate -q -templateList -matchName $template`;
+        int $forceIt = false;
+        if (size($matches) > 0)
+        {
+            if (doForceLoadConfirmDialog($template))
+            {
+                $forceIt = true;
+            } 
+            else
+            {
+                return false;
+            }
+        }        
+
+        // If we get to this point, we need to load the template.
+        // If we needed to force the load, we use the filename alone.
+        // Otherwise we use the filename and the template name. 
+        
+        string $cmd;
+        if ($forceIt) {
+            $cmd = "containerTemplate -load -fn \"" + $fileName + "\"";
+        }
+        else {
+            $cmd = "containerTemplate -load -fn \"" + $fileName + "\" " + $template;
+        }
+
+        $status = !catch(`eval($cmd)`);
+        if (!$status)
+        {
+            string $fmt = (uiRes("m_containerTemplateBrowser.kTemplateNotValid"));
+            string $msg = `format -stringArg $template $fmt`;
+            doErrorDialog($msg);
+        }
+	}
+
+    return $status;
+}
+
+
+
+proc int templateSaveValidate(string $fileName, string $templateName)
+{
+    int $status = true;
+
+    // Check file seems to be on the search path
+    if (!isFileOnSearchPath($fileName))
+    {
+        $status = doSearchPathConfirmDialog();
+    }
+
+    // We don't support saving packaged templates 
+    $status = doPackageCheck($templateName);
+
+    return $status;
+}
+
+
+
+
+// Callback from template file browser
+
+global proc int containerTemplateFileBrowserCB( int    $mode,
+                                                string $finalCallbackCmd,
+                                                string $filename,
+                                                string $fileType )
+{
+    // Retain the current directory from the browser
+    string $currentDir = `workspace -q -dir`;
+    retainWorkingDirectory ($currentDir);
+
+    // First validate that this is a .template file
+    $templateExt = "template";
+    $dotTemplateExt = ".template";
+    $ext = fileExtension($filename);
+    if ($ext != $templateExt)
+    {
+        string $fmt = (uiRes("m_containerTemplateBrowser.kInvalidFileExt"));
+        string $msg = `format -stringArg $dotTemplateExt $fmt`;
+        doErrorDialog($msg);
+        return false;
+    }
+
+    // We extract the template name from the base name of the file
+    string $baseName = basename($filename, $dotTemplateExt);
+
+    // Validation
+
+    int $status = true;
+    string $fullName = $baseName;
+    if ($mode == 0)
+    {
+        $status = templateOpenValidate($filename, $baseName);
+        // If successful, query the templatename that is
+        // associated with this file.
+        string $templateNames[] = `containerTemplate -q -tl -mf $filename`;
+        if (size($templateNames) > 0)
+        {
+            $fullName = $templateNames[0];
+        }
+    }
+    else if ($mode == 1)
+    {
+        $status = templateSaveValidate($filename, $baseName);
+    }
+
+    if ($status && ($finalCallbackCmd != ""))
+    {
+        // Template is accepted, call the user's callback with the
+        // additional filename and templatename parameters.
+        string $cbCmd = ($finalCallbackCmd + 
+                        " \"" + $filename + "\"" + 
+                        " \"" + $fullName + "\"");
+        $status = eval($cbCmd);
+    }
+
+    return $status;
+}
+
+
+
+global proc containerTemplateBrowser( string $callbackCmd, string $customActionLabel, int $mode )
+{
+
+    // Set action button label based on mode, or use custom label if supplied
+    string $actionLabel;
+	int $fileMode;
+    if (size($customActionLabel) > 0) 
+    {
+       $actionLabel = $customActionLabel;
+    }
+    // Read mode
+    else if ($mode == 0) 
+    {
+       $actionLabel = (uiRes("m_containerTemplateBrowser.kSelectTemplate"));
+		$fileMode = 1; // single existing file
+	}
+    // Write mode
+    else if ($mode == 1) 
+    {
+       $actionLabel = (uiRes("m_containerTemplateBrowser.kSaveTemplate"));
+		$fileMode = 0; // any file, if it exists or not
+    }
+    // Not all modes supported yet
+    else {
+        print "containerTemplateBrowser does not support this mode.\n";
+        return;
+    }
+
+    // Set working directory to workspace location
+    string  $workspace = `workspace -q -fn`;
+    string $startDir = `setWorkingDirectory $workspace "templates" ""`;
+
+    // Disable "Options..." dialog
+    global string $gv_operationMode;
+    string $oldOpMode = $gv_operationMode;
+    $gv_operationMode = "";
+
+	string $filter = buildContainerTemplateFilterList();
+
+    // Invoke the filebrowser
+	string $fileCmd = ("fileDialog2 -caption \"" + $actionLabel + "\" -fileMode " + $fileMode);
+	$fileCmd += (" -fileFilter \"" + $filter + "\"");
+	$fileCmd += (" -startingDirectory \"" + $startDir + "\"");
+
+	string $file[] = `eval $fileCmd`;
+	if (0 < size($file) && "" != $file[0])
+	{
+		string $path = fromNativePath($file[0]);
+
+		string $cmd = ("containerTemplateFileBrowserCB " + $mode + " \"" + $callbackCmd + "\" ");    
+		$cmd += ("\"" + $path + "\" \"\"");
+		eval $cmd;
+	}
+
+    // Restore options dialog setting 
+    $gv_operationMode = $oldOpMode;
+}

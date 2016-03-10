@@ -1,0 +1,112 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// hikLiveConnectionOperations.mel
+//
+// Description:
+//		Contains LiveConnection methods that affect the unified character context.
+//		These methods could trigger UI updates in any part of the
+//		unified character context.
+//
+
+///////////////////////////////////////////////////////////////////////
+// Local procedures
+///////////////////////////////////////////////////////////////////////
+
+///////////////////////////////////////////////////////////////////////
+// Global LiveConnection operations.
+///////////////////////////////////////////////////////////////////////
+
+global proc string hikGetLiveStateClient( string $pCharacter, int $pCreate )
+{
+	// If the specified character is connected to a character state client node
+	// return it.
+	if( size($pCharacter) < 1 )
+		return "";
+
+	string $outputCharacterDefn = ($pCharacter + ".OutputCharacterDefinition");
+	string $clientConnections[] = `listConnections -type "HIKCharacterStateClient" -s 0 -d 1 $outputCharacterDefn`;
+	if ( size($clientConnections) > 0 )
+	{
+		return $clientConnections[0];
+	}
+	else if( $pCreate )
+	{
+		// Client node does not exist, create one
+		string $newSrc = `createNode HIKCharacterStateClient`;
+		connectAttr -f $outputCharacterDefn ($newSrc+".InputCharacterDefinition");
+
+		setAttr ($newSrc +".frameRate") 60;
+		setAttr -type "string" ($newSrc +".deviceName") ("Constraint::"+$pCharacter);
+
+        $refNode = hikGetSkNode( $pCharacter, 0 );
+
+		if( $refNode != "" )
+		{
+            connectAttr ($refNode+".worldMatrix[0]") ($newSrc+".referenceGX");
+
+			// Provide CharacterStateClient node with scaling hints in case used streaming protocol
+			// does not supports scalign transport
+			$hipsNode = hikGetSkNode( $pCharacter, 1 );
+			float $hipsScale[] = {1.0, 1.0, 1.0 };
+
+			if( $hipsNode != "" )
+			{
+				$hipsScale = `getAttr ($hipsNode+".scale")`;
+			}			
+
+			setAttr ($newSrc+".hipsScale") $hipsScale[0] $hipsScale[1] $hipsScale[2];
+			
+		}
+
+		return $newSrc;
+	}
+	else
+	{
+		return "";
+	}
+
+}
+
+global proc hikSetLiveState( string $pCharacter, int $pState )
+{
+	string $srcNode =  hikGetLiveStateClient( $pCharacter, $pState );
+	
+	if( $srcNode != "" )
+	{
+		string $livePlug = ( $srcNode + ".live" );
+
+		if( $pState )
+		{
+			string $outPlug = ( $srcNode + ".OutputCharacterState" );
+
+			setAttr $livePlug 0;
+			getAttr -silent $outPlug;
+			setAttr $livePlug 1;
+
+		}
+		else
+		{
+			setAttr $livePlug 0;
+		}
+	}
+}

@@ -1,0 +1,277 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Description:
+//      Implement a tool context that simulates flying the camera
+//		through a scene.
+//
+
+//
+//  Procedure Name:
+//      getFlyThroughCamera
+//
+//  Description:
+//      Get the active camera for the model view under the pointer.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      The name of the camera or an empty string.
+//
+proc string getFlyThroughCamera()
+{
+	string $camera = "";
+	string $panel = `getPanel -underPointer`;
+	if ($panel != "") {
+		//
+		//	Make sure the panel is a model view and contains a
+		//	perspective camera.
+		//
+		string $type = `getPanel -typeOf $panel`;
+		if ($type == "modelPanel" ) {
+			$camera = `modelPanel -query -camera $panel`;
+		} else {
+			// Look for stereo panels 
+			string $editors[] = `lsUI -editors -type scriptedPanel`;
+			for ($i=0 ; $i<size($editors) ; $i++) {
+				if ($panel == `editor -query -panel $editors[$i]`) {
+					$camera = `modelEditor -q -camera $editors[$i]`;
+					break;
+				}
+			}
+		}
+	}
+
+	if ($camera != "") {
+		if (`camera -query -orthographic $camera`) {
+			warning ( (uiRes("m_flyThroughContextSetup.kToolOnlyPerspective")) );
+			$camera = "";
+		} else if (! `objectType -isa transform $camera`) {
+			// Make sure we point to the transform
+			string $parents[] = `listRelatives -parent $camera`;
+			$camera = $parents[0];
+		}
+	}
+	return $camera;
+}
+
+//
+//  Procedure Name:
+//      flyThroughPress
+//
+//  Description:
+//      Handle a press event for the context.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+global proc flyThroughPress()
+{
+	float  $position[] = `draggerContext -query -anchorPoint flyThroughContext`;
+
+	//	Last coordinates of the mouse.
+	//
+	global float $gFlyThroughLastPosition[];
+
+	//	Last rotation values of the camera.
+	//
+	global float $gFlyThroughRotation[];
+
+	//	Coordinates of the mouse when the press happened or when the Ctrl
+	//	key was released.
+	//
+	global float $gFlyThroughAnchor[];
+
+	$gFlyThroughAnchor = `draggerContext -query -anchorPoint flyThroughContext`;
+	$gFlyThroughRotation = `getAttr (getFlyThroughCamera() + ".rotate")`;
+	$gFlyThroughLastPosition = $position;
+	
+	//Just record last position and orientation for undo queue
+	setAttr (getFlyThroughCamera() + ".rotate") `getAttr (getFlyThroughCamera() + ".rx")` `getAttr (getFlyThroughCamera() + ".ry")` `getAttr (getFlyThroughCamera() + ".rz")`;
+	setAttr (getFlyThroughCamera() + ".translate") `getAttr (getFlyThroughCamera() + ".tx")` `getAttr (getFlyThroughCamera() + ".ty")` `getAttr (getFlyThroughCamera() + ".tz")`;
+		
+}
+
+//
+//  Procedure Name:
+//      flyThroughRelease
+//
+//  Description:
+//      Handle a release event for the context.
+//
+//    The undo queue gets temporarily disabled while flying the camera (dragging).
+//    flyThroughRelease is used to set the last position and orientation for
+//    when the undo queue is turned back on so that undoing the camera fly
+//    movement will undo to the previously release point.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+global proc flyThroughRelease()
+{	
+	//Just record last position and orientation for undo queue
+	setAttr (getFlyThroughCamera() + ".rotate") `getAttr (getFlyThroughCamera() + ".rx")` `getAttr (getFlyThroughCamera() + ".ry")` `getAttr (getFlyThroughCamera() + ".rz")`;
+	setAttr (getFlyThroughCamera() + ".translate") `getAttr (getFlyThroughCamera() + ".tx")` `getAttr (getFlyThroughCamera() + ".ty")` `getAttr (getFlyThroughCamera() + ".tz")`;
+			
+}
+
+//
+//  Procedure Name:
+//      flyThroughDrag
+//
+//  Description:
+//      Handle a drag event for the context.
+//
+//		To use the context simply activate the tool 
+//		(eg. "setToolTo flyThroughContext;") then press the 
+//		left mouse button in a model view with a perspective camera
+//		active.  Drag your mouse to change the direction of where
+//		the camera is looking.  Hold down the Ctrl modifier key to 
+//		make the camera move in, out, left or right.  This movement
+//		should be somewhat familiar to all you Quake players.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+global proc flyThroughDrag()
+{
+	float  $position[] = `draggerContext -query -dragPoint flyThroughContext`;
+	int    $button     = `draggerContext -query -button flyThroughContext`;
+	string $modifier   = `draggerContext -query -modifier flyThroughContext`;
+	int    $refresh    = false;
+
+	//	These values represent the amount by which the camera will move 
+	//	forward, backward and side to side.
+	//
+	float  $stepForwardDistance = 0.5;
+	float  $stepSideDistance = 0.5;
+	
+	global float $gFlyThroughLastPosition[];
+	global float $gFlyThroughRotation[];
+	global float $gFlyThroughAnchor[];
+
+	string $camera = getFlyThroughCamera();
+	if ("" != $camera) {
+		if (1 == $button) {
+			if ("none" == $modifier) {
+				//
+				//	No modifier button.  Interpret mouse movements as looking
+				//	around in the scene.
+				//
+
+				float $dy = $position[1] - $gFlyThroughAnchor[1];
+				float $dx = ($position[0] - $gFlyThroughAnchor[0]);
+				float $newRotation[] = $gFlyThroughRotation;
+				$newRotation[0] = $gFlyThroughRotation[0] + $dy;
+				$newRotation[1] = $gFlyThroughRotation[1] - $dx;
+
+				setAttr ($camera + ".rotate") 
+					$newRotation[0] $newRotation[1] $newRotation[2];
+
+				$refresh = true;
+
+			} else if ("ctrl" == $modifier) {
+				//
+				//	Ctrl modifier button.  Up and down movements result in
+				//	moving forward and backward, while left and right result
+				//	in moving side to side.
+				//
+
+				//	Note:  only move in one direction at a time, ie. forward/backward
+				//	vs side to side.  If you handle both with each mouse movement
+				//	then the camera motion looks jerky.  Determine which mouse 
+				//	movement change is greater (the change in x or y) to decide
+				//	the direction the camera should take.
+				//
+				if (abs($position[1] - $gFlyThroughLastPosition[1]) >=
+					abs($position[0] - $gFlyThroughLastPosition[0])) {
+
+					if ($position[1] > $gFlyThroughLastPosition[1]) {
+						//
+						//	Move forward.
+						//
+						dolly -relative -distance (-$stepForwardDistance) $camera;
+
+					} else if ($position[1] < $gFlyThroughLastPosition[1]) {
+						//
+						//	Move backward.
+						//
+						dolly -relative -distance $stepForwardDistance $camera;
+					}
+
+				} else {
+					if ($position[0] > $gFlyThroughLastPosition[0]) {
+						//
+						//	Move right.
+						//
+						track -right $stepSideDistance $camera;
+
+					} else if ($position[0] < $gFlyThroughLastPosition[0]) {
+						//
+						//	Move left.
+						//
+						track -left $stepSideDistance $camera;
+					}
+				}
+
+				$refresh = true;
+
+				//	Need to update the anchor position and camera rotation so that
+				//	when the camera stops moving further look actions are relative
+				//	to where the Ctrl key was released.
+				//
+				$gFlyThroughAnchor = $position;
+				$gFlyThroughRotation = `getAttr ($camera + ".rotate")`;
+			}
+		}
+	}
+	$gFlyThroughLastPosition = $position;
+
+	if ($refresh) refresh -currentView;
+}
+
+//
+//  Description:
+//      Create the context.
+//
+{
+    if (`draggerContext -exists flyThroughContext`)
+        deleteUI flyThroughContext;
+
+    draggerContext
+	    -pressCommand   ("flyThroughPress ; undoInfo -swf 0") // turn off undo
+	    -dragCommand    "flyThroughDrag"
+		-releaseCommand ("undoInfo -swf 1 ; flyThroughRelease")  // turn on undo
+		-cursor         "fly"
+		-image1         "flyThrough.png"	
+        flyThroughContext;
+}

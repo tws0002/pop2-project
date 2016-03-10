@@ -1,0 +1,413 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+/*
+ * Includes
+ */
+
+ 
+/*
+ * globals
+ */
+
+// --------------------------------------------------------------------------
+
+// --------------------------------------------------------------------------
+// Procs
+// --------------------------------------------------------------------------
+
+// --------------------------------------------------------------------------
+
+global proc cMuscleSmartCollide_setup()
+{
+	string $objs[] = `ls -sl` ;
+	if (size($objs) != 2)
+		{
+		error -sl 1 (uiRes("m_cMuscleSmartCollide.kMustSelectTwoJoints")) ;	
+		}
+	// The two objs
+	string $A = $objs[0] ;
+	string $B = $objs[1] ;
+	float $dist = cMuscle_objDist($A, $B) ;
+	
+
+	// We make the constraint node...and the driven grp and the collide itself...
+	
+	string $mCons = `createNode "cMuscleSmartConstraint" -name ("cMuscleSmartConstraint#") ` ;
+	string $grpDriven = `group -em -w -n ("grpCMuscleSmartConstraintDriven#")` ;
+	
+	string $mSC = `createNode "cMuscleSmartCollide" -name ("cMuscleSmartCollideShape#") ` ;
+	string $xforms[] = `listRelatives -ni -parent $mSC`;
+	string $xform = $xforms[0] ;
+	string $mSCBase = `group -em -w -n ("cMuscleSmartCollideBase#")` ;
+
+	connectAttr -f ($A+".worldMatrix") ($mSC+".worldMatrixA") ;
+	connectAttr -f ($A+".worldMatrix") ($mSC+".worldMatrixABase") ;
+	disconnectAttr ($A+".worldMatrix") ($mSC+".worldMatrixABase") ;
+
+	connectAttr -f ($B+".worldMatrix") ($mSC+".worldMatrixB") ;
+	connectAttr -f ($B+".worldMatrix") ($mSC+".worldMatrixBBase") ;
+	disconnectAttr ($B+".worldMatrix") ($mSC+".worldMatrixBBase") ;
+
+	connectAttr -f ($xform+".worldMatrix") ($mSC+".worldMatrixPlane") ;
+	connectAttr -f ($mSCBase+".worldMatrix") ($mSC+".worldMatrixPlaneBase") ;
+	
+	connectAttr -f ($mSC+".worldMatrixA") ($mCons+".worldMatrixA") ; 
+	connectAttr -f ($mSC+".worldMatrixB") ($mCons+".worldMatrixB") ; 
+	connectAttr -f ($mSC+".worldMatrixABase") ($mCons+".worldMatrixABase") ; 
+	connectAttr -f ($mSC+".worldMatrixBBase") ($mCons+".worldMatrixBBase") ; 
+	connectAttr -f ($mSC+".axis") ($mCons+".axis") ; 
+	connectAttr -f ($mSC+".triggerMin") ($mCons+".triggerMin") ; 
+	connectAttr -f ($mSC+".bias") ($mCons+".bias") ; 
+	connectAttr -f ($mSC+".biasAdjust") ($mCons+".biasAdjust") ; 
+
+	parent $xform $grpDriven ;
+	
+	connectAttr -f ($mCons+".outTranslate") ($grpDriven+".translate") ;
+	connectAttr -f ($mCons+".outRotate") ($grpDriven+".rotate") ;
+	
+	string $grpMain = `group -em -w -n ("grpCMuscleSmartCollide#")` ;
+	parent $grpDriven $mSCBase $grpMain ;
+	
+	// Try to pick proper axis to use...
+	int $nAxis = cMuscle_guessPrimaryAxis($A, $B) ;
+	setAttr ($mSC+".axis") $nAxis ;
+	refresh ;
+	
+	cMuscle_snap($xform, $mSCBase) ;
+	
+	string $grpCMSC = "grpCMuscleSmartCollides" ;
+	if (objExists($grpCMSC) != true)
+		$grpCMSC = `group -em -w -n $grpCMSC` ;
+	
+	parent $grpMain $grpCMSC ;
+
+	// Set some nice defaults based on distance.
+	//
+	setAttr ($mSC+".manualScale") ($dist) ; 
+	setAttr ($mSC+".volumizeOffset") (0.25) ; 
+	setAttr ($mSC+".volumizeDist") (1.0) ; 
+	setAttr ($mSC+".volumizeFalloff") (1.5) ; 
+
+
+	setAttr -lock true ($mSC+".SMOOTH_PRE") ; 
+	setAttr -lock true ($mSC+".MOVEMENT") ; 
+	setAttr -lock true ($mSC+".COLLISION") ; 
+	setAttr -lock true ($mSC+".SMOOTH_POST") ; 
+	setAttr -lock true ($mSC+".DISPLAY") ; 
+	
+	// Setup trigger to display nice on the constraint
+	addAttr -ln "trigger" -keyable true $mCons ;
+	connectAttr -f ($mCons+".outTrigger") ($mCons+".trigger") ;
+	
+	// Remove extra attrs
+	cMuscle_cleanMayaShape($mSC) ;
+	
+	
+	select -r $xform $mSC ;
+}
+
+
+// --------------------------------------------------------------------------
+
+
+/*
+ * cMuscleSmartCollide_connectSCToSystem() - Connects all selected cMuscleSmartCollide nodes to
+ *	the selected muscleSystem
+ */
+global proc cMuscleSmartCollide_connectSCToSystem(int $verbose)
+{
+    string $objs[] = `ls -sl`;
+    
+    if (size($objs) <= 0)
+		{
+		if ($verbose)			
+			error -sl 0 (uiRes("m_cMuscleSmartCollide.kMustSelectMuscleCollideAndMuscleSystemDeformer")) ;
+		else
+			return ;
+		}
+
+
+    string $mSCs[] = cMuscle_getSelectedShapes("cMuscleSmartCollide") ; 
+    string $mSs[] = cMuscle_getSelectedDeformers("cMuscleSystem") ;
+        
+    if (size($mSCs) <= 0)
+		{
+		if ($verbose)
+			error -sl 0 (uiRes("m_cMuscleSmartCollide.kMustSelectMuscleSmartCollide")) ;
+		else
+			return ;
+		}
+
+    if (size($mSs) <= 0)
+		{
+		if ($verbose)
+			error -sl 0 (uiRes("m_cMuscleSmartCollide.kMustSelectMuscleSystem")) ;
+		else
+			return ;
+		}
+
+		
+	string $mS ;
+	for ($mS in $mSs)	// each muscleSystem
+		setAttr ($mS+".envelope") 0.0 ;		// Disable
+		
+		
+    string $mSC ;
+    for ($mSC in $mSCs)	// each cMuscleSmartCollide
+        {
+        string $mS ;
+        for ($mS in $mSs)	// each muscleSystem
+            {
+            // Make sure this node isn't connected yet!
+            string $existDir[] = `cMuscleQuery -system $mS -smartcollide` ;
+            
+            string $e;
+            int $alreadyConnected = 0 ;
+            for ($e in $existDir)
+                {
+                if ($mSC == $e)
+                    {
+                    $alreadyConnected = 1;
+                    break ;
+                    }
+                }
+            if ($alreadyConnected)
+            	{
+				string $msg = (uiRes("m_cMuscleSmartCollide.kMuscleSmartCollideAlreadyConnected"));
+				$msg = `format -stringArg $mSC -stringArg $mS $msg`;
+            	warning -sl 0 $msg ;
+                break ;		// next one then!
+                }
+
+            
+            // Find next unconnected index...
+            //
+			int $smartIdxs[] = `cMuscleQuery -system $mS -smartcollide -index`;
+            $smartIdxs = `sort $smartIdxs` ;
+            
+            int $idx=0 ;
+            int $test;
+            int $done=0 ;
+            for ($test=0; $test < size($smartIdxs); ++$test)
+            	{
+				if ($test != $smartIdxs[$test])	// we have a gap!
+                    {
+                    $idx = $test ; 
+                    $done = 1 ;
+                    break ;
+                    }
+                ++$idx ;	// otherwise keep going, we may end with +1 from last...
+                }
+
+			connectAttr -f ($mSC+".collideData") ($mS+".smartCollideData["+$idx+"]") ;            
+            }
+        }
+
+	for ($mS in $mSs)	// each muscleSystem
+		setAttr ($mS+".envelope") 1.0 ;		// enable
+		
+
+    print (uiRes("m_cMuscleSmartCollide.kMuscleSmartCollideConnectionDone")) ;
+
+}
+
+// --------------------------------------------------------------------------
+
+/*
+ * cMuscleSmartCollide_disconnectFromSys() - Disconnects a cMuscleSmartCollide node from
+ *		a cMuscleSystem deformer.
+ */
+global proc cMuscleSmartCollide_disconnectFromSys(int $verbose)
+{
+	string $objs[] = `ls -sl`;
+    
+    if (size($objs) <= 0)
+		{
+		if ($verbose)			
+			error -sl 0 (uiRes("m_cMuscleSmartCollide.kMustSelectMuscleCollideAndMuscleSystemDeformer2")) ;
+		else
+			return ;
+		}
+
+
+    string $mSCs[] = cMuscle_getSelectedShapes("cMuscleSmartCollide") ; 
+    string $mSs[] = cMuscle_getSelectedDeformers("cMuscleSystem") ;
+        
+    if (size($mSCs) <= 0)
+		{
+		if ($verbose)
+			error -sl 0 (uiRes("m_cMuscleSmartCollide.kMustSelectMuscleSmartCollide2")) ;
+		else
+			return ;
+		}
+
+    if (size($mSs) <= 0)
+		{
+		if ($verbose)
+			error -sl 0 (uiRes("m_cMuscleSmartCollide.kMustSelectMuscleSystem2")) ;
+		else
+			return ;
+		}
+	
+	
+    string $mSC ;
+    for ($mSC in $mSCs)	// each cMuscleSmartCollide
+        {
+        string $mS ;
+        for ($mS in $mSs)	// each muscleSystem
+            {
+			int $idx = cMuscle_getConnectedSmartIndex($mS, $mSC) ;
+			if ($idx == -1)
+				{
+				string $msg = (uiRes("m_cMuscleSmartCollide.kMuscleDisplaceNotConnected"));
+				$msg = `format -stringArg $mSC -stringArg $mS $msg`;
+				warning -sl 0 ($msg) ;
+				continue ;
+				}
+		
+			// Ok time to disconnect... and also remove the actual plug...
+			disconnectAttr ($mSC+".collideData") ($mS+".smartCollideData["+$idx+"]") ;
+			removeMultiInstance -b true ($mS+".smartCollideData["+$idx+"]") ;
+
+			string $msg = (uiRes("m_cMuscleSmartCollide.kDisconnectedMuscleSmartCollide"));
+			$msg = `format -stringArg $mSC -stringArg $mS $msg`;
+			print ($msg) ;
+			}
+			
+		}
+		
+		
+}
+
+// --------------------------------------------------------------------------
+
+/*
+ * cMuscle_getConnectedSmartIndex() - Given a system node and a cMuscleSmartCollide
+ *	node, returns the index # that the disp is connected into the sys array with.
+ *
+ *	Return -1 if no connection, otherwise 0....n for index
+ */
+global proc int cMuscle_getConnectedSmartIndex(string $mS, string $mSC)
+{
+
+	// List connections to see if this thing is connected yet...
+	string $cons[] = `listConnections -s 0 -d 1 -p 1 -scn 1 ($mSC+".collideData")` ;
+	string $con ;
+	for ($con in $cons)
+		{
+		string $parts[] ;
+		tokenize($con, ".", $parts) ;
+		if ($parts[0] == $mS)		// Was the connection into the same deformer?
+			{
+			tokenize($con, "[]", $parts) ;		// cMuscleSystem1.smartCollideData[2] for example
+			int $idx = (int)$parts[1] ;			// Get just the index #
+			return $idx ;
+			}
+		}
+
+	return -1 ;		// not connected
+}
+
+
+// --------------------------------------------------------------------------
+
+/*
+ * cMuscle_disconnectSmartCollideSystem() - Removes all cSmartCollide connections from System nodes.
+ */
+global proc cMuscle_disconnectSmartCollideSystem(int $rem)
+{
+    string $objs[] = `ls -sl`;
+    
+    if (size($objs) <= 0)
+        error -sl 0 (uiRes("m_cMuscleSmartCollide.kMustSelectMuscleSystemDeformer")) ;
+
+    string $mSs[] = cMuscle_getSelectedDeformers("cMuscleSystem") ;
+
+    
+    if (size($mSs) <= 0)
+        error -sl 0 (uiRes("m_cMuscleSmartCollide.kMustSelectMuscleSystemDeformedObject")) ;
+
+    select -cl ;
+
+	string $mS ;
+	for ($mS in $mSs)	// each muscleSystem
+		setAttr ($mS+".envelope") 0.0 ;		// Disable
+		
+    for ($mS in $mSs)	// each muscleSystem
+		{
+		string $mCSs[] = `cMuscleQuery -system $mS -smartcollide` ;		// Get cSmartCollides
+		int $idxs[] = `cMuscleQuery -system $mS -smartcollide -index` ;	// And index connected into
+		
+		int $i;
+		for ($i=0; $i < size($mCSs); ++$i)
+			{
+			// Disconnect it!
+			disconnectAttr ($mCSs[$i]+".collideData") ($mS+".smartCollideData["+$idxs[$i]+"]") ;
+			if ($rem == 1)
+				removeMultiInstance -b true ($mS+".smartCollideData["+$idxs[$i]+"]") ;
+			} // each muscle connection in...
+
+		}  // each system selected...
+	
+	for ($mS in $mSs)	// each muscleSystem
+		setAttr ($mS+".envelope") 1.0 ;		// Enable
+		
+	
+    select $objs ;
+
+    print (uiRes("m_cMuscleSmartCollide.kDisconnectedAllMuscleSmartCollide")) ;
+}
+
+// --------------------------------------------------------------------------
+
+// --------------------------------------------------------------------------
+//	cMuscleMultiCollide Procs
+// --------------------------------------------------------------------------
+
+// --------------------------------------------------------------------------
+
+/*
+ * cMuscleMultiCollide_setup() - 
+ */
+global proc cMuscleMultiCollide_setup()
+{
+	string $objs[] = `ls -sl` ;
+	string $def[] = `deformer -type "cMuscleMultiCollide" $objs` ;
+	
+	connectAttr -f ("time1.outTime") ($def[0]+".inTime") ;
+	
+	int $nObjs = `getAttr -size ($def[0]+".input")` ;
+	int $i ;
+	for ($i=0; $i < $nObjs; ++$i)
+		{
+			// Now we do this hack...this way the geometry coming into the deformer, is causing dirty on all geo in
+			// the deformer at once...
+		connectAttr -f ($def[0]+".input["+$i+"].inputGeometry") ($def[0]+".inMesh["+$i+"]") ;
+		}
+	
+	print (uiRes("m_cMuscleSmartCollide.kSetupMuscleMultiCollide")) ;	
+}
+
+// --------------------------------------------------------------------------
+
+
+

@@ -1,0 +1,157 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+//
+//
+//  Creation Date:  16 April 2001
+//
+//  Procedure Name:
+//      art3dPaintCheckDefautBrush
+//
+//  Description:
+//      Makes sure that the nodes that store the default paint effects brushes
+//		for paint, blur, and smear have been created.
+//
+//  Input Arguments:
+//      $mode - mode to make sure default brush exists for ("Paint", "Smear", 
+//			    or "Blur")
+//
+//  Return Value:
+//      None.
+//
+global proc art3dPaintCheckDefaultBrush( string $mode ) {
+	string $defaultBrushName;
+	string $defaultBrushScript;
+
+	// Nodes which store the saved brush settings
+	//
+	global string $gArt3dPaintLastPaintBrush	= "art3dPaintLastPaintBrush";
+	global string $gArt3dPaintLastBlurBrush		= "art3dPaintLastBlurBrush";
+	global string $gArt3dPaintLastSmearBrush	= "art3dPaintLastSmearBrush";
+	
+	// These are the names of the brushes that we will use as defaults
+	//
+	string $defaultPaintBrush = "airbrush/defaultPaint";
+	string $defaultSmearBrush = "airbrush/defaultSmear";
+	string $defaultBlurBrush  = "airbrush/defaultBlur";
+
+	// Names that the default brush had when the saved settings were in place
+	// (e.g. fire1)
+	//
+	global string $gArt3dPaintLastPaintBrushName;
+	global string $gArt3dPaintLastBlurBrushName;
+	global string $gArt3dPaintLastSmearBrushName;
+
+	// Check if the default brushes exist
+	//
+	int $defaultPaintExists, $defaultSmearExists, $defaultBlurExists;
+	
+	switch ( $mode ) {
+		case "Paint":
+			$defaultBrushName = $gArt3dPaintLastPaintBrush;
+			$defaultBrushScript = $defaultPaintBrush;
+			$gArt3dPaintLastPaintBrushName = basename( $defaultBrushScript, "" );
+			break;
+		case "Smear":
+			$defaultBrushName = $gArt3dPaintLastSmearBrush;
+			$defaultBrushScript = $defaultSmearBrush;
+			$gArt3dPaintLastSmearBrushName = basename( $defaultBrushScript, "" );
+			break;
+		case "Blur":
+			$defaultBrushName = $gArt3dPaintLastBlurBrush;
+			$defaultBrushScript = $defaultBlurBrush;
+			$gArt3dPaintLastBlurBrushName = basename( $defaultBrushScript, "" );
+			break;
+		default:		
+			string $fmt = (uiRes("m_art3dPaintCheckDefaultBrush.kUnsupportedMode")); 
+			error `format -s "art3dPaintCheckDefaultBrush" $fmt`; 
+	}
+
+	if ( `objExists $defaultBrushName` ) {
+		// The brush node already exists;
+		return;
+	}
+
+	// Figure out where the brushes live
+	//
+	string $brushDir = getenv( "MAYA_LOCATION" ) + "/brushes/";
+
+	// Make a copy of the existing selection
+    //
+    string $currSelection[] = `ls -sl`;
+
+	// Make a copy of the current brush so that we can put it back
+	//
+	string $defaultName = getDefaultBrush();
+	string $copyReasults[] = `duplicate $defaultName`;
+	string $defaultCopy = $copyReasults[0];
+
+	// Create the node where we will store the brush settings in the future
+	//
+	createNode "brush" -n $defaultBrushName;
+	int $ok = false;
+
+	string $brushBaseName = basename( $defaultBrushScript, "" ) + ".mel";
+	if ( `exists $brushBaseName` ) {
+		// The paint brush is in our script path.  Use that instead.  This
+		// will allow users to override the default brush by putting a 
+		// brush script in their own script directory
+		// 
+		if ( !catch( eval( "source " + $brushBaseName ) ) ) {
+			$ok = true;
+		}
+	} 
+	if ( !$ok ) {
+		// Need to pick up the brush out of the brushes directory
+		//
+		if ( !catch( eval( "source \"" + $brushDir + $defaultBrushScript + ".mel\"" ) ) ) {
+			$ok = true;
+		}
+	}
+
+	if ( !$ok ) {
+		string $fmt = (uiRes("m_art3dPaintCheckDefaultBrush.kFailedToLoadBrush")); 
+		error `format -s $defaultBrushScript $fmt`; 
+	}
+
+	// Store the brush settings for the default brush we just loaded into our 
+	// save node
+	//
+	copyNode( getDefaultBrush(), $defaultBrushName );
+
+	// Put back the old default brush
+	//
+	brushPresetSetup();
+	copyNode( $defaultCopy, getDefaultBrush() );
+	rename( getDefaultBrush(), $defaultName );
+	delete $defaultCopy;
+
+	// Set the paint effects brush mode.
+	//
+	string $currContext = `currentCtx`;
+    art3dPaintCtx -e -brushtype "effectsBrush" $currContext;
+	art3dPaintEffectsBrushCallback( "art3dPaintCtx" );
+	    
+	// Replece the old selection list so that we don't modify Maya's state
+    //
+    select -r $currSelection;
+}

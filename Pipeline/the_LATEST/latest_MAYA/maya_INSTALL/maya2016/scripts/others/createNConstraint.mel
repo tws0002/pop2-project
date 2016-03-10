@@ -1,0 +1,925 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+//<doc>
+//<name createNConstraint>
+//<owner "Autodesk">
+//
+//<synopsis>
+//		createNConstraint( string $constraintType, int $createSet )
+//
+//<returns>
+//		string array containing all the created nodes	
+//
+//<description>
+//	This creates a constraint node that acts on the selected objects and/or components. For each node that
+//  is selected or that has components selected, nComponent nodes are built that feed into the constraint node.
+//  This is equivalent to invoking constraint creation off of the menu where the constraint type is the menu item.
+//  Depending on the constraint type and the selection nRigid nodes may be created for meshes that have not yet been made into
+//  passive nObjects.
+//
+//<flags>
+//	string $constraintType  Must be one of: "transform", "pointToSurface", 
+//			"slideOnSurface", "weldBorders", "force", "match", "tearableSurface", 
+//			"weldBorders", "collisionExclusion", "disableCollision"
+//  int $createSet  if true then create a set for selected components instead of setting them on the nComponent node
+//
+//<examples>
+//	polyPlane;
+//	createNCloth false;
+//	select -r pPlane1.vtx[0] ;
+//	createNConstraint transform false;
+//</doc>
+
+proc int getFirstFreeConstraintIndex( string $nucleus )
+{
+	int $ind;
+	string $att = ($nucleus + ".inputStart");
+	int $numInputs = `getAttr -size $att`;
+	for( $ind = 0; $ind < $numInputs; $ind++ ){
+		string $input = ($att + "[" + $ind +"]");
+		string $con = `connectionInfo -sfd $input`;
+		if( size( $con ) == 0 ){
+			break;
+		}
+	}
+	return $ind;	
+}
+
+proc string makePassiveNObj( string $mesh, string $nucleus )
+{
+	string $fmt = (uiRes("m_createNConstraint.kMakePassiveMsg"));
+	print(`format -s $mesh $fmt`);
+	// string $meshTforms[] = `listTransforms $mesh`;
+	// string $tform = $meshTforms[0];
+	// $nRigid = `createNode nRigid -parent $tform`;
+	$nRigid = `createNode nRigid`;
+	hideParticleAttrs( $nRigid );
+	setAttr ($nRigid + ".selfCollide") false;
+	setAttr ($nRigid + ".collide") false;
+	connectAttr time1.outTime  ($nRigid + ".currentTime");
+	connectAttr ($mesh + ".worldMesh") ($nRigid + ".inputMesh");
+	addPassiveToNSystem($nRigid, $nucleus);
+	connectAttr ($nucleus + ".startFrame") ($nRigid +".startFrame");
+	return $nRigid;
+}
+
+proc string [] getInputMeshForSets( string $obj )	
+{
+	string $meshes[];
+//	string $shapes[] = `ls -shapes -dag $obj`;
+	string $partObj = findTypeInHistory( $obj, "nBase", 0,1 );
+	int $upstream = false;
+	// return the mesh to create the set on and the downstream 
+	// mesh that is the input to the nObject if different
+	if( $partObj == "" ){
+		// look downstream
+		$partObj = findTypeInHistory( $obj, "nBase", 1,0 );
+		if( $partObj != "" ){
+			// $meshes[0] = $shapes[0];
+			$meshes[0] = $obj;
+			$upstream = true;
+		} else {
+			string $fmt = (uiRes("m_createNConstraint.kNotConnectedToNucleus"));
+			warning( `format -s $obj $fmt`);
+			return( $meshes );
+		} 
+	} 
+	// string $cons[] = `listConnections -sh 1 -type nBase $shapes[0]`;
+	string $cons[] = `listConnections -sh 1 -type mesh ($partObj + ".inputMesh")`;
+	if( size( $cons ) > 0 ){
+		$meshes[1] = $cons[0];
+		if( !$upstream ){
+			$meshes[0] = $meshes[1];
+		}
+	} else {
+		if( $upstream ){
+			$meshes[1] = $meshes[0];
+		}
+		string $fmt = (uiRes("m_createNConstraint.kCantFindInputMesh"));
+		warning(`format -s $obj $fmt`);
+	}
+	return( $meshes );
+}
+
+proc makeSetForComponent( string $component, string $inputMesh, string $inputMeshComponents[] )
+{
+
+	string $set = `sets -name "dynamicConstraintSet#" $inputMeshComponents`;
+	string $cons[] = `listConnections ($set + ".groupNodes[0]")`;
+	if( size( $cons ) < 1 ){
+		warning((uiRes("m_createNConstraint.kNoGroupIdNode")));
+		return;
+	}
+	string $gid = $cons[0];	
+	connectAttr ($gid + ".groupId") ($component + ".componentGroupId");
+	connectAttr ($inputMesh + ".worldMesh[0]") ($component + ".surface");
+}
+
+proc int hairSystemTotalVertices( string $hsys )
+{
+// TODO: COMPUTE TOTAL VERTS for ALL HAIRS
+	return 0;
+}
+
+proc int isAllComponents( string $obj, int $numComponents, int $compType )
+{
+	int $count[];
+	$count[0] = 0;
+	if( $compType == 2 ){ // points
+		$count = `polyEvaluate -v $obj`;
+	}else if( $compType == 3 ){ // edges
+		$count = `polyEvaluate -e $obj`;
+	}else if( $compType == 4 ){ // faces
+		$count = `polyEvaluate -f $obj`;
+	} else if( $compType == 7){ // particle points
+		$count[0] = `particle -q -count $obj`;
+	} else if( $compType == 8){ // hair cv
+		$count[0] = hairSystemTotalVertices( $obj );
+	}else{
+		warning( (uiRes("m_createNConstraint.kBadTypeWrn")));
+	}
+	return( $count[0] == $numComponents );
+}
+
+proc int isAllBorderComponents( string $obj, int $compIndices[], int $compType )
+{
+	return false;
+}
+
+proc int setupForTearConstraint( string $objects[], string $selection[] )
+{
+	string $obj;
+	string $newSelection[];
+	for( $obj in $objects ){
+		string $nCloth = findTypeInHistory( $obj, "nCloth", 1,1 );
+		if( $nCloth == "" ){
+			return false;
+		}
+		string $con[] = `listConnections -shapes 1 ($nCloth + ".outputMesh")`;
+		if( size( $con ) < 1 ){
+			string $fmt = (uiRes("m_createNConstraint.kNoOutputMesh"));
+			warning( `format -s $nCloth $fmt`);
+			return false;
+		}
+		string $outMeshNode = $con[0];
+		$con = `listConnections -shapes 1 ($nCloth + ".inputMesh")`;
+		if( size( $con ) < 1 ){
+			string $fmt = (uiRes("m_createNConstraint.kNoInputMesh"));
+			warning( `format -s $nCloth $fmt`);
+			return false;
+		}
+		string $inMeshNode = $con[0]; 
+		if( nodeType( $inMeshNode ) != "mesh"){
+			string $fmt = (uiRes("m_createNConstraint.kNotMesh"));
+			warning( `format -s $inMeshNode $fmt`);
+			return false;
+		}
+
+		string $objComponents[];
+		string $sel;
+		string $tforms[] = listTransforms( $obj );
+		string $objTform = $tforms[0];
+		string $objComp = ($objTform + ".");
+		string $inMeshComp = ($inMeshNode + ".");
+		for( $sel in $selection ){
+			if( startsWith( $sel, $objComp) ){
+				$objComponents[size($objComponents)] = `substitute $objTform $sel $inMeshNode`;
+			} else if ( startsWith( $sel, $inMeshComp) ){
+				$objComponents[size($objComponents)] = $sel;
+			}
+		}
+		if( size($objComponents) > 0 ){
+			int $intermediate = getAttr( $inMeshNode + ".intermediateObject");
+			if( $intermediate ){
+				setAttr ($inMeshNode + ".intermediateObject") false;
+			}
+			string $type = "v";
+			if( gmatch ($objComponents[0], "*.e*" )){
+				$type = "e";
+			} else if (gmatch ($objComponents[0], "*.f*" ) ){
+				$type = "f";
+			}
+			
+			if( $type != "e"){
+				string $oldSel[] = `ls -sl`;
+				if( $type == "v" ){
+					ConvertSelectionToContainedEdges;
+				} else if ($type == "f"){
+					ConvertSelectionToEdges;
+				}
+				
+				string $newSel[] = `ls -sl -flatten`;
+				if( size( $newSel ) > 0 ){
+					string $newComp[];
+					$objComp = ($obj + ".");
+					for( $sel in $newSel ){
+						if( startsWith( $sel, $objComp) ){
+							$newComp[size($newComp)] = `substitute $obj $sel $inMeshNode`;
+						} else if( startsWith( $sel, $inMeshComp) ){
+							$newComp[size($newComp)] = $sel;
+						}
+					}
+					if( size( $newComp ) > 0 ){
+						$objComponents = $newComp;
+						$type = "e";
+					} else {
+						select -r $oldSel;
+					}
+				} else {
+					select -r $oldSel;
+				}
+			}
+
+			select -cl;
+			if( $type == "e" ){
+				polySplitEdge -ch 1 $objComponents;
+			} else {
+				polySplitVertex -ch 1 $objComponents;
+			}
+			float $bend = getAttr( $nCloth + ".bendResistance");
+			if( $bend > 0.2 && $type != "e"){
+				// for higher bend we create a slower edge based constraint and set bend on the constraint
+				ConvertSelectionToEdges;
+			} else if ( $bend < 0.2 && $type != "v" ){
+				ConvertSelectionToVertices;
+			}
+			string $newComp[] = `ls -sl -flatten`;	
+			for( $sel in $newComp ){
+				$newSelection[size($newSelection)] = `substitute $inMeshNode $sel $objTform`;
+			}
+			if( $intermediate ){
+				setAttr ($inMeshNode + ".intermediateObject") true;
+			}
+		} else {
+			polySplitVertex -ch 1 $inMeshNode;
+			$newSelection[size($newSelection)] = $obj;
+		}
+		if( nodeType( $outMeshNode ) != "polyMergeVert"){
+			string $merge = `createNode polyMergeVert`;
+			string $soft = `createNode polySoftEdge`;
+			setAttr ($merge + ".inputComponents") -type componentList 1 "vtx[*]";
+			setAttr ($merge + ".distance") 0.001;
+			setAttr ($soft + ".inputComponents") -type componentList 1 "e[*]";
+			setAttr ($soft + ".angle") 180;
+			$con = `connectionInfo -dfs ($nCloth + ".outputMesh")`;
+			connectAttr -f ($nCloth + ".outputMesh") ($merge + ".inputPolymesh");
+			connectAttr -f ($merge + ".output") ($soft + ".inputPolymesh");
+			connectAttr -f ($soft + ".output") $con[0];
+		}  
+	}
+	$selection = $newSelection;
+   
+	return true;
+}
+
+proc string findRelatedHairSystem( string $obj )
+{
+	string $nobj = "";
+	
+	if( nodeType( $obj ) == "hairSystem" ){
+		$nobj = $obj;
+	} else {
+		if( nodeType( $obj ) == "pfxHair" ){
+			string $hsys[] = `listConnections -type hairSystem $obj`;
+			if( size( $hsys ) > 0 ){
+				$nobj = $hsys[0];
+			}
+		} else if ( nodeType( $obj ) == "nurbsCurve" || nodeType( $obj ) == "follicle" ) {
+			$nobj = findTypeInHistory( $obj, "hairSystem", 1,1 );
+		}
+	} 
+	return $nobj;
+}
+
+proc string findRelatedNucleusObject( string $obj )
+{
+	string $nobj = "";
+	if( nodeType( $obj ) == "nurbsCurve") {
+		$nobj = findRelatedHairSystem( $obj );
+	} else {
+		$nobj = findTypeInHistory( $obj, "nBase", 1,1 );
+	}
+
+	return $nobj;
+}
+
+proc int getIndexOffsetForHair( string $curve, int $forEdge, int $hairOffsets[], string $hairSystemName[] )
+{
+	int $offset = 0;
+	string $follicle = findTypeInHistory( $curve, "follicle", 1,1 );
+	if($follicle != "" ){
+		string $hsys = findTypeInHistory( $follicle, "hairSystem", 1,1 );
+		if( $hsys != "" ){
+			string $hairCon = `connectionInfo -sfd ($follicle+".currentPosition")`;
+			string $tok[];
+			int $ntok = `tokenize $hairCon "[]" $tok`;
+			// if( $ntok != 2 ) // warning??
+			int $hairInd = $tok[1];
+			if( $hairInd == 0 ){
+				return 0;
+			}
+			int $setCache = false;
+			int $startInd = 0;
+			if( size( $hairSystemName ) == 0 ){
+				$hairSystemName[0] = $hsys;
+				$hairOffsets = {};
+				$setCache = true;
+			} else if( $hsys == $hairSystemName[0] ){
+				int $offSize = size( $hairOffsets );
+				if( $hairInd < $offSize){
+					return $hairOffsets[$hairInd];
+				}
+				$setCache = true;
+				if( $offSize >  0){
+					$startInd = $offSize -1;
+					$offset = $hairOffsets[($offSize-1)];
+				}
+			} 
+
+			int $i;
+			int $numCurves = `getAttr -size ( $hsys + ".inputHair" )`;
+			for( $i = $startInd; $i < $numCurves; $i++ ){
+				if( $setCache ){
+					$hairOffsets[$i] = $offset;
+				}
+				string $con[] = `listConnections -sh on ($hsys +".inputHair["+$i+"]")`;
+				if( size($con) > 0 ){
+					string $fol = $con[0];
+					if( $follicle == $fol ){
+						
+						break;
+					} else {
+						if( getAttr( $fol + ".simulationMethod" ) == 2 ){ //dynamic
+							string $curve = "";
+
+							// Getting points from the outCurve better reflects the effect of sampleDensity
+							// on the number of points but will have problems if the user has deleted points
+							// on the output curve. As well it does not work for the case of output pfx only.
+							// Thus we need to get the point count on the start position hair and determine
+							// the simulating points using the follicle sample density. MAYA-10420
+							$con = `listConnections -sh on ($fol +".startPosition")`;
+							if( size( $con ) > 0 ){
+								$curve = $con[0];
+							}
+							
+							if( $curve != "" ){
+								int $size = `getAttr -size ($curve + ".cp")`;
+								if( $size > 1 ){
+									$size = (int)((float)$size * getAttr ($fol +".sampleDensity"));
+								}
+								if( $forEdge ){
+									$size -= 1;
+								}
+								if( $size > 0 ){
+									$offset += $size;
+								}							
+							}
+						}
+					}
+				}
+
+			}
+		}
+	}
+	return $offset;
+}
+
+global proc string[] createNConstraint( string $constraintType, int $createSet )
+//
+//	Description:
+//
+//		Given a selected list of nucleus objects and components, create 
+//      nComponent objects and attach these to a constraint, based on
+//		the desired constraint type
+//
+{
+	if( !nClothEditLicenseFound() ) {        
+		error(uiRes("m_createNCloth.kNoNClothLicense"));
+		return {};
+	}
+	int    $offsetCache[];
+	string $offsetCacheHsysName[];
+
+	// Nodes created by this routine
+	string $newNodes[];
+
+	// Get the selection( including vertices )
+	string $selected[] = `ls -sl -flatten`;
+	$selected = stringArrayRemoveDuplicates( $selected );
+	int $numSelected = size( $selected );
+	if( $numSelected < 1 ){
+		warning((uiRes("m_createNConstraint.kNothingToConstrain")) );
+		return {};
+	}
+
+	int $tearable = ($constraintType == "tearableSurface");
+	int $weldBorders = ($constraintType == "weldBorders");
+	int $force = ($constraintType == "force");
+	int $match = ($constraintType == "match");
+	int $collideExclude = ($constraintType == "collisionExclusion");
+	int $collideDisable = ($constraintType == "disableCollision");
+	int $hairCurveEdges = false; // TODO: set this variable throught the UI
+	if( $tearable || $weldBorders ){
+		// string $nParticles[] = `ls -sl -visible -ni -o -dag -type nParticle`;
+		string $nParticles[] = `ls -sl -ni -o -dag -type nParticle -type hairSystem -type pfxHair`;
+		if( size( $nParticles ) > 0 ){
+			warning((uiRes("m_createNConstraint.kParticlesNoSupported")));
+			return {};
+		}
+	}
+
+	// Get the selected meshes
+	// string $selectedObjects[] = `ls -sl -visible -ni -o -dag -type mesh -type nParticle`;
+	string $selectedObjects[] = `ls -sl -ni -o -dag -type mesh -type nParticle -type pfxHair -type hairSystem -type nurbsCurve`;
+	$selectedObjects = stringArrayRemoveDuplicates( $selectedObjects );
+	int $numObjects = size( $selectedObjects );
+	if( $numObjects < 1 ){
+		warning((uiRes("m_createNConstraint.kNeedToSelectMesh")));
+		return {};
+	}
+
+	if( $match ){
+		string $needMatch = (uiRes("m_createNConstraint.kNeedMatch"));
+		if( $numObjects != 2 || $numSelected != 2){
+			warning( $needMatch );
+			return {};
+		}
+	}
+
+	if( $numSelected < 2 && !$weldBorders && !$force && $constraintType != "transform" && !$collideDisable && endsWith($selected[0],"]") ){
+		warning((uiRes("m_createNConstraint.kNeedToSelectSurface")) );
+		return {};
+	}
+
+	string $parentObject = "";
+	if( $constraintType == "transform" ){
+		// string $locators[] = `ls -sl -visible -ni -o -dag -type locator`;
+		string $locators[] = `ls -sl -ni -o -dag -type locator`;
+		if( size( $locators ) > 0 ){
+			$parentObject = $locators[0];
+		}
+	}
+
+	string $pToSurfObj = "";
+	int $surfConstraint = ($constraintType == "pointToSurface" || $constraintType == "slideOnSurface");
+	if( $surfConstraint ){
+		if( $numObjects < 2 ){
+			warning((uiRes("m_createNConstraint.kNeedVerticesAndSurface")));
+			return {};
+		}
+		// string $selObjs[] = `ls -sl -visible -ni -dag -type mesh`;
+		string $selObjs[] = `ls -sl -ni -dag -type mesh`;
+		int $numSurf = size( $selObjs );
+		if( $numSurf == 0 ){
+			warning((uiRes("m_createNConstraint.kNoSurfaceToConstrain")));
+			return {};
+		}	
+		if( $numSurf > 1 ){
+			warning( (uiRes("m_createNConstraint.kSelectSurfaceToConstrain")) );
+			return {};
+		}	
+		$pToSurfObj = $selObjs[0];
+	}
+	int $positionAtMidpoint = ($collideDisable || $force || $constraintType == "transform");
+	float $bb[];
+	if( $positionAtMidpoint ){
+		$bb = `exactWorldBoundingBox`;
+	}
+
+	string $nucleus = "";
+	string $obj;
+	// find nucleus node
+	int $makePassive[];
+	int $i;
+	for( $i = 0; $i < $numObjects; $i++ ){	
+		string $obj = $selectedObjects[$i];
+		string $partObj = findRelatedNucleusObject( $obj );
+
+		// string $cons[] = `listConnections -sh 1 -type nBase $obj`;
+		$makePassive[$i] = true;
+		if( $partObj != "" ){
+			string $cons[] = `listConnections ($partObj+".startState")`;
+			if( size( $cons ) < 0  ){
+				string $fmt = (uiRes("m_createNConstraint.kNoSolver"));
+				warning( `format -s $obj $fmt`);
+				return {};
+			}
+			if( $nucleus != "" ){
+				if( $nucleus != $cons[0]){
+					warning((uiRes("m_createNConstraint.kDifferntSolvers")));
+					return {};
+				}
+			} else {
+				$nucleus = $cons[0];
+			}
+			
+			$makePassive[$i] = false;
+		} else if( $constraintType == "transform" && $parentObject == ""){
+			$parentObject = $obj;
+		}
+
+		if( $tearable && $makePassive[$i] == true ){
+			warning((uiRes("m_createNConstraint.kNeedCloth")));
+			return {};
+		}
+	}
+
+	if( $nucleus == "" ){
+		warning((uiRes("m_createNConstraint.kNoClothToConstrain")));
+		return {};
+	}
+	if( !$tearable && $constraintType != "transform"){
+		for( $i = 0; $i < $numObjects; $i++ ){	
+			if( $makePassive[$i] ){
+				$newNodes[size($newNodes)] = makePassiveNObj( $selectedObjects[$i], $nucleus );
+			}
+		}
+	}
+
+	if( $surfConstraint ){
+		// make the constrain surface the first component
+		for( $i = 0; $i < $numObjects; $i++ ){	
+			if( $selectedObjects[$i] == $pToSurfObj ){
+				if( $i != 0 ){
+					// swap positions
+					$selectedObjects[$i] = $selectedObjects[0];
+					$selectedObjects[0] = $pToSurfObj;
+					break;
+				}
+			}
+		}
+	}
+
+    if( $tearable ){
+		if( !setupForTearConstraint( $selectedObjects, $selected ) ){
+			return {};
+		}
+		$numSelected = size( $selected ); // could have changed as result of tear
+	}
+	
+	if( $createSet ){
+		// string $nParticles[] = `ls -sl -visible -ni -o -dag -type nParticle`;
+		string $nParticles[] = `ls -sl -ni -o -dag -type nParticle -type hairSystem -type pfxHair`;
+		if( size( $nParticles ) > 0 ){
+			warning((uiRes("m_createNConstraint.kParticleSetsNotSupported")));
+			$createSet = false;
+		}
+	}
+
+	string $constraint = `createNode dynamicConstraint`;
+	$newNodes[size($newNodes)] = $constraint;
+
+	if( $positionAtMidpoint ){
+		move (($bb[0] + $bb[3])*0.5) 
+			 (($bb[1] + $bb[4])*0.5) 
+			 (($bb[2] + $bb[5])*0.5) $constraint;
+	}
+	if( $constraintType == "transform" || $collideDisable || $force){
+		setAttr ($constraint + ".constraintRelation") 0; // object to constraint 
+		setAttr ($constraint + ".componentRelation") 0; // all to first 
+		if( $force ){
+			setAttr ($constraint + ".strength") 0.0;
+			setAttr ($constraint + ".tangentStrength") 0.0;
+			setAttr ($constraint + ".force") 1.0;
+			setAttr ($constraint + ".dropoffDistance") 1.0;
+			setAttr ($constraint + ".strengthDropoff[1].strengthDropoff_Position") 1;
+			setAttr ($constraint + ".strengthDropoff[1].strengthDropoff_FloatValue") 0;
+			setAttr ($constraint + ".strengthDropoff[1].strengthDropoff_Interp") 1;
+		}
+		if( $constraintType == "transform" && $parentObject != ""){
+			if( nodeType( $parentObject ) != "transform"){
+				string $tforms[] = listTransforms( $parentObject );
+				$parentObject = $tforms[0];
+			}	
+			parent -r -s $constraint $parentObject;
+			string $fmt = (uiRes("m_createNConstraint.kParentingMsg"));
+			print(`format -s $parentObject $fmt`);
+		}
+	} else if( $constraintType == "pointToSurface" ){
+		setAttr ($constraint + ".constraintRelation") 1; // object to object
+		setAttr ($constraint + ".componentRelation") 0; // all to first 
+	} else if( $match ){
+		setAttr ($constraint + ".constraintRelation") 1; // object to object
+		setAttr ($constraint + ".componentRelation") 0; // all to first 
+		setAttr ($constraint + ".strength") 0.8;
+		setAttr ($constraint + ".tangentStrength") 0.2;
+		setAttr ($constraint + ".restLengthScale") 0.0;
+	} else if( $constraintType == "slideOnSurface" ){
+		setAttr ($constraint + ".constraintRelation") 1; // object to object
+		setAttr ($constraint + ".componentRelation") 0; // all to first 
+		setAttr ($constraint + ".connectionUpdate") 1; // Per frame 
+		setAttr ($constraint + ".friction") 0.1;
+		setAttr ($constraint + ".strength") 0.02;
+		setAttr ($constraint + ".tangentStrength") 0.2;
+		setAttr ($constraint + ".localCollide") true;
+	} else if( $weldBorders ){
+		setAttr ( $constraint+ ".constraintMethod" ) 0; // weld
+		setAttr ($constraint + ".connectionMethod") 1; // max distance 
+		setAttr ($constraint + ".constraintRelation") 1; // object to object
+		setAttr ($constraint + ".componentRelation") 1; // all to all 
+		setAttr ( $constraint+ ".maxDistance" ) 0.05;
+		if( $numObjects == 1 ){
+			setAttr ( $constraint+ ".connectWithinComponent" ) true;
+		}
+	} else if( $constraintType == "pointToPoint" || $collideExclude ){
+		setAttr ($constraint + ".connectionMethod") 2; // nearest pair 
+		setAttr ($constraint + ".constraintRelation") 1; // object to object
+		setAttr ($constraint + ".componentRelation") 1; // all to all 
+		if( $numObjects == 1 ){
+			setAttr ( $constraint+ ".connectWithinComponent" ) true;
+		}
+	} else if( $tearable ){
+		setAttr ( $constraint+ ".constraintMethod" ) 0; // weld
+		setAttr ($constraint + ".connectionMethod") 1; // max distance 
+		setAttr ($constraint + ".constraintRelation") 1; // object to object
+		setAttr ($constraint + ".componentRelation") 1; // all to all 
+		setAttr ( $constraint+ ".connectWithinComponent" ) true;
+		setAttr ( $constraint+ ".glueStrength" ) 0.1;
+		setAttr ( $constraint+ ".maxDistance" ) 0.01;
+	} else {
+		setAttr ($constraint + ".constraintRelation") 1; // object to object
+		setAttr ($constraint + ".componentRelation") 1; // all to all 
+	}
+	if( $collideDisable || $collideExclude ){
+		setAttr( $constraint + ".strength" ) 0.0;
+		setAttr( $constraint + ".tangentStrength" ) 0.0;
+		setAttr( $constraint + ".collide" ) false;
+		setAttr( $constraint + ".excludeCollisions" ) true;
+		setAttr( $constraint + ".displayConnections" ) false;
+	}
+
+
+	string $mixedTypeWarning = (uiRes("m_createNConstraint.kMixedType"));	
+	string $buffer[];
+	string $nComponents[];
+	string $compTypes[];
+	string $componentObjects[];
+	string $baseName[];
+	string $tok[];
+	int $cTypes[];
+	int $cInds[];
+	for( $i = 0; $i < $numSelected; $i++ ){
+		int $nTok =`tokenize $selected[$i] ".[]" $tok`;
+		$baseName[$i] = $tok[0];
+		if( $nTok > 2 ){
+			string $ct = $tok[1];
+			if( $ct == "cv" ){
+				$cTypes[$i] = 8;
+			} else if( $ct == "vtx" ){
+				$cTypes[$i] = 2;
+			} else if( $ct == "e" ){
+				$cTypes[$i] = 3;
+			} else if( $ct == "f" ){
+				$cTypes[$i] = 4;
+			} else if( $ct == "pt" ){
+				$cTypes[$i] = 7;
+			} else {
+				$cTypes[$i] = -1;
+			}
+			$cInds[$i] = $tok[2];
+		} else {
+			$cTypes[$i] = -1;
+			$cInds[$i] = -1;
+		}
+	}
+	// create the nComponents
+	for( $i = 0; $i < $numObjects; $i++ ){	
+
+		if( $constraintType == "transform" && $makePassive[$i] ){
+			continue;
+		}
+		string $obj = $selectedObjects[$i];
+
+		string $nObject = findRelatedNucleusObject( $obj );
+		int $appendToExistingComponent = false;
+		string $component;
+		int $componentIndex = size( $nComponents );
+		int $indexOffset = 0; // offset for hair curves
+		int $componentIndexOffset = 0; // first unused index on nComponent
+		if( nodeType( $obj ) == "nurbsCurve" ){
+			// TODO change offsets to a double index array on nComponent (hair, index)
+			$indexOffset = getIndexOffsetForHair( $obj, $hairCurveEdges, $offsetCache, $offsetCacheHsysName );		
+
+			int $j;
+			for( $j= 0; $j < $componentIndex; $j++ ){
+				if( $componentObjects[$j] == $nObject ){
+					// another hair in this hair system
+					$appendToExistingComponent = true;
+					$componentIndex = $j;
+					break;
+				}
+			}
+		}
+		if( $appendToExistingComponent ){
+			$component = $nComponents[$componentIndex];
+			$componentIndexOffset = `getAttr -size ($component + ".componentIndices")`;
+		} else {
+			$component = `createNode nComponent`;
+			$nComponents[ $componentIndex ] = $component;
+			$componentObjects[ $componentIndex] = $nObject;
+			connectAttr ( $nObject + ".nucleusId") ($component + ".objectId");
+		}
+		
+		string $tforms[] = listTransforms( $obj );
+		string $objTform = $tforms[0];
+		int $numComponents = $componentIndexOffset;
+		int $j;
+		string $inputMeshComponents[] = {};
+		string $inputMesh[] = {};
+		int $compIndices[] = {};
+		int $compType = 6; // surface
+		int $doCreateSet = $createSet;
+		if( $appendToExistingComponent ){
+			$compType = 8; // hair curves only have selectable cvs currently..edges would be nice in future
+		}
+		int $didFirstCurveEdgeCv = false;
+		for( $j = 0; $j < $numSelected; $j++ ){
+			if( $cTypes[$j]== -1 ){
+				continue;
+			}
+			string $replaceObj;
+			if( $baseName[$j] == $objTform ){
+				$replaceObj = $objTform;
+			} else if( $baseName[$j] == $obj ){
+				$replaceObj = $obj;
+			} else {
+				continue;
+			}
+			if( $numComponents == 0 ){
+				$compType = $cTypes[$j];
+			} else if( $compType != $cTypes[$j] ){
+				warning( `format -s $obj $mixedTypeWarning` );
+				break;
+			}
+			string $sel = $selected[$j];
+
+			if( $doCreateSet &&  $numComponents == 0 ){
+				// sets are applied on the input to nCloth nodes not the outputs
+				// so that construction history added later is reflected in the set.
+				$inputMesh = getInputMeshForSets( $obj );	
+				if( size($inputMesh)== 0 ){
+					// still try to create a component constraint without a set
+					$doCreateSet = false;
+				}
+			}
+
+			if( $doCreateSet ){
+				$inputMeshComponents[$numComponents] = `substitute $replaceObj $sel $inputMesh[0]`;
+				$numComponents++;
+			} else {
+				int $compInd = $cInds[$j];
+				if($compType == 8 && $hairCurveEdges ){
+					$compInd -= 1;
+					if( $compInd < 0 ){
+						$compInd = 0;
+					}
+					if( $compInd == 0 ){
+						if( $didFirstCurveEdgeCv ){
+							$compInd = -1; // allow the first cv to still be converted to edge but avoid duplicate indices
+						}
+						$didFirstCurveEdgeCv = true;
+					}
+				}
+					
+				if( $compInd >= 0 ){
+					$compInd += $indexOffset;
+					setAttr ($component + ".componentIndices[" + $numComponents + "]") $compInd;
+					$compIndices[$numComponents] = $compInd;
+					$numComponents++;
+				}
+			}
+		}
+		if( !$appendToExistingComponent ){
+			int $doBend = false;
+			if( $tearable ){
+				if( "nCloth" == nodeType( $nObject ) ){
+					float $bend = getAttr( $nObject + ".bendResistance");
+					if( $bend > 0.2 ){
+						$doBend = true;
+						setAttr ($constraint + ".bendStrength") $bend; 
+						setAttr ($constraint + ".bend") true;
+						setAttr ($constraint + ".bendBreakAngle") 5.0;
+					}
+				}
+			}	
+			
+			if( $compType == 8 ){
+				if( $hairCurveEdges ){
+					// treat hair cvs as edges
+					setAttr ($component+  ".componentType") 3;
+				} else {
+					// treat hair cvs as vertices
+					setAttr ($component+  ".componentType") 2;
+				}
+			} else if( $compType == 7  ){
+				// treat particle points as vertices
+				setAttr ($component+  ".componentType") 2;
+			} else {
+				setAttr ($component+  ".componentType") $compType;
+			}		
+			
+			if( $compType == 3 && $numObjects == 1 && $constraintType == "pointToPoint"){
+				// For edge components on single objects we set to componentOrder
+				// which essentially treats each edge as being a link, rather than
+				// forming links between edges.
+				setAttr ($constraint + ".connectionMethod") 0; // component order 
+			}			
+			$compTypes[ $componentIndex ] = $compType;
+			if( $numComponents == 0 ){	
+				if( $weldBorders ){
+					setAttr ($component+  ".elements") 1; // BORDERS
+					setAttr ($component+  ".componentType") 3; // edge
+					$compTypes[ $i ] = 3;
+				} else {
+					setAttr ($component+  ".elements") 2; // ALL
+					if( $doBend ){
+						setAttr ($component+  ".componentType") 3; // edge
+						$compTypes[ $i ] = 3;
+					} else if( $tearable || $force || $match || $constraintType == "pointToPoint" ){
+						setAttr ($component+  ".componentType") 2; // point
+						$compTypes[ $i ] = 2;
+					}
+				}
+			} else {
+				if( isAllComponents( $obj, $numComponents, $compType ) ){
+					setAttr ($component+  ".elements") 2; // ALL
+				} else if( isAllBorderComponents( $obj, $compIndices, $compType ) ){
+					setAttr ($component+  ".elements") 1; // ALL BORDERS
+				} else {
+					setAttr ($component+  ".elements") 0; // indice list
+		 			if( $doCreateSet ){
+						makeSetForComponent( $component, $inputMesh[1], $inputMeshComponents );
+					}
+				}
+			}
+		}
+	}
+
+	// connect components to constraint	
+	if( $constraintType == "pointToSurface"  || $constraintType == "slideOnSurface"){
+		// put the surface at the head of the list... there should only be one
+		int $ind = 0;
+		for( $i = 0; $i < size($nComponents); $i++ ){	
+			if( $compTypes[ $i ] == 6 ) { // is a surface
+				connectAttr ($nComponents[$i] + ".outComponent") ($constraint + ".componentIds[" + $ind + "]");
+				$ind++;
+			}
+		}
+		for( $i = 0; $i < size($nComponents); $i++ ){	
+			if( $compTypes[ $i ] != 6 ) { // is NOT a surface
+				connectAttr ($nComponents[$i] + ".outComponent") ($constraint + ".componentIds[" + $ind + "]");
+				$ind++;
+			}
+		}
+			
+	} else {
+		for( $i = 0; $i < size($nComponents); $i++ ){	
+			if( $constraintType == "transform" && $makePassive[$i] ){
+				continue;
+			}
+			connectAttr ($nComponents[$i] + ".outComponent") ($constraint + ".componentIds[" + $i + "]");
+		}
+	}
+	if( size($nComponents) == 1 && ($constraintType == "pointToPoint" || $collideExclude) ){
+		setAttr ( $constraint + ".connectWithinComponent") true;
+	}
+
+	int $nucleusConstraintIndex = getFirstFreeConstraintIndex( $nucleus );
+
+// The following line should be removed once constraints are updating
+// for start frame inside the solver
+	connectAttr "time1.outTime" ($constraint + ".currentTime" );
+
+	connectAttr -f ($constraint + ".evalStart[0]") ($nucleus + ".inputStart[" + $nucleusConstraintIndex + "]");
+	connectAttr -f ($constraint + ".evalCurrent[0]") ($nucleus + ".inputCurrent[" + $nucleusConstraintIndex + "]");
+
+	// force update of nucleus for new constraint if start frame
+	getAttr ($nucleus + ".forceDynamics" );
+
+	select -r $constraint;
+	if( $tearable ){
+		print((uiRes("m_createNConstraint.kAdjustGlueStrength")));
+	}
+
+	return	$newNodes;
+}

@@ -1,0 +1,264 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+// 
+//  Description:
+//      Define the appearance of the attribute editor for the
+//      bulletRigidBody node.  
+//
+
+proc string getNodeName( string $attrName )
+{
+	string $buffer[];
+	tokenize($attrName, ".", $buffer);
+	return $buffer[0];
+}
+
+proc string[] getNodeNames( string $attrNames[] )
+{
+    string $result[];
+
+    for ($attrName in $attrNames)
+    {
+        $result[size($result)] = getNodeName($attrName);
+    }
+    return $result;
+}
+
+proc string getRCName( string $attrName, string $suffix )
+{
+	string $buffer[];
+	tokenize($attrName, ".", $buffer);
+	return stringArrayToString( { $buffer[1], $suffix }, "_" );
+}
+
+proc string[] getSolverFilters(string $attrName)
+{
+    string $result[];
+
+    string $nodeName = getNodeName($attrName);
+
+    string $attrName = $nodeName + ".outRigidBodyData";
+    if (!`objExists $attrName`)
+        $attrName = $nodeName + ".outSoftBodyData";
+
+    string $attrNames[] = `connectionInfo -destinationFromSource $attrName`;
+    if (size($attrNames)>0)
+    {
+        string $nodeNames[] = getNodeNames($attrNames);
+        if (size($nodeNames)>0)
+        {
+            string $solverAttrNames[] = `ls -type "bulletSolverShape" $nodeNames`;
+
+            if (size($solverAttrNames)>0)
+            {
+                string $solverAttrName = $solverAttrNames[size($solverAttrNames)-1];
+
+                string $solverName = getNodeName($solverAttrName);
+
+                $attrName = $solverName + ".collisionFilters";
+
+                $result = getAttr($attrName);
+            }
+        }
+    }
+
+    return $result;
+}
+
+
+proc collisionFilterBitGroup(string $attrName, string $allFilterNames[], int $edit)
+{
+	// Iterate over them, for each one found,
+	// fill in the UI for the associated multi attribute.
+	int $value = getAttr($attrName);
+	int $i;
+
+    string $rcPrefix = getRCName($attrName, "_CheckBox");
+    
+	for ($i=0; $i < size($allFilterNames); $i++)
+	{
+		// If the UI doesn't exist  create it.  Otherwise, use
+		// the existing UI.
+		string $rcName = $rcPrefix + $i;
+		string $cc = stringArrayToString({"AEcollisionBodyFilterChanged", $attrName, $rcName, $i }, " ");
+		int $bitOnOff = AEcollisionBodyBitTest( $value, $i );
+
+		if ($edit)
+    		checkBox  
+				-e
+    			-label $allFilterNames[$i] 
+    			-value $bitOnOff
+    			-changeCommand $cc
+    			$rcName;
+		else
+    		checkBox  
+    			-label $allFilterNames[$i] 
+    			-value $bitOnOff
+    			-changeCommand $cc
+    			$rcName;
+	}
+}
+
+proc collisionFilterAttrNew(string $attrName, string $label, string $allFilterNames[])
+{
+    rowColumnLayout 
+        -numberOfColumns 2
+		-columnAlign 1 "right"
+		-columnWidth 1 100    
+		-columnAlign 2 "left"
+		-columnWidth 2 100    
+        ;
+        
+	text -label $label;
+    columnLayout;
+    
+	collisionFilterBitGroup($attrName, $allFilterNames, false);
+	
+	setParent ..;
+	setParent ..;
+}
+
+proc collisionBodyFilterNew(string $attrName1, string $attrName2, string $allFilterNames[], string $rcName)
+{
+    global string $gAEcollisionBodyFilterControls[];
+	$gAEcollisionBodyFilterControls[size($gAEcollisionBodyFilterControls)] = $rcName;
+
+    rowColumnLayout 
+        -numberOfColumns 2
+		-columnAlign 1 "right"
+		-columnAlign 2 "left"
+		$rcName;
+        
+	// Get all of the collision filters.
+	string $allFilterNames[] = getSolverFilters($attrName1);
+    
+    collisionFilterAttrNew( $attrName1, (uiRes("m_AEbulletShapeTemplate.kCollisionFilterGroup")), $allFilterNames ); 
+    collisionFilterAttrNew( $attrName2, (uiRes("m_AEbulletShapeTemplate.kCollisionFilterMask")), $allFilterNames ); 
+}
+
+global proc int AEcollisionBodyBitTest( int $val, int $bit )
+{
+    if ($val>0)
+    {        
+    	// right shift 
+	    $val /= pow(2,$bit);
+    
+        // determine if bit at bitIndex is set
+        return ($val % 2);
+    }
+    return 0;    
+}
+
+global proc AEcollisionBodyFilterChanged(string $attrName, string $control, int $index)
+{
+	// query the value from the attr
+    int $value = getAttr($attrName);
+    
+	// query the value from the checkBox
+	int $checked = `checkBox -query -value $control`;
+	
+	// if checkBox different from attribute value then change
+	if (AEcollisionBodyBitTest($value,$index)!=$checked)
+	{
+	    if ($checked)
+	    {
+            $value += pow(2,$index);
+        }
+        else
+        {    
+            $value -= pow(2,$index);
+        }
+        
+        string $sSet = stringArrayToString({"setAttr", $attrName, $value }, " ");
+        evalEcho $sSet;
+	}
+                
+}
+
+global proc AEcollisionBodyFilterNew(string $attrName1, string $attrName2)
+{
+	// Register a script job to delete all of the control UI in the case of a file -new.
+	scriptJob -e "deleteAll" AEcollisionBodyFilterDeleteControls;
+
+	setUITemplate -pst attributeEditorTemplate;
+	columnLayout "collisionFilterGroupColumn";
+
+	string $allFilterNames[] = getSolverFilters($attrName1);
+
+    collisionBodyFilterNew( $attrName1, $attrName2, $allFilterNames, "collisionBodyFilter_RowColumnLayout" );
+    
+	setUITemplate -ppt;
+}
+
+
+global proc AEcollisionBodyFilterReplace(string $attrName1, string $attrName2)
+{
+	global string $gAEcollisionBodyFilterControls[];
+
+	setUITemplate -pst attributeEditorTemplate;
+  
+	setParent "collisionFilterGroupColumn";
+
+    string $rcName = "collisionBodyFilter_RowColumnLayout";
+	string $allFilterNames[] = getSolverFilters($attrName1);
+
+	if (!`control -exists $rcName`)
+	{
+	    collisionBodyFilterNew( $attrName1, $attrName2, $allFilterNames, $rcName );
+	}	
+	else
+	{
+		control -e -visible true $rcName;
+		collisionFilterBitGroup( $attrName1, $allFilterNames, true );
+		collisionFilterBitGroup( $attrName2, $allFilterNames, true );
+	}
+
+	setUITemplate -ppt;
+}
+
+global proc AEcollisionBodyFilterDeleteControls ()
+//
+// Description:
+//     This procedure deletes all of the UI controls build for the collisionFilterGroup attribute.
+// The procedure is called from a script job when a file -new is performed.
+//
+{
+	global string $gAEcollisionBodyFilterControls[];
+	string $c;
+	for ($c in $gAEcollisionBodyFilterControls)
+		catch( deleteUI($c) );
+	clear($gAEcollisionBodyFilterControls);
+}
+
+
+global proc AEbulletShapeTemplate ( string $nodeName )
+{
+    // Collision Filters
+
+    editorTemplate -beginLayout (uiRes("m_AEbulletShapeTemplate.kCollisionBodyFilter")) -collapse true;
+
+	editorTemplate -callCustom AEcollisionBodyFilterNew AEcollisionBodyFilterReplace collisionFilterGroup collisionFilterMask;
+
+    editorTemplate -endLayout;
+
+}
+

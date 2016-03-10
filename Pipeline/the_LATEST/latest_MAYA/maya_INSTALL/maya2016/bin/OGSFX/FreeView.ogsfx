@@ -1,0 +1,84 @@
+// Copyright 2014 Autodesk, Inc.  All rights reserved.
+//
+// Use of this software is subject to the terms of the Autodesk license agreement
+// provided at the time of installation or download, or which otherwise
+// accompanies this software in either electronic or hard copy form.
+
+#include "Common.ogsfh"
+
+// The source texture
+uniform texture2D gSourceTex : LeftSourceTexture;
+
+// Sampler of source texture
+uniform sampler2D gSourceSamp = sampler_state
+{
+    Texture = <gSourceTex>;
+};
+
+// The 2nd source texture
+uniform texture2D gSourceTex2 : RightSourceTexture;
+
+// Sampler of 2nd source texture
+uniform sampler2D gSourceSamp2 = sampler_state
+{
+    Texture = <gSourceTex2>;
+};
+
+uniform vec4 gUVTransform : RelativeViewportDimensions;
+uniform vec2 gViewportSizePixels = { 0.0, 0.0 };
+uniform vec2 gSourceSizePixels = { 0.0, 0.0 };
+uniform float  gBorderSizePixels = 10.0;
+uniform vec4 gBorderColor = { 0, 0, 0, 1 };
+uniform vec4 gBackgroundColor = { 0.1, 0.1, 0.1, 1 };
+
+
+// uniform vec4 PS_FreeView(VS_TO_PS_ScreenQuad In) : COLOR0
+GLSLShader PS_FreeView
+{
+    float inRect( vec2 inp, vec2 wh )
+    {
+        float val = (inp.x >= 0.0 && inp.x < wh.x && inp.y >= 0.0 && inp.y < wh.y) ? 1.0 : 0.0;
+        return val;
+    }
+
+    void main()
+    {
+        // scale the incoming uvs to reflect a smaller than full raster viewport
+        vec2 vpScale = gSourceSizePixels.xy / gViewportSizePixels.xy;
+        vec2 UV = (VSUV * gUVTransform.zw + gUVTransform.xy) * vpScale;
+
+        // how much do we scale the sources to fit the given viewport
+        float sourceScale = (gScreenSize[0] - gBorderSizePixels) / (2.0 * gSourceSizePixels.x);
+        // find width & height in UV space
+        vec2 wh = sourceScale * gSourceSizePixels / gScreenSize;
+        // find L0, R0 & B0 in UV space. they are the origins of the left eye vp, the right eye vp & the border rectangle
+        vec2 L0 = vec2( 0, (1.0 - wh.y)/2.0 );
+        vec2 R0 = vec2( wh.x + gBorderSizePixels/gScreenSize[0], L0.y );
+        vec2 B0 = vec2( 0, L0.y - gBorderSizePixels/gScreenSize[1] );
+
+        vec2 Luv = UV - L0;
+        vec2 Ruv = UV - R0;
+
+        float xL = inRect( Luv, wh );
+        float xR = inRect( Ruv, wh );
+        float xB = (1.0-xL) * (1.0-xR) * inRect( UV - B0, vec2( 1.0, 1.0-2.0*B0.y ) );
+
+        vec4 leftEye = texture2D(gSourceSamp, Luv/(wh*vpScale) );
+        vec4 rightEye = texture2D(gSourceSamp2, Ruv/(wh*vpScale) );
+
+        vec4 result = (1.0 - (xB+xR+xL))*gBackgroundColor + xB * gBorderColor + xR * rightEye + xL * leftEye;
+
+        colorOut = result;
+    }
+}
+
+
+technique Main
+{
+    pass p0
+    {
+        VertexShader (in VS_INPUT_ScreenQuad, out VS_TO_PS_ScreenQuad) = VS_ScreenQuad;
+        PixelShader (in VS_TO_PS_ScreenQuad, out pixelOut) = PS_FreeView;
+    }
+}
+

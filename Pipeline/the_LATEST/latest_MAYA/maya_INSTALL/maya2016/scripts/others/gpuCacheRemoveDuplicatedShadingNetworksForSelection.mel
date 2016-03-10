@@ -1,0 +1,79 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+global proc removeDuplicatedShadingNetworksForSelection()
+{
+    string $selectedNodes[] = `ls -selection`;
+    select -clear;
+    for ($node in $selectedNodes)
+        select -add -hierarchy $node;
+
+    string $allUnder[] = `ls -selection`;
+    string $connections[] = `listConnections $allUnder`;
+    string $shadingNetworks[] = stringArrayRemoveDuplicates(
+        `ls -type shadingEngine $connections`);
+
+    for ( $i = 0; $i < `size $shadingNetworks`; $i++ )
+    {
+        if ( !`objExists $shadingNetworks[ $i ]` ) continue;
+
+        for ( $j = $i + 1; $j < `size $shadingNetworks`; $j++ )
+        {
+            if ( !`objExists $shadingNetworks[ $j ]` ) continue;
+
+            $duplicateFound = 0;
+
+            string $comparison = `shadingNetworkCompare
+                $shadingNetworks[$i] $shadingNetworks[$j]`;
+            if ( `shadingNetworkCompare -q -equivalent $comparison` )
+            {
+                string $network1[] = `shadingNetworkCompare -q
+                    -network1 $comparison`;
+
+                // If the networks are equivalent then assign all
+                // the geometry connected to the first shading group to
+                // the next one;
+                string $geometries[] = `sets -query $shadingNetworks[ $i ]`;
+                if ( size( $geometries ) > 0 )
+                {
+                    for ($geometry in $geometries)
+                    {
+                        if (`stringArrayContains $geometry $allUnder`)
+                        {
+                            // sets can return invalid geometry, so catch it
+                            catchQuiet(`sets -edit -forceElement
+                                       $shadingNetworks[$j] $geometry` );
+                        }
+                    }
+                }
+                $duplicateFound = 1;
+            }
+            shadingNetworkCompare -delete $comparison;
+
+            if ( $duplicateFound )
+            {
+                // If a duplicate was found move on to the next shadingEngine
+                break;
+            }
+        }
+    }
+}
+

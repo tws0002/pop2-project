@@ -1,0 +1,242 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Feb, 2000
+//
+//	Procedure Name:
+//		doCreateSubcharacterArgList
+//
+//	Description:
+//		Create a new sub character
+//
+//	Input Arguments:
+//	$version: The version of this option box.  Used to know how to 
+//	interpret the $args array.
+//		"1" : $name
+//  
+//	$args
+//	Version 1
+//	[0]		$name :  name to give the new character
+//  [1]     $excludeTranslate : exclude translate attrs when creating char
+//  [2]     $excludeRotate : exclude rotate attrs when creating char
+//  [3]     $excludeScale : exclude scale attrs when creating char
+//  [4]     $excludeVis : exclude visibility attrs when creating char
+//  [5]     $excludeDynamic : exclude dynamic attrs when creating char
+//  [6]     $channelBox : create based on channel box selections
+//
+//	Return Value:
+//		New subcharacter name
+//
+
+global proc string doCreateSubcharacterArgList( string $version,
+												string $args[] )
+{
+    int    $versionNo = $version;
+	string $name = $args[0];
+	int $excludeTranslate = $args[1];
+	int $excludeRotate = $args[2];
+	int $excludeScale = $args[3];
+	int $excludeVisibility = $args[4];
+	int $excludeDynamic = $args[5];
+	int $useChannelBox = $args[6];
+    string $rootCharacter = "";
+	string $format;
+    
+    if ($versionNo >= 3)
+    {
+        $rootCharacter = $args[7];
+    }
+
+    if (size($rootCharacter) == 0)
+    {
+        // See if there is a current character
+        //
+        string $currChar[] = getCharactersForAction();
+        if (size($currChar) == 0) {
+            error (uiRes("m_doCreateSubcharacterArgList.kNeedCurrentChar"));
+            return "";
+        }
+        if (size($currChar) > 1) {
+			$currChar = `currentCharacters`;
+			if (size($currChar) > 0) {
+				error (uiRes("m_doCreateSubcharacterArgList.kNeedOneCurrentChar"));
+				return "";
+			}
+        }
+        
+        $rootCharacter = $currChar[0];
+    }
+	
+    string $currentSelection[] = `ls -selection`;
+    string $currentSelectionTypes[] = `ls -selection -st`;	
+	string $attrs[];
+	string $attrsInCharacter[];
+	if ($useChannelBox) {
+		$attrs = `selectedChannelBoxPlugs`;
+		if (size($attrs) == 0) {
+			error (uiRes("m_doCreateSubcharacterArgList.kNoAttrsSelected"));
+			return "";
+		}
+	} else {
+		int $excludeTransform = $excludeTranslate + $excludeRotate + $excludeVisibility + $excludeScale;
+		int $selCount = size($currentSelection);
+		int $ii;
+		for ($ii = 0; $ii < $selCount; $ii++) {
+			string $sel = $currentSelection[$ii];
+			string $selType = $currentSelectionTypes[$ii*2+1];
+			
+			if ($sel == $rootCharacter) {
+				$format = (uiRes("m_doCreateSubcharacterArgList.kSkippingFormat1"));
+
+				string $warn = `format -stringArg $sel $format`;
+				warning $warn;
+				continue;
+			}
+
+			string $selName = $sel;
+			if ($selType != "float3" && $selType != "double3") {
+				if (nodeType($sel) != $selType) {
+					$format = (uiRes("m_doCreateSubcharacterArgList.kSkippingFormat2"));
+					string $warn = `format -stringArg $sel $format`;
+					warning $warn;
+					continue;
+				}
+			} else {
+				// For point-type attributes (cv's and vertices), the
+				// attribute name differs from the component name. Strip off
+				// the component name.
+				//
+				string $buffer[];
+				int $result = tokenize($sel,".",$buffer);
+				$selName = $buffer[0];
+
+				// components may also be tweaks ... take that into
+				// account as well
+				//
+				string $isControlPoint[];
+				$isControlPoint = `ls -type controlPoint $selName`;
+				if (!size($isControlPoint)) {
+					$isControlPoint = `listRelatives -noIntermediate -shapes -type controlPoint $selName`;
+				}
+				if (size($isControlPoint)) {
+					string $tmp[];
+					$tmp = `listConnections ($isControlPoint[0]+".tweakLocation")`;
+					if (size($tmp)) {
+						$selName = $tmp[0];
+					}
+				}
+			}
+			
+			if (nodeType($sel) == "character") {
+				$format = (uiRes("m_doCreateSubcharacterArgList.kSkippingFormat3"));
+				string $warn = `format -stringArg $sel $format`;
+				warning $warn;
+				continue;
+			}
+			
+			string $keyableAttrs[] = `listAttr -multi -keyable $sel`;
+			for ($at in $keyableAttrs) {
+
+				// build a list of the attributes in the character
+				//
+				if ($excludeDynamic) {
+					string $userDefined[] = `listAttr -userDefined ($selName+"."+$at)`;
+					if (size($userDefined) > 0) {
+						continue;
+					}
+				}
+
+				if ($excludeTransform == 0) {
+					$attrs[size($attrs)] = ($selName+"."+$at);
+					continue;
+				}
+				
+				string $isTransform[] = `ls -type transform $selName`;
+				if (size($isTransform) == 0) {
+					$attrs[size($attrs)] = ($selName+"."+$at);					
+					continue;
+				}
+				
+				if ($excludeVisibility && $at == "visibility") {
+					continue;
+				} 
+				if ($excludeScale &&
+					($at == "scaleX" || $at == "scaleY" || $at == "scaleZ"))
+					continue;
+				if ($excludeTranslate &&
+					($at == "translateX" || $at == "translateY" ||
+					 $at == "translateZ")) {
+					continue;
+				}
+				if ($excludeRotate &&
+					($at == "rotateX" || $at == "rotateZ" || $at == "rotateY")) {
+					continue;
+				}
+
+				$attrs[size($attrs)] = ($selName+"."+$at);
+			}
+		}
+		if (size($currentSelection) > 0 && (size($attrs) == 0)) {
+			error (uiRes("m_doCreateSubcharacterArgList.kNoValidSubcharSelected"));
+			return "";
+		}
+	}
+
+	int $cc;
+	for ($cc = 0; $cc < size($attrs); $cc++) {
+		if (nodeType($attrs[$cc]) == "character") {
+			string $dstConn[] = `listConnections -source 0 -destination 1 -plugs 1 $attrs[$cc]`;
+			for ($dst in $dstConn) {
+				string $dp;
+				catch($dp = `character -query -characterPlug $dst`);
+				if ($dp == $attrs[$cc]) {
+					$attrs[$cc] = $dst;
+				}
+			}
+		}
+		if (`character -isMember $rootCharacter $attrs[$cc]`) {
+			$attrsInCharacter[size($attrsInCharacter)] = $attrs[$cc];
+		}
+	}
+
+	// Build the create character command
+	//
+	$cmd = ( "character -empty -name \"" + $name + "\";");
+
+	// Create the new character
+	//
+	string $character = eval( $cmd );
+	
+	$cmd = ( "character -edit -add "+$rootCharacter+" "+$character );
+	eval($cmd);
+
+	if (size($attrs)) {
+		$cmd = ("character -edit -forceElement "+$character);
+		for ($at in $attrs) {
+			$cmd += (" "+$at);
+		}
+		eval($cmd);
+	}
+
+	return $character;
+}

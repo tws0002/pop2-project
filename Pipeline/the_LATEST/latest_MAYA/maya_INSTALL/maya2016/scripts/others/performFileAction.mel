@@ -1,0 +1,1394 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  December 9, 1996
+//
+//  Description:
+//      pv_performAction, used currently used by Project Viewer and multilister.
+//		callback Performs standard file operations such as Open, Save, Import, etc.
+//
+
+//	Returns a valid namespace name which is created from the basename
+//	of $fileName, with any illegal characters replaced by an underscore.
+//
+//	Any path or extension in $fileName will be stripped off. If $fileName
+//	contains a URI then everything will be stripped off except the base name
+//	of the file.
+//
+proc string makeNamespaceNameFromFileName(string $fileName)
+{
+	//	Encode $fileName just in case it has any embedded quotes that could
+	//	cause us problems when building command strings.
+	//
+	string $result = encodeString($fileName);
+
+	//	The MURI class can handle both URIs and normal file names, so let's
+	//	let it do all the work. Note that in the Python code we are using
+	//	double quotes around $fileName. Single quotes would be more
+	//	convenient, but the encodeString() call above only escapes double
+	//	quotes, not single.
+	//
+	$result = python("import maya.OpenMaya as om;uri = om.MURI(\"" + $fileName + "\");uri.getFileName(False)");
+
+	//	Now that we have just the basename of the file, make it into a valid
+	//	namespace name.
+	//
+	return `namespace -validateName $result`;
+}
+
+
+proc string findTranslatorToUse(string $file, int $rw, string $type)
+// $rw == 0: only a translator that can read it
+// $rw == 1: only a translator that can write it
+// $rw == 2: only a translator that can read and write it
+// $rw == anything else: don't care
+{
+	if ("" != $type && `translator -q -loaded $type`)
+	{
+		return $type;
+	}
+
+	string $translatorToUse;
+	string $ext = fileExtension($file);
+	string $translators[];
+
+	if ("" != $ext)
+	{
+		$translators = `translator -q -list`;	
+	}
+	else if (`file -q -exists $file`)
+	{
+		$translators = `file -query -type $file`;
+	}
+	
+	for ($translator in $translators)
+	{
+		if ($ext == `translator -q -extension $translator`)
+		{
+			if ($rw == 0)
+			{
+				if (!`translator -q -readSupport $translator`)
+				{
+					continue;
+				}
+			}
+			else if ($rw == 1)
+			{
+				if (!`translator -q -writeSupport $translator`)
+				{
+					continue;
+				}
+			}
+			else if ($rw == 2)
+			{
+				if (!`translator -q -readSupport $translator` || 
+					!`translator -q -writeSupport $translator`)
+				{
+					continue;
+				}
+			}
+
+			$translatorToUse = $translator;
+			break;
+		}
+	}
+
+	if ("" == $translatorToUse)
+	{
+		$translatorToUse = (uiRes("m_fileOptions.kBestGuess"));
+	}
+
+	return $translatorToUse;
+}
+
+proc string pv_getUserTag( string $action )
+//
+//	Description:
+//		Grab the last chosen proxy tag, otherwise return the null string.
+//
+{
+	string $proxyTag = "";
+	if( `optionVar -exists ("proxyOptionsUseNew"+$action+"Tag")` ){
+		int $useNewTag = `optionVar -q ("proxyOptionsUseNew"+$action+"Tag")`;
+		if( $useNewTag && `optionVar -exists ("proxyOptionsNew"+$action+"Tag")`){
+			$proxyTag = `optionVar -q ("proxyOptionsNew"+$action+"Tag")`;
+		} else if (`optionVar -exists ("proxyOptions"+$action+"Tag")`) {
+			$proxyTag = `optionVar -q ("proxyOptions"+$action+"Tag")`;
+		}
+	} else if (`optionVar -exists ("proxyOptions"+$action+"Tag")`) {
+		$proxyTag = `optionVar -q ("proxyOptions"+$action+"Tag")`;
+	}
+	optionVar -intValue ("proxyOptionsNew"+$action+"TagSpecified") false;
+	return( $proxyTag );
+}
+
+proc string handleBestGuessCase( string $theFile )
+{	
+	global string $gv_operationMode;
+	string $fileType = "";
+
+	if ($gv_operationMode == "SaveAs") 
+	{
+		if (`optionVar -exists defaultFileSaveType`) 
+		{
+			$fileType = `optionVar -q defaultFileSaveType`;
+		} 
+		else 
+		{
+			$fileType = "mayaBinary";
+		}
+	} 
+	else if ($gv_operationMode == "ExportAll") 
+	{
+		if (`optionVar -exists defaultFileExportAllType`) 
+		{
+			$fileType = `optionVar -q defaultFileExportAllType`;
+		} 
+		else 
+		{
+			$fileType = "mayaBinary";
+		}
+	} 
+	else if ($gv_operationMode == "ExportActive") 
+	{
+		if (`optionVar -exists defaultFileExportActiveType`) 
+		{
+			$fileType = `optionVar -q defaultFileExportActiveType`;
+		}
+		else 
+		{
+			$fileType = "mayaBinary";
+		}
+	}
+	else if ($gv_operationMode == "ExportSelectionAsReference") 
+	{
+		if (`optionVar -exists defaultFileExportSelectionAsType`) 
+		{
+			$fileType = `optionVar -q defaultFileExportSelectionAsTypeType`;
+		}
+		else 
+		{
+			$fileType = "mayaBinary";
+		}
+	}
+	else if ($gv_operationMode == "ExportOfflineFile" ||
+			 $gv_operationMode == "ExportOfflineFileFromRefEd")
+	{
+		if (`optionVar -exists defaultFileExportEditsType`) 
+		{
+			$fileType = `optionVar -q defaultFileExportEditsType`;
+		} 
+		else 
+		{
+			$fileType = "mayaBinary";
+		}
+	}
+	else if ($gv_operationMode == "ApplyOfflineFile" ||
+			 $gv_operationMode == "ApplyOfflineFileFromRefEd")
+	{
+		if (`optionVar -exists defaultFileApplyEditsType`) 
+		{
+			$fileType = `optionVar -q defaultFileApplyEditsType`;
+		} 
+		else 
+		{
+			$fileType = "mayaBinary";
+		}
+	}
+    else if ($gv_operationMode == "AssignTemplate") {
+		$fileType = "template";
+	}
+	else 
+	{
+		if (`file -q -ex $theFile`) 
+		{
+			// We must be reading a file. Get the actual type.
+
+			string $fileTypeList[];
+			$fileTypeList = `file -q -typ $theFile`;
+
+			int $listSize = size($fileTypeList);
+			int $index;
+			for ($index = 0; $index < $listSize; $index++) 
+			{
+				if (`translator -q -rs $fileTypeList[$index]`) 
+				{
+					$fileType = $fileTypeList[$index];
+					break;
+				}
+			}
+
+			// If we got here we had a problem... let's see if we
+			// can't sort it out for the users.
+
+			// Is the file readable?
+			string $fullPath = `workspace -en $theFile`;
+			if ( filetest("-r",$fullPath) == 0 ) 
+			{
+				string $errMsg = (uiRes("m_performFileAction.kFilePathError"));
+				string $formattedError = `format -s $fullPath $errMsg`; 
+				confirmDialog -message  $formattedError;
+				return "";
+			}
+
+			// If the file is readable, we just must not understand it.
+
+			if ($fileType == "") 
+			{
+				//	Get the file extension. Be sure to remove case to
+				//	simplify comparisons.
+				//
+				string $extension = `match "\\.[^.]*$" $theFile`;
+				$extension = `tolower $extension`;
+
+				int $postedDialog = false;
+
+				if (`about -evalVersion`) 
+				{
+					//
+					//	Maya Personal Learning Edition.
+					//
+					if ( $extension == ".ma" || $extension == ".mb" ) {
+						confirmDialog -message (uiRes("m_performFileAction.kFileOpenError"));
+						$postedDialog = true;
+					}
+				} 
+				else 
+				{
+					//
+					//	Maya.
+					//
+					if ( $extension == ".mp" ) {
+						confirmDialog -message (uiRes("m_performFileAction.kFileOpenErrorPLE"));
+						$postedDialog = true;
+					}
+				}
+
+				if (!$postedDialog) 
+				{ 
+					confirmDialog -message (uiRes("m_performFileAction.kFileTypeError"));
+				}
+			}
+		}
+	}
+
+	return $fileType;
+}
+
+global proc
+int areAllSelectedNodesReferenced()
+{
+	int $allRefd = 0;
+	string $sel[] = `ls -sl`;
+	for ($obj in $sel) {
+		if (`referenceQuery -isNodeReferenced $obj`) {
+			$allRefd = 1;
+		} else {
+			return 0;
+		}
+	}
+	return $allRefd;
+}
+
+global proc
+string findRefNodeForExpEdits()
+{
+	string $refNode;
+	// small hack to know that this call has been made from the
+	// outliner on a reference node
+	global string $gLstRefNode[]; //variable from OutlinerEdMenu.mel
+	if(size($gLstRefNode) > 0)
+	{
+		$refNode = $gLstRefNode[0];
+		// it's safe to clean the list since that call is only for single selection
+		clear($gLstRefNode);
+		return $refNode;	
+	}
+
+	
+	global string $gReferenceEditorPanel;	
+	string $parent = `sceneEditor -q -parent $gReferenceEditorPanel`;
+	if (size($parent) > 0) {
+		string $refFile[] = `sceneEditor -q -si $gReferenceEditorPanel`;
+		if (size($refFile) > 1) {
+			error((uiRes("m_performFileAction.kTooManyFilesSelected")));
+		} else if (size($refFile) > 0) {
+			$refNode = `referenceQuery -rfn $refFile[0]`;
+		}
+	}
+	
+	if (size($refNode) == 0) {
+		// Nothing is selected in the reference editor, check if a referenced
+		// node is selected.
+		//
+		string $sel[] = `ls -sl`;
+		if (size($sel) > 0) {
+			if (`nodeType $sel[0]` == "reference" || `referenceQuery -isNodeReferenced $sel[0]`) {
+				$refNode = `referenceQuery -rfn $sel[0]`;		
+			} else {
+				// check for the case of the group node above a referenced object
+				//
+				string $connRefNodes[] = `listConnections -s 0 -d 1 -type reference ($sel[0]+".message")`;
+				if (size($connRefNodes) > 0) {
+					$refNode = $connRefNodes[0];
+				}
+			}
+		}
+
+		if (size($refNode) == 0) {
+			error((uiRes("m_performFileAction.kMustSelectRef")));
+		}
+	}
+	return $refNode;
+}
+
+
+global proc int performFileAction ( string $theFile, int $fileMode, string $type )
+//
+//	Description:
+//		perform the desired action on the given file.
+//
+{
+	if ("" == $theFile) 
+	{
+		return false;
+	}
+
+	global string $gv_operationMode;
+	global string $gFileOptionsString;
+	global string $gReplaceReferenceNode;	
+	global string $gAddProxyNode;
+
+	string	$result;
+	int		$fileExists;
+	string	$cmdString;
+	string	$translatorOptions;
+	int		$status = false;
+	string  $expandedFileName;
+
+	int $rw = 0;
+	if (0 == $fileMode)
+	{
+		$rw = 1;
+	}
+
+	$fileType = findTranslatorToUse($theFile, $rw, $type);
+
+	//  Use the expanded (resolved) file name to extract the directory
+	$expandedFileName = `file -q -expandName $theFile`;
+	
+	string $dirname = dirname( $expandedFileName );
+	workspace -dir $dirname;
+	retainWorkingDirectory $dirname;
+
+	//	Get the parent window for the error dialog that may appear.
+	//	
+	string $dialogParent = "MayaWindow";
+	string $yes		= (uiRes("m_performFileAction.kYes"));
+	string $cancel	= (uiRes("m_performFileAction.kCancel"));
+
+	$fileExists = `file -q -ex $theFile`;
+
+	if ($fileType == (uiRes("m_fileOptions.kBestGuess"))) 
+	{
+		$fileType = handleBestGuessCase($theFile);
+		if ("" == $fileType)
+			return false;
+	}
+	
+	$translatorOptions = ($fileType+"Options");
+	if (`optionVar -exists $translatorOptions`) {
+		// Post the new options.
+		$gFileOptionsString = `optionVar -q $translatorOptions`;
+	} else {
+		$gFileOptionsString = "";
+	}
+	
+		
+	if ($gv_operationMode == "SaveAs" ||
+		$gv_operationMode == "ExportAll" ||
+		$gv_operationMode == "ExportOfflineFile" ||
+		$gv_operationMode == "ExportOfflineFileFromRefEd" ||
+		$gv_operationMode == "ExportActive" ||
+		$gv_operationMode == "ExportSelectionAsReference")
+	{
+		// Turning off defaultExtesions for all the "write" methods.
+		// This is a persistent setting so we'll save the current
+		// value and the put it back to what it was when we are done.
+		// Be carefull to take this into account if you add in an
+		// early return in this block of code.
+		int $de = `file -q -defaultExtensions`;
+		file -defaultExtensions 0;
+
+		// We first check to see if the given file has an extension
+		// If it does and this does not match the given type, we change
+		// the type to be that specified in the extension.
+		if ( $fileType == "mayaAscii" || $fileType == "mayaBinary" )
+		{
+			string $extension = `match "\\.[^.]*$" $theFile`;
+			$extension = `tolower $extension`;
+			if ( $extension == ".ma" && $fileType == "mayaBinary" )
+				$fileType = "mayaAscii";
+			else if ( $extension == ".mb" && $fileType == "mayaAscii" )
+				$fileType = "mayaBinary";
+		}
+
+		if ( $gv_operationMode == "SaveAs" )
+		{
+			// Fix for MAYA-22139
+			// We first attempt to change the file type as it may fail if
+			// there is an unknown node or some unknown data. If this is 
+			// not done, the 'file -save' operation below will fail leaving 
+			// the scene renamed to the wrong name.
+			if ( !catch(`file -type $fileType`))
+			{
+				file -rename $theFile;	// Rename the file.
+				if (`saveImage -ex fo_saveIcon`) {
+					// This should probably be passed in somehow.
+					saveImage -e -sf $theFile fo_saveIcon;	// Get the save Icon.
+					optionVar -sv defaultFileSaveType $fileType;
+				}
+
+				// Lock the file...
+				file -lockFile `optionVar -q defaultLockFile`;
+
+				// Lock unpublished...
+				file -lockContainerUnpublished `optionVar -q defaultLockContainerUnpublished`;
+
+				string $compressString = "";
+
+				if(`optionVar -exists isCompressedSaveEnabled`)
+				{
+											$compressedSave = `optionVar -q isCompressedSaveEnabled`;
+
+					if ($compressedSave == 1 )
+					{
+						$compressString = " -compress ";
+					}
+				}
+
+
+				string $preserveNameString = "";
+
+				if(`optionVar -exists isCompressedPreserveNameEnabled`)
+				{
+											$preserveName = `optionVar -q isCompressedPreserveNameEnabled`;
+
+					if ($preserveName == 1 )
+					{
+						$preserveNameString = " -preserveName ";
+					}
+				}
+
+
+				string $cmd = "file -f -save " + $compressString + $preserveNameString;
+				if ($gFileOptionsString != "") {
+					$cmd += " -options \""+$gFileOptionsString+"\"";
+				}
+				
+				// Fire!
+				evalEcho($cmd);
+
+				// We want the full name as maya knows it for
+				// recent files
+				string $theSavedFile = `file -q -sn`;
+				if ( `about -nt` )
+					$theSavedFile = convert( $theSavedFile );
+				addRecentFile ($theSavedFile, $fileType);
+			}
+		}
+		else if ($gv_operationMode == "ExportActive") 
+		{
+			//	Set up the export parameters.
+			if (`optionVar -ex exportIncludeInputs`) {
+				if (`optionVar -q exportIncludeInputs`) {
+					file -chn `optionVar -q exportIncludeChannels`;
+					file -ch `optionVar -q exportIncludeHistory`;
+					file -exp `optionVar -q exportIncludeExpressions`;
+					file -con `optionVar -q exportIncludeConstraints`;
+				} else {
+					file -chn false;
+					file -ch false;
+					file -exp false;
+					file -con false;
+				}
+			} // Else don't change the default values.
+
+			//	If the file type is an animation type, then
+			//	set the channels value to true. Animation 
+			//	exporters should set an int optionVar in the
+			//	export options script. The optionVar should be
+			//	set true to always export animation.
+			//
+			string $isAnimOptVar = ($fileType+"AnimationFile");
+			float $channelsValueChanged = false;
+			float $oldChannelsValue = `file -q -chn`;
+
+			if (`optionVar -ex $isAnimOptVar` && 
+				`optionVar -q $isAnimOptVar`) 
+			{
+				file -chn true;
+				$channelsValueChanged = true;
+			}
+
+			if (`optionVar -ex exportIncludeShaders`) 
+			{
+				if (`optionVar -q exportIncludeShaders`) 
+				{
+					file -sh true;
+				} else {
+					file -sh false;
+				}
+			} // Else don't change the default value.
+
+			if (($fileType == "mayaAscii" || $fileType == "mayaBinary")
+				&& (`optionVar -ex exportKeepOnlyRef`
+					&& `optionVar -q exportKeepOnlyRef`)) 
+			{
+				// Then we really want to export it as a reference.
+				string $cmd = ("file -type \""+$fileType+"\" ");
+
+				string $clashName;
+				if (`optionVar -exists exportOptionsUseRenamePrefix`) 
+				{
+					int $userPrefix = `optionVar -q exportOptionsUseRenamePrefix`;
+					if ($userPrefix && `optionVar -exists exportOptionsRenamePrefix`) {
+						$clashName = `optionVar -q exportOptionsRenamePrefix`;
+					}
+				}
+
+				if (size($clashName) == 0) 
+				{
+					$clashName = makeNamespaceNameFromFileName($theFile);
+				}
+
+				if (size($clashName) > 0) 
+				{
+					if (`optionVar -q exportUseNamespacesDuringFileIO`) 
+					{
+						$cmd = $cmd + "-namespace \""+$clashName+"\" ";
+					} else {
+						$cmd = $cmd + "-rpr \""+$clashName+"\" ";
+					}
+				}
+
+				if ($gFileOptionsString != "") 
+				{
+					$cmd = $cmd+"-options \""+$gFileOptionsString+"\" ";
+				}
+				$cmd = $cmd+"-er \""+$theFile+"\"";
+				evalEcho($cmd);
+			} 
+			else 
+			{
+				string $cmd = "file -force -options \"" + $gFileOptionsString + "\" ";
+				$cmd = $cmd + "-typ \"" + $fileType + "\" "; 
+				
+				if (!`optionVar -ex exportKeepReferences`)
+				{
+					optionVar -intValue exportKeepReferences true; 
+				}
+				if (!`optionVar -ex exportUnloadedReferences`)
+				{
+					optionVar -intValue exportUnloadedReferences false; 
+				}
+				
+				if (`optionVar -ex exportKeepReferences` &&
+					`optionVar -q exportKeepReferences`) { 
+					$cmd = $cmd + "-pr ";
+				}
+				if (`optionVar -ex exportUnloadedReferences` &&
+					`optionVar -q exportUnloadedReferences`) { 
+					$cmd = $cmd + "-eur ";
+				}
+
+				$cmd = $cmd + "-es \"" + $theFile +"\"";
+				evalEcho($cmd);
+			}
+			optionVar -sv defaultFileExportActiveType $fileType;
+
+			//	Restore the file -channels state, if it was changed.
+			//
+			if ($channelsValueChanged) {
+				file -chn $oldChannelsValue;
+			}
+		} 
+		else if ($gv_operationMode == "ExportSelectionAsReference") 
+		{			
+			//	Set up the export parameters.
+			if (`optionVar -ex exportIncludeInputs`) {
+				if (`optionVar -q exportIncludeInputs`) {
+					file -chn `optionVar -q exportIncludeChannels`;
+					file -ch `optionVar -q exportIncludeHistory`;
+					file -exp `optionVar -q exportIncludeExpressions`;
+					file -con `optionVar -q exportIncludeConstraints`;
+				} else {
+					file -chn false;
+					file -ch false;
+					file -exp false;
+					file -con false;
+				}
+			} // Else don't change the default values.
+			
+			if (`optionVar -ex exportIncludeShaders`) 
+			{
+				if (`optionVar -q exportIncludeShaders`) 
+				{
+					file -sh true;
+				} else {
+					file -sh false;
+				}
+			} // Else don't change the default value.
+								
+			string $cmd = ("file -type \""+$fileType+"\" ");
+				
+			// Make sure the default is use namespaces
+			if(!`optionVar -exists referenceUseNamespacesDuringFileIO`) {
+				optionVar -intValue referenceUseNamespacesDuringFileIO true;
+			}
+
+			if (`optionVar -exists referenceOptionsGrouping`) {
+				if (`optionVar -q referenceOptionsGrouping`) {
+					$cmd = $cmd + "-gr ";
+				}
+			}
+						
+			if (`optionVar -exists referenceOptionsGroupName`) {
+				string $grpName = `optionVar -q referenceOptionsGroupName`;
+				if ( $grpName != "" ){
+					$cmd = $cmd + "-gn \"" + $grpName + "\" ";
+				}
+			}
+
+			if (`optionVar -exists referenceOptionsLocator`) {
+				if (`optionVar -q referenceOptionsLocator`) {
+					$cmd = $cmd + "-gl ";
+				}
+			}
+
+			if (`optionVar -exists referenceOptionsLockReference`) {
+				if (`optionVar -q referenceOptionsLockReference`) {
+					$cmd = $cmd + "-lck ";
+				}
+			}		
+			
+			// Do not enabled shared nodes if shared file is enabled.
+			//
+			int $sharedRefFileEnabled = 0;
+			if (`optionVar -exists referenceOptionsSharedReference`) 
+			{
+				int $sharedRefType = `optionVar -q referenceOptionsSharedReference`;
+				switch( $sharedRefType )
+				{
+				case 1:
+					if (`optionVar -exists referenceOptionsShareDisplayLayers`) {
+						if (`optionVar -q referenceOptionsShareDisplayLayers`)
+						{
+							$cmd = $cmd + "-shd \"displayLayers\" ";
+						}
+					}
+					if (`optionVar -exists referenceOptionsShareShaders`) {
+						if (`optionVar -q referenceOptionsShareShaders`)
+						{
+							$cmd = $cmd + "-shd \"shadingNetworks\" ";
+						}
+					}
+					if (`optionVar -exists referenceOptionsShareRenderLayers`) {
+                        string $mergeBy = `optionVar -q referenceOptionsShareRenderLayers`;
+                        if ($mergeBy == "name") {
+							$cmd = $cmd + "-shd \"renderLayersByName\" ";
+                        }
+                        else if ($mergeBy == "id") {
+							$cmd = $cmd + "-shd \"renderLayersById\" ";
+                        }
+					}
+					break;
+				case 2:
+					$cmd = $cmd + "-srf ";
+					break;
+				default:
+					break;
+				}
+			}
+			
+
+			string $clashName;
+			if (`optionVar -exists referenceOptionsUseRenamePrefix`) {
+				int $userPrefix = `optionVar -q referenceOptionsUseRenamePrefix`;
+				if ($userPrefix && `optionVar -exists referenceOptionsRenamePrefix`) {
+					$clashName = `optionVar -q referenceOptionsRenamePrefix`;
+				}
+			}
+
+			if (size($clashName) == 0) {
+				$clashName = makeNamespaceNameFromFileName($theFile);
+			}
+			
+			// check if merge the namespace
+			string $mergeNamespaceOption;
+			if (`optionVar -exists namespaceClashNameMethod`) {
+				$mergeNamespaceOption = `optionVar -q namespaceClashNameMethod`;
+				if($mergeNamespaceOption == "new")
+				{
+					$cmd = $cmd + "-mergeNamespacesOnClash false ";
+				}
+				else if($mergeNamespaceOption == "rename")
+				{
+					$cmd = $cmd + "-mergeNamespacesOnClash true ";
+					// using absoluteName
+					$clashName = `optionVar -q fileWorkingNamespaceName`;
+				}
+			}
+
+			if (size($clashName) > 0) {
+				if (`optionVar -q referenceUseNamespacesDuringFileIO`) {
+					$cmd = $cmd + "-namespace \""+$clashName+"\" ";
+				} else {
+					$cmd = $cmd + "-rpr \""+$clashName+"\" ";
+				}
+			}
+
+			if ($gFileOptionsString != "") {
+				$cmd = $cmd+"-options \""+$gFileOptionsString+"\" ";
+			}
+
+			string $preCurrentNamespace;
+			if(`optionVar -exists referenceUseNamespacesDuringFileIO`)
+			{
+				if(`optionVar -q referenceUseNamespacesDuringFileIO`)
+				{
+					$preCurrentNamespace = handleNamespaceBeforeFileAction();
+				}
+			}
+
+			// We export it as a reference.
+			$cmd = $cmd+"-er \""+$theFile+"\"";
+			string $actualFile = `evalEcho($cmd)`;
+			
+			//Set current namespace back
+			if( size($preCurrentNamespace)>0 )
+			{
+				namespace -setNamespace $preCurrentNamespace;
+			}			
+		} 
+		else if ($gv_operationMode == "ExportOfflineFile" ||
+				   $gv_operationMode == "ExportOfflineFileFromRefEd") 
+		{
+			string $targetOptionVar = "exportEditsTarget";
+			int $exportTarget = 1;
+			if ($gv_operationMode == "ExportOfflineFileFromRefEd") {
+				$targetOptionVar = "exportEditsFromRefEdTarget";
+				$exportTarget = 2;
+			}
+			if (`optionVar -ex $targetOptionVar`) {
+				$exportTarget = `optionVar -q $targetOptionVar`;
+			}
+			string $cmd = ("exportEdits -f -type \""+$fileType+"\" ");
+			if ($exportTarget == 2) {
+				string $refNode = findRefNodeForExpEdits();
+				$cmd += ("-orn "+$refNode+" ");
+			} else if ($exportTarget == 1) {
+				$cmd += "-sel ";
+			} else {
+				$cmd += "-exportSelected ";
+			}
+			if ($exportTarget != 0) 
+			{
+				int $inputs = 1;
+				int $channels = 1;
+				int $shaders = 1;
+				if (`optionVar -ex exportEditsIncludeInputs`) {
+					$inputs = `optionVar -q exportEditsIncludeInputs`;
+				}
+				if (`optionVar -ex exportEditsIncludeChannels`) {
+					$channels = `optionVar -q exportEditsIncludeChannels`;
+				}
+				if (`optionVar -ex exportEditsIncludeShaders`) {
+					$shaders = `optionVar -q exportEditsIncludeShaders`;
+				}
+				if ($inputs) {
+					$cmd += "-includeNetwork ";
+				}
+				if ($channels) {
+					$cmd += "-includeAnimation ";
+				}
+				if ($shaders) {
+					$cmd += "-includeShaders ";
+				}
+			}
+
+			int $setAttrs = 1;
+			if( `optionVar -ex exportEditsIncludeSetAttrs`) {
+				$setAttrs = `optionVar -q exportEditsIncludeSetAttrs`;
+			}
+			$cmd += "-includeSetAttrs " + $setAttrs + " ";
+			$cmd += ("\""+$theFile+"\"");
+			evalEcho $cmd;
+		} 
+		else 
+		{ // It must be ExportAll.
+			string $cmd = "file -force -options \"" + $gFileOptionsString + "\" ";
+			$cmd = $cmd + "-type \"" + $fileType + "\" "; 
+			
+			if (!`optionVar -ex exportKeepReferences`)
+			{
+				optionVar -intValue exportKeepReferences true; 
+			}
+			if (!`optionVar -ex exportUnloadedReferences`)
+			{
+				optionVar -intValue exportUnloadedReferences false; 
+			}
+			
+			if (`optionVar -ex exportKeepReferences` &&
+				`optionVar -q exportKeepReferences`) { 
+				$cmd = $cmd + "-pr ";
+			}
+			if (`optionVar -ex exportUnloadedReferences` &&
+				`optionVar -q exportUnloadedReferences`) { 
+				$cmd = $cmd + "-eur ";
+			}
+			$cmd = $cmd + "-ea \"" + $theFile +"\"";
+			evalEcho($cmd);
+			optionVar -sv defaultFileExportAllType $fileType;
+		}
+
+		$status = true;
+		file -defaultExtensions $de;
+	} 
+	else if ($gv_operationMode == "CreateReference") 
+	{
+		// Create a new file to be used as a reference.
+		$status = true;
+		// The -nr flag hasn't been supported since June 1997,
+		// but somehow stuck around here until October 2004!
+		// Is this ever called? Maybe we should remove it...
+		//
+		optionVar -sv defaultFileCreateReferenceType $fileType;
+		file -op $gFileOptionsString -typ $fileType -nr $theFile;
+	} 
+	else if ($fileExists) 
+	{
+		if ($gv_operationMode == "Open") 
+		{
+			
+			if ( `optionVar -q fileSelPreload` ) {
+			
+				// store the current namespace
+				string $oldNamespace = `namespaceInfo -currentNamespace`;
+					
+				// reset the current namespace to "root" before we open preload editor
+				namespace -set ":";
+			
+				string $buildLoadSettingsCmd = "file -f -o -buildLoadSettings ";
+				
+				// User selected "Load No References", "Load All References" or "Load Top-Level References"
+				if( `optionVar -exists fileOpenRefLoadSetting` ) {
+					string $refLoadSetting = `optionVar -q fileOpenRefLoadSetting`;
+					if( $refLoadSetting != "default" ) {
+						$buildLoadSettingsCmd += ("-loadReferenceDepth \"" + $refLoadSetting + "\" ");
+					}
+				}
+
+				$buildLoadSettingsCmd += ("\"" + $theFile + "\"");
+				eval($buildLoadSettingsCmd);
+				
+				if ( `selLoadSettings -q -numSettings` > 1 ) {
+					$cmdString = "optionVar -stringValue preloadRefEdTopLevelFile \"" + $theFile + "\";\n";
+					$cmdString += "PreloadReferenceEditor;\n";
+				} else {
+					string $warnMsg = (uiRes("m_performFileAction.kNoPreferenceWarn"));
+					warning(`format -s $theFile $warnMsg`);
+				}
+				
+				// if the old namespace exits, select it again, to keep the status if user cancel the preload operation
+				if ( `namespace -exists $oldNamespace` && ( $oldNamespace != `namespaceInfo -currentNamespace` ))
+				{
+					namespace -set $oldNamespace;
+				}
+			}
+			
+			if ( "" == $cmdString ) 
+			{
+				$cmdString = "file -f ";
+
+				if (size($gFileOptionsString) > 0) {
+					$cmdString += "-options \""+$gFileOptionsString+"\" ";
+				}
+
+				//	Only add the -executeScriptNodes flag for the negative
+				//	(non-default) case.
+				//
+	if((`optionVar -exists fileExecuteSN`)&&(!`optionVar -q fileExecuteSN`))
+	{
+    	$cmdString += (" -esn false ");
+    }
+		
+				if( `optionVar -exists fileIgnoreVersion` &&
+					`optionVar -query fileIgnoreVersion` )
+				{
+					$cmdString += (" -ignoreVersion ");
+				}
+
+				// User selected "Load No References", "Load All References" or "Load Top-Level References"
+				if( `optionVar -exists fileOpenRefLoadSetting` ) {
+					string $refLoadSetting = `optionVar -q fileOpenRefLoadSetting`;
+					if( $refLoadSetting != "default" ) {
+						$cmdString += ("-loadReferenceDepth \"" + $refLoadSetting + "\" ");
+					}
+				}
+
+				$cmdString += (	" -typ \""+$fileType+"\" -o \""+$theFile+"\";"+ 
+								"addRecentFile(\"" + $theFile + "\", \"" +
+								$fileType + "\")");
+			}
+			$status = saveChanges($cmdString);
+		} 
+		else if ($gv_operationMode == "Reference") 
+		{
+			// Get the proxyTag, if any.
+			//
+			string $proxyTag = pv_getUserTag("Reference");
+
+			// Get the option information.
+			string $cmd = "file -r -type \""+$fileType+"\" ";
+
+			// Make sure the default is use namespaces
+			if(!`optionVar -exists referenceUseNamespacesDuringFileIO`) {
+				optionVar -intValue referenceUseNamespacesDuringFileIO true;
+			}
+
+			if (`optionVar -exists referenceOptionsGrouping`) {
+				if (`optionVar -q referenceOptionsGrouping`) {
+					$cmd = $cmd + "-gr ";
+				}
+			}
+
+			if( `optionVar -exists fileIgnoreVersion` &&
+				`optionVar -query fileIgnoreVersion` )
+			{
+				$cmd += (" -ignoreVersion ");
+			}
+			
+			if (`optionVar -exists referenceOptionsGroupName`) {
+				string $grpName = `optionVar -q referenceOptionsGroupName`;
+				if ( $grpName != "" ){
+					$cmd = $cmd + "-gn \"" + $grpName + "\" ";
+				}
+			}
+
+			if (`optionVar -exists referenceOptionsLocator`) {
+				if (`optionVar -q referenceOptionsLocator`) {
+					$cmd = $cmd + "-gl ";
+				}
+			}
+
+			if (`optionVar -exists referenceOptionsLockReference`) {
+				if (`optionVar -q referenceOptionsLockReference`) {
+					$cmd = $cmd + "-lck ";
+				}
+			}
+			
+			if (`optionVar -exists referenceOptionsDeferReference`) {
+				if (`optionVar -q referenceOptionsDeferReference`) {
+					$cmd = $cmd + "-dr 1 ";
+				}
+			}
+
+			if( `optionVar -exists fileReferenceRefLoadSetting` ) {
+				string $refLoadSetting = `optionVar -q fileReferenceRefLoadSetting`;
+				if( $refLoadSetting != "default" ) {
+					$cmd += ("-loadReferenceDepth \"" + $refLoadSetting + "\" ");
+				}
+			}
+
+			// Do not enabled shared nodes if shared file is enabled.
+			//
+			int $sharedRefFileEnabled = 0;
+			if (`optionVar -exists referenceOptionsSharedReference`) 
+			{
+				int $sharedRefType = `optionVar -q referenceOptionsSharedReference`;
+				switch( $sharedRefType )
+				{
+				case 1:
+					if (`optionVar -exists referenceOptionsShareDisplayLayers`) {
+						if (`optionVar -q referenceOptionsShareDisplayLayers`)
+						{
+							$cmd = $cmd + "-shd \"displayLayers\" ";
+						}
+					}
+					if (`optionVar -exists referenceOptionsShareShaders`) {
+						if (`optionVar -q referenceOptionsShareShaders`)
+						{
+							$cmd = $cmd + "-shd \"shadingNetworks\" ";
+						}
+					}
+					if (`optionVar -exists referenceOptionsShareRenderLayers`) {
+                        string $mergeBy = `optionVar -q referenceOptionsShareRenderLayers`;
+                        if ($mergeBy == "name") {
+							$cmd = $cmd + "-shd \"renderLayersByName\" ";
+                        }
+                        else if ($mergeBy == "id") {
+							$cmd = $cmd + "-shd \"renderLayersById\" ";
+                        }
+					}
+					break;
+				case 2:
+					$cmd = $cmd + "-srf ";
+					break;
+				default:
+					break;
+				}
+			}
+			
+			string $clashName;
+			if (`optionVar -exists referenceOptionsUseRenamePrefix`) {
+				int $userPrefix = `optionVar -q referenceOptionsUseRenamePrefix`;
+				if ($userPrefix && `optionVar -exists referenceOptionsRenamePrefix`) {
+					$clashName = `optionVar -q referenceOptionsRenamePrefix`;
+				}
+			}
+
+			if (size($clashName) == 0) {
+				$clashName = makeNamespaceNameFromFileName($theFile);
+			}
+			
+			// check if merge the namespace
+			string $mergeNamespaceOption;
+			if (`optionVar -exists namespaceClashNameMethod`) {
+				$mergeNamespaceOption = `optionVar -q namespaceClashNameMethod`;
+				if($mergeNamespaceOption == "new")
+				{
+					$cmd = $cmd + "-mergeNamespacesOnClash false ";
+				}
+				else if($mergeNamespaceOption == "rename")
+				{
+					$cmd = $cmd + "-mergeNamespacesOnClash true ";
+					// using absoluteName
+					$clashName = `optionVar -q fileWorkingNamespaceName`;
+				}
+			}
+
+			if (size($clashName) > 0) {
+				if (`optionVar -q referenceUseNamespacesDuringFileIO`) {
+					$cmd = $cmd + "-namespace \""+$clashName+"\" ";
+				} else {
+					$cmd = $cmd + "-rpr \""+$clashName+"\" ";
+				}
+			}
+
+			if ($gFileOptionsString != "") {
+				$cmd = $cmd+"-options \""+$gFileOptionsString+"\" ";
+			}
+
+
+
+			string $preCurrentNamespace;
+			if(`optionVar -exists referenceUseNamespacesDuringFileIO`)
+			{
+				if(`optionVar -q referenceUseNamespacesDuringFileIO`)
+				{
+					$preCurrentNamespace = handleNamespaceBeforeFileAction();
+				}
+			}
+
+			// Grab the returned file name, in case the file is used
+			// multiple times, so that we can retrieve the correct
+			// reference node name.
+			//
+			$cmd = $cmd + "\""+$theFile+"\"";
+			string $actualFile = `evalEcho($cmd)`;
+
+			// Set the proxy tag
+			//
+			string $refNode = `file -q -rfn $actualFile`;
+			if( !`exists isValidReference` ){
+				source "proxyUtils.mel";
+			}
+			if( isValidReference( $refNode ) ){
+				setAttr ($refNode + ".proxyTag") -type "string" $proxyTag;
+			}
+
+			//Set current namespace back
+			if( size($preCurrentNamespace)>0 )
+			{
+				namespace -setNamespace $preCurrentNamespace;
+			}
+
+			$status = true;
+		} 
+		else if ($gv_operationMode == "Import") 
+		{
+			// Get the option information.
+			string $cmd = "file -import -type \""+$fileType+"\" ";
+
+			if (`optionVar -exists fileOptionsGrouping`) {
+				if (`optionVar -q fileOptionsGrouping`) {
+					$cmd = $cmd+"-gr ";
+				}
+
+			    if (`optionVar -exists fileOptionsGroupNodeName`) {
+				    $cmd = $cmd+"-gn \"" + `optionVar -q fileOptionsGroupNodeName` + "\" ";
+			    }
+			}
+
+			if( `optionVar -exists fileIgnoreVersion` &&
+				`optionVar -query fileIgnoreVersion` )
+			{
+				$cmd += (" -ignoreVersion ");
+			}
+			
+			if (`optionVar -exists fileOptionsRenameAll`) {
+				if (`optionVar -q fileOptionsRenameAll`) {
+					$cmd = $cmd+"-ra true ";
+				}
+			}
+
+			int $removeDuplicateNetworks = 0;
+			if (`optionVar -exists removeDuplicateShadingNetworksOnImport`) {
+				if (`optionVar -q removeDuplicateShadingNetworksOnImport`) {
+					$removeDuplicateNetworks = 1;
+				}
+			}
+
+			if ( $removeDuplicateNetworks )
+			{
+				$cmd = $cmd+"-rdn ";
+			}
+
+			string $clashName;
+			if (`optionVar -exists fileOptionsUseRenamePrefix`) {
+				int $userPrefix = `optionVar -q fileOptionsUseRenamePrefix`;
+				if ($userPrefix && `optionVar -exists fileOptionsRenamePrefix`) {
+					$clashName = `optionVar -q fileOptionsRenamePrefix`;
+				}
+			}
+
+			if (size($clashName) == 0) {
+				$clashName = makeNamespaceNameFromFileName($theFile);
+			}
+			
+			// check if merge the namespace
+			string $mergeNamespaceOption;
+			if (`optionVar -exists namespaceClashNameMethod`) {
+				$mergeNamespaceOption = `optionVar -q namespaceClashNameMethod`;
+				if($mergeNamespaceOption == "new")
+				{
+					$cmd = $cmd + "-mergeNamespacesOnClash false ";
+				}
+				else if($mergeNamespaceOption == "rename")
+				{
+					$cmd = $cmd + "-mergeNamespacesOnClash true ";
+					// using absoluteName
+					$clashName = `optionVar -q fileWorkingNamespaceName`;
+				}
+			}
+
+			if (size($clashName) > 0) {
+				if (`optionVar -q useNamespacesDuringFileIO`) {
+					$cmd = $cmd + "-namespace \""+$clashName+"\" ";
+				} else {
+					$cmd = $cmd + "-rpr \""+$clashName+"\" ";
+				}
+			}
+
+			if ($gFileOptionsString != "") {
+				$cmd = $cmd+"-options \""+$gFileOptionsString+"\" ";
+			}
+
+			if (`optionVar -ex importKeepReferences` && 
+				`optionVar -q importKeepReferences`) { 
+				$cmd = $cmd + " -pr "; 
+			}
+
+			if( `optionVar -exists fileImportRefLoadSetting` ) {
+				string $refLoadSetting = `optionVar -q fileImportRefLoadSetting`;
+				if( $refLoadSetting != "default" ) {
+					$cmd += ("-loadReferenceDepth \"" + $refLoadSetting + "\" ");
+				}
+			}
+
+		
+			//Set current namespace to selected namespace in fileOption if needed
+			string $preCurrentNamespace;
+			if(`optionVar -exists useNamespacesDuringFileIO`)
+			{
+				if(`optionVar -q useNamespacesDuringFileIO`)
+				{
+					$preCurrentNamespace = handleNamespaceBeforeFileAction();
+				}
+			}
+
+			$cmd = $cmd+"\""+$theFile+"\"";
+			evalEcho($cmd);
+
+			//Set current namespace back
+			if( size($preCurrentNamespace)>0 )
+			{
+				namespace -setNamespace $preCurrentNamespace;
+			}
+			$status = true;
+		} 
+		else if ($gv_operationMode == "ReplaceReference") 
+		{
+			// Get the option information.
+			string $cmd =	"file -loadReference \""+$gReplaceReferenceNode 
+							+ "\" -type \""+$fileType+"\" ";
+
+			if ($gFileOptionsString != "") {
+				$cmd = $cmd+"-options \""+$gFileOptionsString+"\" ";
+			}
+
+			$cmd = $cmd + "\""+$theFile+"\"";
+
+			evalEcho($cmd);
+			$status = true;
+		} 
+		else if ($gv_operationMode == "Proxy") 
+		{
+			// Perform the add proxy
+
+			// Get the proxyTag, if any.
+			//
+			string $proxyTag = pv_getUserTag("Proxy");
+
+
+			string $cmd = "proxyAdd \"" + $gAddProxyNode + "\" \"" + $theFile + "\" \"" + $proxyTag + "\"";
+			evalEcho($cmd);
+			$status = true;
+		} 
+		else if ($gv_operationMode == "ApplyOfflineFile" ||
+				   $gv_operationMode == "ApplyOfflineFileFromRefEd") 
+		{
+			//
+			// Perform Apply Reference Edits
+			//
+			string $cmd = ("file ");
+			if (`optionVar -exists applyEditsImport` &&
+				`optionVar -query applyEditsImport`) {
+				$cmd += ("-import ");
+			} else {
+				$cmd += ("-r ");
+			}
+			$cmd += ("-type \""+$fileType+"\" ");
+
+			string $applyNS;
+			if (`optionVar -exists applyEditsNamespaceName`) {
+				$applyNS = `optionVar -q applyEditsNamespaceName`;
+			}
+			if (size($applyNS) == 0) {
+				$applyNS = pv_basename($theFile);
+			}
+			$cmd += (" -namespace \""+$applyNS)+"\"";
+
+			if ($gv_operationMode == "ApplyOfflineFile" &&
+				`optionVar -exists applyOfflineFileToRoot` &&
+				`optionVar -q applyOfflineFileToRoot` &&
+				(0 == areAllSelectedNodesReferenced())) {
+				$cmd += "-applyTo \":\" ";
+			} else {
+				string $refNode = findRefNodeForExpEdits();
+				$cmd += " -applyTo \"" + $refNode + "\"";
+			}
+
+			string $substString = "";
+			if( `optionVar -exists applyOfflineFileSubstitutions` ) {
+				$substString = `optionVar -q applyOfflineFileSubstitutions`;
+				string $substitutions[] = stringToStringArray($substString, ";");
+				int $i = 0;
+				for( $i = 0; $i < size($substitutions); $i+=2) {
+					$cmd += " -replaceName \"" + $substitutions[$i] + "\" \"" + $substitutions[$i+1] + "\"";
+				}
+			}
+			//Set current namespace to selected namespace in fileOption if needed
+			string $preCurrentNamespace = handleNamespaceBeforeFileAction();
+
+			$cmd = $cmd + " \""+$theFile+"\"";
+			evalEcho($cmd);
+
+			//Set current namespace back
+			if( size($preCurrentNamespace)>0 )
+			{
+				namespace -setNamespace $preCurrentNamespace;
+			}
+
+			$status = true;
+		} 
+		else if ($gv_operationMode == "AssignTemplate") 
+		{
+			if (! `exists containerTemplateFileBrowserCB`) {
+				eval("source \"containerTemplateBrowser.mel\"");
+			}
+			if (containerTemplateFileBrowserCB(0,"",$theFile,$fileType)) 
+			{
+				int $autobind = `optionVar -q assignTemplateFileAutobind`;
+				int $standins = `optionVar -q assignTemplateFileStandins`;
+				string $template = basename($theFile,".template");
+				containerAssignTemplate("",$template,$autobind,$standins);
+			}
+		}
+	} 
+	else 
+	{
+		string $ok = (uiRes("m_performFileAction.kOk"));
+		confirmDialog -message (uiRes("m_performFileAction.kNoFileError")) 
+			-button $ok -defaultButton $ok -parent $dialogParent;
+	}
+
+	if ($gv_operationMode == "Open" || $gv_operationMode == "Import") 
+	{
+		checkForUnknownImageTypes();
+	}
+		
+	return $status;
+}
+
+
+global proc string handleNamespaceBeforeFileAction()
+//	Description:
+//		Set current namespace to be the namespace selected in file option,
+//		Involed actions are "reference" "import" "ApplyOfflineFile" "ApplyOfflineFileFromRefEd"
+//	Retruns
+//		Previous current namespace name if set current into new namespace. else return "".
+//
+{
+		//Set namespace into working namespace
+		string $workingNamespace = "";
+		string $currentNamspace = "";
+		if ( `optionVar -exists fileWorkingNamespaceName` ) 
+		{
+			$workingNamespace = `optionVar -q fileWorkingNamespaceName`;
+		}
+
+		if( size($workingNamespace)>0 )
+		{
+			$currentNamspace = `namespaceInfo -currentNamespace`;
+			namespace -setNamespace $workingNamespace;
+			if(!startsWith($currentNamspace, ":"))
+			{
+				$currentNamspace = ":" + $currentNamspace;
+			}
+		}
+
+		return $currentNamspace;
+}
+

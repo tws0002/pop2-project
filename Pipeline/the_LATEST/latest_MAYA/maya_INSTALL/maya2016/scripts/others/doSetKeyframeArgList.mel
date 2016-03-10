@@ -1,0 +1,652 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Dec 3, 1996
+//
+
+proc string[] appendArray(string $a[], string $b[]) 
+//
+//	Description:
+//		Appends the contents of $b onto $a
+//
+{
+	string $combined[] = $a;
+	int $nA = size($combined);
+
+	int $nB = size($b);
+
+	for ($ii = 0; $ii < $nB; $ii++) {
+		$combined[$nA++] = $b[$ii];
+	}
+
+	return $combined;
+}
+
+proc string[] makeUnique(string $a[]) 
+//
+//	Description:
+//		Returns a unique string array in alphabetcial order.
+//
+{
+	string $sorted[] = sort($a);
+
+	int $index = 0;
+	string $newArray[];
+
+	int $nItems = size($sorted);
+	if ($nItems > 0) {
+		$newArray[$index++] = $sorted[0];
+	}
+
+	for ($ii = 1; $ii < $nItems; $ii++) {
+		if ($sorted[$ii] != $sorted[$ii-1]) {
+			$newArray[$index++] = $sorted[$ii];
+		}
+	}
+
+	return $newArray;
+}
+
+proc string[] removeIntersection(string $a[], string $b[])
+//
+//	Description:
+//		Returns an array with all of the elements from $a removed from
+//		$b.
+//
+{
+	string $remainder[];
+	int $rIndex = 0;
+	
+	int $nA = size($a);
+	int $nB = size($b);
+
+	if ($nA == 0) {
+		return $b;
+	}
+
+	for ($ii = 0; $ii < $nB; $ii++) {
+		int $found = false;
+		for ($jj = 0; $jj < $nA; $jj++) {
+			if ($a[$jj] == $b[$ii]) {
+				$found = true;
+				break;
+			}
+
+			if (!$found) {
+				$remainder[$rIndex++] = $b[$ii];
+			}
+		}
+	}
+
+	return $remainder;
+}
+
+proc string[] ikFKGetCharacterContents(string $character)
+//
+//	Description:
+//		Returns all of the transforms from the passed character and its 
+//		subcharacters.
+//
+{
+	string $nodes[] = `character -q -no $character`;
+	string $transforms[] = `ls -type transform $nodes`;
+
+	string $characters[] = `ls -type character $nodes`;
+	string $char;
+	for ($char in $characters) {
+		$transforms = appendArray($transforms, ikFKGetCharacterContents($char));
+	}
+
+	return $transforms;
+}
+
+
+proc string[] ikFKHandleObjects(string $targets[], int $mode)
+//
+//	Description:
+//		Sets the IK/FK keys and returns the unset target items.
+//
+{
+	//	If everything is a handle or a joint, just call ikFK directly
+	//	and return an empty array.
+	//
+	if (size(`ls -type "ikHandle" -type "joint" $targets`) == size($targets)) {
+		catch(ikFK($mode, $targets));
+		return ({});
+	}
+
+	string $characters[] = `ls -type "character" $targets`;
+	int $nCharacters = size($characters);
+
+	string $characterContents[];
+	if ($nCharacters > 0) {
+		string $item;
+		for ($item in $characters) {
+			string $cc[] = ikFKGetCharacterContents($item);
+			$characterContents = appendArray($characterContents, $cc);
+		}
+
+		$characterContents = makeUnique($characterContents);
+	}
+
+	//	Get of the handles and joints
+	//
+	string $expandedTargets[] = appendArray($targets, $characterContents);
+	if (size($characterContents) > 0) {
+		$expandedTargets = makeUnique($expandedTargets);
+	}
+
+	string $handles[] = `ls -type "ikHandle" $expandedTargets`;
+	string $joints[] = `ls -type "joint" $expandedTargets`;
+
+	int $nOthers = 0;
+	string $others[];
+
+	string $item;
+    for ($item in $expandedTargets) {
+		//  First check for non-handles and non-joints that have a
+		//  a special .ikBlend attribute (old name was .solverEnable)
+		//
+		if (size(`ls -type "joint" -type "ikHandle" $item`) == 0 &&
+			(size(`ls ($item+".solverEnable")`) ||
+			 size(`ls ($item+".ikBlend")`)) ) {
+			$others[$nOthers++] = $item;
+		}
+	}
+
+	int $nHandles = size($handles);
+	int $nJoints = size($joints);
+
+	if ($nHandles == 0 && $nJoints == 0 && $nOthers == 0) {
+		return $targets;
+	}
+
+	//	Get the combined list of items to key. Do not worry about duplicates
+	//	since the ikFK script is smart enough to handle them.
+	//
+	string $combined[] = appendArray($handles, $joints);
+	$combined = appendArray($combined, $others);
+
+	//	There is nothing that IK/FK would be interested in setting.
+	//
+	if (size($combined) == 0) {
+		return $targets;
+	} 
+
+	catch(ikFK($mode, $combined));
+
+	//	Return the unset elements.
+	//
+	return (removeIntersection($combined, $targets));
+}
+
+proc string ikFKHandleMembers(string $members, int $mode)
+//
+//	Description:
+//		Sets the IK/FK keys and returns the unset target items.
+//		The format is a string bounded by '{' and '}' characters.
+//
+{
+	if (size($members) == 0 || $members == "{}") {
+		return $members;
+	}
+
+	//	Skip the {" and "} sections.
+	//
+	int $nChars = size($members);
+	string $sub = `substring $members 3 ($nChars-2)`;
+
+	//	Create an array based on the string and then call the 
+	//	ikFKHandleObjects procedure.
+	//
+	string $buf[];
+	tokenize $sub "\", \"" $buf;
+
+	string $unused[];
+	if (size($buf)) {
+		$unused = ikFKHandleObjects($buf, $mode);
+	} else {
+		return $members;
+	}
+
+	//	Reconstruct the members string 
+	//
+	if (size($unused) == 0) {
+		return $members;
+	} 
+
+	int $nUnused = size($unused);
+	string $unusedMembers = ("{\"" + $unused[0] + "\"");
+	for ($ii = 1; $ii < $nUnused; $ii++) {
+		$unusedMembers += (" ,\"" + $unused[$ii] + "\"");
+	}
+	$unusedMembers += "}";
+
+	return $unusedMembers;
+}
+
+proc string[] ikFKHandleAttributes(string $attrs[], int $mode)
+//
+//	Description:
+//		Sets the ikFK keys for nodes from the list of passed attributes.
+// 		The unset nodes are returned.
+//
+{
+	int $nIKRelated = 0;
+	string $ikRelated[];
+
+	int $nCharacters = 0;
+	string $characters[];
+
+	int $nRemainder = 0;
+	string $remainder[];
+
+	int $nNodes = 0;
+	string $nodes[];
+
+	string $item;
+	for ($item in $attrs) {
+		string $buf[];
+		tokenize $item "." $buf;
+
+		$nodes[$nNodes++] = $buf[0];
+	}
+
+	return (ikFKHandleObjects($nodes, $mode));
+}
+
+proc resetStepTangents(string $stepTangents[])
+//
+//	Description:
+//		Some step tangents may get set back to spline during the general
+//		setKeyframe call (after ikFK is called). This resets those tangents
+//		back to step.
+//
+{
+	float $time = `currentTime -q`;
+
+	string $item;
+	for ($item in $stepTangents) {
+		if (size(`ls $item`)) {
+			catch(`keyTangent -e -t $time -ott clamped $item`);
+		}
+	}
+}
+
+
+//	Procedure Name:
+//		doSetKeyframe
+//
+//	Description:
+//		This is the actual function that calls from the "Set Keyframe" option
+//		box.
+//
+//	Input Arguments:
+//	$version: The version of this option box.  Used to know how to 
+//	interpret the $args array.
+//		"1" : $which, $hierarchy, $channelBox, $control, $shape
+//		"2" : $prompt
+//		"3" : $breakdown, $selectionConnection
+//	
+//	$args
+//	Version 1
+//	[0]		$which .. 1 : set keyframes on all keyable attrs
+//					  2 : set keyframes on all manip handle attrs
+//					  3 : set keyframes on current manip handle
+//					  4 : set keyframes on all manip handle attrs and if no
+//						  manip is up set keyframes on all keyable attrs
+//			The remaining arguments are only applicable if $which == 1
+//	[1]		$hierarchy  0/1 : set keyframe on selected items only, or all below
+//	[2]		$channelBox 0/1 : if 1, set keyframes on attrs specified in channel box
+//	[3]		$control    0/1 : if 1 and a transform above a shape is selected,
+//							    key all control points also
+//	[4]		$shape      0/1 : if 1 and a transform above a shape is selected,
+//								key attributes of shape as well
+//								(excluding control pts)
+//	Version 2
+//	[5]		$prompt 	: 1 prompt user for list of times at which to set keys
+//						  {0} do not prompt user; i.e., set keys at current time
+//	Version 3
+//	[6]		$breakdown	: 1 set breakdowns
+//						  {0} set keys
+//	[7]		$selectionConnection	name of selection connection to use
+//	
+//	Version 4
+//	[8]		$useIKFK	: If 1, use IK/FK on selected joints and ikHandles.
+//
+//	Version 5
+//	[9]		$useFBIK	: If 1, set a full body key on effectors / fk bones of fbik rig
+//	Version 6
+//	[10]		$setAnimLayerZeroKey	: If 1, sets an identity key on the selected layer for anim layers.
+//
+//	Return Value:
+//		number of attributes keyframed
+//
+
+global proc int doSetKeyframeArgList( string $version, string $args[] )
+{
+	int		$versionNum				= $version;
+
+	int		$which					= $args[0];
+	int		$hierarchy				= ($which == 4 ? 0 : $args[1]);
+	int		$channelBox				= ($which == 4 ? 0 : $args[2]);
+	int		$control				= ($which == 4 ? 0 : $args[3]);
+	int		$shape					= ($which == 4 ? 0 : $args[4]);
+	int		$prompt					= ($versionNum >= 2 ? $args[5] : 0);
+	int		$breakdown				= ($versionNum >= 3 ? $args[6] : 0);
+	string	$selectionConnection	= ($versionNum >= 3 ? $args[7] : "");
+	int 	$useIKFK				= ($versionNum >= 4 ? $args[8] : 0);
+	int 	$useFBIK				= ($versionNum >= 5 ? $args[9] : 0);
+	int 	$setAnimLayerZeroKey	= ($versionNum >= 6 ? $args[10] : 0);
+
+	string	$attrsToKey[];
+	int		$i;
+	int		$count;
+	int		$total = 0;
+
+	int 	$ikFKMode = 0;	//	Defines the behavior of neighboring keys.
+							//	See the ikFK.mel script for details.
+
+	if ($channelBox) {
+		string $objects[] = selectedChannelBoxObjects();
+		string $attrs[] = selectedChannelBoxAttributes();
+		if (size($objects) == 0 && size($attrs) == 0) {
+			// when nothing is selected in the channel box, use active mode
+			//
+			$channelBox = 0;
+		}
+	}
+	loadFullBodyIKFunctions();			
+	int $setFBIKKeys = 0;				
+	if($useFBIK) {
+		string $selectedObjs[] = `ls -sl`;
+		for($obj in $selectedObjs) {
+			if(isFullBodyIKObject($obj,0)) {
+				$setFBIKKeys = 1;
+				break;
+			}
+		}
+		if($setFBIKKeys) {
+		    string $keyingMode = "1";
+		    if(`optionVar -exists keyFullBody`) {
+		        int $setFullBodyKey = `optionVar -query keyFullBody`;      
+		        if($setFullBodyKey == 1) {
+		            $keyingMode = "1";
+		        }
+		        else if($setFullBodyKey == 2) {
+		            $keyingMode = "2";
+		        }
+		        else if($setFullBodyKey == 3) {		        
+                    //we want to key in "selected" keying mode, but the actual keying mode to
+                    //pass to doSetFullBodyIKKeysArgList is 4 in this case.
+                    $keyingMode = "4";
+                }
+		    }                         
+			int $numKeysSet = `doSetFullBodyIKKeysArgList 3 {$keyingMode, "4"}`;
+			return $numKeysSet;
+		}
+	}		
+	
+	global 	string	$gSetIKFKStepTangentList[];
+	clear($gSetIKFKStepTangentList);
+
+	//	If $prompt is on, ignore $useIKFK
+	//
+	if ($prompt && $useIKFK) {
+		$useIKFK = 0;
+	}
+
+	string $cmd = "setKeyframe -breakdown " + $breakdown + " ";
+	string $ikFKCmd = "";
+	string $ok = (uiRes("m_doSetKeyframeArgList.kOk"));
+	string $cancel = (uiRes("m_doSetKeyframeArgList.kCancel"));
+	string $setBreakdown = (uiRes("m_doSetKeyframeArgList.kSetBreakdown"));
+	string $objectKeysWarning = (uiRes("m_doSetKeyframeArgList.kObjectKeysWarn"));
+	string $objectBreakdownsWarning = (uiRes("m_doSetKeyframeArgList.kObjectBreakdownsWarn"));
+	
+	if($setAnimLayerZeroKey) {
+	    $cmd += "-id -itt flat -dd true ";
+	}
+	
+	if( $prompt ) {
+		string $response = `promptDialog
+			-title ($breakdown ? $setBreakdown : (uiRes("m_doSetKeyframeArgList.kSetKey")))
+			-message (uiRes("m_doSetKeyframeArgList.kEnterListofTimes"))
+			-text ""
+			-button $ok
+			-button $cancel
+			-defaultButton $ok
+			-cancelButton $cancel
+			-dismissString $cancel`;
+
+		// Give the user a chance to cancel
+		//
+		if( $response != $ok ) {
+			return 0;
+		}
+
+		string $keyTimes = `promptDialog -query -text`;
+		string $buffer[];
+
+		// $keyTimes would be easier to work with as an array of
+		// elements.  Calling this proc separates out the elements
+		// based on whitespace or commas.
+		//
+		if( tokenizeList( $keyTimes, $buffer ) ) {
+			// Add each of the times listed to the command, preceded by 
+			// the -t flag.
+			//
+			int $timeAdded = 0;
+
+			$keyTimes = "";
+			for( $time in $buffer ) {
+				if( size( $time ) > 0 ) {
+					$keyTimes = ( $keyTimes + "-t " + $time + " " );
+					$timeAdded = 1;
+				}
+			}
+			
+			// If the user entered a bunch of spaces,
+			// there are no times, but $buffer isn't technically
+			// empty.  Just return, and don't set any keys.
+			//
+			if( !$timeAdded ) {
+				return 0;
+			}
+			
+			$cmd = ( $cmd + $keyTimes );
+		} else {
+			// Don't spit out a silly error if there's no list.
+			//
+			if( $keyTimes != "" ) {
+				error( (uiRes("m_doSetKeyframeArgList.kInvalidListOfTimesErr")) );
+			}
+			return 0;
+		}
+	}
+        
+	// Get the target objects
+	//
+	string $members;
+	if($setFBIKKeys) {
+		//if a full body rig is being keyed, we don't want to re-key any
+		//part of a full body rig, so remove them from the selection here.
+		$members = filterForHikEffectors($selectionConnection,0);
+	}
+	else {
+		$members = expandSelectionConnection ($selectionConnection);	
+	}
+    	    
+	int $hasObjects = false;
+
+	if ($which == 4)
+	{
+		$attrsToKey = `listAnimatable -manip`;
+		int $nAttrs = size($attrsToKey);
+
+		if ($useIKFK && $nAttrs > 0) {
+			ikFKHandleAttributes($attrsToKey, $ikFKMode);
+		}
+
+		for ($i = 0; $i < $nAttrs; $i++)
+		{
+			$count = evalEcho( $cmd + $attrsToKey[$i] );
+			$total = $total + $count;
+		}
+	}
+
+	if (($which == 1) || ($which == 4))
+	{
+		if ($hierarchy == 1) {
+			$cmd = $cmd + "-hierarchy below ";
+		} else {
+			$cmd = $cmd + "-hierarchy none ";
+		}
+
+        string $warnMsg;
+
+		if ($channelBox == 1) {
+			if ($useIKFK) {
+				//	Make sure that the IK/FK code is executed.
+				//	The generic setKeyframe code will set keys on this
+				//	twice, but that should not be a problem.
+				//
+				string $objects[] = selectedChannelBoxObjects();
+				ikFKHandleObjects($objects, $ikFKMode);
+			}
+
+			string $syntax[] = keySetOptionBoxCommon( { "setKeyframe", 
+														"unknown", 
+														"channelBoxSyntax" } );
+			if( size( $syntax[0] ) == 0 ) {
+				warning( (uiRes("m_doSetKeyframeArgList.kNoChannelsSelected")) );
+				return 0;
+			}
+		
+			$cmd = $cmd + $syntax[0];
+
+			// and finally execute the command
+			//
+			$total = $total + evalEcho($cmd);
+			$hasObjects = true;
+		}
+		else if( $members != "" ) {
+			if ($useIKFK) {
+				//	process the members string.
+				//
+				ikFKHandleMembers($members, $ikFKMode);
+			}
+
+			// Only add the selection connection to the cmd if
+			// there are NO active keys.
+			//
+			if ($members == "{}") {
+				$cmd = "";
+				if($breakdown) {
+				    $warnMsg = (uiRes("m_doSetKeyframeArgList.kNoObjectsSelBreakdowns"));
+                } else {
+				    $warnMsg = (uiRes("m_doSetKeyframeArgList.kNoObjectsSelKeys"));
+                }
+				warning($warnMsg);
+			}
+			else {
+				$cmd = ($cmd + 
+					"-controlPoints " + $control + " " +
+					"-shape " + $shape + " " +
+					$members
+				 );
+				$total = $total + evalEcho ($cmd);
+				$hasObjects = true;
+			}
+		}
+		else
+		{
+			string $objects[] = `ls -sl`;
+			if ($useIKFK) {
+				ikFKHandleObjects($objects, $ikFKMode);
+			}
+
+			$hasObjects = (size ($objects) > 0 ? true : false);
+			$cmd = $cmd +
+				   ("-controlPoints " + $control +
+					" -shape " + $shape);
+			if (!$hasObjects && ($useIKFK && $total == 0)) {
+				if($breakdown) {
+				    $warnMsg = uiRes("m_doSetKeyframeArgList.kNoObjectsSelBreakdowns");
+                } else {
+				    $warnMsg = uiRes("m_doSetKeyframeArgList.kNoObjectsSelKeys");
+                }
+				warning($warnMsg);
+			}
+			else {
+				if ($hasObjects) {
+					$total = evalEcho($cmd);
+				}
+			}
+		}
+	}
+	else if (($which == 2) || ($which == 3))
+	{
+		if ($which == 2)
+			$attrsToKey = `listAnimatable -manip`;
+		else	// $which == 3
+			$attrsToKey = `listAnimatable -manipHandle`;
+
+		int $nItems = size($attrsToKey);
+		if ($useIKFK) {
+			ikFKHandleAttributes($attrsToKey, $ikFKMode);
+		}
+
+		for ($i = 0; $i < size($attrsToKey); $i++)
+		{
+			$count = evalEcho( $cmd + $attrsToKey[$i] );
+			$total = $total + $count;
+		}
+	}
+
+	if (($total == 0) && $hasObjects)
+	{
+		switch($which)
+		{
+			case 1:	// all keyable
+				warning( (uiRes("m_doSetKeyframeArgList.kActiveObjectsWarn")) );
+				break;
+			case 2: // all manip handles
+				warning( (uiRes("m_doSetKeyframeArgList.kCurrentManipWarn")) );
+				break;
+			case 3: // current manip handle
+				warning( (uiRes("m_doSetKeyframeArgList.kCurrentManipHandleWarn")) );
+				break;
+			case 4: // all manip handles or all keyable
+				warning( (uiRes("m_doSetKeyframeArgList.kCurrentManipActiveWarn")) );
+				break;
+		}
+	}
+
+	if (size($gSetIKFKStepTangentList)) {
+		resetStepTangents($gSetIKFKStepTangentList);
+		clear($gSetIKFKStepTangentList);
+	}
+
+	return $total;
+}

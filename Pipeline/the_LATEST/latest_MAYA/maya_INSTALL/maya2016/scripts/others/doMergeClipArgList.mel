@@ -1,0 +1,212 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+// Private utility functions
+
+// Return a list of all ghost shape nodes managed by a named scheduler
+proc string[] getAllGhosts( string $scheduler )
+{
+	string $ghosts[] = {};
+	for ( $clip in `clipSchedule -q -name $scheduler` )
+		$ghosts[ size($ghosts) ] = getGhostShapeForClip( $clip );
+	return $ghosts;
+}
+
+// Given a list of clips and corresponding clipGhostShape nodes,
+// delete all ghostshapes in the set of clips named in the third argument
+proc removeGhostsForMergedClips( string $allclips[], string $allghosts[], string $todelete[] )
+{
+	for ( $clip in $todelete )
+	{
+		int $inx = stringArrayFind( $clip, 0, $allclips );
+		if ( $inx > -1 && 
+			size( $allghosts[$inx] ) &&
+			objExists( $allghosts[$inx] ) )
+			delete $allghosts[ $inx ];
+	}
+}
+
+// Get the name of the scheduler managing the list of clips
+proc string getSchedulerForClips( string $clips[] )
+{
+	string $scheduler = "";
+	for ( $clip in $clips )
+	{
+		string $sch = getClipScheduler( $clip );
+		if ( size( $scheduler ) == 0 ) {
+			$scheduler = $sch;
+			continue;
+		}
+
+		if ( $sch != $scheduler )
+			error( (uiRes("m_doMergeClipArgList.kAllSelectedClips")) );
+	}
+
+	if ( size($scheduler) == 0 )
+		error( (uiRes("m_doMergeClipArgList.kNoValidScheduler")) );
+
+	return $scheduler;
+}
+
+proc disconnectIntermediatePoses(string $clips[])
+{
+	for ($clip in $clips)
+	{
+		string $ghost = getGhostShapeForClip($clip);
+		if (size($ghost) == 0)
+			continue;
+
+		string $src = ($ghost + ".intermediatePoses");
+		string $dest[] = `listConnections -p 1 -s 1 $src`;
+		if (size($dest) == 0)
+			continue;
+
+		disconnectAttr $src $dest[0];
+	}
+}
+
+// Main entry point/function
+
+//
+//
+//  Creation Date:  Nov, 1999
+//
+//  Procedure Name:
+//    doMergeClipArgList
+//
+//  Description:
+//    Merge (bake) the selected clips into a single clip.
+//
+//  Input Arguments:
+//     $version: The version of this option box.  Used to know how to interpret the $args array.
+//  
+//  $args
+//  Version 1
+//  [0]     $name : name of the baked clip
+//  [1]   $editor : editor containing the clip
+//  [2]     $keep : 0 = put merged version in trax
+//                  1 = put merged version in visor
+//
+global proc
+doMergeClipArgList( string $version, string $args[] )
+{
+	string $mergeName = $args[0];
+	string $clipEd    = $args[1];
+	int    $keep      = $args[2];
+
+	if (size($clipEd) == 0) {
+		string $errMsg = (uiRes("m_doMergeClipArgList.kCouldNotFindClipEdit"));
+		error (`format -s $clipEd $errMsg`);
+		return;
+	}
+
+	string $selectedClips[] = getSelectedClips("noOptions");
+	if ( size($selectedClips) == 0)
+		error( uiRes("m_clipPropertiesWindow.kNoClipsSelected") );
+
+	// First get the name of the scheduler for all clips.
+	// If all the clips don't use the same scheduler, getSchedulerForClips
+	// will throw an error, which will cause us to bail at this point.
+	string $scheduler = getSchedulerForClips( $selectedClips );
+
+	// Assuming now errors are encoundered, proceed to assemble the
+	// bakeClip command we will eventually issue.
+	string $cmd = "bakeClip ";
+
+	// First, append the index of each clip to the command string
+	for ( $clip in $selectedClips )
+	{
+		int $clipIndex = getClipIndex($clip, $scheduler);
+		$cmd += ("-ci " + $clipIndex + " ");
+	}
+
+	// If the user has specified the merged clip will be placed in the
+	// visor, add the -k option to bake clip.
+	if ( $keep )
+		$cmd += " -k ";
+
+	// 
+	if ( size($mergeName) )
+		$cmd += ("-name \""+$mergeName+"\" ");
+
+	string $character[] = `clipSchedule -q -ch $scheduler`;
+	$cmd += $character[0];
+
+	// If the original clips are being kept
+	if ( $keep )
+	{
+		// we can simply issue the bake cmd and exit
+		eval( $cmd );
+	}
+	else
+	{
+		// Otherwise, we need to do a little bit of extra work to make sure
+		// the new clip is added correctly to the depend graph (so that it
+		// can be ghosted). We also want to cleanup any old ghost that may be left over.
+		
+		// First we generate a list of all scheduled clips and their ghosts (if they exist).
+		string $pre[]    = `clipSchedule -q -name $scheduler`;
+		string $ghosts[] = getAllGhosts( $scheduler );
+
+		// We also check if any of the selected clips are ghosted, to determine if the 
+		// merged clip should also be ghosted
+		int $ghosted = ( clipsAreGhosted( $selectedClips ) != 0 ) ? true : false;
+
+		disconnectIntermediatePoses $selectedClips;
+
+		// Before proceeding with the merge, we remove ghosts for the clips we are about the delete
+		removeGhostsForMergedClips($pre, $ghosts, $selectedClips);
+
+		// Next, we perform the bake cmd
+		eval( $cmd );
+
+		// After the bake, a new clip will be added to the scheduler and the two
+		// original clips will have been deleted. To determine the name of the new
+		// clip, we ask the scheduler for all scheduled clips.
+		string $post[] = `clipSchedule -q -name $scheduler`;
+
+		// The clip that was added can be found by removing the names 
+		// of all clips prior to the merge from those after the merge.
+		string $added[]  = stringArrayRemoveExact( $pre, $post );
+
+		// Bail if no new clip was added
+		if ( size($added) == 0 || size($added[0]) == 0)
+			return;
+
+		// Lastly, hook up the new clip to the graph so it can be ghosted.
+		ghostAppendedClip($scheduler, { "", $added[0] }, 1);
+
+		// Grab the newly created ghost
+		string $ghost = getGhostShapeForClip($added[0]);
+
+		// If none of the original clips were ghosted, remove the ghost
+		// (but keep all the other connections needed to ghost the clip
+		// should the user decide to do this in the future).
+		if (size($ghost))
+		{
+			if (!$ghosted)
+				delete $ghost;
+			else
+				setAttr ( $ghost + ".intermediatePoses" ) ( size( $selectedClips ) - 1 );
+		}
+	}
+}

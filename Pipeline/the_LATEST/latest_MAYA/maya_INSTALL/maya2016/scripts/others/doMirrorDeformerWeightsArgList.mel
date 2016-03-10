@@ -1,0 +1,134 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//	Procedure Name:
+//		doMirrorDeformerWeightsArgList
+//
+//	Description:
+//		Mirror deformer weights
+//
+//	Input Arguments:
+//	$version: The version of this option box.  Used to know how to 
+//	interpret the $args array.
+//		"1" : $name
+//  
+//	$args
+//	Version 1
+//	[0]		$args: command flags for the mirror mode and the weight association method
+//  [1]		$deformer: the deformer to act on, or "" to determine from selection
+//  [2]		$create: whether to create a new deformer
+//
+//	Return Value:
+//		None
+//
+
+global proc int doMirrorDeformerWeightsArgList( string $version, string $args[])
+{
+	// Handle the different versions of arguments we accept and convert them
+	// into a set of flat command flags
+	//	
+	string $cmdArgs = $args[0];
+	string $srcDeformer = $args[1];
+	string $dstDeformer = "";
+	int $create = $args[2];
+
+	string $currentSelection[] = `ls -selection`;
+	if ($srcDeformer == "") {
+		string $allDeformers[] = findRelatedDeformer($currentSelection[0]);
+		string $deformers[] = `ls -type weightGeometryFilter $allDeformers`;
+		
+		if (size($deformers) > 1) {
+			error((uiRes("m_doMirrorDeformerWeightsArgList.kDeformerUnspecified")));
+		} else if (size($deformers) == 0) {
+			error((uiRes("m_doMirrorDeformerWeightsArgList.kNoDeformer")));			
+		}
+		$srcDeformer = $deformers[0];
+	}
+	string $deformerType = nodeType($srcDeformer);
+
+	if ($create) {
+		int $selSize = size($currentSelection);
+		string $destShape = "";
+		
+		// Get the destination shape.
+		if ($selSize == 1)
+			$destShape = $currentSelection[0];
+		else if ($selSize == 2)
+			$destShape = $currentSelection[1];
+		
+		string $destSet[] = `listConnections -type objectSet $srcDeformer`;
+		string $destSelection[];
+		string $s;
+		for ($s in $destSet)
+		{
+			string $members[] = `sets -q $destSet[0]`;
+			string $m;
+			for ($m in $members)
+			{
+				if (startsWith($m, $destShape))
+					$destSelection[size($destSelection)] = $m;
+			}
+		}
+		select -r $destSelection;
+		
+		// Create the appropriate deformer.
+		string $newDeformer[];
+		if ($deformerType == "cluster")
+			$newDeformer = `cluster -frontOfChain`;
+		else if ($deformerType == "softMod")
+			$newDeformer = `softMod -frontOfChain`;
+		else if ($deformerType == "wire")
+			$newDeformer = `wire -frontOfChain`;
+		else if ($deformerType == "jiggle")
+		{
+			$newDeformer = `duplicate`;
+			deformer -e -geometry $destShape $newDeformer[0];
+		}
+		else if (`objectType -isA weightGeometryFilter $srcDeformer`)
+		{
+			string $nodeType = nodeType($srcDeformer);
+			$newDeformer = `deformer -type $nodeType`;
+		} else {
+			warning((uiRes("m_doMirrorDeformerWeightsArgList.kDeformerTypeWarning")));
+			return 0;
+		}
+		$dstDeformer = $newDeformer[0];
+		
+		// Restore the selection.
+		select -r $destSelection;
+	}
+
+	// construct the command
+	//
+	string $cmd = ("copyDeformerWeights -sd " + $srcDeformer + " -ss " + $currentSelection[0]);
+	if (size($currentSelection) == 2)
+		$cmd += (" -ds " + $currentSelection[1]);
+	else
+		$cmd += (" -ds " + $currentSelection[0]);
+	if ($dstDeformer != "")
+		$cmd += (" -dd " + $dstDeformer);
+	
+	$cmd += $cmdArgs;
+	
+	evalEcho($cmd);
+	return 1;
+}

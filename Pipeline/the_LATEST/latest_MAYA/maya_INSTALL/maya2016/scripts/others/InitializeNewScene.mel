@@ -1,0 +1,174 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  29 Mar 1997
+//
+//  Description:
+//      This procedure runs at each file->new, to reset
+//		whatever needs to be reset then.
+//
+//  Input Arguments:
+//      none
+//
+//  Return Value:
+//      None
+//
+
+
+global proc InitializeNewScene()
+//
+// This script runs every time file->new is executed.  It
+// can be used to reset various objects in maya.  This
+// script runs whether or not maya is running in batch (prompt)
+// mode, and so should not contain UI code.
+//
+{
+	global int $gFilterUICusomFiltersLoaded;
+	
+	// Setup the time slider to its startup values.
+	//
+	float $min, $max; 
+	if( `optionVar -exists playbackMinDefault` ) {
+		$min = `optionVar -query playbackMinDefault`;
+	} else {
+		if( `optionVar -exists playbackMin` ) {
+			$min = `optionVar -query playbackMin`;
+		} else {
+			$min = 1.0;
+		}
+		optionVar -fv playbackMinDefault $min;
+	}
+	if( `optionVar -exists playbackMaxDefault` ) {
+		$max = `optionVar -query playbackMaxDefault`;
+	} else {
+		if( `optionVar -exists playbackMax` ) {
+			$max = `optionVar -query playbackMax`;
+		} else {
+			$max = 24.0;
+		}
+		optionVar -fv playbackMaxDefault $max;
+	}
+	
+	// set option vars for current scene
+	optionVar -fv playbackMin $min
+			  -fv playbackMax $max;
+	catch( `playbackOptions -min $min -max $max` );
+
+	// Set currentTime to be the min of the playback range.
+	//
+	float $time = 1.0;
+	catch( $time = `playbackOptions -q -min` );
+	catch( `currentTime $time` );  
+
+	// Set the animation start/end range
+	//
+	float $animStart, $animEnd;
+	if( `optionVar -exists playbackMinRangeDefault` ) {
+		$animStart = `optionVar -query playbackMinRangeDefault`;
+	} else {
+		if( `optionVar -exists playbackMinRange` ) {
+			$animStart = `optionVar -query playbackMinRange`;
+		} else {
+			$animStart = 1.0;
+		}
+		optionVar -fv playbackMinRangeDefault $animStart;
+	}
+	if( `optionVar -exists playbackMaxRangeDefault` ) {
+		$animEnd = `optionVar -query playbackMaxRangeDefault`;
+	} else {
+		if( `optionVar -exists playbackMaxRange` ) {
+			$animEnd = `optionVar -query playbackMaxRange`;
+		} else {
+			$animEnd = 48.0;
+		}
+		optionVar -fv playbackMaxRangeDefault $animEnd;
+	}
+
+	// set option vars for current scene
+	optionVar -fv playbackMinRange $animStart
+			  -fv playbackMaxRange $animEnd;
+	catch( `playbackOptions -animationStartTime $animStart 
+							-animationEndTime $animEnd` );
+
+	// Changing the current time unit has side
+	// effects so we need to update some optionVars
+	optionVar 
+		-fv playbackMin `playbackOptions -q -min`
+		-fv playbackMax `playbackOptions -q -max`;
+
+	// reset the default playblast file optionVar
+	//
+	optionVar -stringValue playblastFile "playblast";
+
+
+	//
+	// TODO: figure out if we still need to do this now 
+	// that default nodes are not removed by a delete 
+	// all.
+	//
+	//  Load in objects that are saved as preferences.
+	//
+	initDefaultFilters;
+	if (!`filterUICustomFiltersLoaded`) {
+		// Even if we do not get anything from prefs, we still consider the file loaded.
+		$gFilterUICusomFiltersLoaded = 1;
+		if (!`loadPrefObjects` ) {
+			warning (uiRes("m_InitializeNewScene.kPrefLoadFailed"));
+		}
+		filterUIUpdateCustomFilters;
+	}
+
+	//
+	// The renderGlobals start/end frame attributes are in ticks,
+	// which leads to some awkward values when the current time units are not
+	// Film frames.  The two lines below just make sure that they are 'nice'
+	// values after each File->New.
+	setAttr defaultRenderGlobals.startFrame 1;
+	setAttr defaultRenderGlobals.endFrame 10;
+	
+    // Fix for MAYA-16769.
+    // The default value of defaultResolution's pixelAspect attribute is 0,
+    // which leads to Global Setting Window resetting this value every time  
+    // on refresh and hence causing scene to be marked dirty.
+	// The line below just makes sure it is at the desired value after each 
+	// File->New.
+	setAttr defaultResolution.pixelAspect 1;
+	
+	setAttr -type "string" defaultHardwareRenderGlobals.resolution "ntsc_4d 646 485 1.333";
+
+    // Load render globals preset for all renderers, which loads the renderer
+    // specific node presets for common render globals nodes(defaultRenderGlobals, defaultResolution)
+    // and the globals nodes for the renderer itself.
+    // 
+    string $allRenderers[] = `renderer -query -namesOfAvailableRenderers`;
+    for($renderer in $allRenderers) {
+        loadPreferredRenderGlobalsPreset($renderer);
+    }
+
+	// Load render globals preset for Hardware 2.0
+	createObjectTypeFilters(0);
+
+	// Reset polygon selection constraints
+	//
+	polySelectConstraint -disable;
+}

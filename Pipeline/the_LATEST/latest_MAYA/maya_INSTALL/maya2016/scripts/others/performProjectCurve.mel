@@ -1,0 +1,348 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  April 24, 1997
+//
+//  Description:
+//      This script is defines the option box for the projectCurve menu item.
+//
+//  Input Arguments:
+//      int action
+//		  0 - show the option box dialog
+//        1 - just execute the projectCurve operation
+//
+//  Return Value:
+//      None.
+//
+
+
+proc setOptionVars (int $forceFactorySettings)
+{
+    projectCurveSetOptionVars( $forceFactorySettings );
+}
+
+global proc projectCurveSetup( string $parent,
+							   int $forceFactorySettings,
+							   string $goToTool )
+{
+	// retrieve option settings.
+	//
+	setOptionVars($forceFactorySettings);	
+	projectToolSetup( $forceFactorySettings, $goToTool );
+
+	setParent $parent;	
+
+	// query all the option vars.
+	//
+	int $curveRangePartial = `optionVar -q projectCurveRangePartial`+1 ;
+	radioButtonGrp -edit -select $curveRangePartial curveRangeRadioButtonGrp ;		
+	int $dir = `optionVar -q projectCurveAlongDirection`+1 ;
+	radioButtonGrp -edit -select $dir projectVectorTypeRadioButton ;
+		
+	// Global vs. local tolerance
+	int $useGlobalTol = `optionVar -q projectCurveUseGlobalTol`;
+	radioButtonGrp -e -select (2 - $useGlobalTol) useGlobalTolBtn;
+
+	//	Tolerance
+	//
+	floatSliderGrp -edit 
+		-v `optionVar -q projectCurveTolerance`
+		projectCurveTolSlider;
+
+	if( $useGlobalTol ) {
+		tabLayout -e -selectTab noSlider useGlobalTolTab;
+	}
+	else {
+		tabLayout -e -selectTab slider useGlobalTolTab;
+	}
+
+	if( "" != $goToTool ) { 
+		checkBoxGrp -e -v1 `scriptCtx -q -euc $goToTool`
+		  scriptToolExtraWidget;
+		checkBoxGrp -e -v2 `scriptCtx -q -lac $goToTool`
+		  scriptToolExtraWidget;
+	}
+}
+
+
+global proc projectCurveCallback( string $parent, int $doIt, string $goToTool )
+{
+	if( "" != $goToTool ) {
+		optionVar -iv projectCurveEuc `scriptCtx -q -euc $goToTool`;
+		optionVar -iv projectCurveLac `scriptCtx -q -lac $goToTool`;
+	}
+	setParent $parent ;
+
+	// get Values from controls.
+	//
+	int $curveRangePartial =
+		`radioButtonGrp -q -select curveRangeRadioButtonGrp` - 1 ;
+	optionVar -intValue projectCurveRangePartial $curveRangePartial ;
+
+	// project curve direction.
+	//
+	int $dir = `radioButtonGrp -q -select projectVectorTypeRadioButton` - 1 ;
+	optionVar -intValue projectCurveAlongDirection $dir  ;
+
+	// global vs. local tolerance
+	int $useGlobalTol = 2 - `radioButtonGrp -q -select useGlobalTolBtn`;
+	optionVar -intValue projectCurveUseGlobalTol $useGlobalTol;
+
+	// tolerance
+	optionVar -floatValue projectCurveTolerance
+		`floatSliderGrp -q -v projectCurveTolSlider`;
+
+	if( 1 == $doIt ) {
+		performProjectCurve( 0, $goToTool ) ; 
+		string $tmpCmd = "performProjectCurve( 0, \"" + $goToTool + "\")";
+		addToRecentCommandQueue $tmpCmd "Project Curve On Surface";
+	}
+	else if( $doIt ) {
+		setToolTo $goToTool;
+	}
+}
+
+proc projectCurveOptions( int $inTheTool, string $goToTool )
+{
+	//	Name of the command for this option box.
+	//
+	string $commandName = "projectCurve";
+
+	//	Build the option box actions.
+	//
+	string $callback = ($commandName + "Callback");
+	string $setup = ($commandName + "Setup");
+
+	global string $gOptionBoxActionToolItem;
+	$gOptionBoxActionToolItem = "modelWithToolProject";
+	global string $gOptionBoxActionToolItemCB;
+	$gOptionBoxActionToolItemCB = "projectToolScript 3";
+
+	//	Step 1:  Get the option box.
+	//	============================
+	string $layout = getOptionBox();
+	setParent $layout;
+	
+	//	Step 2:  Pass the command name to the option box.
+	//	=================================================
+	setOptionBoxCommandName($commandName);
+	
+	//	Step 3:  Activate the default UI template.
+	//	==========================================
+	setUITemplate -pushTemplate DefaultTemplate;
+
+	//	Step 4: Create option box contents.
+	//	===================================
+	
+	//	Turn on the wait cursor.
+	//
+	waitCursor -state 1;
+
+	tabLayout -scr true -tv false;
+	
+	string $parent = `columnLayout -adjustableColumn 1`;
+	
+	string $activeView		= (uiRes("m_performProjectCurve.kActiveView"));
+	radioButtonGrp -nrb 2 -select 1 -label (uiRes("m_performProjectCurve.kProjectAlong"))  -label1 $activeView  -da1 0
+		-label2 (uiRes("m_performProjectCurve.kSurface"))  -da2 1 projectVectorTypeRadioButton;
+
+	radioButtonGrp -nrb 2 -label (uiRes("m_performProjectCurve.kUseTolerance")) 
+	   -label1 (uiRes("m_performProjectCurve.kGlobal")) 
+	   -label2 (uiRes("m_performProjectCurve.kLocal")) 
+	   -on1 "tabLayout -e -selectTab noSlider useGlobalTolTab"
+	   -on2 "tabLayout -e -selectTab slider useGlobalTolTab"
+	   useGlobalTolBtn;
+
+	tabLayout -tabsVisible false useGlobalTolTab;
+	   columnLayout slider;
+		   floatSliderGrp -label (uiRes("m_performProjectCurve.kTolerance"))  
+			   -min 0.001 -max 1.0 -fmn 0.00001 -fmx 10.0
+			   projectCurveTolSlider;
+	   setParent ..;
+	   columnLayout noSlider;
+	   setParent ..;
+	setParent ..;
+
+   separator;
+	
+	radioButtonGrp -numberOfRadioButtons 2 
+		-label  (uiRes("m_performProjectCurve.kCurveRange"))  
+		-label1 (uiRes("m_performProjectCurve.kComplete"))  -da1 0
+		-label2 (uiRes("m_performProjectCurve.kPartial"))  -da2 1 -select 1 curveRangeRadioButtonGrp;
+
+	if( $inTheTool ) {
+		separator;
+		checkBoxGrp -ncb 2 -label (uiRes("m_performProjectCurve.kToolBehavior")) 
+		  -label1 (uiRes("m_performProjectCurve.kExit")) 
+		  -v1 off
+		  -on1 ("scriptCtx -e -euc true " + $goToTool)
+		  -of1 ("scriptCtx -e -euc false " + $goToTool)
+
+		  -label2 (uiRes("m_performProjectCurve.kAuto")) 
+		  -v2 on
+		  -on2 ("scriptCtx -e -lac true " + $goToTool)
+		  -of2 ("scriptCtx -e -lac false " + $goToTool)
+		  scriptToolExtraWidget;
+	}
+	//	Turn off the wait cursor.
+	//
+	waitCursor -state 0;
+	
+	//	Step 5: Deactivate the default UI template.
+	//  ===========================================
+	//
+	setUITemplate -popTemplate;
+
+	//	Step 6: Customize the buttons.  
+	//	==============================
+
+	//	'Apply' button.
+	//
+	string $applyBtn = getOptionBoxApplyBtn();
+	if( $inTheTool ) {
+		button -edit -label (uiRes("m_performProjectCurve.kProjectTool")) 
+			-command ($callback + " " + $parent + " 3 \"" + $goToTool + "\"")
+			$applyBtn;
+	}
+	else {
+		button -edit -label (uiRes("m_performProjectCurve.kProject")) 
+			-command ($callback + " " + $parent + " 1 \"" + $goToTool + "\"")
+			$applyBtn;
+	}
+
+	//	'Save' button.
+	//
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + $parent + " 0 \"" +
+				  $goToTool + "\"; hideOptionBox")
+		$saveBtn;
+
+	//	'Reset' button.
+	//
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + " " + $parent + " 1 \"" + $goToTool + "\"")
+		$resetBtn;
+
+	//	Step 7: Set the option box title.
+	//	=================================
+	//
+	if( $inTheTool ) {
+		setOptionBoxTitle (uiRes("m_performProjectCurve.kSurfaceToolTitle"));
+	}
+	else {
+		setOptionBoxTitle (uiRes("m_performProjectCurve.kSurfaceTitle"));
+	}
+
+	//	Step 8: Customize the 'Help' menu item text.
+	//	============================================
+	//
+	setOptionBoxHelpTag( "ProjectCurveOnSurface" );
+
+	//	Step 9: Set the current values of the option box.
+	//	=================================================
+	//
+	eval ($setup + " " + $parent + " 0 \"" + $goToTool + "\"");	
+	
+	//	Step 10: Show the option box.
+	//	=============================
+	//
+	showOptionBox();
+}
+
+proc string projectCurveHelp()
+{
+	string $help = "  Command: Project Curve - project a curve onto a surface\n"
+		+ "Selection: curves to project and surfaces onto which to project.";
+    return $help ;
+}
+
+proc string assembleCmd()
+//
+//	Description :
+//		To assemble projectCurve proc.
+//
+{
+	setOptionVars(false);
+
+	string $cmd = "projectCurvePreset"  ;
+	$cmd = $cmd + "(" ;  
+
+	int $history = `constructionHistory -q -tgl`;
+	$cmd = $cmd + $history ;  
+	$cmd = $cmd + "," ;  
+
+	int $curveRangePartial = `optionVar -q projectCurveRangePartial` ;
+	$cmd = $cmd + $curveRangePartial ;  
+	$cmd = $cmd + "," ;  
+
+	int $viewDir = `optionVar -q projectCurveAlongDirection` ;
+	$cmd = $cmd + $viewDir ;
+	$cmd = $cmd + "," ;  
+  
+	float $tol = `optionVar -q projectCurveTolerance`;
+	if( `optionVar -q projectCurveUseGlobalTol` ) {
+		$tol = `optionVar -q positionalTolerance`;
+	}
+	$cmd = $cmd + $tol ;
+  
+	$cmd = $cmd + ")" ;  
+	return $cmd ;
+
+}
+
+global proc string performProjectCurve( int $action, string $goToTool )
+//
+//	Description :
+//      0 - Execute the command.
+//      1 - Show the option box dialog.
+//      2 - Return the command.
+//      3 - Show the tool option box dialog.
+{
+	int $inTheTool = false;
+	if( 3 == $action ) {
+		$action = 1;
+		$inTheTool = true;
+	}
+
+	string $cmd = "" ;
+	switch( $action ) {
+
+	  case 0 :
+		$cmd = `assembleCmd`;
+		eval $cmd ;
+		break ;
+
+	  case 1 :
+		projectCurveOptions( $inTheTool, $goToTool );
+		break ;
+
+	  case 2 :
+	  default:
+		$cmd = `assembleCmd` ;
+		break ;
+	}
+	return $cmd ;
+}
+

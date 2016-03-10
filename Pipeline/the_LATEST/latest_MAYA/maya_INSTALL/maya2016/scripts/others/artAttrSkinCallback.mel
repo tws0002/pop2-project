@@ -1,0 +1,950 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  June 2000
+//
+//  Description:
+//      Option tool callbacks for Artisan Select Paint tool.
+//
+//
+//  Procedure Name:
+//         artSelectCallback 
+//
+//  Description:
+//      Initialize the option values.
+//
+//  Input Arguments:
+//
+//  Return Value:
+//      None.
+//
+// 
+
+global int $artSkinWeightSliderCallbackEnable = true;// Flag used to prevent reentrency when the weight
+                                                        // slider value is adjusted
+
+global proc artSkinUpdateWeightFieldFromSelection( string     $artCommand )
+{
+    // Update the Weight field value
+    // This procedure must be called whenever the paint mode is changed or
+    // when the selection change
+
+    string    $currContext = `currentCtx`;
+    int $paintMode = `eval( $artCommand + " -q -skinPaintMode "+ $currContext )`;
+    
+    //paintMode: 1 == paint skin weights, 0 == marquee select, 2 == paint select   
+    if( !($paintMode==1) )
+    {
+        global string $artSkinCurrentInfluence;
+        
+        if ( "" == $artSkinCurrentInfluence ) 
+        { 
+            return;
+        }
+        
+        if( size( `ls -sl -type float3` ) == 0 )
+        {
+            return;
+        }
+        
+        string $skinClusters[] =`artSkinFindSkinClusterNodes`;
+        if(size($skinClusters)>0)
+        {
+            
+            // We have a skinCluster node.
+            string $skinCluster = $skinClusters[0];
+            
+                
+            string $cmd = "skinPercent -transform "+ $artSkinCurrentInfluence + " -q  "+ $skinCluster;
+                            
+            float $value;
+            catchQuiet( $value = `eval $cmd` );
+            
+
+            global int $artSkinWeightSliderCallbackEnable;
+
+            $artSkinWeightSliderCallbackEnable = false;
+            floatSliderGrp -e -value $value    artAttrValueSlider;
+            $artSkinWeightSliderCallbackEnable = true;
+
+        }
+    }
+}
+
+global proc artSkinSelectInfluence(
+    string $artCommand,
+    string $influence
+)
+// 
+//    Description:
+//        Find all the selected skinCluster (not just the active one)
+//        nodes that are influenced by $influence and connect the message
+//        attribute from the $influence transform to the .ptt attribute of the
+//        skinCluster node. 
+//
+{
+
+    if(`optionMenuGrp -exists artAttrSkinWeightType`)
+    {
+        int $currWeightType = `optionMenuGrp -q -sl artAttrSkinWeightType`;
+        if(($currWeightType != 1) && ($influence != "blendWeight")) // 1 == paint skin weight, 2 == paint DQ blend weight
+        {
+            return;
+        }
+    }
+    
+    global string $artSkinCurrentInfluence;
+    
+    string $currContext = `currentCtx`;
+    int $paintMode = `artAttrSkinPaintCtx -q -skinPaintMode $currContext`; 
+
+
+    // Make the proper connection.
+    string $connections[];
+    string $connection;
+
+    $artSkinCurrentInfluence = $influence;
+
+    // Update the scene and List selections
+    artSkinPaintInflChanged( $influence );
+    
+    // Get all the paintable nodes.
+    string $cmd = ($artCommand + " -q -objattrArray `currentCtx`");
+    string $paintClusters = `eval $cmd`;
+
+    string $buffer[];
+    tokenize( $paintClusters, " ", $buffer );
+
+    // Find the skin cluster is connected to the influence node.
+    string    $item;
+    for ( $item in $buffer ) {
+        string $itemElems[];
+        tokenize( $item, ".", $itemElems );
+        int $nbElem = size($itemElems);
+        if ( ( $nbElem < 3 ) || ( $itemElems[2] != "paintWeights") ) {
+            continue;
+        }
+        
+        // We have the skinCluster node.
+        string $skinCluster = $itemElems[1];
+        string $skinAttr     = $itemElems[0] + "." + $itemElems[1] + "." + $itemElems[2];
+
+        int $foundConnection = false;
+        $connections = `listConnections ($skinCluster + ".matrix")`;
+        
+        for ( $connection in $connections ) {
+            if ($connection == $influence) {
+                $foundConnection = true;
+                break;
+            }
+        }
+        
+        // Delete any existing connection to the 
+        // .ptt attribute of the skinCluster.
+        $connections = `listConnections $skinCluster`;
+        for( $connection in $connections ) {
+            if ($connection != "") {
+                if (isConnected(($connection + ".message"),($skinCluster + ".ptt"))) {
+                    disconnectAttr(($connection + ".message"), ($skinCluster + ".ptt"));
+                    
+                    if( $paintMode == 1)
+                    {
+                        hilite -u $connection;
+                    }
+                }
+            }
+        }
+            
+        if ($influence == "blendWeight") {
+            
+            connectAttr ($skinCluster  + ".message") ($skinCluster + ".ptt");
+
+            // Notify the context about the change.
+            string $cmd = ($artCommand + " -e -pas \"" + $skinAttr + "\" `currentCtx`");
+            eval( $cmd );
+        }
+            
+        // Now make the connection to the new influence node.
+        if ($foundConnection && size($influence) != 0) {
+            connectAttr ($influence + ".message") ($skinCluster + ".ptt");
+            
+            if( $paintMode == 1 )
+            {
+                hilite $influence;
+            }
+
+            // Notify the context about the change.
+            string $cmd = ($artCommand + " -e -pas \"" + $skinAttr + "\" `currentCtx`");
+            eval( $cmd );
+        }
+    }
+    
+    $cmd = ($artCommand + " -e -inf \"" + $influence + "\" `currentCtx`");
+    eval( $cmd );
+    
+    artSkinUpdateWeightFieldFromSelection( $artCommand );
+
+}
+
+global proc artSkinRevealSelected(string  $artCommand)
+//  Description:
+//      Called when the "reveal selected" button is pushed.
+//      If the user has an influence selected, this will display the
+//      influence in the influence list.
+{
+    global string $gArtSkinInfluencesList;
+    global string $artSkinCurrentInfluence;
+    
+    string $inflToReveal;
+    if($artSkinCurrentInfluence != "") {
+        $inflToReveal = $artSkinCurrentInfluence;
+    }
+    else {
+        error( (uiRes("m_artAttrSkinCallback.kRevealSelectedNoInfluenceSelected")));
+        return;
+    }
+    
+    treeView -e -showItem $inflToReveal $gArtSkinInfluencesList;
+    
+}
+
+global proc artSkinSelectVerticesForInfluence(string  $infl,int $add,int $remove)
+{
+    string $skinClusters[] = `artSkinFindSkinClusterNodes`;
+    if(size($skinClusters) > 0) 
+    {
+        string $skinCluster = $skinClusters[0];
+
+        string $cmd = "skinCluster -e ";
+
+        $cmd += "-selectInfluenceVerts ";
+        $cmd += $infl;
+        $cmd += " ";
+        if($add)
+            $cmd += "-ats ";
+        else if($remove)
+            $cmd += "-rfs ";
+
+        $cmd +=  $skinCluster;
+        evalEcho($cmd);
+    }
+}
+
+global proc artSkinSelectVertices(string  $artCommand,int $add,int $remove)
+//
+//  Description:
+//      Called when the "select vertices" button is pushed.
+//      This will select the vertices being influenced by the joint the user is
+//      currently painting.
+{
+
+    global string $gArtSkinInfluencesList;
+
+    string $curList[] = `treeView -q -si $gArtSkinInfluencesList`;
+
+    if(size($curList)<=0) 
+    {
+        error( (uiRes("m_artAttrSkinCallback.kNoInfluenceSelected")));
+        return;
+    }
+
+    string $skinClusters[] = `artSkinFindSkinClusterNodes`;
+    if(size($skinClusters) > 0) 
+    {
+        string $skinCluster = $skinClusters[0];
+
+        string $cmd = "skinCluster -e ";
+        for($sel in $curList)
+        {
+            $cmd += "-selectInfluenceVerts ";
+            $cmd += $sel;
+            $cmd += " ";
+        }
+
+        if($add)
+            $cmd += "-ats ";
+        else if($remove)
+            $cmd += "-rfs ";
+
+        $cmd +=  $skinCluster;
+        evalEcho($cmd);
+    }
+    
+}
+
+global proc artAttrSkinNormalizeModeCallback(string $artCommand)
+{
+    int $currNormalizationMode = `optionMenuGrp -q -sl artAttrSkinNormalizationMode`;
+    string $skinClusters[] = artSkinFindSkinClusterNodes();
+    if ( size($skinClusters) <= 0 ) {
+        return;
+    }
+
+    int $forceNormalize = 0;
+    string $yesStr = (uiRes("m_artAttrSkinCallback.kArtAttrSkinNormalizeWeightsConfirmYes")) ;
+    string $noStr = (uiRes("m_artAttrSkinCallback.kArtAttrSkinNormalizeWeightsConfirmNo"));
+    if(`confirmDialog -title (uiRes("m_artAttrSkinCallback.kArtAttrSkinNormalizeWeightsConfirmTitle")) 
+                  -message (uiRes("m_artAttrSkinCallback.kArtAttrSkinNormalizeWeightsConfirm"))
+                  -button  $yesStr
+                  -button  $noStr -defaultButton $yesStr
+                  -cancelButton $noStr -dismissString $noStr` == $yesStr)
+    {
+        $forceNormalize = 1;
+    }
+
+    string $plug = $skinClusters[0] + ".nw";
+    if($currNormalizationMode == 1) {   //Normalization Off
+        setAttr $plug 0;
+    }
+    else if($currNormalizationMode == 2) {   //Interactive normalization
+        setAttr $plug 1;
+    }
+    else {  //post normalization
+        setAttr $plug 2;
+    }
+
+    if($forceNormalize)
+    {
+        string $cmd = "skinCluster -e -fnw ";
+        $cmd += $skinClusters[0];
+        evalEcho($cmd);
+    }
+}
+
+global proc artAttrSkinWeightTypeCallback(string $artCommand)
+{
+    int $exists = `optionMenuGrp -exists artAttrSkinWeightType`;
+    if (!$exists)
+        return;
+
+    int $currWeightType = `optionMenuGrp -q -sl artAttrSkinWeightType`;
+    global string $gArtSkinInfluencesList;
+    if($currWeightType == 1) 
+    {
+        string $selectedInfs[] = `treeView -q -si $gArtSkinInfluencesList`;
+        if(size($selectedInfs) > 0)
+        {
+            artSkinSelectInfluence($artCommand,$selectedInfs[0]);
+        }
+        radioButtonGrp -e -enable true    artAttrSkinPaintModeRadioButton;
+    }
+    else if($currWeightType == 2) 
+    {
+        radioButtonGrp -e -enable false    artAttrSkinPaintModeRadioButton;
+
+        artSkinSelectInfluence($artCommand,"blendWeight");
+    }
+}
+
+global proc artSkinInvertSelectionCallback(string $artCommand)
+//  Description:
+//      Called when the "Invert selection" button is pressed
+//
+{
+    global string $gArtSkinInfluencesList;
+
+    string $allInfs[] = `treeView -q -children "" $gArtSkinInfluencesList`;
+    for($inf in $allInfs) 
+    {
+        int $sel = (`treeView -q -itemSelected $inf $gArtSkinInfluencesList`)? 0 : 1;
+        treeView -e -si $inf $sel $gArtSkinInfluencesList;
+    }
+
+    artSkinSelectInfluence($artCommand,""); // By passing a "" influence as second parameter, all the selected influences will be soft selected (which makes sense here)
+}
+
+global proc artSkinLockRefreshUI(string $infl)
+{
+    if (`attributeQuery -n $infl -ex liw`) {
+        global string $gArtSkinInfluencesList;
+
+        // Make sure the corresponding item is visible ...
+        treeView -edit -buttonVisible $infl 1 1 $gArtSkinInfluencesList;
+
+        // ... and set the icon accordingly
+        int $lockValue = (`getAttr ($infl + ".liw")`)? 1 : 0;
+        string $icon = ($lockValue)? "Lock_ON.png" : "Lock_OFF_grey.png";
+        treeView -edit -image $infl 1 $icon $gArtSkinInfluencesList;
+    }
+}
+
+global proc artSkinLockInfPassedIn(string $infl, int $lockValue)
+{
+    if (`attributeQuery -n $infl -ex liw`) {
+        string $cmdString = ("setAttr " + $infl + ".liw ");
+        $cmdString += $lockValue;
+
+        evalEcho $cmdString;
+
+        artSkinLockRefreshUI($infl);
+    }
+}
+
+global proc artSkinLockInf(
+    string     $artCommand , int $lockValue
+)
+//
+//  Description:
+//      Called when the lock influence button is pushed.
+//      It locks the selected influences. It also updates the lock 
+//        button in the list.
+{
+
+    global string $gArtSkinInfluencesList;
+    
+    string $skinClusters[] = `artSkinFindSkinClusterNodes`;
+
+    if(size($skinClusters)>0)
+    {
+        // We have the skinCluster node.
+        string $skinCluster = $skinClusters[0];
+
+        string    $selectedInfs[] = `treeView -q -si $gArtSkinInfluencesList`;
+
+        for($selectedInf in $selectedInfs) {
+
+            if (`attributeQuery -n $selectedInf -ex liw`) {
+               artSkinLockInfPassedIn($selectedInf, $lockValue);
+            }
+            else {
+                // No lockWeight attribute - print an error message.
+                string $format = (uiRes("m_artAttrSkinCallback.kNoLockWeights"));
+                string $errMsg = `format -stringArg $selectedInf $format`;
+                error( $errMsg );
+            }
+        }
+    }
+}
+
+global proc artSkinInvLockInf(
+    string $artCommand,
+    int    $lockValue
+)
+//
+//  Description:
+//      Called when the lock influence button is pushed.
+//      It locks/unlock the inverse selected influences 
+//      and updates the list buttons accordingly.
+{
+
+    global string $gArtSkinInfluencesList;
+    
+    string $skinClusters[] = `artSkinFindSkinClusterNodes`;
+    if (size($skinClusters) == 0)
+        return;
+
+    // We have the skinCluster node.
+    string $skinCluster = $skinClusters[0];
+    if (size($skinCluster) == 0)
+        return;
+
+    string $all[] = `treeView -q -children "" $gArtSkinInfluencesList`;
+    string $sel[] = `treeView -q -si $gArtSkinInfluencesList`;
+    string $inv[] = stringArrayRemove($sel, $all);
+    for($item in $inv)
+    {
+        if (`attributeQuery -n $item -ex liw`) {
+            artSkinLockInfPassedIn($item, $lockValue);
+        }
+        else
+        {
+                // No lockWeight attribute - print an error message.
+                string $format = ("^1s has no lockWeights attribute.");
+                string $errMsg = `format -stringArg $item $format`;
+                error( $errMsg );
+        }
+    }
+}
+
+global proc artAttrMoveInfluence()
+{
+    string $influences[];
+    artSkinInflGetSelection( $influences, 1 );
+    if( size($influences) == 0 )
+        return;
+
+    string $clusters[] = `artSkinFindSkinClusterNodes`;
+    doMoveSkinInfluences( $clusters, $influences );
+}
+
+global proc artAttrShowInfluences(string $artCommand)
+{
+    string $sel[] = `ls -sl`;
+    if(size($sel) > 0) {
+        string $skinCluster = findSkinClusterFromSelectedComponent($sel[0]);
+        if($skinCluster == "")
+            return;
+        string $transforms[] = `skinPercent -ignoreBelow 1e-6 -q -t $skinCluster`; 
+        
+        string    $currContext = `currentCtx`;   
+        int $paintMode = `eval( $artCommand + " -q -skinPaintMode "+ $currContext )`;
+   
+        // paintMode: 1 == skin weight paint, 0 == marquee select, 2 == paint select
+        if( !($paintMode==1) )
+        {
+            for($transform in $transforms) {
+                select -add $transform;
+            }
+        }
+        else 
+        {
+            global string $gArtSkinInfluencesList;
+            for($transform in $transforms) {
+                treeView -e -selectItem $transform 1 $gArtSkinInfluencesList;
+            }
+            
+        }
+    }
+    else {
+        error((uiRes("m_artAttrSkinCallback.kArtAttrSkinShowInfluenceNoSelection")));
+        return;
+    }
+}
+
+global proc artSkinSetSelectionValue( float $value,    int $intermediateChange, string     $artCommand, string    $currTool )
+// Caled when either the "value slider" value is changed 
+// This will assign the new weight value for the selected influence to the currently selected vertices
+// This function will only work if the following premisses are met
+// - Current mode is Select not Paint
+// - there is 1 and only one influence selected
+// - some vertices are selected
+// InterediateMove is used to indicate that the change 
+// should not be recorded on the undo stack as it is generated by a cursor drag
+// Undos are only preserved when this parameter is false (on slider release)
+{
+
+    global int $artSkinWeightSliderCallbackEnable = true;
+    
+    if( !$artSkinWeightSliderCallbackEnable)
+    {
+        return;
+    }
+
+    global int $artSkinSetSelectionValueIntermediateAllowed; 
+
+    if( $intermediateChange &&!$artSkinSetSelectionValueIntermediateAllowed )
+    {
+        // This condition prevents Intermediate calls to stack-up or to be executed after 
+        // the final change
+        return; 
+    }
+    $artSkinSetSelectionValueIntermediateAllowed = false;
+
+    string    $currContext = `currentCtx`;
+    int $paintMode = `eval( $artCommand + " -q -skinPaintMode "+ $currContext )`;
+   
+   // paintMode: 1 == skin weight paint, 0 == marquee select, 2 == paint select
+    if( !($paintMode==1) )
+    {
+        global string $artSkinCurrentInfluence;
+        
+        if ( "" == $artSkinCurrentInfluence ) 
+        { 
+            // Nothing selected - print a warning message.
+            string $warn = (uiRes("m_artAttrSkinCallback.kNoInfluence2"));
+            warning( $warn );
+            return;
+        }
+        
+        
+        
+        string $skinClusters[] = `artSkinFindSkinClusterNodes`;
+        if(size($skinClusters)>0)
+        {
+        
+            // We have a skinCluster node.
+            string $skinCluster = $skinClusters[0];
+            string $lCmd =  "skinPercent -transformValue "+$artSkinCurrentInfluence +" "+ $value +" "+ $skinCluster;
+        
+            global int $artSkinSetSelectionValueUndoChunk = 0; // True if inside a manipulation chunk
+            
+            if( $intermediateChange )
+            {
+                int $undoState = `undoInfo -q -state`;
+
+                if( $undoState && !$artSkinSetSelectionValueUndoChunk )
+                {
+                    // First drag event. Openning an undo chunk that will contain the cursor drag sequence
+                    // If we undo, it is to the current state that we want to revert
+                    $artSkinSetSelectionValueUndoChunk = 1;
+                    undoInfo -openChunk;
+                    catchQuiet( eval( $lCmd ) );
+                }
+                else
+                {
+                    // During intermediate drag events Undos are suspended because useless 
+                    // they just waste a large amount of memory
+                    undoInfo -swf off;
+                    catchQuiet( eval( $lCmd ) );  
+                    undoInfo -swf $undoState;
+                }
+            }
+            else
+            { 
+                evalEcho( $lCmd );  
+                
+                if( $artSkinSetSelectionValueUndoChunk )
+                {
+                    undoInfo -closeChunk;
+                    $artSkinSetSelectionValueUndoChunk = 0;
+                }
+            }
+        }
+    }
+    else if( !$intermediateChange )
+    {
+        // Invoque the default callback
+        string $lCmd = $artCommand + " -e -value " + $value+" `currentCtx`";
+        
+        eval $lCmd;
+
+    }
+}
+
+global int $artSkinSetSelectionValueIntermediateAllowed = 0; 
+
+global proc artSkinSetSelectionValueIntermediate( float $value,    string     $artCommand, string    $currTool )
+{
+    // This function queue a call to artSkinSetSelectionValue to be executed on idle
+    // It must be invoqued when the weight slider is moved in order to provide feedback in the viewer
+    // Calls are queued to be executed on idle to prevent from jamming Maya
+    global int $artSkinSetSelectionValueIntermediateAllowed; 
+
+    // Only queue a call if there is no calls already queued
+    if( !$artSkinSetSelectionValueIntermediateAllowed )
+    {
+        $artSkinSetSelectionValueIntermediateAllowed = 1;
+
+        string $cmd = ("artSkinSetSelectionValue( " + $value + ", true, \"" + $artCommand + "\", \"" + $currTool + "\")" );
+        evalDeferred($cmd);
+    }
+
+}
+
+global proc artAttrSkinPaintSelectModeChange(int $paintSelectMode, string $artCommand )
+{
+    //paintSelectMode: 1 == add, 2 == remove, 3 == toggle
+    string $currContext = `currentCtx`;
+    artAttrSkinPaintCtx -e -paintSelectMode $paintSelectMode $currContext; 
+}
+
+global proc artAttrSkinSetPaintMode(int $paintMode)
+{
+    // paintMode:  1 == paint skin weight, 0 == marquee select, 2 == paint select
+    if($paintMode == 1) {
+         radioButtonGrp -e -select 1 artAttrSkinPaintModeRadioButton;
+    }
+    else if($paintMode == 0) {
+        radioButtonGrp -e -select 2 artAttrSkinPaintModeRadioButton;
+    }
+    else if($paintMode == 2) {
+        radioButtonGrp -e -select 3 artAttrSkinPaintModeRadioButton;
+    }
+        
+    artAttrSkinPaintModePaintSelect($paintMode, "artAttrSkinPaintCtx");
+    
+}
+
+global proc artAttrSkinNextPaintMode()
+{
+    string $currContext = `currentCtx`;
+    int $paintMode = `artAttrSkinPaintCtx -q -skinPaintMode $currContext`;
+    // paintMode:  1 == paint skin weight, 0 == marquee select, 2 == paint select
+    if($paintMode == 1) {
+         radioButtonGrp -e -select 2 artAttrSkinPaintModeRadioButton;
+        $paintMode = 0;
+    }
+    else if($paintMode == 0) {
+        radioButtonGrp -e -select 3 artAttrSkinPaintModeRadioButton;
+        $paintMode = 2;
+    }
+    else if($paintMode == 2) {
+        radioButtonGrp -e -select 1 artAttrSkinPaintModeRadioButton;
+        $paintMode = 1;
+    }
+        
+    artAttrSkinPaintModePaintSelect($paintMode, "artAttrSkinPaintCtx");
+}
+
+global proc artAttrSkinPrevPaintMode()
+{
+    string $currContext = `currentCtx`;
+    int $paintMode = `artAttrSkinPaintCtx -q -skinPaintMode $currContext`;
+    // paintMode:  1 == paint skin weight, 0 == marquee select, 2 == paint select
+    if($paintMode == 1) {
+         radioButtonGrp -e -select 3 artAttrSkinPaintModeRadioButton;
+        $paintMode = 2;
+    }
+    else if($paintMode == 0) {
+        radioButtonGrp -e -select 1 artAttrSkinPaintModeRadioButton;
+        $paintMode = 1;
+    }
+    else if($paintMode == 2) {
+        radioButtonGrp -e -select 2 artAttrSkinPaintModeRadioButton;
+        $paintMode = 0;
+    }
+        
+    artAttrSkinPaintModePaintSelect($paintMode, "artAttrSkinPaintCtx");
+}
+
+global proc setSelectModeOnObject(string $item, string $mask)
+//
+// Changes the selection/display state on this object to allow
+// selection of the specified selection mask type.
+{
+    string $selectCmd;
+
+    if (`selectMode -q -object`) {
+        hilite $item;
+        selectType -ocm -alc false;
+        $selectCmd = "selectType -ocm -" + $mask + " true;";
+    } else {
+        selectType -ocm -alc false;
+        $selectCmd = "selectType -" + $mask + " true;";
+        if (!`selectMode -q -preset`) {
+            $selectCmd = $selectCmd + "hilite " + $item + ";";
+        }
+    }
+    eval $selectCmd;
+}
+
+global proc artAttrSkinSelectGeometry(string $artCommand)
+{
+    global string $gLastPaintedGeomName;
+    if(($gLastPaintedGeomName != "")&&(`objExists $gLastPaintedGeomName`)) 
+    {
+        select -r $gLastPaintedGeomName;
+    }
+}
+
+global proc artAttrSkinPaintModePaintSelect( int $paintMode, string $artCommand )
+{
+    global string $gLastPaintedGeomName;
+    
+    // Callback invoqued by the Paint/Select redio buttons
+    // This procedure forward the UI state to the artCommand
+    string $currContext = `currentCtx`;
+
+    
+    artAttrSkinPaintCtx -e -skinPaintMode $paintMode $currContext; 
+    
+    global string $artSkinCurrentInfluence;
+    global string $gArtSkinInfluencesList;
+    artAttrSkinPaintCtx -e -inf $artSkinCurrentInfluence $currContext; 
+    
+    string $curList[] = `treeView -q -si $gArtSkinInfluencesList`;
+    //Reveal selected causes other selected items to become unselected.
+    //so only do it if the user has only 1 item selected.
+    if(size($curList) == 1)
+        treeView -e -showItem $artSkinCurrentInfluence $gArtSkinInfluencesList; 
+    
+
+    radioButtonGrp -e -en1 ($paintMode == 1) -en2 ($paintMode == 1) artAttrOperRadioButton0;
+    radioButtonGrp -e -en1 ($paintMode == 1) -en2 ($paintMode == 1) artAttrOperRadioButton1;
+
+    radioButtonGrp -e -enable ($paintMode == 2) artAttrSkinPaintSelectModeRadioButton;
+
+    int $enableValueControls = true;
+
+    if( $paintMode == 1)
+    {
+        $enableValueControls = `radioButtonGrp -q -da2 artAttrOperRadioButton1`;
+        
+        // Restore the slider value
+        string $cmd = ($artCommand + " -q -value " + `currentCtx` );
+        floatSliderGrp -e -v `eval $cmd` artAttrValueSlider;
+        artAttrUpdatePaintValueSlider $artCommand;
+        
+        optionMenuGrp -e -enable true artAttrSkinWeightType;
+    }
+    else
+    {
+        string $skinClusters[] = `artSkinFindSkinClusterNodes`;
+        if(size($skinClusters) > 0) 
+        {
+            string $outGeomPlug = $skinClusters[0] + ".outputGeometry[0]";
+            string $conn[] = `listConnections -p 1 -s 0 -d 1 $outGeomPlug`;
+            if(size($conn) >0) {
+                string $strs[];
+                tokenize($conn[0],".",$strs);
+                if(`objectType -isa shape $strs[0]`) 
+                {
+                    $gLastPaintedGeomName = $strs[0];
+                }
+            }
+        }
+
+        if($gLastPaintedGeomName != "") {
+            setSelectModeOnObject($gLastPaintedGeomName, "vertex");
+        }
+
+        if( $paintMode == 0)    //0 == marquee select, for paint select we don't want to put the influences onto the selection list.
+            artSkinUpdateSelectionStateAfterListRebuild( );
+        artSkinUpdateWeightFieldFromSelection $artCommand;
+        optionMenuGrp -e -enable false artAttrSkinWeightType;
+    }
+
+    artAttrUpdateValueControls ( $enableValueControls );
+    artAttrSkinJointMenuRebuild( $artCommand );
+}
+
+global proc artSkinPaintCallback(
+    string $artCommand,
+    string $currTool
+)
+//
+//    Description:
+//        Skin Weights Paint tool callbacks.
+//
+{
+    global string $gArtSkinInfluencesList;
+
+    // Define the common callbacks.    
+    artAttrCommonCallback( $artCommand, $currTool );
+
+    // Define the button callback.
+/*
+    button -e
+        -c ( "artSkinLockInf " + $artCommand + " 1")
+    artSkinLockInfButton;
+
+    button -e
+        -c ( "artSkinLockInf " + $artCommand + " 0")
+    artSkinUnlockInfButton;
+*/
+
+    symbolButton -e
+        -c ( "artSkinInvertSelectionCallback " + $artCommand )
+    artSkinInvertSelection;
+    
+    symbolButton -e
+        -c ( "artSkinRevealSelected " + $artCommand )
+    artSkinRevealSelectedButton;
+
+    treeView -e -sc artSkinInflListChanging $gArtSkinInfluencesList;
+    treeView -e -scc ("artSkinInflListChanged "+$artCommand) $gArtSkinInfluencesList;
+
+    symbolButton -e 
+        -c "weightHammerVerts"
+    artAttrHammerButton;
+    
+    symbolButton -e 
+        -c "artAttrMoveInfluence"
+    artAttrMoveInfluenceButton;
+    
+    symbolButton -e 
+        -c "artAttrSkinWeightCopy"
+    artAttrSkinWeightCopyButton;
+    
+    symbolButton -e 
+        -c "artAttrSkinWeightPaste"
+    artAttrSkinWeightPasteButton;
+    
+    symbolButton -e
+        -c ("artAttrShowInfluences " + $artCommand)
+    artAttrShowInfluenceButton;
+
+    button -e -c ("artAttrSkinSelectGeometry " + $artCommand)
+    artSkinSelectGeometry;
+        
+    optionMenuGrp  -e -cc ("artAttrSkinNormalizeModeCallback " + $artCommand) artAttrSkinNormalizationMode;
+    
+    optionMenuGrp  -e -cc ("artAttrSkinWeightTypeCallback " + $artCommand) artAttrSkinWeightType;
+        
+    floatSliderGrp -e  
+            -dragCommand ("artSkinSetSelectionValueIntermediate #1 "+$artCommand+" "+ $currTool)
+            -changeCommand ("artSkinSetSelectionValue #1 false "+$artCommand+" "+ $currTool)
+        artAttrValueSlider;
+                
+    radioButtonGrp -e
+        -on1    ("artAttrSkinPaintModePaintSelect 1 "+$artCommand)
+        -on2    ("artAttrSkinPaintModePaintSelect 0 "+$artCommand)
+        -on3    ("artAttrSkinPaintModePaintSelect 2 "+$artCommand)
+    artAttrSkinPaintModeRadioButton;
+                
+    radioButtonGrp -e
+        -on1    ("artAttrSkinPaintSelectModeChange 1 "+$artCommand)
+        -on2    ("artAttrSkinPaintSelectModeChange 2 "+$artCommand)
+        -on3    ("artAttrSkinPaintSelectModeChange 3 "+$artCommand)
+    artAttrSkinPaintSelectModeRadioButton;
+    
+    radioButtonGrp -e
+        -enable 0
+    artAttrSkinPaintSelectModeRadioButton;
+}
+
+
+// =======================================================
+// Main Procedure.
+// =======================================================
+
+global proc artAttrSkinCallback(
+    string    $artCommand
+)
+{
+    source "artisanCallback.mel";
+    source "artAttrCallback.mel";
+
+    string $currContext = `currentCtx`;
+    string $currTool    = `contextInfo -c $currContext`;
+
+    // Basic Brush frameLayout.
+    artisanBrushCallback( $artCommand, $currTool );
+
+    // //////////////////////////////////////////// 
+    // Skin Paint Weight frameLayout callback.
+    artSkinPaintCallback( $artCommand, $currTool );
+
+    // Stroke frameLayout.
+    artisanStrokeCallback( $artCommand, $currTool );
+
+    // Stroke frameLayout.
+    artisanPressureCallback( $artCommand, $currTool );
+    
+    // Display frameLayout.
+    artisanDisplayCallback( $artCommand, $currTool );
+
+    // scriptJobs for updating the weight field and influences list selection
+    global int $artSkinSelectRefreshJob = 0;
+    if( ($artSkinSelectRefreshJob == 0 ) ||
+       !(`scriptJob -exists $artSkinSelectRefreshJob` ))
+    {
+        // Update the weight field and the influences list on selection change
+        string $cmd = "if( `currentCtx` == \""+$currContext+"\" ){ artSkinInflSceneSelectionChanged ; artSkinUpdateWeightFieldFromSelection " + $artCommand +";};";
+        $artSkinSelectRefreshJob = `scriptJob -parent $currTool -e SelectionChanged $cmd`;
+        
+        // Update the weight field and the influences list on undo redo
+        // Notes:
+        //        1 - Never change the selection or the scene state during these events. This will creates inconsistencies 
+        //            at the undo level
+        //        2 - For the weight field updates we currently rely on Undo/Redo post events. This gives good results
+        //            If problem are encountered we could use an event that would monitor the active cluster weights change instead
+        //
+
+
+        scriptJob -parent $currTool -e Undo $cmd;
+        scriptJob -parent $currTool -e Redo $cmd;
+        
+    }
+
+}

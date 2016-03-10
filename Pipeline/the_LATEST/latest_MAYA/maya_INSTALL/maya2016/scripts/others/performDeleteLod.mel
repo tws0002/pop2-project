@@ -1,0 +1,168 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+global proc string[] performDeleteLod()
+//
+//	Description:
+//		This script deletes associated "lod" nodes and 
+//		connections from a transform and/or its group.
+//		The user must select one or more transforms.
+//
+//		If any selected transform has:
+//		a) any connections to an "lod" node, or 
+//		b) a child of this transform is connected to an "lod" node,
+//
+//		then what happens is:
+//		a) all associated "lod" nodes are deleted,
+//		b) associated visibility attributes are turned ON
+//
+{
+	string $nodesToDelete[];
+	string $selAll[] = `ls -sl`;
+	if( size($selAll) == 0 ) {
+		error( (uiRes("m_performDeleteLod.kNothingSelected")));
+		return $nodesToDelete;
+	}
+
+	// Find all transforms that have lod nodes attached
+	//
+	string $sel[] = `ls -tr $selAll`;
+	if( size($sel) == 0 ) {
+		error( (uiRes("m_performDeleteLod.kNoTransformSelected")));
+		return $nodesToDelete;
+	}
+
+	string $existingLODConnection;
+	string $transform;
+	int $numSel = size($sel);
+	int $i;
+	int $j;
+	string $pieces[];
+	string $visAttr = ".lodVisibility";
+
+	for( $i = 0; $i < $numSel; $i ++ ) {
+
+		$transform = $sel[$i];
+
+		if( `connectionInfo -id ($transform + $visAttr)` > 0 ) {
+			$existingLODConnection = 
+			`connectionInfo -sfd ($transform + $visAttr)`;
+		} else {
+			$existingLODConnection = "";
+		}
+
+		if( size($existingLODConnection) > 0 ) {
+
+			// This node is connected to an lod.
+			// Parse out the node name, then add it to "$nodesToDelete"
+			//
+			$num = `tokenize $existingLODConnection "." $pieces`;
+			if( $num > 0 ) {
+				if( AWNumberOfOccurrencesInStringArray( 
+					$pieces[0], $nodesToDelete ) == 0 ) {
+					$nodesToDelete[size($nodesToDelete)] = $pieces[0];
+				}
+			}
+		} else {
+
+			// Check if any children of this transform are connected
+			// then use it to find the lod node to delete
+			//
+			string $ch[] = `listRelatives -children`;
+			int $numCh = size($ch);
+			if( $numCh > 0 ) {
+
+				for( $j = 0; $j < $numCh; $j ++ ) {
+					if( `connectionInfo -id ($ch[$j]+$visAttr)`>0) {
+						$existingLODConnection =
+						`connectionInfo -sfd ($ch[$j] + $visAttr)`;
+					} else {
+						$existingLODConnection = "";
+					}
+					if( size($existingLODConnection) > 0 ) {
+						$num = `tokenize $existingLODConnection "." $pieces`;
+						if( $num > 0 ) {
+							if( AWNumberOfOccurrencesInStringArray( 
+								$pieces[0], $nodesToDelete ) == 0 ) {
+								$nodesToDelete[size($nodesToDelete)]=
+									$pieces[0];
+							}
+							break;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	int $numNodesToDelete = size($nodesToDelete);
+	if( $numNodesToDelete == 0 ) {
+		error( (uiRes("m_performDeleteLod.kSelectedHaveNoLOD")));
+		return $nodesToDelete;
+	}
+
+	// For each node, get its list of outputs
+	// The outputs need to be made visible once the lod nodes are deleted
+	//
+	string $connection[];
+	string $visibilityAttr[];
+	for( $i = 0; $i < $numNodesToDelete; $i ++ ) {
+
+		// try to "reset" its threshold values to something arbitrary
+		// This will force "undo" to restore the threshold values
+		int $numThresholds = `getAttr -size ($nodesToDelete[$i] + ".th")`;
+		for($c=0; $c<$numThresholds; $c++) {
+			setAttr ($nodesToDelete[$i] + ".th[" +$c + "]") 0.666;
+		}
+
+		// try to "reset" its display values to something arbritrary
+		// This will force "undo" to restore the display values
+		int $numDisplay = `getAttr -size ($nodesToDelete[$i] + ".dl")`;
+		for($c=0; $c<$numDisplay; $c++) {
+			setAttr ($nodesToDelete[$i] + ".dl[" +$c + "]") 0;
+		}
+
+		// explicitly break each connection on the output attr
+		// This will force "undo" to restore each connection
+		int $numOutputs = `getAttr -size ($nodesToDelete[$i] + ".o")`;
+		string $conn[];
+		for($c=0; $c<$numOutputs; $c++) {
+			$conn = `connectionInfo -dfs ($nodesToDelete[$i]+".o["+$c+"]")`;
+			if( size($conn) > 0 ) {
+				disconnectAttr ($nodesToDelete[$i]+".o["+$c+"]") $conn[0];
+			}
+		}
+		
+		string $msg = (uiRes("m_performDeleteLod.kDeleteNode")) ;
+		print `format -stringArg $nodesToDelete[$i] $msg` ; 
+		string $ch[] = `listRelatives -children $nodesToDelete[$i]`;
+		ungroup $nodesToDelete[$i];
+
+		// turn lodVisibility on for all cases, to ensure visibility
+		int $numCh = size($ch);
+		for($c=0; $c<$numCh; $c++) {
+			eval("setAttr " + $ch[$c] + ".lodVisibility on");
+		}
+	}
+
+	// return deleted nodenames
+	return $nodesToDelete;
+}

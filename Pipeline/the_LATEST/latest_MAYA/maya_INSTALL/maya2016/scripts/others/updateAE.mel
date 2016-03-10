@@ -1,0 +1,573 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//	Created: 	Sept 29, 1997
+//
+//
+//<doc>
+//<name updateAE>
+//
+//<synopsis>
+//		updateAE ( string $node )
+//
+//<returns>
+//		None.
+//
+//<description>
+//		Displays the information for the named node in the attribute editor.
+//
+//<flags>
+//		string $node : Node name to show in the attribute editor.
+//
+//<examples>
+//	// Create some geometry
+//	sphere;
+//	cone;
+//
+//	// Show the attribute editor with the cone
+//	AttributeEditor; 
+//
+//	// Show the sphere in the attribute editor 
+//	updateAE "nurbsSphere1";
+//
+//</doc>
+
+global string	$gAEFocusNode = "";
+global int 		$gAENotesScriptJob = -1;
+global int 		$gAENotesScriptJob2 = -1;
+global int 		$gAENotesScriptJob3 = -1;
+
+proc updateAEStack( string $node )
+// Update the stack used to keep track of the focus nodes brought
+// up in the attribtue editor.  This stack will be used as a navigation
+// tool under the Focus menu item in the attribute editor
+//
+{
+	global string	$gAENodeStack[];
+	global string	$gAEFocusNode;
+
+	int		$maxStackSize = 10;
+	int		$nodeStackSize;
+	string	$tmp[] = `ls -l $node`;
+	string	$newNode = $tmp[0];
+	clear $tmp;
+
+	// make a copy of the node stack
+	//
+	for ($i = (size($gAENodeStack)-1); $i >= 0; $i--) {
+		if ($gAENodeStack[$i] != "") {
+			$tmp[size($tmp)] = $gAENodeStack[$i];
+		}
+	}
+	$nodeStackSize = size($tmp);
+
+	// clear the node stack
+	//
+	clear $gAENodeStack;
+	
+	// check if something has been renamed or deleted, possibly making
+	// some items in the list no longer valid
+	//
+	for ($i = 0; $i < $nodeStackSize; $i++) {
+		if (!`objExists $tmp[$i]`) {
+			$nodeStackSize--;
+			for ($j = $i; $j < $nodeStackSize; $j++) {
+				$tmp[$j] = $tmp[$j+1];
+			}
+			$tmp[$nodeStackSize] = "";
+			$i--;
+		}
+	}
+
+	// look through the list for an occurrence of this node
+	// if found, shuffle it to the end
+	//
+	int $found = false;
+	for ($i = 0; $i < $nodeStackSize; $i++) {
+		if ($newNode == $tmp[$i]) {
+			$found = true;
+			break;
+		}
+	}
+
+	if ($found) {
+
+		// shuffle this one to the bottom
+		for ($j = $i; $j < $nodeStackSize; $j++) {
+			$tmp[$j] = $tmp[$j+1];
+		}
+
+		// add the node to the stack
+		$tmp[$nodeStackSize-1] = $newNode;
+
+	} else if ($nodeStackSize >= $maxStackSize) {
+
+		// shuffle everything up one to preserve max stack size
+		for ($i = 1; $i < $nodeStackSize; $i++) {
+			$tmp[$i-1] = $tmp[$i];
+		}
+
+		// add the node to the stack
+		$tmp[$nodeStackSize-1] = $newNode;
+
+	} else {
+
+		// add the node to the stack
+		$tmp[$nodeStackSize] = $newNode;
+
+	}
+
+	// copy the $tmp array back into the global stack
+	//
+	for ($i = (size($tmp)-1); $i >= 0; $i--) {
+		if ($tmp[$i] != "") {
+			$gAENodeStack[size($gAENodeStack)] = $tmp[$i];
+		}
+	}
+}
+
+global proc killScriptJobAENotes() 
+{
+	global int $gAENotesScriptJob;
+	global int $gAENotesScriptJob2;
+	global int $gAENotesScriptJob3;
+
+	// Kill the current script job, if any
+	//
+	if( $gAENotesScriptJob != -1) { 
+		if( `scriptJob -exists $gAENotesScriptJob` ) {
+			catch(`scriptJob -force -kill $gAENotesScriptJob`);
+		}
+		$gAENotesScriptJob = -1;
+	}
+	if( $gAENotesScriptJob2 != -1) { 
+		if( `scriptJob -exists $gAENotesScriptJob2` ) {
+			catch(`scriptJob -force -kill $gAENotesScriptJob2`);
+		}
+		$gAENotesScriptJob2 = -1;
+	}
+	if( $gAENotesScriptJob3 != -1) { 
+		if( `scriptJob -exists $gAENotesScriptJob3` ) {
+			catch(`scriptJob -force -kill $gAENotesScriptJob3`);
+		}
+		$gAENotesScriptJob3 = -1;
+	}
+}
+
+global proc setupScriptJobAENotes( string $fullNodeName, string $longAttrName ) 
+//
+//	Description:
+//		Sets up a script job that updates the Notes section 
+//		when this attribute changes.
+//
+{
+	global int $gAENotesScriptJob;
+	global int $gAENotesScriptJob2;
+	global int $gAENotesScriptJob3;
+	killScriptJobAENotes();
+
+	// Don't do anything unless AE is actually showing
+
+	string $nodeForNotes = $fullNodeName;
+
+	// Get the full node name, but without components
+	// eg. |pCube1|pcubeShape1.vtx[3]  should be
+	//     |pCube1|pcubeShape1
+	//
+	string $buffer[];
+	if( tokenize( $nodeForNotes, ".", $buffer ) > 1 ) {
+		$nodeForNotes = $buffer[0];
+	}
+	
+	if( (size($nodeForNotes) == 0) || (!`objExists $nodeForNotes`) ) {
+		return;
+	}
+
+	string $scriptJobCmd = "updateAENotes(\"" + $nodeForNotes + "\", \"" 
+		+ $longAttrName + "\");";
+
+	if( `attributeQuery -exists -n $nodeForNotes $longAttrName` ) {
+
+		// Add a scriptJob so that when this attribute changes
+		// updateAENotes() is called
+		//
+		int $scriptJobNumber = `scriptJob -kws -protected
+			-attributeChange ($nodeForNotes+"."+$longAttrName) $scriptJobCmd`;
+			
+		// Store the script job number so we can kill it later
+		$gAENotesScriptJob = $scriptJobNumber;
+
+		// Add a scriptJob so that when this attribute is deleted
+		// the Notes scroll field is blanked out
+		//
+		string $scriptJobCmd2 = "scrollField -e -text \"\" AENotesScrollField; ";
+		$scriptJobNumber = `scriptJob -kws -runOnce on -protected 
+			-attributeDeleted ($nodeForNotes+"."+$longAttrName) $scriptJobCmd2`;
+		$gAENotesScriptJob2 = $scriptJobNumber;
+
+		// Add a scriptJob so that when this attribute is undone and redone
+		// the Notes scroll field is updated again
+		//
+		$scriptJobNumber = `scriptJob -kws -runOnce on -protected 
+			-attributeAdded ($nodeForNotes+"."+$longAttrName) $scriptJobCmd`;
+		$gAENotesScriptJob3 = $scriptJobNumber;
+
+	} else {
+
+		$scriptJobCmd += "$gAENotesScriptJob3 = -1;"
+			+ "setupScriptJobAENotes(\"" 
+			+ $nodeForNotes + "\"," 
+			+ "\"" + $longAttrName  + "\""
+			+ " );"
+			;
+
+		// The notes attribute doesn't exist yet.
+		// Add a scriptJob so that when this attribute is created
+		// the Notes scroll field is updated 
+		//
+		$scriptJobNumber = `scriptJob -kws -runOnce on -protected 
+			-attributeAdded ($nodeForNotes+"."+$longAttrName) $scriptJobCmd`;
+		$gAENotesScriptJob3 = $scriptJobNumber;
+
+	}
+}
+
+global proc updateAENotes( string $fullNodeName, string $longAttrName ) 
+//
+//	Description:
+//		Updates the Notes area to have the notes for the given node
+//		If there is no node then disable the text field.
+//		If there are no notes for the given text field, clear out the field.
+//
+{
+	string $nodeForNotes = $fullNodeName;
+	if( $nodeForNotes == "" )  {
+		// There is nothing to display.  Disable the entire Notes area
+		text -e -enable false AENotesTextLabel;
+		text -e -enable false AENotesTextLabel2;
+		text -e -label (uiRes("m_updateAE.kNotesInitial")) AENotesTextLabel;
+		text -e -label "" AENotesTextLabel2;
+		scrollField -e -enable false AENotesScrollField;
+		scrollField -e -cc "" AENotesScrollField;
+		scrollField -e -ec "" AENotesScrollField;
+		scrollField -e -kpc "" AENotesScrollField;
+		scrollField -e -text "" AENotesScrollField;
+		return;
+	}
+
+	text -e -enable true AENotesTextLabel;
+	scrollField -e -enable true AENotesScrollField;
+
+	// Put the name of the node in the "Notes" line
+	// The name sometimes has the full path, eg. |pCone|pConeShape
+	// so parse out the last node name.
+	//
+	string $justNode = "";
+	string $buffer[];
+	int $numTokens = tokenize($nodeForNotes, "|", $buffer);
+	if( $numTokens > 0 ) {
+		$justNode = $buffer[$numTokens-1];
+
+		// Remove any components, eg. pCube1.vtx[3]
+		//
+		if( tokenize( $justNode, ".", $buffer ) > 1 ) {
+			$justNode = $buffer[0];
+		}
+	}
+	string $name = (uiRes("m_updateAE.kName"));
+	string $fmt = (uiRes("m_updateAE.kNameAndNode"));
+	text -e -label (`format -s $name -s $justNode $fmt` ) AENotesTextLabel;
+	scrollField -e -ed true AENotesScrollField;
+
+	// Get the full node name, but without components
+	// eg. |pCube1|pcubeShape1.vtx[3]  should be
+	//     |pCube1|pcubeShape1
+	//
+	if( tokenize( $nodeForNotes, ".", $buffer ) > 1 ) {
+		$nodeForNotes = $buffer[0];
+	}
+
+	// Update the scroll field
+	// If the attribute exists, then put the attribute
+	// value into the scroll field.  Otherwise, clear out the scroll field
+	//
+	string $notes = "";
+	if( `objExists $nodeForNotes` && `attributeQuery -exists -n $nodeForNotes $longAttrName` ) {
+		$notes = `getAttr ($nodeForNotes + "." + $longAttrName)`;
+
+		// If the notes attribute is locked, then
+		// don't allow editing of the attribute
+		// Also display helpful message "Notes are locked".
+		//
+		if( `getAttr -l ($nodeForNotes + "." + $longAttrName)` ) {
+			scrollField -e -ed false AENotesScrollField;
+		}
+	}
+	scrollField -e -text $notes AENotesScrollField;
+	text -e -enable false AENotesTextLabel2; 
+	text -e -label "" AENotesTextLabel2; 
+
+	// Attach commands to the scroll field so 
+	// the node's note will update
+	//
+	{
+		string $shortAttrName= "nts";
+		string $attrTypeNotes = "string";
+		string $cc = getUpdateAENotesChangeCmd( $nodeForNotes,
+				$longAttrName, $shortAttrName, $attrTypeNotes );
+		scrollField -e -cc $cc AENotesScrollField;
+		scrollField -e -ec $cc AENotesScrollField;
+
+		$cc = getUpdateAENotesStatusCmd( $nodeForNotes, $longAttrName );
+		scrollField -e -kpc $cc AENotesScrollField;
+	}
+}
+
+global proc updateAENotesStatus( string $nodeName,
+	string $longAttrName )
+//
+//	Description:
+//		This proc updates the "*" in the Notes title bar.  The "*" indicates
+//		whether or not the notes in the notes scroll field are different
+//		from the notes stored on the given node.
+//		Typically, this proc is attached to a cmd on the
+//		Notes scroll field.
+//
+{
+	int $enable = false;
+	string $label = "";
+	// if scrollField is enabled
+	// if notes attr exists
+	// if scrollField text is different from notes attr
+	//
+	if( `scrollField -q -enable AENotesScrollField` ) {
+		string $currentNotes = `scrollField -q -text AENotesScrollField`;
+
+		if( `attributeQuery -exists -n $nodeName $longAttrName` ) {
+			string $attrNotes = `getAttr ($nodeName + "." + $longAttrName)`;
+			if( $currentNotes != $attrNotes ) {
+				$enable = true;
+				$label = "*";
+			}
+		} else if( size($currentNotes) > 0 ) {
+			$enable = true;
+			$label = "*";
+		}
+	}
+
+	text -e -enable $enable AENotesTextLabel2;
+	text -e -label $label AENotesTextLabel2;
+}
+
+global proc string getUpdateAENotesStatusCmd( string $nodeForNotes, 
+	string $longAttrName) 
+//
+//	Description:
+//		This returns a command string that can be attached as a callback 
+//		to update the "*" in the Notes title bar.  The "*" indicates
+//		whether or not the notes in the notes scroll field are different
+//		from the notes stored on the given node.
+//		Typically the string is attached to the "keyPressCommand"
+//		of the Notes scroll field.
+//
+//		The purpose of the evalDeferred is that the keyPressCommand
+//		of the Notes scroll field is executed before the key is
+//		actually processed.  ie. if the key is Backspace, the
+//		keyPressCommand is executed BEFORE any text is deleted
+//		in the scroll field.  Using evalDeferred means that the
+//		the updateAENotesStatus call will happen on the next idle event.
+//
+{
+	string $updateStatusCmd = "evalDeferred(\""
+		+ "updateAENotesStatus( \\\"" 
+		+ $nodeForNotes + "\\\","
+		+ "\\\"" + $longAttrName  + "\\\""
+		+ ");"
+		+ "\");"
+		;
+	return $updateStatusCmd;
+}
+
+global proc string getUpdateAENotesChangeCmd( string $nodeForNotes, 
+	string $longAttrName, string $shortAttrName, string $attrType ) 
+//
+//	Description:
+//		This returns a command string that can be attached as a callback for
+//		a control, to update the Notes area.  When attached to the
+//		Notes scroll field control's change cmd, this will update
+//		the associated node's attribute.
+// 		Also update script job so that it detects when this attribute
+//		has changed, (eg. with setAttr cmd) and will update the Notes
+//		control.
+//
+{
+	string $editCmd = "killScriptJobAENotes();"
+		+ "setNotesAttribute( \"" 
+		+ $nodeForNotes + "\","
+		+ "\"" + $longAttrName  + "\","
+		+ "\"" + $shortAttrName  + "\","
+		+ "\"" + $attrType  + "\","
+		+ "`scrollField -q -text AENotesScrollField`);"
+		+ "text -e -enable false AENotesTextLabel2;"
+		+ "text -e -label \"\" AENotesTextLabel2;"
+		+ "setupScriptJobAENotes(\"" 
+		+ $nodeForNotes + "\"," 
+		+ "\"" + $longAttrName  + "\""
+		+ " );"
+		;
+	return $editCmd;
+}
+
+global proc commitAENotes( string $nodeToCommit ) 
+// This proc is typically called before the AE is switched
+// from displaying one node to another.  At this point,
+// the notes from the first node need to be commited
+// before AE switches to the next node.
+//
+{
+	string $longAttrNameNotes = "notes";
+	string $shortAttrNameNotes = "nts";
+	string $attrTypeNotes = "string";
+
+	// If notes area is editable, then proceed
+	//
+	if( `scrollField -q -ed AENotesScrollField` ) {
+
+		// Figure out which node we're switching from
+		//
+		if( size($nodeToCommit) > 0 ) {
+
+   			string $notesToCommit = `scrollField -q -text AENotesScrollField`;
+	
+			// Apply the notes from the Notes area to the
+			// node that we're switching from
+			//
+ 			if( catch(setNotesAttribute( $nodeToCommit, 
+				$longAttrNameNotes, $shortAttrNameNotes, $attrTypeNotes,
+ 				$notesToCommit ) ) ) {
+				// there was an error with setNotesAttribute
+				// Ignore it since it's handled by setNotesAttribute
+			}
+			else {
+				// Commit was complete.  
+				text -e -enable false AENotesTextLabel2;
+				text -e -label "" AENotesTextLabel2;
+			}
+		}
+	}
+}
+
+global proc updateAE( string $node )
+// This proc calls other to build the tabs and controls for the
+// specified focus node.  
+//
+{
+	global string	$gAttributeEditorWindowName;
+	global string	$gAEMenuBarLayoutName;
+	global string	$gAERootLayoutName;
+	global string	$gAERootPaneLayoutName;
+	global string	$gAENothingSelectedLayout;
+	global string	$gAEBaseLayoutName;
+	global string	$gAECurrentTab;
+	global string	$gAERelatedNodes[];
+	global string	$gAEFocusNode;
+
+	global string	$gAETabLayoutName;
+	string $longAttrNameNotes = "notes";
+	string $shortAttrNameNotes = "nts";
+	string $attrTypeNotes = "string";
+
+	setParent $gAEMenuBarLayoutName;
+
+	if ($node == "" || !`objExists $node`) 
+	{
+		AEsetDisplayToEmpty();
+		
+		$gAEFocusNode = "";
+		if( `window -exists $gAttributeEditorWindowName` ) {
+			window -e
+				-title (localizedUIComponentLabel("Attribute Editor"))
+				$gAttributeEditorWindowName;
+		}
+		
+		// Disable the "Notes" section and clear out any text
+		updateAENotes( $node, $longAttrNameNotes );
+
+		//  Kill any script jobs 
+		setupScriptJobAENotes( $node, $longAttrNameNotes );
+
+		button -e -enable false AEselectButton;
+		button -e -enable false AEcopyButton;
+		$gAECurrentTab = "";
+		$gAEPrevCurrentTab = "";
+		clear $gAERelatedNodes;
+	} 
+	else 
+	{
+		AEsetDisplayToNodes();
+
+		AEbuildAllTabs $node;
+		AEbuildControls;
+
+		// Note: nameField will return a full-dag path to the node. 
+		// But the container command will return just the node name.
+		// So make sure we are comparing the same thing -- use
+		// isSameObject which will compare the long-names of both
+		// nodes.
+		string $focusTab = `nameField -q -o tabNameField0`;
+		string $container = `container -q -fc $node`;
+		if( isSameObject($container, $focusTab) && !isSameObject($container, $node) ){
+			// Make the second tab the focus node so that if a refreshAE gets
+			// triggered, we don't accidentally jump to the container.
+			//
+			if( `nameField -exists tabNameField1` ){
+				$focusTab = `nameField -q -o tabNameField1`;
+			}
+		}
+
+		// Will we ever have a case where updateAE is called on a node that
+		// is not selected? i.e. will $gAEFocusNode always be the same as 
+		// $node? If so, we can just set it directly rather than querying
+		// the first or second tab node name. Needs investigation.
+		//
+		$gAEFocusNode = $focusTab;
+
+		if ( $focusTab != "" ) {
+			string $tokens[];
+			tokenize($focusTab,"|",$tokens);
+			$focusTab = $tokens[size($tokens)-1];
+			if( `window -exists $gAttributeEditorWindowName` ) {
+                                string $windowTitle = (uiRes("m_updateAE.kAttributeEditorTab"));
+				window -e
+					-title `format -s $focusTab $windowTitle`
+					$gAttributeEditorWindowName;
+			}
+		}
+
+		updateAEStack($node);
+
+		button -e -enable true AEselectButton;
+		button -e -enable true AEcopyButton;
+	}
+}
+

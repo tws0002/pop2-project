@@ -1,0 +1,275 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  30 Dec 2002
+//
+//  Description:
+//      Settings for application of drag-and-drop initial
+//      fluid states.
+//
+
+//
+//  Procedure Name:
+//      setOptionVars
+//
+//  Description:
+//		Initialize the option values.
+//
+//  Input Arguments:
+//		Whether to set the options to default values.
+//
+//  Return Value:
+//      None.
+//
+proc setOptionVars(int $forceFactorySettings)
+{
+	//	Resize target fluid to initial state resolution
+	//
+	if($forceFactorySettings || !`optionVar -exists initialStatesResizeOnDrop`)
+	{
+		optionVar -intValue initialStatesResizeOnDrop 1;
+	}
+}
+
+//
+//  Procedure Name:
+//      initialStatesSetup
+//
+//  Description:
+//		Update the state of the option box UI to reflect the option values.
+//
+//  Input Arguments:
+//      parent               - Top level parent layout of the option box UI.
+//                             Required so that UI object names can be 
+//                             successfully resolved.
+//
+//		forceFactorySettings - Whether the option values should be set to
+//                             default values.
+//
+//  Return Value:
+//      None.
+//
+global proc initialStatesSetup(string $parent, int $forceFactorySettings)
+{
+	//	Retrieve the option settings
+	//
+	setOptionVars($forceFactorySettings);
+
+	setParent $parent;
+
+	//	Resize
+	//
+	int $resize = `optionVar -query initialStatesResizeOnDrop`;
+	radioButtonGrp -e -sl ($resize+1) initialStatesResizeOnDrop;
+}
+
+//
+//  Procedure Name:
+//      initialStatesCallback
+//
+//  Description:
+//		Update the option values with the current state of the option box UI.
+//
+//  Input Arguments:
+//      parent - Top level parent layout of the option box UI.  Required so
+//               that UI object names can be successfully resolved.
+//
+//		doIt   - Whether the command should execute.
+//
+//  Return Value:
+//      None.
+//
+global proc initialStatesCallback(string $parent, int $doIt)
+{
+    setParent $parent;
+
+	//	Resize fluid to match initial state
+	//
+	optionVar -intValue initialStatesResizeOnDrop
+		(`radioButtonGrp -query -sl initialStatesResizeOnDrop` - 1);
+
+	if( $doIt ) {
+		performInitialStates 0; 
+	}
+}
+
+//
+//  Procedure Name:
+//      initialStatesOptions
+//
+//  Description:
+//		Construct the option box UI.  Involves accessing the standard option
+//		box and customizing the UI accordingly.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+proc initialStatesOptions()
+{
+	//	Name of the command for this option box.
+	//
+	string $commandName = "initialStates";
+
+	//	Build the option box actions.
+	//
+	string $callback = ($commandName + "Callback");
+	string $setup = ($commandName + "Setup");
+
+	string $layout = getOptionBox();
+	setParent $layout;
+	
+	setUITemplate -pushTemplate DefaultTemplate;
+	tabLayout -tv false -scr true;
+	
+	string $parent = `columnLayout -adjustableColumn 1`;
+	
+	radioButtonGrp 
+		-label (uiRes("m_performInitialStates.kFluidResolution")) -nrb 2
+		-label1 (uiRes("m_performInitialStates.kAsIs"))
+		-label2 (uiRes("m_performInitialStates.kFromInitialState"))
+		-annotation (uiRes("m_performInitialStates.kFluidResolutionAnnot"))
+		initialStatesResizeOnDrop;
+
+	setUITemplate -popTemplate;
+
+	//	'Apply' button.
+	//
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit
+		-command ($callback + " " + $parent + " " + 1)
+		$applyBtn;
+
+	//	'Save' button.
+	//
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + $parent + " " + 0 + "; hideOptionBox")
+		$saveBtn;
+
+	//	'Reset' button.
+	//
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + " " + $parent + " " + 1)
+		$resetBtn;
+
+	//	Set the option box title.
+	//
+	setOptionBoxTitle (uiRes("m_performInitialStates.kInitialStatesOptions"));
+	setOptionBoxCommandName($commandName);
+	setOptionBoxHelpTag( "InitialState" );
+
+	//	Set the current values of the option box.
+	//
+	eval( $setup + " " + $parent + " " + 0 );	
+	
+	//	Show the option box.
+	//
+	showOptionBox();
+}
+
+//
+//  Procedure Name:
+//      assembleCmd
+//
+//  Description:
+//		Construct the command that will apply the option box values.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+proc string assembleCmd()
+{
+	setOptionVars(false);
+
+	// This option box is not like the others...  The options
+	// come into play when an initial state is applied to a
+	// a fluid, not when we press the "Apply" button.  That's
+	// why this command doesn't have any option vars in it.
+	//
+	string $cmd = ( "{ " + 
+					"    VisorWindow; " + 
+					"    string $pnl=visorPanelName();" + 
+					"    if( size( $pnl ) > 0 ) { " +
+					"         visorPanelMenuCommand( $pnl, \"selectOrCreateTabByLabel Fluid Initial States\");" +
+					"    } " +
+					"} " );
+
+	return $cmd;
+}
+
+//
+//  Procedure Name:
+//      performInitialStates
+//
+//  Description:
+//		Perform the command using the corresponding 
+//		option values.  This procedure will also show the option box
+//		window if necessary as well as construct the command string
+//		that will invoke the command with the current 
+//		option box values.
+//
+//  Input Arguments:
+//      0 - Execute the command.
+//      1 - Show the option box dialog.
+//      2 - Return the command.
+//
+//  Return Value:
+//      None.
+//
+global proc string performInitialStates(int $action)
+{
+	string $cmd = "";
+
+	switch ($action) {
+
+		//	Execute the command from option settings.
+		//
+		case 0:
+			setOptionVars(false);
+			$cmd = `assembleCmd`;
+			eval($cmd);
+			break;
+
+		//	Show the option box.
+		//
+		case 1:
+			initialStatesOptions();
+			break;
+
+		//	Return the command string.
+		//
+		case 2:
+			setOptionVars (false);
+			$cmd = `assembleCmd`;
+			break;
+	}
+	return $cmd;
+}
+

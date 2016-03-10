@@ -1,0 +1,205 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  July 24, 1998
+//
+//  Procedure Name:
+//      deleteInvalidNurbs
+//
+//  Description:
+//		Delete all the NURBS surfaces and curves that are currently invalid.
+//      Fully undoable, as it only calls delete at the end.
+//
+//  Input Arguments:
+//      int activeOnly
+//		  0 - delete all invalid NURBS surfaces and curves
+//		  1 - delete active invalid NURBS surfaces and curves
+//
+//  Return Value:
+//      Number of nodes deleted.
+//
+
+proc string deleteInstead( string $shape )
+//
+// Take the shape name and return the parent transform name, if
+// it has only one child.  Do it recursivelly, all the way up.
+//
+{
+	string $children[];
+	string $parent[];
+	string $result, $nt;
+	int $done;
+
+	$parent = `listRelatives -fullPath -parent $shape`;
+	$result = $shape;
+	$done = false;
+
+	while( !$done ) {
+		if( size($parent) > 0 ) {
+			$nt = `nodeType $parent[0]`;
+			if( ("transform" != $nt) &&
+				("curveVarGroup" != $nt) &&
+				("surfaceVarGroup" != $nt) ) {
+				$done = true;
+				break;
+			}
+			string $children[] = `listRelatives -fullPath -children $parent[0]`;
+
+			if( (1 == size($children)) && ($shape == $children[0]) ) {
+				$result = $parent[0];
+				$shape = $result;
+				$parent = `listRelatives -fullPath -parent $shape`;
+			}
+			else {
+				$done = true;
+				break;
+			}
+		}
+		else {
+			$done = true;
+			break;
+		}
+	}
+	return $result;
+}
+
+global proc int deleteInvalidNurbs( int $activeOnly )
+//
+//	Description: Implements the "deleteInvalidNurbs" operation, optionally
+//				 providing status reporting and interruptability.  The
+//				 deleteInvalidNurbs() proc now calls this one.
+//
+{
+	//	Are we being called during an Optimize Scene Size operation?
+	// 	If so, we need to display progress information.  This was done
+	//	as a global variable to avoid having to change the signature of
+	//	the proc, as that could break many scripts, both internal and
+	//	customer-written.
+	//
+	int $showProgress = cleanUp_ShouldReportProgress();
+	
+	string $tmp;
+	string $objects[];
+	int $i, $n, $j;
+
+	global string $gCleanUpSummary[];
+	int $numSurfacesDeleted = 0;
+	int $numCurvesDeleted = 0;
+	int $interrupted = 0;
+
+	global int $gSelectNurbsSurfacesBit;
+	global int $gSelectNurbsCurvesBit;
+
+	if( $activeOnly ) {
+		$objects = `filterExpand -ex true -sm $gSelectNurbsSurfacesBit`;
+	}
+	else {
+		$objects = `ls -long -type "nurbsSurface"`;
+	}
+
+	$n = size($objects);
+
+	//	Initialize progress bar if required
+	//
+	if( $showProgress )
+	{
+		cleanUp_StartProgress( $n, "Removing invalid NURBS surfaces", 1 );
+	}
+
+	for( $i=0; $i<$n; $i+=1 ) 
+	{
+		//	Check for interrupt and update progress, if necessary.
+		//
+		if( $showProgress )
+		{
+			if( cleanUp_SetProgress( $i ) ) 
+			{
+				$interrupted = 1;
+				break;
+			}
+		}
+
+		$tmp = $objects[$i] + ".degreeU";
+		if( `getAttr $tmp` < 1 ) {
+			$numSurfacesDeleted += deleteIfNotReferenced( `deleteInstead($objects[$i])` );
+		}
+	}
+
+	//	Finalize progress if necessary.
+	//
+	if( $showProgress )
+	{
+		cleanUp_EndProgress();
+	}
+
+	//	If deletion of invalid surfaces was interrupted, don't proceed to delete invalid
+	//	curves.
+	//
+	if( $interrupted )
+	{
+		return ($numSurfacesDeleted + $numCurvesDeleted);
+	}
+
+	if( $activeOnly ) {
+		$objects = `filterExpand -ex true -sm $gSelectNurbsCurvesBit`;
+	}
+	else {
+		$objects = `ls -long -type "nurbsCurve"`;
+	}
+	$n = size($objects);
+
+	//	initialize progress bar for deletion of invalid curves, if required.
+	//
+	if( $showProgress )
+	{
+		cleanUp_StartProgress( $n, "Removing invalid NURBS curves", 1 );
+	}
+
+	for( $i=0; $i<$n; $i+=1 ) 
+	{
+		//	check for interrupt, if required
+		//
+		if( $showProgress )
+		{
+			if( cleanUp_SetProgress( $i ) ) 
+			{
+				$interrupted = 1;
+				break;
+			}
+		}
+
+		$tmp = $objects[$i] + ".degree";
+		if( `getAttr $tmp` < 1 ) {
+			$numCurvesDeleted += deleteIfNotReferenced( `deleteInstead($objects[$i])` );
+		}
+	}
+
+	//	finalize progress bar for deletion of invalid curves, if required.
+	//
+	if( $showProgress )
+	{
+		cleanUp_EndProgress();
+	}
+
+	return ($numSurfacesDeleted + $numCurvesDeleted);
+}

@@ -1,0 +1,154 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Dec 15, 1999
+//
+//
+//  Description:
+//		Arguments are passed in $args[] array.  We'll call 
+//		the first arg ($args[0]) $levelString.  The second
+//		argument $args[1], if present, will set the 
+//		displayFilter.  
+//
+//      Set the subdiv diplay level on the active
+//		objects according to $levelString.  If $levelString
+//		contains a "+" or "-" the value of level is
+//		taken to be relative, otherwise it's
+// 		absolute.  Returns 1 if setting the level
+//		succeeded, and 0 if not.  Probable causes
+//		of failure include: poorly fomed $levelString
+//		argument (+/- must be the first character of
+//		$levelString), attempting to set the
+//		display level to a level that doesn't exist, or
+//		no valid subdiv surface selected.
+//
+//  Examples
+//		// Decrease current level by two.
+//	 	//
+//		setSubdivDisplayLevel "-2";
+//		
+//		// Set the current display level to three.
+//	 	//
+//		setSubdivDisplayLevel 3;
+//		
+//		// Increase current level by one.
+//	 	//
+//		setSubdivDisplayLevel "+1";
+//
+global proc int setSubdivDisplayLevelAndFilter( string $targets[], 
+												string $levelString,
+												int    $filter )
+{
+	int 	$foundValidTarget = false;
+	int 	$setValidValue = false;
+
+	string 	$target;
+
+	int    	$isPlus = false;
+	int    	$isMinus = false;
+	int	   	$level = 0;
+
+	// Find out whether the level passed in represents
+	// an absolute or a relative change.
+	//
+	string 	$relativeString = substring( $levelString, 1, 1 );
+	if( $relativeString == "+" ) {
+		$isPlus = true;
+		$level = substring( $levelString, 2, size( $levelString ) );
+	}
+	else if( $relativeString == "-" ) {
+		$isMinus = true;
+		$level = substring( $levelString, 2, size( $levelString ) );
+	}
+	else {
+		$level = $levelString;
+	}
+
+	// First process
+	//
+	string 	$cmd;
+	string  $errorMessage = "";
+
+	for( $target in $targets ) {
+		string $attrs[] = `listAttr ($target+".displayLevel") ($target+".displayFilter")`;
+		int $isSubdiv = size( $attrs ) == 2;
+		if( $isSubdiv == 1 ) {
+			$foundValidTarget = true;
+
+			int $currLevel = `getAttr ($target + ".displayLevel")`;
+			int $newLevel = $level;
+			
+			if( $isPlus ) {
+				$newLevel = $currLevel + $level;
+			}
+			else if( $isMinus ) {
+				$newLevel = $currLevel - $level;
+			}
+
+			int $deepest = `subdiv -query -deepestLevel $target`;
+
+			// It's not an error at this point if we try setting above
+			// the maximum or below the minimum, but we will cause an
+			// an error condition later if NONE of our targets succeeded.
+			// In that case, set the error message to be something 
+			// useful, even though it won't contain info about all the
+			// targets that caused it to fail.
+			//
+			if(( $newLevel <= $deepest )
+			&& ( $newLevel >= 0 ))
+			{   
+				$setValidValue = true;
+				// Set the display level
+				//
+				$cmd = ( "setAttr \"" + $target + ".displayLevel\" " + 
+						 $newLevel + "; " );
+
+				// Set the display filter
+				//
+				$cmd += ( "setAttr \"" + $target + ".displayFilter\" " + 
+						  $filter + "; " );
+
+				catch( `evalEcho $cmd` );
+			} else if( $newLevel > $deepest ) {
+				string $msg = (uiRes("m_setSubdivDisplayLevelAndFilter.kFinerError"));
+				$errorMessage = `format -stringArg $deepest $msg`;
+			} else if( $newLevel < 0 ) {
+				$errorMessage  = (uiRes("m_setSubdivDisplayLevelAndFilter.kCoarserError"));
+			}
+		}
+	}
+	
+	// No valid targets on active list.
+	//
+	if( $foundValidTarget == 0 ) {
+		string $msg = (uiRes("m_setSubdivDisplayLevelAndFilter.kSelectError"));
+		error($msg);
+	}
+	// None of our targets worked.
+	//
+	else if( $setValidValue == 0 ) {
+		error( $errorMessage );
+	}
+
+	return $setValidValue;
+}

@@ -1,0 +1,539 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+global proc UVSnapshotDoDrawUV(string $wnd)
+{
+	string $name = `textFieldGrp -q -text DUVfileName`;
+	if ($name == "")
+	{
+		warning (uiRes("m_performUVSnapshot.kEnterFileName"));
+		return;
+	}
+
+	int $format = `optionMenuGrp -q -sl DUVfileFormat`;
+	optionVar -intValue "DUVfileFormat" $format;
+
+	string $ext[];
+	string $imfExt = ".iff", $imfKey = "iff";
+	string $pluginName;
+	if(`about -mac`){
+		$ext = { "iff", "jpg", "pntg", 
+		"ps", 
+		"png", "pict", "qtif", "sgi", "tga", "tif", "bmp"};
+		$imfKey = $ext[$format-1];
+		$imfExt = "." + $ext[$format-1];
+	}else{
+		$pluginName = `optionMenuGrp -q -v DUVfileFormat`;
+		if ($pluginName != (uiRes("m_performUVSnapshot.kMayaIFFMenu")) ) {
+			$imfKey = `imfPlugins -q -key $pluginName`;
+			$imfExt = `imfPlugins -q -ext $pluginName`;
+		}
+	}	
+	
+	int $xRes = `intSliderGrp -q -v DUVXSlider`;
+	int $yRes = `intSliderGrp -q -v DUVYSlider`;
+	float $rgb[] = `colorSliderGrp -q -rgb DUVcolor`;
+	int $antiAlias = `checkBoxGrp -q -v1 DUVAntiAlias`;
+
+	// Save the values in the optionVars
+	optionVar -intValue "DUVresX" $xRes;
+	optionVar -intValue "DUVresY" $yRes;
+	optionVar -intValue "DUVKeepAspect" `checkBoxGrp -q -v1 DUVKeepAspect`;
+	optionVar -intValue "DUVAntiAlias" `checkBoxGrp -q -v1 DUVAntiAlias`;
+
+	optionVar -floatValue "DUVred" $rgb[0];
+	optionVar -floatValue "DUVgreen" $rgb[1];
+	optionVar -floatValue "DUVblue" $rgb[2];
+
+	// Fix the extension if not the right one
+	if (`match ("\\"+$imfExt+"$") $name` == "")
+		$name = $name+$imfExt;
+
+	// Finally do the job
+	int $rgbi[3];
+	$rgbi[0] = $rgb[0]*255;
+	$rgbi[1] = $rgb[1]*255;
+	$rgbi[2] = $rgb[2]*255;  
+
+	string $yes = (uiRes("m_performUVSnapshot.kYes"));
+	string $cancel = (uiRes("m_performUVSnapshot.kCancel"));
+	if (`file -q -ex $name`)
+	{
+		// Warn if file already exists.
+		$result = `confirmDialog -message (uiRes("m_performUVSnapshot.kFileExist"))
+			-button $yes -button $cancel -defaultButton $cancel
+			-parent $wnd`;
+		if ($result != $yes)
+			return;
+	}
+
+	// Before executing the command, double all the \'s in case we
+	// have a NT like path
+	$name = substituteAllString($name, "\\", "\\\\");
+
+	string $antiAliasCmd;
+	if ($antiAlias)
+		$antiAliasCmd = " -aa";
+	else
+		$antiAliasCmd = "";
+
+	// Now find out if the user selected 0 to 1, entire range or user-defined range,
+	// and add this selection to the command.
+	//
+
+	int $rangeRequired = `optionVar -q uvSnapshotUVRange`;
+	string $rangeCmd;
+
+	if ($rangeRequired == 1){
+		$rangeCmd = " -euv"; // entire range required
+	}
+	else if ($rangeRequired == 2) {
+		// First get the user-defined UV values.
+		//
+		float $uMin = `optionVar -q uvSnapshotUMin`;
+		float $uMax = `optionVar -q uvSnapshotUMax`;
+		float $vMin = `optionVar -q uvSnapshotVMin`;
+		float $vMax = `optionVar -q uvSnapshotVMax`;
+		$rangeCmd = " -uMin " + $uMin + " -uMax " + $uMax + " -vMin " + $vMin + " -vMax " + $vMax;
+	} else {
+		$rangeCmd = "";
+	}
+
+	string $cmd = "uvSnapshot" + $antiAliasCmd + $rangeCmd +" -n \""+$name+"\""+
+		" -xr "+$xRes+" -yr "+$yRes+
+		" -r "+$rgbi[0]+" -g "+$rgbi[1]+" -b "+$rgbi[2]+
+		" -o -ff "+$imfKey;
+
+
+	// Only delete the window is the command did not fail
+	if (! catch (`evalEcho $cmd`))
+		deleteUI $wnd;
+}
+
+global proc UVSnapshotResetDefaults()
+{
+	// Reset to factory settings
+	intSliderGrp -e -v 256 DUVXSlider;
+	intSliderGrp -e -v 256 DUVYSlider;
+	checkBoxGrp -e -v1 1 DUVKeepAspect;
+	checkBoxGrp -e -v1 1 DUVAntiAlias;
+	colorSliderGrp -e -rgb 1. 1. 1. DUVcolor;
+	optionMenuGrp -e -sl 1 DUVfileFormat;
+	initOptionVarsUVSnapshot(1);
+	
+	// Reset UV range UI
+	string $dir = `optionVar -q uvSnapshotFileName`;
+	if ( `about -nt` ) {	
+		$dir = substituteAllString($dir, "/", "\\");
+	}
+	textFieldButtonGrp -e -tx $dir DUVfileName;
+
+    int $intValue = `optionVar -q uvSnapshotUVRange` + 1;
+    optionMenuGrp -edit -select $intValue uvRangeCtrl;
+	uvSnapshotCtrlChanged("uvRange");
+
+	float $floatValue = `optionVar -q uvSnapshotUMin`;
+	floatSliderGrp -e -value $floatValue uvSnapshotUMinCtrl;
+
+	$floatValue = `optionVar -q uvSnapshotUMax`;
+	floatSliderGrp -e -value $floatValue uvSnapshotUMaxCtrl;
+
+	$floatValue = `optionVar -q uvSnapshotVMin`;
+	floatSliderGrp -e -value $floatValue uvSnapshotVMinCtrl;
+
+	$floatValue = `optionVar -q uvSnapshotVMax`;
+	floatSliderGrp -e -value $floatValue uvSnapshotVMaxCtrl;
+}
+
+global float $UVSnapshotRatio = 1.0;
+
+global proc UVSnapshotUpdateX()
+{
+	global float $UVSnapshotRatio;
+	if (`checkBoxGrp -q -v1 DUVKeepAspect`)
+		intSliderGrp -e -v 
+			(`intSliderGrp -q -v DUVYSlider` * $UVSnapshotRatio) DUVXSlider;
+}
+
+global proc UVSnapshotUpdateY()
+{
+	global float $UVSnapshotRatio;
+	if (`checkBoxGrp -q -v1 DUVKeepAspect`)
+		intSliderGrp -e -v 
+			(`intSliderGrp -q -v DUVXSlider` / $UVSnapshotRatio ) DUVYSlider;
+}
+
+global proc UVSnapshotStoreRatio()
+{
+	global float $UVSnapshotRatio;
+	float $x = `intSliderGrp -q -v DUVXSlider`;
+	float $y = `intSliderGrp -q -v DUVYSlider`;
+	$UVSnapshotRatio = $x / $y;	
+}
+
+global proc UVSnapshotFileNameCallback()
+{
+	string $currentFileName = `textFieldGrp -q -text DUVfileName`;
+	optionVar -stringValue uvSnapshotFileName $currentFileName;
+}
+
+global proc int UVSnapshotBrowseCallBack(string $fileName, string $fileType)
+{
+	if(endsWith($fileName,".*"))
+		$fileName = substring($fileName,1,size($fileName)-2);
+	textFieldGrp -e -fileName $fileName DUVfileName;
+	optionVar -stringValue uvSnapshotFileName $fileName; 
+	return true;
+}
+
+global proc UVSnapshotBrowse()
+{
+	string $dir = `workspace -q -rd`;
+	setWorkingDirectory $dir "image" "images";
+	fileBrowser("UVSnapshotBrowseCallBack", (uiRes("m_performUVSnapshot.kSaveSnapshotTitle")), "map", 1);
+}
+
+global proc uvSnapshotCtrlChanged(string $field)
+{
+    string $control = $field+"Ctrl";
+    int $intValue;
+    float $floatValue;
+    float $floatArray[];
+    string $text;
+
+    switch ($field)
+    {               
+        case "uvRange":
+            $intValue = `optionMenuGrp -q -select $control`-1; 
+            optionVar -intValue uvSnapshotUVRange $intValue;
+            floatSliderGrp -edit -enable ($intValue==2) uvSnapshotUMinCtrl;
+            floatSliderGrp -edit -enable ($intValue==2) uvSnapshotUMaxCtrl;
+            floatSliderGrp -edit -enable ($intValue==2) uvSnapshotVMinCtrl;
+            floatSliderGrp -edit -enable ($intValue==2) uvSnapshotVMaxCtrl;
+            break;
+
+        case "uvSnapshotUMin":
+            $floatValue = `floatSliderGrp -q -value $control`; 
+            optionVar -floatValue uvSnapshotUMin $floatValue;
+            break;
+
+        case "uvSnapshotUMax":
+            $floatValue = `floatSliderGrp -q -value $control`; 
+            optionVar -floatValue uvSnapshotUMax $floatValue;
+            break;
+
+        case "uvSnapshotVMin":
+            $floatValue = `floatSliderGrp -q -value $control`; 
+            optionVar -floatValue uvSnapshotVMin $floatValue;
+            break;
+
+        case "uvSnapshotVMax":
+            $floatValue = `floatSliderGrp -q -value $control`; 
+            optionVar -floatValue uvSnapshotVMax $floatValue;
+            break;
+    }
+}
+
+global proc initOptionVarsUVSnapshot(int $forceFactorySettings) {
+
+	if ($forceFactorySettings || !`optionVar -exists UVSnapshotFilename`)
+    {
+	string $dir = (`workspace -q -rd` + "images/outUV");
+        optionVar -stringValue uvSnapshotFileName $dir; 
+    }
+    
+	if ($forceFactorySettings || !`optionVar -exists uvSnapshotUVRange`) 
+    {
+        optionVar -intValue uvSnapshotUVRange 0; 
+    }
+
+	if ($forceFactorySettings || !`optionVar -exists uvSnapshotUMin`) 
+    {
+        optionVar -floatValue uvSnapshotUMin 0.0; 
+    }
+
+	if ($forceFactorySettings || !`optionVar -exists uvSnapshotUMax`) 
+    {
+        optionVar -floatValue uvSnapshotUMax 1.0; 
+    }
+
+	if ($forceFactorySettings || !`optionVar -exists uvSnapshotVMin`) 
+    {
+        optionVar -floatValue uvSnapshotVMin 0.0; 
+    }
+
+	if ($forceFactorySettings || !`optionVar -exists uvSnapshotVMax`) 
+    {
+        optionVar -floatValue uvSnapshotVMax 1.0; 
+	}
+}
+
+global proc performUVSnapshot()
+{
+	global float $UVSnapshotRatio;
+	
+	string $wnd = "UVSnapshotWindow";
+	
+	if( `window -q -exists $wnd` )
+		deleteUI $wnd;
+
+	string $uvSnapshot = (uiRes("m_performUVSnapshot.kUVSnapshot"));
+	window -title $uvSnapshot -iconName $uvSnapshot -w 500 -h 300 $wnd;
+
+	int $spacing = 160;  // Matches option box spacing
+
+	initOptionVarsUVSnapshot(0);	
+
+	setUITemplate -pushTemplate DefaultTemplate;
+
+	string $dir = `optionVar -q uvSnapshotFileName`;
+
+	if ( `about -nt` )
+		$dir = substituteAllString($dir, "/", "\\");
+
+	int $isMayaEvalVersion = `about -ev`;
+	int $kPLEMaxX = 8192;
+	int $kPLEMaxY = 8192;
+	if( $isMayaEvalVersion ) {
+		$kPLEMaxX = 1024;
+		$kPLEMaxY =  768;
+	} 
+
+	formLayout snapUVform;		// holds the scrolling configuration panel and the buttons
+	scrollLayout snapUVscroll;	// makes the panel scroll if it don't fit in the window
+	formLayout snapUVcontrols;	// makes sure the two collapseable frame layouts line up
+		frameLayout -label $uvSnapshot -cl 0 snapUVframe;
+			columnLayout snapUVcol;
+
+				textFieldButtonGrp -label (uiRes("m_performUVSnapshot.kFileName"))
+					-cw 1 $spacing 
+					-cw 3 65
+					-tx $dir 
+					-buttonLabel (uiRes("m_performUVSnapshot.kBrowse"))
+					-cc UVSnapshotFileNameCallback
+					-bc UVSnapshotBrowse 
+					DUVfileName;
+
+				intSliderGrp -label (uiRes("m_performUVSnapshot.kSizeX"))
+					-cw 1 $spacing
+					-min 32 -max $kPLEMaxX 
+					-v 256 
+					-cc UVSnapshotUpdateY 
+					DUVXSlider;
+
+				intSliderGrp -label (uiRes("m_performUVSnapshot.kSizeY"))
+					-cw 1 $spacing
+					-min 32 -max $kPLEMaxY
+					-v 256 
+					-cc UVSnapshotUpdateX 
+					DUVYSlider;
+
+				checkBoxGrp -l "" -label1 (uiRes("m_performUVSnapshot.kKeepAspectRatio"))
+					-cw 1 $spacing 
+					-v1 1
+					-on1 UVSnapshotStoreRatio
+					DUVKeepAspect;
+
+				colorSliderGrp -label (uiRes("m_performUVSnapshot.kColorValue"))
+					-cw 1 $spacing 
+					-rgb 1. 1. 1.
+					DUVcolor;
+
+				checkBoxGrp -l "" -label1 (uiRes("m_performUVSnapshot.kAntialiasLines"))
+					-cw 1 $spacing 
+					-v1 1
+					DUVAntiAlias;
+
+				optionMenuGrp -label (uiRes("m_performUVSnapshot.kImageFormat"))
+					-cw 1 $spacing 
+					DUVfileFormat;
+
+					if(`about -mac`){
+						menuItem -label (uiRes("m_performUVSnapshot.kMayaIFF")) ;
+						menuItem -label (uiRes("m_performUVSnapshot.kJPEG")) ;                    
+						menuItem -label (uiRes("m_performUVSnapshot.kMacPaint")) ;
+						menuItem -label (uiRes("m_performUVSnapshot.kPhotoshop")) ;
+						menuItem -label (uiRes("m_performUVSnapshot.kPNG")) ;
+						menuItem -label (uiRes("m_performUVSnapshot.kQuickDraw")) ;
+						menuItem -label (uiRes("m_performUVSnapshot.kQuicktimeImage")) ;
+						menuItem -label (uiRes("m_performUVSnapshot.kSGI")) ;
+						menuItem -label (uiRes("m_performUVSnapshot.kTarga")) ;						
+						menuItem -label (uiRes("m_performUVSnapshot.kTIFF")) ;				
+						menuItem -label (uiRes("m_performUVSnapshot.kWindowsBitmap")) ;					
+					}else {
+						string $imfKey;
+						int $i = 0;
+						$imfPlugins = `imfPlugins -q`;
+						menuItem -label (uiRes("m_performUVSnapshot.kMayaIFFMenu"));	// Always give IFF as a choice
+						for ($i = 0; $i< size($imfPlugins); $i++) {
+							$imfKey = `imfPlugins -q -key $imfPlugins[$i]`;
+							if ((`imfPlugins -q -writeSupport $imfKey`) &&
+								!(`imfPlugins -q -multiFrameSupport $imfKey`) &&
+								$imfKey != "maya")
+								menuItem -label ($imfPlugins[$i]) ;
+						}
+					}
+				setParent ..;
+			setParent ..;
+
+		frameLayout -label (uiRes("m_performUVSnapshot.kUVRangeOptions")) -cl 0 uvRangeForm ;
+			columnLayout uvRangeCol;
+				optionMenuGrp -label (uiRes("m_performUVSnapshot.kUVRange"))
+					-cw 1 $spacing 
+					-cc "uvSnapshotCtrlChanged(\"uvRange\")"
+					uvRangeCtrl;
+					menuItem -label (uiRes("m_performUVSnapshot.kNormal")); 
+					menuItem -label (uiRes("m_performUVSnapshot.kEntireRange")); 
+					menuItem -label (uiRes("m_performUVSnapshot.kUserSpecified")); 
+
+				floatSliderGrp -label (uiRes("m_performUVSnapshot.kUMin"))
+					-cw 1 $spacing 
+					-min 0 -max 1
+					-fieldMinValue -10000 -fieldMaxValue 10000
+					-cc "uvSnapshotCtrlChanged(\"uvSnapshotUMin\")"
+					uvSnapshotUMinCtrl;
+
+				floatSliderGrp -label (uiRes("m_performUVSnapshot.kUMax"))
+					-cw 1 $spacing 
+					-min 0 -max 1
+					-fieldMinValue -10000 -fieldMaxValue 10000
+					-cc "uvSnapshotCtrlChanged(\"uvSnapshotUMax\")"
+					uvSnapshotUMaxCtrl;
+
+				floatSliderGrp -label (uiRes("m_performUVSnapshot.kVMin"))
+					-cw 1 $spacing 
+					-min 0 -max 1
+					-fieldMinValue -10000 -fieldMaxValue 10000
+					-cc "uvSnapshotCtrlChanged(\"uvSnapshotVMin\")"
+					uvSnapshotVMinCtrl;
+
+				floatSliderGrp -label (uiRes("m_performUVSnapshot.kVMax"))
+					-cw 1 $spacing 
+					-min 0 -max 1
+					-fieldMinValue -10000 -fieldMaxValue 10000
+					-cc "uvSnapshotCtrlChanged(\"uvSnapshotVMax\")"
+					uvSnapshotVMaxCtrl;
+			setParent ..;
+		setParent ..;
+		setParent ..;
+		setParent ..;
+	
+		button  -label (uiRes("m_performUVSnapshot.kOk"))
+			-c ("UVSnapshotDoDrawUV(\""+$wnd+"\")")
+			okButton;
+		button  -label (uiRes("m_performUVSnapshot.kReset"))
+			-c "UVSnapshotResetDefaults"
+			resetButton;
+		button  -label (uiRes("m_performUVSnapshot.kCloseBtn"))
+			-c ("{deleteUI "+$wnd+";}")
+			closeButton;
+
+	setParent ..;
+
+	formLayout -edit
+		-af snapUVframe "top" 5
+		-af snapUVframe "left" 0
+		-af snapUVframe "right" 15
+		-an snapUVframe "bottom"
+
+		-ac uvRangeForm "top" 5 snapUVframe
+		-af uvRangeForm "left" 0
+		-af uvRangeForm "right" 15
+		-af uvRangeForm "bottom" 5
+		snapUVcontrols;
+
+	formLayout -edit
+		-af snapUVscroll "top" 5
+		-af snapUVscroll "left" 0
+		-af snapUVscroll "right" 15
+		-ac snapUVscroll "bottom" 5 okButton
+
+		-an okButton "top"
+		-af okButton "left" 5
+		-ap okButton "right" 3 33
+		-af okButton "bottom" 5
+
+		-an resetButton "top" 
+		-ap resetButton "left" 2 33
+		-ap resetButton "right" 3 66
+		-af resetButton "bottom" 5
+
+		-an closeButton "top"
+		-ap closeButton "left" 2 66
+		-af closeButton "right" 5
+		-af closeButton "bottom" 5
+		snapUVform;
+
+	// Read the values from the optionVars
+	if (`optionVar -ex "DUVresX"`)
+		intSliderGrp -e -v `optionVar -q "DUVresX"` DUVXSlider;
+
+	if (`optionVar -ex "DUVresY"`)
+		intSliderGrp -e -v `optionVar -q "DUVresY"` DUVYSlider;
+
+	if (`optionVar -ex "DUVKeepAspect"`)
+		checkBoxGrp -e -v1 `optionVar -q "DUVKeepAspect"` DUVKeepAspect;
+
+	if (`optionVar -ex "DUVAntiAlias"`)
+		checkBoxGrp -e -v1 `optionVar -q "DUVAntiAlias"` DUVAntiAlias;
+
+    $intValue = `optionVar -q uvSnapshotUVRange` + 1;
+    optionMenuGrp -edit -select $intValue uvRangeCtrl;
+    uvSnapshotCtrlChanged("uvRange");
+
+    $floatValue = `optionVar -q uvSnapshotUMin`;
+    floatSliderGrp -edit -value $floatValue uvSnapshotUMinCtrl;
+
+    $floatValue = `optionVar -q uvSnapshotUMax`;
+    floatSliderGrp -edit -value $floatValue uvSnapshotUMaxCtrl;
+
+    $floatValue = `optionVar -q uvSnapshotVMin`;
+    floatSliderGrp -edit -value $floatValue uvSnapshotVMinCtrl;
+
+    $floatValue = `optionVar -q uvSnapshotVMax`;
+    floatSliderGrp -edit -value $floatValue uvSnapshotVMaxCtrl;
+
+	if ((`optionVar -ex "DUVred"`) && 
+		(`optionVar -ex "DUVgreen"`) && 
+		(`optionVar -ex "DUVblue"`))
+		colorSliderGrp -e -rgb 
+			`optionVar -q "DUVred"` 
+			`optionVar -q "DUVgreen"` 
+			`optionVar -q "DUVblue"` DUVcolor;
+
+	if (`optionVar -ex "DUVfileFormat"`)
+	{
+		//older version might have a number that isn't matched.
+		int $frmtIndex = `optionVar -q "DUVfileFormat"`;
+		if ($frmtIndex > `optionMenuGrp -q -numberOfItems DUVfileFormat`)
+			$frmtIndex = `optionMenuGrp -q -numberOfItems DUVfileFormat`;
+			
+		optionMenuGrp -e -sl $frmtIndex DUVfileFormat;
+	}
+	
+	float $x = `intSliderGrp -q -v DUVXSlider`;
+	float $y = `intSliderGrp -q -v DUVYSlider`;
+	$UVSnapshotRatio = $x / $y;	
+
+	setUITemplate -popTemplate;
+
+	showWindow $wnd;
+}

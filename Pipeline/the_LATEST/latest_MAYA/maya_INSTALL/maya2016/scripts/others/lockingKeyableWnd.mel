@@ -1,0 +1,305 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+proc int channelNameStyle() {
+	if( !`optionVar -exists CCchannelNames` ) {
+		optionVar -intValue CCchannelNames 2;
+	}
+
+	return `optionVar -q CCchannelNames`;
+}	
+
+global proc string[] lockingKeyableWnd_uiNames( string $longNames[], string $selectedItem )
+{
+	// If $selectedItem is a component or node.attr plug (as in 
+	// nurbsSphere1.cv[0][2]) then we need to strip off the attribute
+	// part of $selectedItem or else we'll call attributeName on
+	// nurbsSphere1.cv[0][2].controlPoints[2].xValue instead of
+	// nurbsSphere1.controlPoints[2].xValue.
+	//
+	string $buffer[];
+	tokenize( $selectedItem, ".", $buffer );
+	string $selectedNode = $buffer[0];
+
+	int $channelNames = channelNameStyle();
+
+	string $results[];
+
+	for( $n in $longNames ) {
+		string $uiName;
+		switch( $channelNames ) {
+			case 0:
+				$uiName = `attributeName -leaf false -short ($selectedNode + "." + $n)`;
+				break;
+			case 1:
+				$uiName = $n;
+				break;
+			case 2:
+				$uiName = `attributeName -leaf false -nice ($selectedNode + "." + $n)`;
+				break;
+			default:
+				$uiName = $n;
+				error (uiRes("m_lockingKeyableWnd.kUnknown"));
+				break;
+		}
+		$results[size($results)] = $uiName;
+	}
+	
+	return $results;
+}
+
+
+global proc rebuildMenu(string $tabs, string $window)
+{
+	setParent LockingKeyable;
+	menu -e -dai Object;
+	setParent -m Object;
+	string $selected[] = `ls -sl -tail 20`;
+	int $numOfSelected = `size( $selected )`;
+	if( $numOfSelected == 0 ) 
+	{
+		menuItem -label (uiRes("m_lockingKeyableWnd.kNothing"));
+	} 
+	else 
+	{
+		for( $item in $selected ) 
+		{
+			string $command = "MenuSelect" + " " + `tabLayout -q -st $tabs` + 
+				" " + $item + " " + `tabLayout -q -st $tabs` + " " + $window;//$item;
+			menuItem -c $command -label $item;
+		}
+		if( $numOfSelected == 20 ) {
+			menuItem -label (uiRes("m_lockingKeyableWnd.kTruncated"));
+		}
+	}
+}
+
+
+
+global proc MenuSelect(string $commandStr, string $selection, string $parent,
+						string $window)
+{
+	setParent LockingKeyable;
+
+	// Lets check to see if this frame exists, if not
+	// nothing to do.  Sometimes timing of deferred
+	// callbacks means autoUpdate or MenuSelect procs can
+	// get called with stale info.  Be sure that $selection
+	// actually exists before trying to do anything w/it.
+	//
+	if ( ! `frameLayout -exists $parent` || !`objExists $selection` )
+	{
+		return;
+	}
+	
+    int $childCount = `frameLayout -query -numberOfChildren $parent`;
+    string $command = "";
+
+    if (0 == $childCount) 
+	{
+        $command = "PScreate" + $commandStr + "UI " + $parent + " " + 
+			$selection;
+	}
+	else
+	{
+        $command = "PSupdate" + $commandStr + "UI " + $parent + " " + 
+			$selection;
+	}
+
+	evalDeferred $command;
+
+	$command = "UpdateTab " + $selection + " LKtabs " + $window;
+	tabLayout -e -preSelectCommand $command LKtabs;
+
+	string $name = (uiRes("m_lockingKeyableWnd.kChannelControlName"));
+	string $windowName = `format -s $selection $name`;
+
+	window -e -title $windowName $window;
+}
+
+global proc UpdateTab(string $selection, string $parent, string $window)
+{
+	setParent LockingKeyable;
+	string $tabSelected = eval( "tabLayout -q -st " + $parent );
+	
+	string $command = "MenuSelect " + $tabSelected + " " + $selection + " " + 
+		$tabSelected + " " + $window;	
+	eval $command;
+//	tabLayout -e -cc "" LKtabs;
+}
+
+global proc autoUpdateCC()
+{
+	// don't do anything if the window is minimized
+	//
+	if ( `window -q -iconify LockingKeyable` ) {
+		return;
+	}
+
+   	string $selected[] = `ls -sl -tail 20`;
+    int $numOfSelected = `size( $selected )`;
+
+	setParent LockingKeyable;
+
+
+	if ((!(`frameLayout -exists warnFrame`))&&( $numOfSelected != 0 )) {
+
+		tabLayout -e -tv true LKtabs;
+
+		string $command = "MenuSelect" + " " + `tabLayout -q -st LKtabs` +
+			" " + $selected[$numOfSelected-1] + " " + `tabLayout -q -st LKtabs` + " " +
+			"LockingKeyable";
+
+		eval $command;
+	} else if( $numOfSelected != 0 ) {
+		if (`tabLayout -exists warnTab`) {
+			deleteUI warnTab;
+		}
+		tabLayout -e -tv true LKtabs;
+		tabLayout -e -st Keyable LKtabs;
+		string $command = "MenuSelect" + " " + `tabLayout -q -st LKtabs` +
+			" " + $selected[$numOfSelected-1] + " " + `tabLayout -q -st LKtabs` + " " +
+			"LockingKeyable";
+
+		eval $command;
+	} else if (!`tabLayout -exists warnTab`) {
+		setParent LKtabs;
+		tabLayout warnTab;
+		frameLayout -bv false -lv false -cll false warnFrame; 
+		frameLayout -lv false warnFrame;
+		text -label (uiRes("m_lockingKeyableWnd.kNothingSelected")) warning;
+		tabLayout -e -tv false  warnTab;
+		tabLayout -e -tv false  LKtabs;
+		tabLayout -e -st warnTab LKtabs;
+	}
+
+}
+
+global proc buildChannelControlContextHelpItems(string $nameRoot, string $menuParent)
+//
+//  Description:
+//		Build context sensitive menu items
+//		
+//  Input Arguments:
+//		$nameRoot - name to use as the root of all item names
+//		$menuParent - the name of the parent of this menu
+//
+//  Return Value:
+//      None
+//
+{
+	menuItem -label (uiRes("m_lockingKeyableWnd.kChannelControlHelp"))
+		-enableCommandRepeat false
+		-command "showHelp ChannelControl";
+}
+
+global proc lockingKeyableWnd()
+{
+    string $selected[] = `ls -sl -tail 20`;
+    int $numOfSelected = `size( $selected )`;
+	if ( `window -exists LockingKeyable` ) {
+		showWindow LockingKeyable;
+		return;
+	}
+
+	window
+		-mb true
+		-w 500 -h 400
+		-title (uiRes("m_lockingKeyableWnd.kChannelControl"))
+		-iconName (uiRes("m_lockingKeyableWnd.kChannels"))
+		-mnc "window -e -rc autoUpdateCC -mnc \"\" LockingKeyable"
+		LockingKeyable;
+		
+	string $object = (uiRes("m_lockingKeyableWnd.kObject"));
+	if(`about -mac`){
+		menu -p LockingKeyable
+			-label $object
+			-pmc "rebuildMenu LKtabs LockingKeyable" 
+			-familyImage "menuIconObject.png"
+			Object;
+	}
+	
+	//	Adds support for the Context Sensitive Help Menu.
+	//
+	addContextHelpProc "LockingKeyable" "buildChannelControlContextHelpItems";
+	doHelpMenu "LockingKeyable" "LockingKeyable";
+
+	setUITemplate -pushTemplate NONE;
+
+	scriptJob -p LockingKeyable -e "SelectionChanged" "autoUpdateCC";
+
+	tabLayout LKtabs;
+
+	frameLayout -lv false Keyable;
+	setParent ..;
+
+	frameLayout -lv false Locking;
+	setParent ..;
+
+	tabLayout -e -tabLabel Keyable (uiRes("m_lockingKeyableWnd.kKeyable"))
+	    -tabLabel Locking (uiRes("m_lockingKeyableWnd.kLocked")) -tv false LKtabs;
+	tabLayout -e -st Keyable LKtabs;
+	tabLayout -e -tv false LKtabs;
+
+	if(!`about -mac`){
+		menu -p LockingKeyable 
+			-label $object
+			-pmc "rebuildMenu LKtabs LockingKeyable" 
+			-familyImage "menuIconObject.png"
+			Object;
+	}
+
+	int $channelNames = channelNameStyle();
+
+	menu -p LockingKeyable -label (uiRes("m_generateCBEditMenu.kChannelNames"))
+		ChannelNames;
+		string $collection = `radioMenuItemCollection lockKeyChannelNamesCollection`;
+		menuItem -label (uiRes("m_generateCBEditMenu.kNice"))
+			-c "optionVar -intValue CCchannelNames 2; evalDeferred autoUpdateCC"
+			-collection $collection
+			-radioButton ($channelNames == 2);
+		menuItem -label (uiRes("m_generateCBEditMenu.kLong"))
+			-c "optionVar -intValue CCchannelNames 1; evalDeferred autoUpdateCC"
+			-collection $collection
+			-radioButton ($channelNames == 1);
+		menuItem -label (uiRes("m_generateCBEditMenu.kShort"))
+			-c "optionVar -intValue CCchannelNames 0; evalDeferred autoUpdateCC"
+			-collection $collection
+			-radioButton ($channelNames == 0);
+			
+    if( $numOfSelected != 0 )
+	{
+		autoUpdateCC;
+	}
+	else
+	{
+		setParent LKtabs;
+		tabLayout warnTab;
+		frameLayout -bv false -lv false -cll false warnFrame; 
+		frameLayout -lv false warnFrame;
+		tabLayout -e -tv false  warnTab;
+		tabLayout -e -st warnTab LKtabs;
+		text -label (uiRes("m_lockingKeyableWnd.kNothingSelected")) warning;
+	}
+	setUITemplate -popTemplate;
+
+	showWindow LockingKeyable;
+}

@@ -1,0 +1,261 @@
+#!/bin/csh -f
+#Tag 0x00C98a00
+#*
+#*+***********************************************************************
+#*
+#*  Module:
+#*	maya
+#*
+#*-***********************************************************************
+#*
+
+set maya_exec = maya.bin
+
+
+#
+#  Determine if launched from the desktop or a shell.  This will tell
+#  us how to display error messages later.
+#
+
+set tty = 1
+
+set OSname = `/bin/uname -s`
+switch ("$OSname")
+	case Linux:
+		set lib = lib
+		set lsFlags = '-l'
+		breaksw
+
+	default:
+		echo "Maya is not supported on $OSname."
+		exit 1
+		breaksw
+endsw
+
+#
+#	Parse the argument list
+#
+
+set	mayaArgs = ""
+set mayaApp = ""
+set debuggerArgs = ""
+
+while ( $#argv > 0 )
+    switch ( "$1" )
+    case -data:
+		# This is a supported maya flag which we have to differentiate from -d.
+		set mayaArgs = "${mayaArgs} '$1'"
+	breaksw
+
+	#
+	# Check to see if we should launch under a debugger
+	#
+    case -d:
+		if ( $#argv <= 1 ) then
+			if ( $tty == 1 ) then
+				echo "No debugger specified."
+			else
+				xconfirm -c -t "No debugger specified." -icon warning>&/dev/null
+			endif
+			exit 1
+		endif
+		shift
+		set dbgApp = $1
+	breaksw
+
+    case -default:
+		set mayaArgs = "${mayaArgs} '$1'"
+	breaksw
+
+    case -dbgArg:
+		shift
+		set debuggerArgs = "${debuggerArgs} '$1'"
+	breaksw
+
+    case -d*:
+		set dbgApp = `echo $1 | cut -c3-`
+	breaksw
+
+    case -lic=*:
+		if ( ! $?MAYA_LICENSE ) setenv MAYA_LICENSE
+		setenv MAYA_LICENSE "${MAYA_LICENSE}`echo $1 | cut -c6-`"
+	breaksw
+
+    default:
+		# See if the user specified an executable
+		set mayaSpecified = `expr "$1" : '.*\(maya\.bin\).*' \| ''`
+		if ($mayaSpecified == "maya.bin") then
+			set mayaApp = $1
+		else
+			set mayaArgs = "${mayaArgs} '$1'"
+		endif
+
+    endsw
+
+    shift
+end
+
+
+#
+#  If the MAYA_LOCATION is set, use it.  Otherwise, determine it.
+#
+
+if ( $?MAYA_LOCATION ) then
+    if ( -x "${MAYA_LOCATION}/bin/${maya_exec}" ) then
+		set maya = "${MAYA_LOCATION}/bin/${maya_exec}"
+    else
+		unsetenv MAYA_LOCATION
+    endif
+endif
+
+
+#
+#  Need to determine where Maya resides based on how this shell was
+#  invoked.  Determine full pathname, follow soft link, and extract
+#  directory.  If "maya" is not in a "bin" directory, bail.
+#
+
+if ( ! $?MAYA_LOCATION ) then
+    #
+    #  Create the full pathname of the invoked binary.
+    #
+
+    if ( "$0" =~ /* ) then
+		set me = "$0"
+    else
+		set me = `pwd`/$0
+    endif
+
+
+    #
+    #  If it's a link, find the actual file.
+    #
+
+    while ( -l "$me" )
+		set linkdirname = `dirname "$me"`
+		set me = `/bin/ls $lsFlags "$me" | tr ' ' '\012' | tail -n 1`
+		if ( "$me" !~ /* ) then
+			set me = "$linkdirname/$me"
+		endif
+    end
+
+
+    #
+    #  Binary should be in $MAYA_LOCATION/bin.  Verify that.
+    #
+
+    set bindir = `dirname "$me"`
+    if ( -d "$bindir" ) then
+		set bindir = `cd "$bindir"; echo $cwd`
+    endif
+    set binfile = `basename "$bindir"`
+    if ( "$binfile" =~ "bin" ) then
+		# We cannot call setenv directly if there are spaces in the Path.
+		# We must use a temp variable.
+		set maya_loc = `dirname "$bindir"`
+		setenv MAYA_LOCATION "$maya_loc"
+		if ( -x "${MAYA_LOCATION}/bin/${maya_exec}" ) then
+			set maya = "${MAYA_LOCATION}/bin/${maya_exec}"
+		else
+			unsetenv MAYA_LOCATION
+		endif
+    endif
+endif
+
+#
+#  This allows Maya to save SGI format image files with matte.
+
+setenv WF_IMF_SGI_MATTE
+
+#
+#	101914: color correction needed for Cineon files.
+
+setenv WF_IMF_CIN_CORRECTION both
+setenv WF_IMF_CIN_WHITE_POINT 685
+
+# Disable KDE's Qt imageformat plugins as Maya does not need them and they
+# make Maya's startup 4 times slower.
+#
+# If you want to use KDE's Qt image formats and are willing to accept the
+# performance degredation, remove or comment out the following line:
+unsetenv QT_PLUGIN_PATH
+
+# Set up the location of the libquicktime plugins
+setenv LIBQUICKTIME_PLUGIN_DIR "$MAYA_LOCATION/lib"
+
+#
+# Set up the location of the DSO's and run
+#
+
+if ( $?MAYA_LOCATION ) then
+    if ( $?libn32 && $?LD_LIBRARYN32_PATH ) then
+        setenv  LD_LIBRARYN32_PATH  "$MAYA_LOCATION/lib:$LD_LIBRARYN32_PATH"
+    else if ( $?LD_LIBRARY_PATH ) then
+        setenv  LD_LIBRARY_PATH     "$MAYA_LOCATION/lib:$LD_LIBRARY_PATH"
+    else
+        setenv  LD_LIBRARY_PATH     "$MAYA_LOCATION/lib"
+    endif
+
+    # Prepend modules lib to LD_LIBRARY_PATH or LD_LIBRARYN32_PATH
+    # See Manitoba/Apps/maya.cpp for OSX
+    foreach moduleDir ( "$MAYA_LOCATION/plug-ins"/* )
+        if ( -d "$moduleDir" && -d "$moduleDir/lib" ) then
+            if ( $?libn32 && $?LD_LIBRARYN32_PATH ) then
+                setenv LD_LIBRARYN32_PATH "$moduleDir/lib:$LD_LIBRARYN32_PATH"
+            else if ( $?LD_LIBRARY_PATH ) then
+                setenv LD_LIBRARY_PATH    "$moduleDir/lib:$LD_LIBRARY_PATH"
+            else
+                setenv LD_LIBRARY_PATH    "$moduleDir/lib"
+            endif
+        endif
+    end
+
+	if ("$mayaApp" != "") set maya = "${mayaApp}"
+
+    if ( -x "$maya" ) then
+		if ( $?dbgApp ) then
+			#echo "debugging: ${maya}"
+			setenv AW_DEBUGGING F
+			setenv MAYA_DEBUG_NO_SIGNAL_HANDLERS 1
+			echo "Executing: ${dbgApp} ${debuggerArgs} ${maya}"
+			if ( "${mayaArgs}" !~ "" ) then
+				echo "Maya args: ${mayaArgs}"
+			endif
+			eval "${dbgApp}" ${debuggerArgs} ${maya} ${mayaArgs}
+			exit $status
+		else
+			#echo "running: ${maya}"
+			set noSpaceMaya = `echo $maya | sed -e 's/ /\\ /g'`
+			eval $noSpaceMaya ${mayaArgs}
+			exit $status
+		endif
+    endif
+endif
+
+if ( ! $?maya ) set maya = "${maya_exec}"
+
+if ( $tty == 1 ) then
+    echo The Maya executable \(\`${maya}\'\) cannot be found
+else
+    xconfirm -c -t "The Maya executable \(\`${maya}\'\) cannot be found" \
+	    -icon warning >&/dev/null
+endif
+exit 1
+
+
+#*+
+#* ==========================================================================
+#* The information  in  this  file is  provided for the  exclusive use of the
+#* licensees of Alias Systems Corp. Such users have the right to use, modify,
+#* and  incorporate this code  into  other  products  for purposes authorized
+#* by the  Alias Systems Corp. license agreement, without fee.
+#*
+#* Alias Systems Corp. disclaims all warranties with regard to this software,
+#* including all implied warranties  of  merchantability and  fitness.  In no
+#* event  shall  Alias Systems Corp. be liable for any  special,  indirect or
+#* consequential  damages  or  any  damages whatsoever resulting from loss of
+#* use, data  or profits, whether in  an  action of  contract,  negligence or
+#* other tortious  action,  arising out of or  in connection  with the use or
+#* performance of this software.
+#* ==========================================================================
+#*-

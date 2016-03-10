@@ -1,0 +1,2009 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Description:
+//	  Creation and manipulation of the nodeEditor panel
+//
+
+source "nodeEditorWindow.mel";
+
+proc int enableBifrostCompoundEditing()
+{
+	string $enableGraphEditing = getenv("MAYA_BIFROST_COMPOUNDS");
+	return ( size($enableGraphEditing) != 0 );
+}
+
+
+global string $gNodeEdGlobalOptionsKeys[];
+$gNodeEdGlobalOptionsKeys = {	"nodeEdAddNewNodes",
+								"nodeEdDefaultNodeViewMode",
+								"nodeEdExtendToShapes",
+								"nodeEdGridSnapping",
+								"nodeEdGridVisibility",
+								"nodeEdIgnoreAssets",
+								"nodeEdSaveGraphInfoWithPanel",
+								"nodeEdShowNamespace",
+								"nodeEdUseAssetsAndPublishedAttributes",
+								"nodeEdShowSGShapes",
+								"nodeEdShowShapes",
+								"nodeEdShowTransforms",
+								"nodeEdSyncedSelection" };
+
+// Initialize the preference which controls which node types are
+// not to be added implicitly to the node editor.  Maya nodes can
+// be added to the auxiliary nodes list, but for now, plugin nodes 
+// must be added to this preference.
+//
+if (!`optionVar -ex "nodeEdNoImplicitAddTypes"`) {
+	optionVar 
+		-sva nodeEdNoImplicitAddTypes  "defaultRenderingList"
+		-sva nodeEdNoImplicitAddTypes  "defaultTextureList"
+		-sva nodeEdNoImplicitAddTypes  "mentalrayFramebuffer"
+		-sva nodeEdNoImplicitAddTypes  "mentalrayGlobals"
+		-sva nodeEdNoImplicitAddTypes  "mentalrayItemsList"
+		-sva nodeEdNoImplicitAddTypes  "mentalrayOptions"
+
+		// created by 'Modify' menu post 
+		-sva nodeEdNoImplicitAddTypes  "hikSolver"
+		-sva nodeEdNoImplicitAddTypes  "ikRPsolver"
+		-sva nodeEdNoImplicitAddTypes  "ikSCsolver"
+		-sva nodeEdNoImplicitAddTypes  "ikSplineSolver";
+}
+
+global proc nodeEditorPanel (string $panelName)
+//
+//  Description:
+//		Create a new scripted nodeEditorPanel.  If the scripted
+//		panel hasn't yet been defined then define it.
+//
+{
+	global string $gMainPane;
+
+	if (!`scriptedPanelType -exists nodeEditorPanel`) {
+		//
+		//  Define the callbacks for the nodeEditor panel
+		//
+		scriptedPanelType
+			-createCallback		"nodeEdCreateCallback" 
+			-initCallback		"nodeEdInitCallback" 
+			-addCallback		"nodeEdAddCallback"
+			-removeCallback		"nodeEdRemoveCallback"
+			-deleteCallback		"nodeEdDeleteCallback"
+			-saveStateCallback	"nodeEdSaveStateCallback"
+			nodeEditorPanel;
+	}
+
+	//  instantiate a new nodeEditorPanel
+	//
+	setParent $gMainPane;
+	scriptedPanel 
+		-unParent 
+		-type nodeEditorPanel 
+		$panelName;
+}
+
+global proc nodeEdCreateCallback(string $panelName) {
+//
+//  Description:
+//	  Create any editors unparented here and do
+//	  any other initialization required.
+//
+	string $ned = ( $panelName + "NodeEditorEd" );
+	nodeEditor
+		-unParent
+		-showNamespace `optionVar -q nodeEdShowNamespace`
+		-useAssets `optionVar -q nodeEdUseAssetsAndPublishedAttributes`
+		-showShapes `optionVar -q nodeEdShowShapes`
+		-showSGShapes `optionVar -q nodeEdShowSGShapes`
+		-showTransforms `optionVar -q nodeEdShowTransforms`
+		-consistentNameSize `optionVar -q nodeEdConsistentNodeNameSize`
+		-autoSizeNodes `optionVar -q nodeEdAutoSizeNodes`
+		-syncedSelection `optionVar -q nodeEdSyncedSelection`
+		-extendToShapes `optionVar -q nodeEdExtendToShapes`
+		-addNewNodes `optionVar -q nodeEdAddNewNodes`
+		-gridVisibility `optionVar -q nodeEdGridVisibility`
+		-gridSnap `optionVar -q nodeEdGridSnapping`
+		-additiveGraphingMode `optionVar -q nodeEdAdditiveGraphingMode`
+		-defaultPinnedState `optionVar -q nodeEdDefaultPinnedState`
+		-settingsChangedCallback nodeEdSyncControls
+		-popupMenuScript nodeEdBuildPanelMenus
+		-createNodeCommand nodeEdCreateNodeCommand
+		-keyPressCommand nodeEdKeyPressCommand
+		$ned;
+
+	callPython("maya.app.general.nodeEditor","createCallback",{$ned});
+
+	addContextHelpProc $panelName "nodeEdBuildContextHelpItems";
+}
+
+
+global proc nodeEdInitCallback(string $panelName) {
+//
+//  Description:
+//	  Re-initialize the panel.
+//
+}
+
+global proc nodeEdSyncControls(string $ned)
+//
+//  Description:
+//	  Syncs the UI control state to its editor.
+//
+{
+	string $textFieldName = ($ned + "DepthTextField");
+	int $depth = `nodeEditor -q -tdl $ned`;
+	
+	if ( `textField -exists $textFieldName` ){
+		textField -e -text $depth $textFieldName;
+	} else {
+		return;
+	}
+
+	iconTextButton -e -i1 `nodeEdLockImage($ned)` ($ned + "LCB");
+	
+	int $shapes = `nodeEditor -q -showShapes $ned`;
+	string $item = ($ned + "SSGRB");
+	
+	if ($shapes) {
+		if (!`nodeEditor -q -showSGShapes $ned`) {
+			iconTextRadioButton -e -select $item;
+		} else {
+			$item = ($ned + "SSRB");
+			iconTextRadioButton -e -select $item;
+		}
+	} else {
+		$item = ($ned + "NSRB");
+		iconTextRadioButton -e -select $item;
+	}
+	
+	iconTextCheckBox -e -v (`nodeEditor -q -gridVisibility $ned`) ($ned + "GridToggleVisibility");
+	iconTextCheckBox -e -v (`nodeEditor -q -gridSnap $ned`) ($ned + "GridToggleSnap");
+}
+
+global proc nodeEdSyncMenu(string $ned, string $menu)
+//
+//  Description:
+//	  Syncs the menu to the editor
+//
+{
+	int $inContainer = `nodeEditor -q -inContainerView $ned`;
+	if ("edit" == $menu)
+	{
+		string $item = ($ned + "EPN");
+		menuItem -e -enable (!$inContainer) $item;
+
+		$item = ($ned + "EUP");
+		menuItem -e -enable (!$inContainer) $item;
+	}
+	else if ("display" == $menu)
+	{
+		string $item = ($ned + "GridVisibility");
+		menuItem -e -cb `nodeEditor -q -gridVisibility $ned` $item;
+
+		$item = ($ned + "GridSnap");
+		menuItem -e -cb `nodeEditor -q -gridSnap $ned` $item;
+
+		int $shapes = `nodeEditor -q -showShapes $ned`;
+		if ($shapes) {
+			if (!`nodeEditor -q -showSGShapes $ned`) {
+				$item = ($ned + "SSGI");
+				menuItem -e -rb 1 $item;
+			} else {
+				$item = ($ned + "SSI");
+				menuItem -e -rb 1 $item;
+			}
+		} else {
+			$item = ($ned + "NSI");
+			menuItem -e -rb 1 $item;
+		}
+		$item = ($ned + "SSGI");
+		menuItem -e -enable (!$inContainer) $item;
+		$item = ($ned + "SSI");
+		menuItem -e -enable (!$inContainer) $item;
+		$item = ($ned + "NSI");
+		menuItem -e -enable (!$inContainer) $item;
+
+		$item = ($ned + "CNNS");
+		menuItem -e -cb `nodeEditor -q -consistentNameSize $ned` $item;
+		$item = ($ned + "STI");
+		menuItem -e -cb `nodeEditor -q -showTransforms $ned` -enable (!$inContainer) $item;
+		$item = ($ned + "ETSI");
+		menuItem -e -cb `nodeEditor -q -extendToShapes $ned` -enable (!$inContainer) $item;
+		$item = ($ned + "ShowNamespace");
+		menuItem -e -cb `nodeEditor -q -showNamespace $ned` $item;
+		$item = ($ned + "UseAssetsAndPublishedAttributes");
+		menuItem -e -cb `nodeEditor -q -useAssets $ned` -enable (!$inContainer) $item;
+	} 
+	else if ("options" == $menu)
+	{
+		string $item = ($ned + "RSI");
+		menuItem -e -cb `renderThumbnailUpdate -q` -enable (!$inContainer) $item;
+		$item = ($ned + "ATGI");
+		menuItem -e -cb `nodeEditor -q -addNewNodes $ned` -enable (!$inContainer) $item;
+		$item = ($ned + "ASNI");
+		menuItem -e -cb `nodeEditor -q -autoSizeNodes $ned` $item;
+		$item = ($ned + "AGMI");
+		menuItem -e -cb `nodeEditor -q -additiveGraphingMode $ned` -enable (!$inContainer) $item;
+		$item = ($ned + "PBDI");
+		menuItem -e -cb `nodeEditor -q -defaultPinnedState $ned` -enable (!$inContainer) $item;
+	}
+	else if ("tabs" == $menu)
+	{
+		string $item, $label;
+		int $primaryNE  = `nodeEditor -query -primary $ned`;
+		int $canRestore = `nodeEditor -query -restoreLastClosedTab $ned`;
+		int $canRedock  = `nodeEditor -query -redockTab $ned`;
+
+		$item = ($ned + "TabsCT");
+		menuItem -e -enable $primaryNE $item;
+		$item = ($ned + "TabsRT");
+		if ($canRedock)
+			$label = (uiRes("m_nodeEditorPanel.kRenameTab"));
+		else
+			$label = uiRes("m_nodeEditorPanel.kRenameActiveTab");
+		menuItem -e -label $label -enable ($primaryNE || $canRedock) $item;
+		$item = ($ned + "TabsCAT");
+		if ($canRedock)
+			$label = (uiRes("m_nodeEditorPanel.kCloseTab"));
+		else
+			$label = uiRes("m_nodeEditorPanel.kCloseActiveTab");
+		menuItem -e -label $label -enable ($primaryNE || $canRedock) $item;
+		$item = ($ned + "TabsCAllT");
+		menuItem -e -enable $primaryNE $item;
+
+		$item = ($ned + "TabsRLCT");
+		menuItem -e -enable ($primaryNE && $canRestore) $item;
+
+		$item = ($ned + "TabsRTT");
+		menuItem -e -enable (!$primaryNE && $canRedock) $item;
+	}
+	else if ("Compound" == $menu)
+	{
+    	$item = ($ned + "AddIterationPorts");
+
+        string $specType = nodeEdGetCurrentVNNCompoundSpecialization();
+		menuItem -e -enable ($specType == "Bifrost_DoWhile") $item;
+    }
+}
+
+proc nodeEdUpdateNodeTreeLister(string $ned)
+{
+	// Query the NodeEditor for the VNN runtime.  If it is empty, then we assume
+	// that we are not in a VNN container, which means we want the default mode.
+	string $runTime = `nodeEditor -q -vnnRuntime $ned`;
+	if ($runTime == "")
+		$runTime = "Hypershade";
+
+	// Get the create node form from the panel.
+	string $nedPanel = $ned;
+	if (endsWith($nedPanel, "NodeEditorEd"))
+	{
+		$nedPanel = startString($nedPanel, size($nedPanel) - size("NodeEditorEd"));
+	}
+	string $nedCreateForm = ( $nedPanel + "NodeEditorEdCreateNodeForm" );
+
+	string $createFormChildren[] = `formLayout -q -childArray $nedCreateForm`;
+	string $nodeTreeLister;
+	string $nodeLibrary;
+	for ($nodeTreeLister in $createFormChildren)
+	{
+		// Loop thur the nodeTreeLister's inside the CreateNode and set the
+		// one that matches this runtime to visible (making all the others
+		// non-visible).
+		if (startsWith($nodeTreeLister, "nodeTreeLister"))
+		{
+			$nodeLibrary = `nodeTreeLister -q -nodeLibrary $nodeTreeLister`;
+			nodeTreeLister -e -visible ($nodeLibrary == $runTime) $nodeTreeLister;
+		}
+	}
+}
+
+global proc nodeEdUpdateUIByTab(string $ned, string $showMenu)
+//
+//  Description:
+//	  Update Node Editor UI when the tab changes, as not all functionality may be applicable
+//	  (currently specific to the container view)
+//
+{
+	int $inContainer = `nodeEditor -q -inContainerView $ned`;
+
+	string $item = $ned + "Bookmarks";
+	menu -e -visible (!$inContainer) $item;
+
+	if (enableBifrostCompoundEditing() ) {
+        $item = ($ned + "CompoundMenu");
+        menu -e -visible $inContainer $item;
+    }
+
+	if(`menu -exists $showMenu`) {
+		menu -e -visible (!$inContainer) $showMenu;
+	}
+
+	$item = ($ned + "RegraphCollapse");
+	iconTextButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "SNEI");
+	iconTextButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "UPSTRM");
+	iconTextButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "UPDNSTRM");
+	iconTextButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "DNSTRM");
+	iconTextButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "LCCV");
+	iconTextButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "ADDSEL");
+	iconTextButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "LCDA");
+	iconTextButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "BookmarkCollapse");
+	iconTextButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "AddBM");
+	iconTextButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "EditBM");
+	iconTextButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "FDBack");
+	iconTextButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "FDForward");
+	iconTextButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "DisplayCollapse");
+	iconTextButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "SSRB");
+	iconTextRadioButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "SSGRB");
+	iconTextRadioButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "NSRB");
+	iconTextRadioButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "DisplayLockSeparator");
+	separator -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "LCB");
+	iconTextButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "DepthTraversalCollapse");
+	iconTextButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "ZeroDepth");
+	iconTextButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "ReduceOne");
+	iconTextButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "DepthTextField");
+	textField -e -manage (!$inContainer) $item;
+	
+	$item = ($ned + "IncreaseDepth");
+	iconTextButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "UnlimitedDepth");
+	iconTextButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "FilterCollapse");
+	iconTextButton -e -manage (!$inContainer) $item;
+
+	$item = ($ned + "FilterUIForm");
+	formLayout -e -manage (!$inContainer) $item;
+
+	// Update the CreateNode window that we have docked inside.
+	nodeEdUpdateNodeTreeLister($ned);
+}
+
+global proc nodeEdTraversalDepthLimit(string $ned, string $action, string $arg)
+//
+//  Description:
+//	  Handles interaction with traversal depth limit controls
+//
+{
+	string $cmd;
+	int $dep;
+
+	switch ($action) {
+	case "zero":
+		nodeEditor -e -fa -rfs -tdl 0 $ned;
+		break;
+	case "incr":
+		$dep = `nodeEditor -q -tdl $ned`;
+		nodeEditor -e -fa -rfs -tdl ($dep + 1)  $ned;
+		break;
+	case "decr":
+		$dep = `nodeEditor -q -tdl $ned`;
+		if ($dep >= 0) {
+			nodeEditor -e -fa -rfs -tdl ($dep - 1)  $ned;
+		}
+		break;
+	case "set":
+		$cmd = ("nodeEditor -e -rfs -tdl " + $arg + " " + $ned);
+		eval($cmd);
+		break;
+	case "inf":
+		nodeEditor -e -fa -rfs -tdl -1 $ned;
+		break;
+	default:
+		break;
+	}
+}
+
+global proc nodeEdGraphControl(string $ned, string $graphCmd) {
+	int $mods = `getModifiers`;
+	int $isShiftDown = ( $mods % 2 );
+	
+	if ( $isShiftDown ){
+		$graphCmd += "-agm on ";
+	} else {
+		$graphCmd += "-frameAll ";
+	}
+		
+	$graphCmd += $ned;
+	eval($graphCmd);
+}
+
+global proc string nodeEdLockImage(string $ned) {	
+	if (`nodeEditor -q -addNewNodes $ned`)
+		return "nodeGrapherUnlocked.png";
+	else
+		return "nodeGrapherLocked.png";	
+}
+
+global proc string nodeEdSyncImage (string $ned) {
+	if (`nodeEditor -q -syncedSelection $ned`)
+		return "syncOn.png";
+	else
+		return "syncOff.png";
+}
+
+proc nodeEdSetInitialPaneSize(string $createNodePane)
+//
+//  Description:
+//		Set the Create Node pane to a proper default size if
+//		the current size is not valid (needs to be done on the
+//		first show of the pane since the Node Editor is not at
+//		a size to calculate proper proportions when first
+//		created).
+//
+{
+	int $defaultCreateNodePaneProportion = 40;
+	int $defaultCreateNodePaneWidth;
+	if (`about -mac`) {
+		$defaultCreateNodePaneWidth = 375;
+	} else {
+		$defaultCreateNodePaneWidth = 365;
+	}
+
+	int $createNodePaneProportion;
+	int $paneLayoutWidth = `paneLayout -q -width $createNodePane`;
+	if($paneLayoutWidth < $defaultCreateNodePaneWidth * 2) {
+		// Set to the default proportion if the paneLayout
+		// width is less than twice the default width of the
+		// Create Node pane.
+		//
+		$createNodePaneProportion = $defaultCreateNodePaneProportion;
+	} else {
+		// Otherwise, set to the default width.
+		//
+		$createNodePaneProportion = $defaultCreateNodePaneWidth * 100 / $paneLayoutWidth;
+	}
+	paneLayout -e -paneSize 1 $createNodePaneProportion 100 $createNodePane;
+}
+
+global proc nodeEditorToggleCreateNode(string $panelName)
+{
+	string $ned = ( $panelName + "NodeEditorEd" );
+	string $nedPane = ( $panelName + "NodeEditorEdPane" );
+	string $nedCreateForm = ( $panelName + "NodeEditorEdCreateNodeForm" );
+
+	setParent $panelName;
+
+	int $manage = !`formLayout -q -manage $nedCreateForm`;
+	if($manage) {
+		// Check if the size of the Create Node pane needs to be initialized
+		global string $gNodeEditorCreateNodePaneInitialize[];
+		if (stringArrayContains($nedCreateForm, $gNodeEditorCreateNodePaneInitialize)) {	
+			// Set the proper initial size if necessary
+			nodeEdSetInitialPaneSize($nedPane);
+
+			// Remove this Node Editor from the initialize list
+			string $remove[] = { $nedCreateForm };
+			$gNodeEditorCreateNodePaneInitialize = stringArrayRemove($remove, $gNodeEditorCreateNodePaneInitialize);
+		}
+	}
+	formLayout -e -manage $manage $nedCreateForm;
+
+	// If this is the primary Node Editor, save its state
+	// for any secondary Node Editor opened afterwards to
+	// replicate
+	//
+	global int $gNodeEditorCreateNodePaneShown;
+	if(`nodeEditor -q -primary $ned`) {
+		$gNodeEditorCreateNodePaneShown = $manage;
+	}
+}
+
+global proc nodeEditorToggleDisplayIcons (int $arg, string $ned)
+//
+// Show and Hide the node editor display icons
+// $arg = 1 means show, 0 means hide, -1 means use optionVar
+//
+{
+	int $state = $arg;
+	if ($state < 0) $state = (!`optionVar -q nodeEditorShowDisplayIcons`);
+	
+	iconTextRadioButton -edit -manage $state ($ned + "SSRB");
+	iconTextRadioButton -edit -manage $state ($ned + "SSGRB");
+	iconTextRadioButton -edit -manage $state ($ned + "NSRB");
+	separator -edit -manage $state ($ned + "DisplayLockSeparator");
+	iconTextButton -edit -manage $state ($ned + "LCB");
+		
+	if ($state) {	
+		iconTextButton -edit -i1 openBar.png ($ned + "DisplayCollapse");
+	} else {
+		iconTextButton -edit -i1 closeBar.png ($ned + "DisplayCollapse");
+	}
+	optionVar -intValue "nodeEditorShowDisplayIcons" $state;
+}
+
+global proc nodeEditorToggleLayoutIcons (int $arg, string $ned)
+//
+// Show and Hide the node editor layout icons
+// $arg = 1 means show, 0 means hide, -1 means use optionVar
+//
+{
+	int $state = $arg;
+	if ($state < 0) $state = (!`optionVar -q nodeEditorShowLayoutIcons`);
+	int $inContainer = `nodeEditor -q -inContainerView $ned`;
+
+	iconTextButton -edit -manage ($state && !$inContainer) ($ned + "LCCV");
+	iconTextButton -edit -manage ($state && !$inContainer) ($ned + "ADDSEL");
+	iconTextButton -edit -manage ($state && !$inContainer) ($ned + "LCDA");
+	iconTextButton -edit -manage $state ($ned + "LCHSR");
+		
+	if ($state) {
+		iconTextButton -edit -i1 openBar.png ($ned + "LayoutCollapse");
+	} else {
+		iconTextButton -edit -i1 closeBar.png ($ned + "LayoutCollapse");
+	}
+	optionVar -intValue "nodeEditorShowLayoutIcons" $state;
+}
+
+global proc nodeEditorToggleRegraphIcons (int $arg, string $ned)
+//
+// Show and Hide the node editor sync and re-graph icons
+// $arg = 1 means show, 0 means hide, -1 means use optionVar
+//
+{
+	int $state = $arg;
+	if ($state < 0) $state = (!`optionVar -q nodeEditorShowRegraphIcons`);
+	
+	iconTextButton -edit -manage $state ($ned + "SNEI");
+	iconTextButton -edit -manage $state ($ned + "UPSTRM");
+	iconTextButton -edit -manage $state ($ned + "UPDNSTRM");
+	iconTextButton -edit -manage $state ($ned + "DNSTRM");
+		
+	if ($state) {	
+		iconTextButton -edit -i1 openBar.png ($ned + "RegraphCollapse");
+	} else {
+		iconTextButton -edit -i1 closeBar.png ($ned + "RegraphCollapse");
+	}
+	optionVar -intValue "nodeEditorShowRegraphIcons" $state;
+}
+
+global proc nodeEditorToggleDepthTraversalIcons (int $arg, string $ned)
+//
+// Show and Hide the node editor depth traversal icons
+// $arg = 1 means show, 0 means hide, -1 means use optionVar
+//
+{
+	int $state = $arg;
+	if ($state < 0) $state = (!`optionVar -q nodeEditorShowDepthTraversalIcons`);
+	
+	iconTextButton -edit -manage $state ($ned + "ZeroDepth");
+	iconTextButton -edit -manage $state ($ned + "ReduceOne");
+	textField -edit -manage $state ($ned + "DepthTextField");
+	iconTextButton -edit -manage $state ($ned + "IncreaseDepth");
+	iconTextButton -edit -manage $state ($ned + "UnlimitedDepth");
+		
+	if ($state) {
+		iconTextButton -edit -i1 openBar.png ($ned + "DepthTraversalCollapse");
+	} else {
+		iconTextButton -edit -i1 closeBar.png ($ned + "DepthTraversalCollapse");
+	}
+	optionVar -intValue "nodeEditorShowDepthTraversalIcons" $state;
+}
+
+global proc nodeEditorToggleLodIcons (int $arg, string $ned)
+//
+// Show and Hide the node editor LOD icons
+// $arg = 1 means show, 0 means hide, -1 means use optionVar
+//
+{
+	int $state = $arg;
+	if ($state < 0) $state = (!`optionVar -q nodeEditorShowLodPinIcons`);
+
+	iconTextButton -edit -manage $state ($ned + "LODSimpleMode");
+	iconTextButton -edit -manage $state ($ned + "LODConnectedMode");
+	iconTextButton -edit -manage $state ($ned + "LODShowAll");
+	iconTextButton -edit -manage $state ($ned + "LODShowCustom");
+
+	iconTextButton -edit -manage $state ($ned + "AttrFilterToggle");
+	iconTextButton -edit -manage $state ($ned + "SwatchSizeToggle");
+
+	if ($state) {	
+		iconTextButton -edit -i1 openBar.png ($ned + "LODCollapse");
+	} else {
+		iconTextButton -edit -i1 closeBar.png ($ned + "LODCollapse");
+	}
+	optionVar -intValue "nodeEditorShowLodPinIcons" $state;
+}
+
+global proc nodeEditorToggleBookmarkIcons (int $arg, string $ned)
+//
+// Show and Hide the node editor bookmark icons
+// $arg = 1 means show, 0 means hide, -1 means use optionVar
+//
+{
+	int $state = $arg;
+	if ($state < 0) $state = (!`optionVar -q nodeEditorShowBookmarkIcons`);
+	
+	iconTextButton -edit -manage $state ($ned + "AddBM");
+	iconTextButton -edit -manage $state ($ned + "EditBM");
+	iconTextButton -edit -manage $state ($ned + "FDBack");
+	iconTextButton -edit -manage $state ($ned + "FDForward");
+	
+	if ($state) {
+		iconTextButton -edit -i1 openBar.png ($ned + "BookmarkCollapse");
+	} else {
+		iconTextButton -edit -i1 closeBar.png ($ned + "BookmarkCollapse");
+	}
+	optionVar -intValue "nodeEditorShowBookmarkIcons" $state;
+}
+
+global proc nodeEditorToggleGridIcons (int $arg, string $ned)
+//
+// Show and Hide the node editor grid icons
+// $arg = 1 means show, 0 means hide, -1 means use optionVar
+//
+{
+	int $state = $arg;
+	if ($state < 0) $state = (!`optionVar -q nodeEditorShowGridIcons`);
+	
+	iconTextCheckBox -edit -manage $state ($ned + "GridToggleVisibility");
+	iconTextCheckBox -edit -manage $state ($ned + "GridToggleSnap");
+		
+	if ($state) {	
+		iconTextButton -edit -i1 openBar.png ($ned + "GridCollapse");
+	} else {
+		iconTextButton -edit -i1 closeBar.png ($ned + "GridCollapse");
+	}
+	optionVar -intValue "nodeEditorShowGridIcons" $state;
+}
+
+global proc nodeEditorToggleFilterUI (int $arg, string $ned)
+//
+// Show and Hide the node editor filter UI
+// $arg = 1 means show, 0 means hide, -1 means use optionVar
+//
+{
+	int $state = $arg;
+	if ($state < 0) $state = (!`optionVar -q nodeEditorShowFilterUI`);
+
+	string $layout = ($ned + "FilterUIForm");
+	formLayout -edit -manage $state $layout;
+
+	optionVar -intValue "nodeEditorShowFilterUI" $state;
+}
+
+proc string nodeEdCreateNodeTreeListerForRuntime(string $runTime)
+{
+	// Create this Vnn nodeTreeLister non-visible by default.
+	string $nodeTreeLister = `nodeTreeLister -visible false -nodeLibrary $runTime`;
+
+	// Query VNN for the libraries from this runTime.
+	string $lib;
+	string $libraries[] = `vnn -libraries $runTime`;
+	for ($lib in $libraries)
+	{
+		// Then query VNN for each of the nodes in the library.
+		string $node;
+		string $nodes[] = `vnn -nodes $runTime $lib`;
+		for ($node in $nodes)
+		{
+			// Add node to the tree lister.
+			string $itemPath = /*$runTime + "/" + */ $lib + "/" + $node;
+			string $iconPath = "";	// We have no icons yet
+			string $vnnStr = $runTime + "," + $lib + "," + $node;
+			catch(`nodeTreeLister -e -addVnnItem $itemPath $iconPath $vnnStr $nodeTreeLister`);
+		}
+	}
+
+	return $nodeTreeLister;
+}
+
+proc nodeEdCreateVnnNodeTreeListers(string $nedCreateForm)
+{
+	string $rt;
+	string $runTimes[] = `vnn -runTimes`;
+	string $vnnNodeTreeLister;
+	for ($rt in $runTimes)
+	{
+		// Create a new nodeTreeLister for each of the runtime types and place
+		// it in the create node form (at the same location).  Note: only one
+		// of them is visible at a time.
+		$vnnNodeTreeLister = nodeEdCreateNodeTreeListerForRuntime($rt);
+
+		formLayout -e
+			-af $vnnNodeTreeLister top 0
+			-af $vnnNodeTreeLister left 0
+			-af $vnnNodeTreeLister bottom 0
+			-af $vnnNodeTreeLister right 0
+			$nedCreateForm;
+
+		nodeTreeLister -e
+			-refreshCommand ("refreshListerContent " + $vnnNodeTreeLister)
+			$vnnNodeTreeLister;
+	}
+}
+
+proc nodeEdCreateNodeTreeLister(string $panelName)
+{
+	string $nedPane = ( $panelName + "NodeEditorEdPane" );
+	string $nedCreateForm = ( $panelName + "NodeEditorEdCreateNodeForm" );
+
+	setParent $nedCreateForm;
+
+	string $renderNodeTreeLister = createRenderNodeTreeLister("", "");
+
+	formLayout -e
+		-af $renderNodeTreeLister top 0
+		-af $renderNodeTreeLister left 0
+		-af $renderNodeTreeLister bottom 0
+		-af $renderNodeTreeLister right 0
+		$nedCreateForm;
+
+	nodeTreeLister -e
+		-refreshCommand ("refreshListerContent " + $renderNodeTreeLister)
+		$renderNodeTreeLister;
+
+	// We now add a non-visible nodeTreeLister for each of the runTimes registered
+	// with VNN.
+	nodeEdCreateVnnNodeTreeListers($nedCreateForm);
+
+	// Set the initial show state based on the current
+	// state of the primary Node Editor.
+	//
+	global int $gNodeEditorCreateNodePaneShown = false;
+	if (!$gNodeEditorCreateNodePaneShown) {
+		formLayout -e -manage false $nedCreateForm;
+
+		// Add this Node Editor to the list of NEs that need to
+		// initialize the Create Node pane size when it is first
+		// shown (can't be properly done now while the window size
+		// is not valid and the pane is set to not visible).
+		//
+		global string $gNodeEditorCreateNodePaneInitialize[];
+		int $nextIndex = `size $gNodeEditorCreateNodePaneInitialize`;
+        $gNodeEditorCreateNodePaneInitialize[$nextIndex] = $nedCreateForm;
+	} else {
+		nodeEdSetInitialPaneSize($nedPane);
+	}
+}
+
+proc string nodeEdCreateToolbar(string $panelName) {
+	string $ned = ( $panelName + "NodeEditorEd" );
+	string $toolBarFrame  = `frameLayout
+		-visible true 
+		-borderVisible false
+		-labelVisible false 
+		-collapsable false 
+		-collapse true
+		`;
+
+	string $toolBarForm = `flowLayout -visible true`;
+		
+	//
+	// Create quick access buttons which will be hooked up later, 
+	// so they can be in sync with the menu as well as the popupMenu.
+	//
+		
+	int $iconsize = 26;
+		
+	setParent $toolBarForm;
+	
+	string $item;
+
+	//
+	// Create Node
+	//
+
+	$item = ($ned + "TGCN");
+	string $cmd = "NodeEditorToggleCreateNodePane";
+	iconTextButton
+		-i1 createNode.png
+		-w $iconsize -h $iconsize
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		$item;
+
+	//
+	// Re-Graph Controls & Sync
+	//
+	
+	// Create the expand/collapse button separators
+	$item = ($ned + "RegraphCollapse");
+	iconTextButton -vis true -h 27 -w 9
+		-annotation (uiRes("m_nodeEditorPanel.kShowHideNodeEditorRegraph")) 
+		-i1 openBar.png
+		-c ("nodeEditorToggleRegraphIcons(-1, \"" + $ned + "\")")
+		$item;
+		
+	$item = ($ned + "SNEI");
+	$cmd = "NodeEditorToggleSyncedSelection";
+	iconTextButton
+		-i1 `nodeEdSyncImage($ned)`
+		-w $iconsize -h $iconsize
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		$item;
+
+	$item = ($ned + "UPSTRM");
+	$cmd = "NodeEditorGraphUpstream";
+	iconTextButton
+		-image1 "hsUpStreamCon.png"
+		-w $iconsize -h $iconsize
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		$item;
+
+	$item = ($ned + "UPDNSTRM");
+	$cmd = "NodeEditorGraphUpDownstream";
+	iconTextButton
+		-i1 "hsUpDownStreamCon.png" 
+		-w $iconsize -h $iconsize
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		$item;
+	
+	$item = ($ned + "DNSTRM");
+	$cmd = "NodeEditorGraphDownstream";
+	iconTextButton
+		-image1 "hsDownStreamCon.png"
+		-w $iconsize -h $iconsize
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		$item;
+	
+	// check for optionVar
+	if (!`optionVar -exists "nodeEditorShowRegraphIcons"`) {
+		optionVar -intValue "nodeEditorShowRegraphIcons" 1;
+	} else {
+		nodeEditorToggleRegraphIcons(`optionVar -q "nodeEditorShowRegraphIcons"`, $ned);
+	}
+	
+	//
+	// Layout & Clear
+	//
+	
+	// Create the expand/collapse button separators
+	$item = ($ned + "LayoutCollapse");
+	iconTextButton -vis true -h 27 -w 9
+		-annotation (uiRes("m_nodeEditorPanel.kShowHideNodeEditorLayout")) 
+		-i1 openBar.png
+		-c ("nodeEditorToggleLayoutIcons(-1, \"" + $ned + "\")")
+		$item;
+
+	$item = ($ned + "LCCV");
+	$cmd = "NodeEditorGraphClearGraph";
+	iconTextButton
+		-image1 "hsClearView.png"
+		-width $iconsize
+		-height $iconsize
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		$item;
+	
+	// TODO: get proper icon from design
+	$item = ($ned + "ADDSEL");
+	$cmd = "NodeEditorGraphAddSelected";
+	iconTextButton
+		-image1 "nodeGrapherAddNodes.png"
+		-w $iconsize -h $iconsize
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		$item;
+
+	$item = ($ned + "LCDA");
+	$cmd = "NodeEditorGraphRemoveSelected";
+	iconTextButton
+		-image1 "nodeGrapherRemoveNodes.png"
+		-width $iconsize
+		-height $iconsize
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		$item;
+
+	$item = ($ned + "LCHSR");
+	$cmd = "NodeEditorGraphRearrange";
+	iconTextButton
+		-image1 "hsRearrange.png"
+		-width $iconsize
+		-height $iconsize
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		$item;
+
+	// Check for optionVar
+	if (!`optionVar -exists "nodeEditorShowLayoutIcons"`) {
+		optionVar -intValue "nodeEditorShowLayoutIcons" 1;
+	} else {
+		nodeEditorToggleLayoutIcons(`optionVar -q "nodeEditorShowLayoutIcons"`, $ned);
+	}
+	
+	//
+	// LOD Controls
+	//
+	
+	// Create the expand/collapse button separators
+	$item = ($ned + "LODCollapse");
+	iconTextButton -vis true -h 27 -w 9
+		-annotation (uiRes("m_nodeEditorPanel.kShowHideNodeEditorLod")) 
+		-i1 openBar.png
+		-c ("nodeEditorToggleLodIcons(-1, \"" + $ned + "\")")
+		$item;
+	
+	$item = ($ned + "LODSimpleMode");
+	$cmd = "NodeEditorHideAttributes";
+	iconTextButton
+		-i1 "nodeGrapherModeSimpleLarge.png"
+		-w $iconsize -h $iconsize
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		$item;
+
+	$item = ($ned + "LODConnectedMode");
+	$cmd = "NodeEditorShowConnectedAttrs";
+	iconTextButton
+		-i1 "nodeGrapherModeConnectedLarge.png" 
+		-w $iconsize -h $iconsize
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+	$item;
+
+	$item = ($ned + "LODShowAll");
+	$cmd = "NodeEditorShowAllAttrs";
+	iconTextButton
+		-i1 "nodeGrapherModeAllLarge.png" 
+		-w $iconsize -h $iconsize
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		$item;
+
+	$item = ($ned + "LODShowCustom");
+	$cmd = "NodeEditorShowCustomAttrs";
+	iconTextButton
+		-i1 "nodeGrapherModeCustomLarge.png" 
+		-w $iconsize -h $iconsize
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		$item;
+
+	$item = ($ned + "AttrFilterToggle");
+	$cmd = "NodeEditorToggleAttrFilter";
+	iconTextButton
+		-i1 "search.png" 
+		-version 2016
+		-w $iconsize -h $iconsize
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		$item;
+
+	$item = ($ned + "SwatchSizeToggle");
+	$cmd = "NodeEditorToggleNodeSwatchSize";
+	iconTextButton
+		-i1 "nodeGrapherSwatchToggle.png" 
+		-version 2016
+		-w $iconsize -h $iconsize
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		$item;
+
+	// Check for optionVar
+	if (!`optionVar -exists "nodeEditorShowLodPinIcons"`) {
+		optionVar -intValue "nodeEditorShowLodPinIcons" 1;
+	} else {
+		nodeEditorToggleLodIcons(`optionVar -q "nodeEditorShowLodPinIcons"`, $ned);
+	}
+
+	//
+    // Bookmarks
+    //
+	
+	// Create the expand/collapse button separators
+	$item = ($ned + "BookmarkCollapse");
+	iconTextButton -vis true -h 27 -w 9
+		-annotation (uiRes("m_nodeEditorPanel.kShowHideNodeEditorBookmark")) 
+		-i1 openBar.png
+		-c ("nodeEditorToggleBookmarkIcons(-1, \"" + $ned + "\")")
+		$item;
+		
+	// Create bookmark items
+	callPython("maya.app.general.nodeEditorBookmarks","buildToolbar",{$ned});
+
+	// Check for optionVar
+	if (!`optionVar -exists "nodeEditorShowBookmarkIcons"`) {
+		optionVar -intValue "nodeEditorShowBookmarkIcons" 1;
+	} else {
+		nodeEditorToggleBookmarkIcons(`optionVar -q "nodeEditorShowBookmarkIcons"`, $ned);
+	}
+	
+	//
+    // Display & Lock
+    //	
+	
+	// Create the expand/collapse button separators
+	$item = ($ned + "DisplayCollapse");
+	iconTextButton -vis true -h 27 -w 9
+		-annotation (uiRes("m_nodeEditorPanel.kShowHideNodeEditorDisplays")) 
+		-i1 openBar.png
+		-c ("nodeEditorToggleDisplayIcons(-1, \"" + $ned + "\")")
+		$item;
+	
+	iconTextRadioCollection;
+	
+	$item = ($ned + "SSRB");
+	$cmd = "NodeEditorGraphAllShapes";
+	iconTextRadioButton
+        -image1 "nodeGrapherDisplayAll.png"
+        -width $iconsize
+        -height $iconsize
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-onCommand $cmd
+		$item;
+	
+	$item = ($ned + "SSGRB");
+	$cmd = "NodeEditorGraphAllShapesExceptShading";
+	iconTextRadioButton
+        -image1 "nodeGrapherDisplayAllExcept.png"
+        -width $iconsize
+        -height $iconsize
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-onCommand $cmd
+		$item;
+ 
+	$item = ($ned + "NSRB");
+	$cmd = "NodeEditorGraphNoShapes";
+	iconTextRadioButton
+        -image1 "nodeGrapherDisplayNone.png"
+        -width $iconsize
+        -height $iconsize
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-onCommand $cmd
+		$item;
+		
+	$item = ($ned + "DisplayLockSeparator");
+	separator -h $iconsize -horizontal false -style single $item;
+	
+	// Lock Current View
+	$item = ($ned + "LCB");
+	$cmd = "NodeEditorToggleLockUnlock";
+	iconTextButton
+		-i1 "nodeGrapherUnlocked.png"
+		-w $iconsize -h $iconsize
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		$item;
+	
+	// Check for optionVar
+	if (!`optionVar -exists "nodeEditorShowDisplayIcons"`) {
+		optionVar -intValue "nodeEditorShowDisplayIcons" 1;
+	} else {
+		nodeEditorToggleDisplayIcons (`optionVar -q "nodeEditorShowDisplayIcons"`, $ned);
+	}
+	
+	//
+	// Depth Traversal Limit control
+	//
+	
+	// Create the expand/collapse button separators
+	$item = ($ned + "DepthTraversalCollapse");
+	iconTextButton -vis true -h 27 -w 9
+		-annotation (uiRes("m_nodeEditorPanel.kShowHideNodeEditorDepthTraversal")) 
+		-i1 openBar.png
+		-c ("nodeEditorToggleDepthTraversalIcons(-1, \"" + $ned + "\")")
+		$item;
+
+	string $tdlcmd = ("nodeEdTraversalDepthLimit " + $ned);
+
+	$item = ($ned + "ZeroDepth");
+	$cmd = "NodeEditorSetTraversalDepthZero";
+	iconTextButton
+		-i1 "zeroDepth.png" 
+		-w $iconsize -h $iconsize
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		$item;
+	
+	$item = ($ned + "ReduceOne");
+	$cmd = "NodeEditorReduceTraversalDepth";
+	iconTextButton
+		-i1 "reduceDepth.png" 
+		-w $iconsize -h $iconsize
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		$item;
+						
+	$item = ($ned + "DepthTextField");
+	textField	   
+		-width 28
+		-height 28
+		-annotation (uiRes("m_nodeEditorPanel.kSetTraversalDepthAnnot"))
+		-cc ("nodeEditor -e -rfs -tdl #1 " + $ned)
+		$item;
+	
+	$item = ($ned + "IncreaseDepth");
+	$cmd = "NodeEditorIncreaseTraversalDepth";
+	iconTextButton
+		-i1 "increaseDepth.png" 
+		-w $iconsize -h $iconsize
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		$item;
+	
+	$item = ($ned + "UnlimitedDepth");
+	$cmd = "NodeEditorSetTraversalDepthUnlim";
+	iconTextButton
+		-i1 "unlimitedDepth.png" 
+		-w $iconsize -h $iconsize
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		$item;
+	
+	// Check for optionVar
+	if (!`optionVar -exists "nodeEditorShowDepthTraversalIcons"`) {
+		optionVar -intValue "nodeEditorShowDepthTraversalIcons" 1;
+	} else {
+		nodeEditorToggleDepthTraversalIcons(`optionVar -q "nodeEditorShowDepthTraversalIcons"`, $ned);
+	}
+
+	//
+	// Grid controls
+	//
+	
+	// Create the expand/collapse button separators
+	$item = ($ned + "GridCollapse");
+	iconTextButton -vis true -h 27 -w 9
+		-annotation (uiRes("m_nodeEditorPanel.kShowHideNodeEditorGrid")) 
+		-i1 openBar.png
+		-c ("nodeEditorToggleGridIcons(-1, \"" + $ned + "\")")
+		$item;
+
+	$item = ($ned + "GridToggleVisibility");
+	$cmd = "NodeEditorGridToggleVisibility";
+	iconTextCheckBox
+		-i1 "nodeGridDisplay.png" 
+		-w $iconsize -h $iconsize
+		-v 0
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-cc $cmd
+		$item;
+	
+	$item = ($ned + "GridToggleSnap");
+	$cmd = "NodeEditorGridToggleSnap";
+	iconTextCheckBox
+		-i1 "snapGrid.png" 
+		-w $iconsize -h $iconsize
+		-v 0
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-cc $cmd
+		$item;
+						
+	// Check for optionVar
+	if (!`optionVar -exists "nodeEditorShowGridIcons"`) {
+		optionVar -intValue "nodeEditorShowGridIcons" 1;
+	} else {
+		nodeEditorToggleGridIcons (`optionVar -q "nodeEditorShowGridIcons"`, $ned);
+	}
+
+	//
+	// Filter UI
+	//
+
+	// Create the expand/collapse button separators
+	$item = ($ned + "FilterCollapse");
+	iconTextButton -vis true -h 27 -w 9
+		-annotation (uiRes("m_nodeEditorPanel.kShowHideNodeEditorFilter")) 
+		-i1 openBar.png
+		-c ("nodeEditorToggleFilterUI(-1, \"" + $ned + "\")")
+		$item;
+
+	string $layout = ($ned + "FilterUIForm");
+	formLayout $layout;
+	filterUICreateField($ned, $layout);
+
+	// Check for optionVar
+	if (!`optionVar -exists "nodeEditorShowFilterUI"`) {
+		optionVar -intValue "nodeEditorShowFilterUI" 1;
+	} else {
+		nodeEditorToggleFilterUI(`optionVar -q "nodeEditorShowFilterUI"`, $ned);
+	}
+
+	setParent ..;
+
+	return $toolBarFrame;
+}
+
+global proc nodeEdAddCallback(string $panelName) {
+//
+//  Description:  Create UI and parent any editors.
+//
+
+	string $ned = ( $panelName + "NodeEditorEd" );
+	string $nedPane = ( $panelName + "NodeEditorEdPane" );
+	string $nedCreateForm = ( $panelName + "NodeEditorEdCreateNodeForm" );
+
+	callPython("maya.app.general.nodeEditor","addCallback",{$ned});
+	callPython("maya.app.general.nodeEditorBookmarks","addCallback",{$ned});
+
+	waitCursor -state on;
+
+	// Make sure that there is no template active
+	setUITemplate -pushTemplate NONE;
+
+	string $baseForm = `formLayout`;
+
+	string $nodeEditorToolbarFrame = nodeEdCreateToolbar($panelName);
+
+	setParent $baseForm;
+	string $basePane = `paneLayout -configuration "vertical2" -staticWidthPane 1 $nedPane`;
+
+	formLayout $nedCreateForm;
+	setParent ..; // from $nedCreateForm
+
+	// Parent the editors to the editor layout
+	//
+	nodeEditor -edit -parent $basePane $ned;
+	formLayout -edit
+		-attachForm $nodeEditorToolbarFrame top 0
+		-attachForm $nodeEditorToolbarFrame left 0
+		-attachForm $nodeEditorToolbarFrame right 0
+		-attachForm $basePane left 0
+		-attachForm $basePane right 0
+		-attachForm $basePane bottom 0
+		-attachControl $basePane top 0 $nodeEditorToolbarFrame
+		$baseForm;
+
+	nodeEdCreateNodeTreeLister($panelName);
+
+	setParent -top;
+
+	setUITemplate -popTemplate;
+
+	//	Attach a procedure that will limit the kinds of filters displayed
+	//	in the Node Editor's filter menus.
+	//
+	filterUISetRelatedFiltersProcedure($ned, "nodeEdFilterCategories");
+
+	nodeEdSyncControls($ned);
+
+	nodeEditor -e -gsl $ned;
+
+	// panels in windows may require extra processing
+	nodeEdWindowAddCallback($panelName);
+
+	waitCursor -state off;
+}
+
+global proc nodeEdRemoveCallback(string $panelName) {
+//
+//  Description:
+//		Unparent any editors and save state if required.
+//
+	string $ned = ($panelName + "NodeEditorEd");
+	string $nedCreateForm = ( $panelName + "NodeEditorEdCreateNodeForm" );
+
+	// If this Node Editor is still on the list to initialize the Create Node
+	// pane size (i.e. the pane never got turned on), remove it
+	//
+	global string $gNodeEditorCreateNodePaneInitialize[];
+	if (stringArrayContains($nedCreateForm, $gNodeEditorCreateNodePaneInitialize)) {	
+		string $remove[] = { $nedCreateForm };
+		$gNodeEditorCreateNodePaneInitialize = stringArrayRemove($remove, $gNodeEditorCreateNodePaneInitialize);
+	}
+
+	// panels in windows may require extra processing
+	nodeEdWindowRemoveCallback($panelName);
+
+	if (`nodeEditor -exists $ned`) {
+		nodeEditor -edit -unParent $ned;
+	}
+
+	filterUIRemoveView($ned);
+
+	callPython("maya.app.general.nodeEditor","removeCallback",{$ned});
+	callPython("maya.app.general.nodeEditorBookmarks","removeCallback",{$ned});
+}
+
+global proc nodeEdDeleteCallback(string $panelName) {
+//
+//  Description:
+//		Delete any editors and do any other cleanup required.
+
+	string $ned = ( $panelName + "NodeEditorEd" );
+
+	if (`nodeEditor -exists $ned`) {
+		deleteUI -editor $ned;
+	}
+}
+
+global proc string nodeEdSaveStateCallback(string $panelName) {
+//
+//  Description:
+//		Return a string that will restore the current state
+//		when it is executed.
+//
+	// create the normal state string
+	string $indent = "\n\t\t\t";
+	string $ned = ( $panelName + "NodeEditorEd" );
+	string $stateString = (
+		$indent + "$editorName = ($panelName+\"NodeEditorEd\");\n" +
+		`nodeEditor -query -stateString $ned`
+		);
+	return $stateString;
+}
+
+global proc nodeEdBuildContextHelpItems(string $nameRoot, string $menuParent)
+//
+//  Description:
+//		Build context sensitive menu items for the node editor.  
+//		
+//  Input Arguments:
+//		$nameRoot - name to use as the root of all item names
+//		$menuParent - the name of the parent of this menu
+//
+//  Return Value:
+//	  None
+//
+{
+	menuItem -label (uiRes("m_nodeEditorPanel.kHelpOnNodeEditor"))
+		-enableCommandRepeat false
+		-command "showHelp NodeEditor";
+}
+
+global proc string [] nodeEdFilterCategories()
+//
+//	Description:
+//		Return the types of filters that the Node Editor will display
+//		in its "Show->Objects" filter menu.
+//
+{
+	string $result[] = { "Modeling", "Camera", "Animating", "Lighting", "CreateNode" };
+	return $result;
+}
+
+global proc nodeEdSyncShapeMenuState(string $ned)
+//
+//	Description:
+//		Syncs the editor to the menu state.
+//
+{
+	string $item = ($ned + "SSI");
+	int $all = `menuItem -q -rb $item`;
+	if ($all) {
+		eval ("NodeEditorShapeMenuStateAll");
+	} else {
+		$item = ($ned + "SSGI");
+		int $noSG = `menuItem -q -rb $item`;
+		if ($noSG) {
+			eval ("NodeEditorShapeMenuStateAllExceptShadingGroupMembers");
+		} else {
+			eval ("NodeEditorShapeMenuStateNoShapes");
+		}
+	}
+}
+
+proc nodeEdBuildTabsMenu(string $ned)
+//
+//	Description:
+//		Builds the 'Tabs' menu for the panel.
+//
+{
+	menu -label (uiRes("m_nodeEditorPanel.kTabs")) 
+		-version 2016
+		-pmc ("nodeEdSyncMenu(\"" + $ned + "\",\"tabs\")");
+
+	string $item;
+	string $cmd;
+
+	$item = ($ned + "TabsCT");
+	$cmd  = "NodeEditorCreateTab";
+	menuItem
+		-label (uiRes("m_nodeEditorPanel.kCreateTab"))
+		-annotation (getRunTimeCommandAnnotation($cmd))
+		-command $cmd
+		$item;
+
+	$item = ($ned + "TabsRT");
+	$cmd  = "NodeEditorRenameActiveTab";
+	menuItem
+		-label (uiRes("m_nodeEditorPanel.kRenameActiveTab"))
+		-annotation (getRunTimeCommandAnnotation($cmd))
+		-command $cmd
+		$item;
+
+	$item = ($ned + "TabsCAT");
+	$cmd  = "NodeEditorCloseActiveTab";
+	menuItem
+		-label (uiRes("m_nodeEditorPanel.kCloseActiveTab"))
+		-annotation (getRunTimeCommandAnnotation($cmd))
+		-command $cmd
+		$item;
+
+	menuItem -divider true;
+
+	$item = ($ned + "TabsCAllT");
+	$cmd  = "NodeEditorCloseAllTabs";
+	menuItem
+		-label (uiRes("m_nodeEditorPanel.kCloseAllTabs"))
+		-annotation (getRunTimeCommandAnnotation($cmd))
+		-command $cmd
+		$item;
+
+	menuItem -divider true;
+
+	$item = ($ned + "TabsRLCT");
+	$cmd = "NodeEditorRestoreLastClosedTab";
+	menuItem
+		-label (uiRes("m_nodeEditorPanel.kRestoreLastClosedTab"))
+		-annotation (getRunTimeCommandAnnotation($cmd))
+		-command $cmd
+		$item;
+
+	menuItem -divider true;
+
+	$item = ($ned + "TabsRTT");
+	$cmd = "NodeEditorRedockTornOffTab";
+	menuItem
+		-label (uiRes("m_nodeEditorPanel.kRedockThisTab"))
+		-annotation (getRunTimeCommandAnnotation($cmd))
+		-command $cmd
+		$item;
+}
+
+proc nodeEdBuildCompoundMenu(string $ned)
+{
+	string $item = ($ned + "CompoundMenu");
+	menu  -label (uiRes("m_nodeEditorPanel.kCompound"))
+	      -pmc ("nodeEdSyncMenu(\"" + $ned + "\",\"Compound\")") 
+	      -version 2016  $item;
+
+	$item = ($ned + "CreateCompound");
+	$cmd  = "NodeEditorCreateCompound";
+	menuItem
+		-label (uiRes("m_nodeEditorPanel.kCreateCompound"))
+		-annotation (getRunTimeCommandAnnotation($cmd))
+		-command $cmd
+		$item;
+
+	menuItem -divider true -dividerLabel (uiRes("m_nodeEditorPanel.kIterationCompoundSection"));
+
+	$item = ($ned + "CreateDoWhileCompound");
+	$cmd  = "NodeEditorCreateDoWhileCompound";
+	menuItem
+		-label (uiRes("m_nodeEditorPanel.kCreateDoWhileCompound"))
+		-annotation (getRunTimeCommandAnnotation($cmd))
+		-command $cmd
+		$item;
+
+	$item = ($ned + "AddIterationPorts");
+	$cmd  = "NodeEditorAddIterationStatePorts";
+	menuItem
+		-label (uiRes("m_nodeEditorPanel.kAddIterationStatePorts"))
+		-annotation (getRunTimeCommandAnnotation($cmd))
+		-command $cmd
+		$item;
+
+	menuItem -divider true;
+	
+	$item = ($ned + "ExportCompound");
+	$cmd  = "NodeEditorExportCompound";
+	menuItem
+		-label (uiRes("m_nodeEditorPanel.kExportCompound"))
+		-annotation (getRunTimeCommandAnnotation($cmd))
+		-command $cmd
+		$item;
+}
+
+proc nodeEdBuildOptionsMenu(string $ned)
+//
+//	Description:
+//		Builds the 'Options' menu for the panel.
+//
+{
+	menu -label (uiRes("m_nodeEditorPanel.kOptions")) 
+		-pmc ("nodeEdSyncMenu(\"" + $ned + "\",\"options\")");
+	
+	// Options->Render Swatches
+	string $item = ($ned + "RSI");
+	$cmd = "NodeEditorRenderSwatches";
+	menuItem 
+		-label (uiRes("m_nodeEditorPanel.kRenderSwatches"))
+		-cb 1
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		$item;
+		
+
+
+	// Options->Add to Graph on Create
+	// for -addNewNodes, need to update menuitem + toolbar button
+	string $buttonitem = ($ned + "LCB");
+	$item = ($ned + "ATGI");
+	$cmd = "NodeEditorAddOnNodeCreate";
+	menuItem 
+		-label (uiRes("m_nodeEditorPanel.kAddOnNodeCreate"))
+		-cb 0
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		 $item;
+
+	// Options->Auto-size Nodes
+	$item = ($ned + "ASNI");
+	$cmd = "NodeEditorAutoSizeNodes";
+	menuItem 
+		-label (uiRes("m_nodeEditorPanel.kAutosizeNodes"))
+		-cb 1
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		 $item;
+
+	// Options->Additive Graphing Mode
+	$item = ($ned + "AGMI");
+	$cmd = "NodeEditorAdditiveGraphingMode";
+	menuItem 
+		-label (uiRes("m_nodeEditorPanel.kAdditiveGraphingMode"))
+		-cb 1
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		 $item;
+	
+	// Options->Pin all nodes by default
+	$item = ($ned + "PBDI");
+	$cmd = "NodeEditorPinByDefault";
+	menuItem 
+		-label (uiRes("m_nodeEditorPanel.kPinByDefault"))
+		-cb 0
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		 $item;
+}
+
+proc nodeEdBuildDisplayMenu(string $ned)
+{
+//
+//	Description:
+//		Builds the 'Display' menu for the panel.
+//
+	string $displayMenu = `menu -label (uiRes("m_nodeEditorPanel.kDisplay")) `;	
+	menu -e -pmc ("nodeEdSyncMenu(\"" + $ned + "\",\"display\")")  $displayMenu;
+
+	string $shapeCmd = 
+		("nodeEdSyncShapeMenuState(\"" + $ned + "\")");
+
+	string $item = ($ned + "GridVisibility");
+	string $cmd = "NodeEditorGridToggleVisibility";
+	menuItem -cb 0
+		-label (uiRes("m_nodeEditorPanel.kGridVisibility"))
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		$item;
+
+	$item = ($ned + "GridSnap");
+	$cmd = "NodeEditorGridToggleSnap";
+	menuItem -cb 0
+		-label (uiRes("m_nodeEditorPanel.kGridSnap"))
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		$item;
+
+	radioMenuItemCollection;
+
+	$item = ($ned + "SSI");
+	menuItem 
+		-label (uiRes("m_nodeEditorPanel.kAllShapes")) 
+		-annotation (getRunTimeCommandAnnotation( "NodeEditorGraphAllShapes" ))
+		-rb 0
+		-command $shapeCmd
+		 $item;
+
+	$item = ($ned + "SSGI");
+	menuItem 
+		-label (uiRes("m_nodeEditorPanel.kAllShapesExceptShadingGroupMembers")) 
+		-annotation (getRunTimeCommandAnnotation( "NodeEditorGraphAllShapesExceptShading" ))
+		-rb 0
+		-command $shapeCmd
+		 $item;
+
+	$item = ($ned + "NSI");
+	menuItem 
+		-label (uiRes("m_nodeEditorPanel.kNoShapes")) 
+		-annotation (getRunTimeCommandAnnotation( "NodeEditorShapeMenuStateNoShapes" ))
+		-rb 0
+		-command $shapeCmd
+		 $item;
+
+	menuItem -divider true;
+
+	$item = ($ned + "CNNS");
+	menuItem 
+		-version 2016
+		-label (uiRes("m_nodeEditorPanel.kConsistentNodeNameSize"))
+		-cb 0
+		-command ("NodeEditorToggleConsistentNodeNameSize")
+		$item;
+
+	$item = ($ned + "STI");
+	menuItem 
+		-label (uiRes("m_nodeEditorPanel.kTransforms")) 
+		-cb 0
+		-command ("NodeEditorTransforms")
+		 $item;
+
+	$item = ($ned + "ETSI");
+	menuItem 
+		-label (uiRes("m_nodeEditorPanel.kExtendToShapes")) 
+		-annotation 
+		(uiRes("m_nodeEditorPanel.kExtendToShapesAnnot"))
+		-cb 0
+		-command ("NodeEditorExtendToShapes")
+		 $item;
+
+	$item = ($ned + "ShowNamespace");
+	$cmd = "NodeEditorToggleShowNamespace";
+	menuItem -cb 0
+		-label (uiRes("m_nodeEditorPanel.kShowNamespace"))
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		$item;
+
+	$item = ($ned + "UseAssetsAndPublishedAttributes");
+	$cmd = "NodeEditorToggleUseAssetsAndPublishedAttributes";
+	menuItem -cb 0
+		-label (uiRes("m_nodeEditorPanel.kUseAssetsAndPublishedAttributes"))
+		-annotation ( getRunTimeCommandAnnotation( $cmd ) )
+		-command $cmd
+		$item;
+}
+
+proc nodeEdBuildViewMenu(string $ned)
+//
+//	Description:
+//		Builds the 'View' menu for the panel.
+//
+{
+	menu -label (uiRes("m_nodeEditorPanel.kView")) ;
+
+	string $item = ($ned + "VFA");
+	menuItem 
+		-label (uiRes("m_nodeEditorPanel.kFrameAll")) 
+		-annotation
+		(uiRes("m_nodeEditorPanel.kFrameAllAnnot")) 
+		-command "FrameAll"
+		 $item;
+	$item = ($ned + "VFS");
+	menuItem 
+		-label (uiRes("m_nodeEditorPanel.kFrameSelection")) 
+		-annotation
+		(uiRes("m_nodeEditorPanel.kFrameSelectionAnnot"))
+		-command "FrameSelected"
+		 $item;
+	$item = ($ned + "VZI");
+	string $cmd = "NodeEditorToggleZoomIn";
+	menuItem 
+		-label (uiRes("m_nodeEditorPanel.kZoomIn")) 
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		 $item;
+	$item = ($ned + "VZO");
+	$cmd = "NodeEditorToggleZoomOut";
+	menuItem 
+		-label (uiRes("m_nodeEditorPanel.kZoomOut")) 
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		 $item;
+}
+
+proc nodeEdBuildEditMenu(string $ned)
+//
+//	Description:
+//		Builds the 'Edit' menu for the panel.
+//
+{
+	string $editMenu = `menu -label (uiRes("m_nodeEditorPanel.kEdit"))` ;
+	menu -e -pmc ("nodeEdSyncMenu(\"" + $ned + "\",\"edit\")") $editMenu;
+	
+	string $item = ($ned + "ESM");
+	string $cmd = "NodeEditorHideAttributes";
+	menuItem 
+		-label (uiRes("m_nodeEditorPanel.kSimpleMode")) 
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		-image "nodeGrapherModeSimpleLarge.png"
+		 $item;
+	$item = ($ned + "ECM");
+	$cmd = "NodeEditorShowConnectedAttrs";
+	menuItem 
+		-label (uiRes("m_nodeEditorPanel.kConnectedMode")) 
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		-image "nodeGrapherModeConnectedLarge.png"
+		 $item;
+	$item = ($ned + "EFM");
+	$cmd = "NodeEditorShowAllAttrs";
+	menuItem 
+		-label (uiRes("m_nodeEditorPanel.kFullMode")) 
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-image "nodeGrapherModeAllLarge.png"
+		-command $cmd
+		 $item;
+	$item = ($ned + "EXM");
+	$cmd = "NodeEditorShowCustomAttrs";
+	menuItem 
+		-label (uiRes("m_nodeEditorPanel.kCustomMode"))
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-image "nodeGrapherModeCustomLarge.png"
+		-command $cmd
+		$item;
+
+	menuItem -divider true;
+	
+	$item = ($ned + "EPN");
+	$cmd = "NodeEditorPinSelected";
+	menuItem 
+		-label (uiRes("m_nodeEditorPanel.kPin")) 
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		-image "nodeGrapherPinnedLarge.png"
+		 $item;
+	$item = ($ned + "EUP");
+	$cmd = "NodeEditorUnpinSelected";
+	menuItem 
+		-label (uiRes("m_nodeEditorPanel.kUnpin")) 
+		-annotation (getRunTimeCommandAnnotation( $cmd ))
+		-command $cmd
+		-image "nodeGrapherUnpinnedLarge.png"
+		 $item;
+}
+
+global proc nodeEdBuildPanelMenus(string $ned)
+//
+//	Description:
+//		Called by the editor to create panel menus.
+//
+{
+	string $parent = `setParent -q`;
+
+	nodeEdBuildEditMenu($ned);
+	nodeEdBuildViewMenu($ned);
+	callPython("maya.app.general.nodeEditorBookmarks","buildMenu",{$ned});
+	nodeEdBuildTabsMenu($ned);
+	if (enableBifrostCompoundEditing() ) {
+    	nodeEdBuildCompoundMenu($ned);
+    }
+	nodeEdBuildOptionsMenu($ned);
+	nodeEdBuildDisplayMenu($ned);
+	string $compoundMenu = ($ned + "CompoundMenu");
+	string $showMenu = filterUICreateMenu($ned, $parent);
+
+	// call the python menu init
+	callPython("maya.app.general.nodeEditor","buildPanelMenus",{$ned});
+
+	// Set the command to update UI when the tab changes
+	// (even on non-primary editors, as this also applies when
+	// switching into, out of, and between container views)
+	nodeEditor -e -tabChangeCommand ("nodeEdUpdateUIByTab " + $ned + " " + $showMenu) $ned;
+
+	if(`nodeEditor -q -inContainerView $ned`) {
+		// If this is a torn-off container view, show the Bifrost
+		// Compound menu and hide the Bookmarks and Show menus,
+		// as they are not applicable (may change later)
+		string $bookmarksMenu = $ned + "Bookmarks";
+		if(`menu -exists $bookmarksMenu`) {
+			menu -e -visible false $bookmarksMenu;
+		}
+		if(`menu -exists $compoundMenu`) {
+			menu -e -visible true $compoundMenu;
+		}
+		if(`menu -exists $showMenu`) {
+			menu -e -visible false $showMenu;
+		}
+	} else {
+		// Hide the Bifrost Compound menu if not in container view
+		if(`menu -exists $compoundMenu`) {
+			menu -e -visible false $compoundMenu;
+		}
+	}
+}
+
+global proc nodeEdCreateNodeCommand(string $nodeType)
+//
+// Description:
+//		Called by editor to create a node from the tab-create control.
+//
+{
+	callPython("maya.app.general.nodeEditor","createNode", {$nodeType});
+}
+
+global proc int nodeEdKeyPressCommand(string $ned, string $key)
+//
+// Description:
+//		Called by editor to when a key is pressed while it has focus.
+//
+{
+    string $pwf = `getPanel -withFocus`;
+	string $pup = `getPanel -underPointer`;
+
+	// don't process keys if the editor isn't focused & under the pointer
+    if ($pup == $pwf) {
+		//
+		// Node LOD levels
+        int $mods = `getModifiers`;
+		if ($mods == 0)
+		{
+			// We keep the hard coded Tab, Delete and Backspace key 
+			// shortcuts because they cannot be accessed through hotkeys.
+			//
+			// Delete
+			if ($key == "Backspace" || $key == "Del") {
+				nodeEditor -e -del $ned;
+				return 1;
+			}
+			// Create-node popup
+			else if ($key == "Tab") {
+				nodeEditor -e -bcn $ned;
+				return 1;
+			}
+		}
+    }
+    return 0;
+}
+
+global proc int nodeEdKeyReleaseCommand(string $ned, string $key)
+//
+// Description:
+//		Called by editor to when a key is released while it has focus.
+//
+{
+	// Since node editor has a hotkey context, this hard coded proc is
+	// useless, but is kept for backwards compatibility purposes
+
+    return 0;
+}
+
+global proc string getCurrentNodeEditorPanel ()
+//
+// Description:
+// 		Called by run time commands to retrieve the current node editor's panel name
+//
+{
+	string $currentPanel = `getPanel -withFocus`;
+	if ("" != $currentPanel) {
+		string $panelType = `getPanel -typeOf $currentPanel`;
+		if ($panelType ==  "scriptedPanel" && `scriptedPanel -query -type $currentPanel` == "nodeEditorPanel") {
+			return ($currentPanel);
+		}
+	}
+	return "";				
+}
+
+global proc string getCurrentNodeEditor ()
+//
+// Description:
+// 		Called by run time commands to retrieve the current node editor's editor name
+//
+{
+	string $currentPanel = getCurrentNodeEditorPanel();
+	if( $currentPanel != "" )
+	{
+		return ($currentPanel + "NodeEditorEd");
+	}
+	return "";
+}
+
+global proc string getPrimaryNodeEditor()
+//
+// Description:
+//		Find and return the name of the primary node editor (if it exists).
+//		There can be only one primary node editor.
+//
+{
+	string $allNEs[] = `getPanel -scriptType "nodeEditorPanel"`;
+	string $oneNE;
+	for ($oneNE in $allNEs)
+	{
+		string $ned = $oneNE + "NodeEditorEd";
+		if(`nodeEditor -query -primary $ned`)
+			return $ned;
+	}
+	return "";
+}
+
+proc string wrapInQuotesAndSpace(string $towrap)
+{
+    return " \"" + $towrap + "\" ";
+}
+
+global proc nodeEdCreateDoWhileCompound()
+{
+	string $ned = ( `getCurrentNodeEditor`);
+	if ("" != $ned) {
+	    string $selectionArray[];
+	    $selectionArray = `nodeEditor -q -sln $ned`;
+	    string $cmd = "vnnCompound -create" + wrapInQuotesAndSpace(":do-while");
+	    for ( $sel in $selectionArray )
+	        $cmd += "-moveNodeIn" + wrapInQuotesAndSpace($sel);
+	    $cmd += wrapInQuotesAndSpace( `nodeEditor -q -vd $ned` );
+	    $cmd += wrapInQuotesAndSpace( `nodeEditor -q -vc $ned` );
+	    evalEcho($cmd);
+  }
+}
+
+
+global proc nodeEdAddIterationStatePorts()
+{
+	string $ned = ( `getCurrentNodeEditor`);
+	if ("" != $ned) {
+	    string $selectionArray[];
+	    $selectionArray = `nodeEditor -q -sln $ned`;
+	    string $cmd = "vnnCompound -addStatePortUI";
+	    $cmd += wrapInQuotesAndSpace( `nodeEditor -q -vd $ned` );
+	    $cmd += wrapInQuotesAndSpace( `nodeEditor -q -vc $ned` );
+	    eval($cmd);
+  }
+}
+
+global  proc string nodeEdGetCurrentVNNCompoundSpecialization()
+{
+	string $ned = ( `getCurrentNodeEditor`);
+	if ("" != $ned) {
+	    string $selectionArray[];
+	    $selectionArray = `nodeEditor -q -sln $ned`;
+	    string $cmd = "vnnCompound -specializedTypeName";
+	    $cmd += wrapInQuotesAndSpace( `nodeEditor -q -vd $ned` );
+	    $cmd += wrapInQuotesAndSpace( `nodeEditor -q -vc $ned` );
+	    return eval($cmd);
+  }
+  return "";
+}
+

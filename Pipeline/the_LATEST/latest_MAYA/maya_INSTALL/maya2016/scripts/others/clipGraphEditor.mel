@@ -1,0 +1,290 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+// Creation Date:  01/07/2000
+//
+//  Procedure Name:
+//		clipGraphEditor
+//
+//  Description:
+//		Open the graph editor for the anim curves of the selected clips
+//		in the clipEditor.
+//
+//  Input Arguments:
+//      $editor - The Trax Editor.
+//
+//  Return Value:
+//      None.
+//
+
+proc int isVisible(string $graphEd, int $forceOpen) 
+//
+//	Description:
+//		Returns 1 if the specified graphEditor is visible, otherwise
+//		0 is returned. 
+//		If the editor is in the main window, but the main window is 
+//		minimized, the editor is not considered visible. If the editor
+//		is in its own window and that window is minimized, the editor 
+//		is considered visible.
+//
+//		If the $forceOpen argument is used, if a main Maya window is 
+//		found and it is iconified, it is expanded.
+//
+{
+	string $parentLayout = `editor -q -p $graphEd`;
+	if (`size($parentLayout)` == 0) {
+		return false;
+	}
+
+	string $buff[];
+	tokenize($parentLayout, "|", $buff);
+
+	//	The main Maya window is a special case.
+	if (`window -q -mw $buff[0]`) {
+		if (`window -q -i $buff[0]`) {
+			if ($forceOpen) {
+				showWindow $buff[0];
+			} else {
+				//	No editors are visible in the main window.
+				//
+				return false;
+			}
+		}
+
+		string $visiblePanels[] = `getPanel -vis`;
+		string $graphEdPanel = `editor -q -panel $graphEd`;
+
+		string $visItem;
+		int $found = false;
+
+		for ($visItem in $visiblePanels) {
+			if ($visItem == $graphEdPanel) {
+				$found = true;
+				break;
+			}
+		}
+
+		return $found;
+	}
+
+	return true;
+}
+
+proc string availibleGraphEditor(int $forceOpen)
+//
+//	Description:
+//		Returns an avalible Graph Editor. This procedure assumes that the
+//		Graph Editor names are in the form of graphEditor#GraphEd, 
+//		which is their default. 
+//
+//		If a Graph Editor is not found, "" is returned.
+//
+//		If a Graph Editor is set to not Auto Load selected objects
+//		it is considered unavalible.
+//
+{
+	string $regexp = "graphEditor[0-9]*GraphEd$";
+	string $item;
+	string $searchResultList[];
+
+	int $nMatch = 0;
+	string $editors[] = `lsUI -ed`;
+	string $sorted[] = `sort($editors)`;
+	for ($item in $sorted) {
+		string $searchResult = match($regexp, $item);
+		if( $searchResult == $item) {
+			$searchResultList[$nMatch++] = $searchResult;
+		}
+	}
+
+	if ($nMatch == 0) {
+		return "";
+	}
+
+	//	Get rid of all of the editors that are not currently displayed.
+	//
+	int $i;
+	int $nEditors = 0;
+	string $graphEditorList[];
+	string $candidateGraphEditor;
+	for ($i = 0; $i < $nMatch; $i++) {
+		//	Only editors that are created should be considered.
+		//
+		if (isVisible($searchResultList[$i], $forceOpen)) {
+			//	Avoid the ones with auto load off.
+			//
+			string $mlc = `editor -q -mlc $searchResultList[$i]`;
+			string $outline = `selectionConnection -q -p $mlc`;
+			if (isAutoLoad($outline)) {
+				$graphEditorList[$nEditors++] = $searchResultList[$i];
+
+				//	Only one Graph Editor is needed.
+				break;
+			} else {
+				if (`size($candidateGraphEditor)` == 0) {
+					$candidateGraphEditor = $searchResultList[$i];
+				}
+			}
+		}
+	}
+
+	string $graphEditor = "";
+	if (size($graphEditorList) == 0) {
+		if (size($candidateGraphEditor) == 0) {
+			$graphEditor = "";
+		} else {
+			$graphEditor = $candidateGraphEditor;
+		}
+	} else {
+		$graphEditor = $graphEditorList[0];
+	}
+
+	if (!$forceOpen && size($graphEditor) == 0) {
+		//	Check one more time, this time if the main Maya window is 
+		//	encountered and it is iconified, force it open.
+		//
+		$graphEditor = availibleGraphEditor(true);
+	}
+
+	//	Return the graphEditor, if it was found.
+	//
+	return $graphEditor;
+}
+
+
+global proc clipGraphEditor( string $editor )
+{
+	//	1. Find an avalible editor, if one does not exist, create one.
+	//	2. Get the clips to display.
+	//	3. Get the blends to display.
+	//	4. If window is minimized, expand
+	//	5. Change the selected items in the outliner
+	//	6. Change the selected items in the editor.
+	//	7. Frame the view.
+
+	//	Get the clips selected in the Trax Editor.
+	//
+	string $clipNodeList[] = getSelectedClips("allowCache");
+
+	//	Get the blends selected in the Trax Editor.
+	//
+	string $blendNodeList[] = getSelectedBlends();
+	string $cacheBlendNodeList[] = getSelectedCacheBlends("");
+	
+
+	//	Get a Graph Editor and the Graph Editor Outline
+	//
+	string $graphEditor = availibleGraphEditor(false);
+	if (`size($graphEditor)` == 0) {
+		GraphEditor;
+		$graphEditor = availibleGraphEditor(false);
+
+		if (`size($graphEditor)` == 0) {
+			error (uiRes("m_clipGraphEditor.kCouldNotGetGraphEd"));
+		}
+	}
+
+	string $editorMLC = `editor -q -mlc $graphEditor`;
+	string $graphEditorOutliner = `selectionConnection -q -p $editorMLC`;
+
+	//	If the Graph Editor is iconified, expand it.
+	//
+	string $parentLayout = `editor -q -p $graphEditor`;
+	string $buff[];
+	tokenize($parentLayout, "|", $buff);
+
+	//	If this is not the main window, bring it to the front.
+	//
+	if (!`window -q -mw $buff[0]`) {
+		showWindow $buff[0];
+	} 
+
+	int $nClips = `size($clipNodeList)`;
+	int $nBlends = `size($blendNodeList)`;
+	int $nCacheBlendNodes = `size($cacheBlendNodeList)`;
+	int $nSelected = $nClips + $nBlends + $nCacheBlendNodes ;
+	if ($nSelected > 0) {
+		//	Clear the selection list.
+		//
+		select -cl;
+
+		//	Add the selected blends and display in the editor.
+		//
+		for ($i = 0; $i < $nBlends; $i++) {
+			select -add $blendNodeList[$i];
+		}
+
+		//	Add the selected clips and display in the editor.
+		//
+		for ($i = 0; $i < $nClips; $i++) {
+			select -add $clipNodeList[$i];
+		}
+		
+		//	Add the selected cache blends and display in the editor.
+		//
+		for ($i = 0; $i < $nCacheBlendNodes; $i++) {
+			select -add $cacheBlendNodeList[$i];
+		}
+	}
+
+	//	Update the Graph Editor and Graph Editor Outliner.
+	//
+	if (!isAutoLoad($graphEditorOutliner)) {
+		doReload($graphEditorOutliner);
+	}
+
+	// Changing the mainListConnection will delete the previous one,
+	// which is undesirable here because the change is only temporary.
+	// Temporarily make the graph editor's mainListConnection global
+	// so it doesn't get deleted.
+	//
+	int $isGlobal = `selectionConnection -query -global $editorMLC`;
+	if(!$isGlobal) {
+		selectionConnection -edit -global true $editorMLC;
+	}
+
+	int $editorLocked = `selectionConnection -query -lock $editorMLC`;
+	if ($editorLocked) {
+		editor -edit -unlockMainConnection $graphEditor;
+	}
+
+	editor -edit -mlc animationList $graphEditor;
+
+	//	Frame the view.
+	//
+	animCurveEditor -e -la "selected" $graphEditor;
+
+	//	Restore the mainListConnection to the graph editor.
+	//
+	editor -edit -mlc $editorMLC $graphEditor;
+	if ($editorLocked) {
+		editor -edit -lockMainConnection $graphEditor;
+	}
+
+	// Restore the previous global state of the graph editor's
+	// mainListConnection.
+	//
+	if(!$isGlobal) {
+		selectionConnection -edit -global false $editorMLC;
+	}
+}

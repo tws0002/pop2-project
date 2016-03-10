@@ -1,0 +1,592 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+//
+//  Description:
+// 		An option window used to create a container.
+//
+
+//
+//  Procedure Name:
+//      setOptionVars
+//
+//  Description:
+//		Initialize the option values.
+//
+//  Input Arguments:
+//		Whether to set the options to default values.
+//
+//  Return Value:
+//      None.
+//
+proc setOptionVars(int $forceFactorySettings)
+{
+	if ($forceFactorySettings || !`optionVar -exists containerIncludeNetwork`) {
+		// do not include network by default
+		optionVar -intValue containerIncludeNetwork 0;
+	}
+
+	if ($forceFactorySettings || !`optionVar -exists containerIncludeShaders`) {
+		// do not include shaders by default
+		optionVar -intValue containerIncludeShaders 0;
+	}
+
+	if ($forceFactorySettings || !`optionVar -exists containerIncludeHier`) {
+		// 1 = shapes, default
+		//
+		optionVar -intValue containerIncludeHier 1;
+	}
+
+	// clean up some option vars that are no longer used (only in 2009 alphas)
+	if (`optionVar -exists containerPublishConns`) {
+		optionVar -remove containerPublishConns;
+	}
+	if (`optionVar -exists containerIncludeShapes`) {
+		optionVar -remove containerIncludeShapes;
+	}
+
+	if ($forceFactorySettings || !`optionVar -exists containerOperation`) {
+		// 1: (default) create container
+		// 2: select
+		optionVar -intValue containerOperation 1;
+	}
+
+	if ($forceFactorySettings || !`optionVar -exists containerPublishRoot`) {
+		optionVar -intValue containerPublishRoot 0;
+	}
+
+	if ($forceFactorySettings || !`optionVar -exists containerPublishTRS`) {
+		optionVar -intValue containerPublishTRS 0;
+	}
+
+}
+
+//
+//  Procedure Name:
+//      createContainerSetup
+//
+//  Description:
+//		Update the state of the option box UI to reflect the option values.
+//
+//  Input Arguments:
+//      parent               - Top level parent layout of the option box UI.
+//                             Required so that UI object names can be 
+//                             successfully resolved.
+//
+//	forceFactorySettings - Whether the option values should be set to
+//                             default values.
+//
+//  Return Value:
+//      None.
+//
+global proc createContainerSetup(string $parent, int $forceFactorySettings)
+{
+	// Retrieve the option settings
+	//
+	setOptionVars( $forceFactorySettings );
+	
+	setParent $parent;
+
+	textFieldGrp -e -text "asset1" containerNameWidget;
+
+	int $includeNet = `optionVar -query containerIncludeNetwork`;
+	checkBoxGrp -edit -value1 $includeNet includeConnWidget;
+
+	int $includeSh = `optionVar -query containerIncludeShaders`;
+	checkBoxGrp -edit -value1 $includeSh includeShaderWidget;
+
+	// include hierarchy
+	//  0 = ignore
+	//  1 = shapes
+	//  2 = below
+    //  3 = above
+	//  4 = above and below
+	//
+	int $includeHier = `optionVar -query containerIncludeHier`;
+	toggleContainerHierarchyRadio ($includeHier > 0);
+	checkBoxGrp -e -value1 ($includeHier > 0) includeHierWidget;
+	switch ($includeHier) {
+	case 0:
+		// fall through to shapes as the default if include
+		// hierarchy is off
+	case 1: {
+		radioButtonGrp -edit -sl 1 hierShapesWidget;
+		break;
+	}
+	case 2: {
+		radioButtonGrp -edit -sl 1 hierBelowWidget;
+		break;
+	}
+	case 3: {
+		radioButtonGrp -edit -sl 1 hierAboveWidget;
+		break;
+	}
+	case 4: {
+		radioButtonGrp -edit -sl 1 allHierWidget;
+		break;
+	}
+	}
+
+	int $op = `optionVar -query containerOperation`;
+	radioButtonGrp -edit -sl $op containerOperation;
+	toggleNameText($op == 1);
+
+	int $pubRoot = `optionVar -query containerPublishRoot`;
+	checkBoxGrp -edit -value1 $pubRoot publishRootWidget;
+
+	int $pubTRS = `optionVar -query containerPublishTRS`;
+	checkBoxGrp -edit -value1 $pubTRS publishTRSWidget;
+	checkBoxGrp -edit -enable $pubRoot publishTRSWidget;
+}
+
+//
+//  Procedure Name:
+//      createContainerCallback
+//
+//  Description:
+//		Update the option values with the current state of the option box UI.
+//
+//  Input Arguments:
+//      parent - Top level parent layout of the option box UI.  Required so
+//               that UI object names can be successfully resolved.
+//
+//	doIt   - Whether the command should execute.
+//
+//  Return Value:
+//      None.
+//
+global proc createContainerCallback(string $parent, int $doIt)
+{
+    setParent $parent;
+
+	int $includeNetwork = `checkBoxGrp -q -value1 includeConnWidget`;
+	optionVar -intValue containerIncludeNetwork $includeNetwork;
+
+	int $includeSh = `checkBoxGrp -q -value1 includeShaderWidget`;
+	optionVar -intValue containerIncludeShaders $includeSh;
+
+	int $includeHier = 1;
+	if (! `checkBoxGrp -q -value1 includeHierWidget`) {
+		$includeHier = 0;
+	} else {
+		if (`radioButtonGrp -q -sl hierShapesWidget`) {
+			$includeHier = 1;
+		} else if (`radioButtonGrp -q -sl hierBelowWidget`) {
+			$includeHier = 2;
+		} else if (`radioButtonGrp -q -sl hierAboveWidget`) {
+			$includeHier = 3;
+		} else if (`radioButtonGrp -q -sl allHierWidget`) {
+			$includeHier = 4;
+		}
+	}
+	optionVar -intValue containerIncludeHier $includeHier;
+	
+	optionVar -intValue containerOperation
+		`radioButtonGrp -query -sl containerOperation`;
+
+	int $pubRoot = `checkBoxGrp -q -value1 publishRootWidget`;
+	optionVar -intValue containerPublishRoot $pubRoot;
+
+	int $pubTRS = `checkBoxGrp -q -value1 publishTRSWidget`;
+	optionVar -intValue containerPublishTRS $pubTRS;
+	
+	if ($doIt) {
+		performCreateContainer 0; 
+		addToRecentCommandQueue "performCreateContainer 0" "Create Container";
+	}
+}
+
+global proc toggleNameText(int $state)
+{
+	textFieldGrp -e -enable $state containerNameWidget;
+}
+
+global proc toggleContainerHierarchyRadio(int $state)
+{
+	radioButtonGrp -e -enable $state hierShapesWidget;
+	radioButtonGrp -e -enable $state hierBelowWidget;
+	radioButtonGrp -e -enable $state hierAboveWidget;
+	radioButtonGrp -e -enable $state allHierWidget;
+}
+
+//
+//  Procedure Name:
+//      createContainerOptions
+//
+//  Description:
+//		Construct the option box UI.  Involves accessing the standard option
+//		box and customizing the UI accordingly.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+proc createContainerOptions()
+{
+	global int $gOptionBoxTemplateDescriptionMarginWidth;
+	global int $gOptionBoxTemplateFrameSpacing;
+
+	//	Name of the command for this option box.
+	//
+	string $commandName = "createContainer";
+
+	//	Build the option box actions.
+	//
+	string $callback = ($commandName + "Callback");
+	string $setup = ($commandName + "Setup");
+
+	//	STEP 1:  Get the option box.
+	//	============================
+	//
+	//	The value returned is the name of the layout to be used as
+	//	the parent for the option box UI.
+	//
+	string $layout = getOptionBox();
+	setParent $layout;
+	
+	//	STEP 2:  Pass the command name to the option box.
+	//	=================================================
+	//
+	//	Any default option box behaviour based on the command name is set 
+	//	up with this call.  For example, updating the 'Help' menu item with
+	//	the name of the command.
+	//
+	setOptionBoxCommandName("container");
+	
+	//	STEP 3:  Activate the default UI template.
+	//	==========================================
+	//
+	//	Activate the default UI template so that the layout of this 
+	//	option box is consistent with the layout of the rest of the 
+	//	application.
+	//
+	setUITemplate -pushTemplate OptionBoxTemplate;
+
+	//	STEP 4: Create option box contents.
+	//	===================================
+	//	
+	//	This, of course, will vary from option box to option box.	
+	
+	//	Turn on the wait cursor.
+	//
+	waitCursor -state 1;
+
+	scrollLayout;
+	string $parent = `formLayout`;
+	
+	string $operationFrame = `frameLayout -collapsable 0
+		-label (uiRes("m_performCreateContainer.kAssetEffect"))
+		-mw $gOptionBoxTemplateDescriptionMarginWidth`;
+	columnLayout;
+
+	radioButtonGrp -vr -label (uiRes("m_performCreateContainer.kOperation"))
+		-numberOfRadioButtons 2
+		-label1 (uiRes("m_performCreateContainer.kOperation1"))
+		-label2 (uiRes("m_performCreateContainer.kOperation2"))
+		-on1 "toggleNameText 1"
+		-on2 "toggleNameText 0"		
+		containerOperation;
+
+    textFieldGrp
+			-label (uiRes("m_performCreateContainer.kName"))
+			containerNameWidget;
+
+	setParent $parent;
+
+	string $optionFrame = `frameLayout -collapsable 0
+					  -label (uiRes("m_performCreateContainer.kOptionFrame"))
+					  -mw $gOptionBoxTemplateDescriptionMarginWidth`;
+	columnLayout;
+	
+	checkBoxGrp
+		-ncb 1
+		-label (uiRes("m_performCreateContainer.kIncludeConnected"))
+		-label1 ""
+		-annotation (uiRes("m_performCreateContainer.kConnectedNodesAnnot"))
+		includeConnWidget;
+
+	checkBoxGrp
+		-ncb 1
+		-label (uiRes("m_performCreateContainer.kIncludeShaders"))
+		-label1 ""
+		-annotation (uiRes("m_performCreateContainer.kConnectedShadersAnnot"))
+		includeShaderWidget;
+
+	checkBoxGrp
+		-ncb 1
+		-label (uiRes("m_performCreateContainer.kIncludeHierarchy"))
+		-onc "toggleContainerHierarchyRadio 1"
+		-ofc "toggleContainerHierarchyRadio 0"
+		-label1 ""
+		includeHierWidget;
+
+	radioButtonGrp
+		-label ""
+		-label1 (uiRes("m_performCreateContainer.kIncludeShapes"))
+		hierShapesWidget;
+
+	radioButtonGrp
+		-label ""
+		-label1 (uiRes("m_performCreateContainer.kBelow"))
+		-scl hierShapesWidget
+		hierBelowWidget;
+
+	radioButtonGrp
+		-label ""
+		-label1 (uiRes("m_performCreateContainer.kAbove"))
+		-scl hierShapesWidget
+		hierAboveWidget;
+
+	radioButtonGrp
+		-label ""
+		-label1 (uiRes("m_performCreateContainer.kAll"))
+		-scl hierShapesWidget
+		allHierWidget;
+
+	setParent $parent;
+
+	string $publishFrame = `frameLayout -collapsable 0
+		-label (uiRes("m_performCreateContainer.kPublishFrame"))
+		-mw $gOptionBoxTemplateDescriptionMarginWidth`;
+	columnLayout;
+
+	checkBoxGrp
+		-ncb 1
+		-label (uiRes("m_performCreateContainer.kSelectionTransform"))
+		-label1 ""
+		-ann (uiRes("m_performCreateContainer.kRootTransformAnnot"))
+		-onc "checkBoxGrp -e -enable 1 publishTRSWidget"
+		-ofc "checkBoxGrp -e -enable 0 publishTRSWidget"
+		publishRootWidget;
+
+	checkBoxGrp
+		-ncb 1
+		-label (uiRes("m_performCreateContainer.kTransformAttr"))
+		-label1 ""
+		-ann (uiRes("m_performCreateContainer.kRootAttrAnnot"))
+		publishTRSWidget;
+
+	setParent $parent;
+	
+	setParent ..;	
+
+	formLayout -e
+		-af $operationFrame "top" $gOptionBoxTemplateFrameSpacing
+		-af $operationFrame "left" $gOptionBoxTemplateFrameSpacing
+		-af $operationFrame "right" $gOptionBoxTemplateFrameSpacing
+		-an $operationFrame "bottom"
+
+		-ac $optionFrame "top" $gOptionBoxTemplateFrameSpacing $operationFrame
+		-af $optionFrame "left" $gOptionBoxTemplateFrameSpacing
+		-af $optionFrame "right" $gOptionBoxTemplateFrameSpacing
+		-an $optionFrame "bottom"
+
+		-ac $publishFrame "top" $gOptionBoxTemplateFrameSpacing $optionFrame
+		-af $publishFrame "left" $gOptionBoxTemplateFrameSpacing
+		-af $publishFrame "right" $gOptionBoxTemplateFrameSpacing
+		-an $publishFrame "bottom"
+		$parent;
+
+	//	Turn off the wait cursor.
+	//
+	waitCursor -state 0;
+	
+	//	Step 5: Deactivate the default UI template.
+	//	===========================================
+	//
+	setUITemplate -popTemplate;
+
+	//	Step 6: Customize the buttons.  
+	//	==============================
+	//
+	//	Provide more descriptive labels for the buttons.  This is not 
+	//	necessary, but in some cases, for example, a button labelled 
+	//	'Create' may be more meaningful to the user than one labelled
+	//	'Apply'.
+	//
+	//	Disable those buttons that are not applicable to the option box.
+	//
+	//	Attach actions to those buttons that are applicable to the option
+	//	box.  Note that the 'Close' button has a default action attached 
+	//	to it that will hide the window.  If a a custom action is
+	//	attached to the 'Close' button then be sure to call the 'hide the
+	//	option box' procedure within the custom action so that the option
+	//	box is hidden properly.
+
+	//	'Apply' button.
+	//
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit
+		-command ($callback + " " + $parent + " " + 1)
+		$applyBtn;
+
+	//	'Save' button.
+	//
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + $parent + " " + 0 + "; hideOptionBox")
+		$saveBtn;
+
+	//	'Reset' button.
+	//
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + " " + $parent + " " + 1)
+		$resetBtn;
+
+	//	Step 7: Set the option box title.
+	//	=================================
+	//
+	setOptionBoxTitle (uiRes("m_performCreateContainer.kCreateContainerOptions"));
+
+	//	Step 8: Customize the 'Help' menu item text.
+	//	============================================
+	//
+	setOptionBoxHelpTag( "CreateAssetContainer" );
+
+	//	Step 9: Set the current values of the option box.
+	//	=================================================
+	//
+	eval (($setup + " " + $parent + " " + 0));	
+	
+	//	Step 10: Show the option box.
+	//	=============================
+	//
+	showOptionBox();
+}
+
+//
+//  Procedure Name:
+//      assembleCmd
+//
+//  Description:
+//		Construct the command that will apply the option box values.
+//
+//  Input Arguments:
+//      None.
+//
+proc string assembleCmd()
+{
+	string $cmd;
+
+	setOptionVars(false);
+
+	string $containerName = "asset1";
+	if (`textFieldGrp -exists containerNameWidget`) {
+		$containerName = `textFieldGrp -q -text containerNameWidget`;
+	}
+
+	if (`optionVar -q containerPublishRoot`) {
+		$cmd += "string $pccSel[] = `ls -sl`; ";
+	}
+	
+	$cmd += "container ";
+	// create the container command string
+	if (size($containerName)) {
+		$cmd += "-name \""+$containerName+"\" ";
+	}
+
+	if (`optionVar -q containerIncludeNetwork`) {
+		$cmd += "-includeNetwork ";
+	}
+
+	if (`optionVar -q containerIncludeShaders`) {
+		$cmd += "-includeShaders ";
+	}
+
+	if( !`exists hierarchyFlags` ){
+		eval("source \"containerOperations.mel\"");
+	}
+	$cmd += hierarchyFlags( `optionVar -q containerIncludeHier` );
+
+	if (2 == `optionVar -q containerOperation`) {
+		// select proposed container contents only
+		//
+		$cmd += "-preview ";
+	}
+
+	$cmd += "-force -addNode `ls -sl`;";
+
+	if (`optionVar -q containerPublishRoot`) {
+		$cmd += " containerAutopublishRoot($pccSel, ";
+		$cmd += (`optionVar -q containerPublishTRS` + ", ");
+		$cmd += ((`optionVar -q containerOperation` == 2)+");");
+	}
+	
+	
+	return $cmd;
+}
+
+//
+//  Procedure Name:
+//      performCreateContainer
+//
+//  Description:
+//		Perform the create container command using the corresponding 
+//		option values.  This procedure will also show the option box
+//		window if necessary as well as construct the command string
+//		that will invoke the optionBoxExample1 command with the current
+//		option box values.
+//
+//  Input Arguments:
+//      0 - Execute the command.
+//      1 - Show the option box dialog.
+//      2 - Return the command.
+//
+global proc string performCreateContainer(int $action)
+{
+	string $cmd = "";
+
+	switch ($action) {
+
+		//	Execute the command.
+		//
+		case 0:
+			//	Get the command.
+			//
+			$cmd = `assembleCmd`;
+
+			//	Execute the command with the option settings.
+			//
+			evalEcho($cmd);
+
+			break;
+
+		//	Show the option box.
+		//
+		case 1:
+			createContainerOptions;
+			break;
+
+		//	Return the command string.
+		//
+		case 2:
+			//	Get the command.
+			//
+			$cmd = `assembleCmd`;
+			break;
+	}
+	return $cmd;
+}
+

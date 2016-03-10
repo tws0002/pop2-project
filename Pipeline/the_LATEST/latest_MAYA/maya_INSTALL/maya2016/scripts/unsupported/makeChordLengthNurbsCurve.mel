@@ -1,0 +1,215 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//	Description :
+//		Given a NURBS curve change to
+//		chord length parametrization with out
+//		changing the CVs. Note : You will see
+//		the edit points shuffle around.
+//
+
+proc float distProc( float $x, float $y, float $z )
+{
+	float $d  ;
+	$d = $x*$x ;
+	$d += $y*$y ;
+	$d += $z*$z ;
+	$d = sqrt($d) ;
+	return $d ;
+}
+proc float[] chordLengthKnots( string $crvName )
+{
+	float $knots[] ;
+
+	string $infoNode ;
+
+    // create info Node.
+    if( catch( $infoNode = `createNode curveInfo` ) ) {
+        return $knots ;
+    }
+
+    string $degAttr = $crvName + ".degree" ;
+ 	int $deg = `getAttr $degAttr` ;
+	
+	// connect curve on to the info node.
+    //
+    string $outAttr = $crvName + ".ws[0]" ;
+    string $inAttr = $infoNode + ".ic" ;
+    connectAttr $outAttr $inAttr ;
+
+	// get control vertices.
+	//
+	string $base = $infoNode + ".cp[*]" ;
+	string $xvAttr = $base + ".xv" ;
+	string $yvAttr = $base + ".yv" ;
+	string $zvAttr = $base + ".zv" ;
+	float $xv[] = `getAttr $xvAttr` ;
+	float $yv[] = `getAttr $yvAttr` ;
+	float $zv[] = `getAttr $zvAttr` ;
+
+	int $ncv = size($xv) ;	
+
+	// # of edit points
+	//
+	if( $ncv <= $deg ) {
+		warning (uiRes("m_makeChordLengthNurbsCurve.kWarningInvalidNumOfControlVerts")) ;
+		delete $infoNode ;
+		return $knots ;
+	}
+
+	int $i ;
+	int $cvIndex = 0;
+	int $kIndex = 0;
+
+	int $ep =  $ncv - $deg + 1 ;
+
+	float $len = 0.0 ;
+
+	// first knot value.
+	//
+	for( $kindex = 0 ; $kindex < $deg ; $kindex++ ) $knots[$kindex] = $len ;		
+
+	for( $i = 1 ; $i <= $deg ; $i++ ) {
+		float $dx = $xv[$i] - $xv[$i-1] ; 
+		float $dy = $yv[$i] - $yv[$i-1] ; 
+		float $dz = $zv[$i] - $zv[$i-1] ; 
+		float $dist = distProc($dx,$dy,$dz) ;
+		$len += $dist ;
+	}
+	$kindex = size($knots) ;
+	$knots[$kindex++] = $len ;	
+	for( $i =$deg+1 ; $i < $ncv ; $i++ ) {
+		float $dx = $xv[$i] - $xv[$i-1] ; 
+		float $dy = $yv[$i] - $yv[$i-1] ; 
+		float $dz = $zv[$i] - $zv[$i-1] ; 
+		float $dist = distProc($dx,$dy,$dz) ;
+		$len += $dist ;
+		$knots[$kindex++] = $len ;	
+	}
+	for( $i = 0 ; $i < $deg-1 ; $i++ ) $knots[$kindex++] = $len ;
+	delete $infoNode ;
+	return $knots ;	
+}
+
+proc int matchKnots( string $crvName, float $knots[] )
+//
+//	Description :
+//
+{
+
+	// get the number of cvs needed.
+	//
+    string $degAttr = $crvName + ".degree" ;
+ 	int $deg = `getAttr $degAttr` ;
+    string $spansAttr = $crvName + ".spans" ;
+ 	int $ns = `getAttr $spansAttr` ;
+	int $cv = $deg + $ns ;
+
+	// create a dummy curve with the knots.
+	//
+	string $dummyCrv ;
+	string $crvCmdStr = "curve " + " -d "  ;
+	$crvCmdStr += $deg ;
+	$crvCmdStr += " " ;
+
+	for( $i = 0 ; $i < $cv ; $i++ ) { 
+		float $x  = 0.0 ;
+		$crvCmdStr += "-p " ;
+		$crvCmdStr += $x ;
+		$crvCmdStr += " " ;
+		$crvCmdStr += $x ;
+		$crvCmdStr += " " ;
+		$crvCmdStr += $x ;
+		$crvCmdStr += " " ;
+	}
+
+	int $nk = size($knots) ;
+	for( $i = 0 ; $i < $nk ; $i++ ) {
+		$crvCmdStr += "-k " ;
+		$crvCmdStr += $knots[$i];
+		$crvCmdStr += " " ;
+	}
+
+	string $dummyCrv = eval($crvCmdStr) ;
+	
+	// rebuild $crvName to match Knots of $dummyCrv
+	//
+	string $res[] ;
+	$error = 0 ;
+
+	if( catch ($res = `rebuildCurve -ch 0 -rpo 1 -rt 2 -kr 1 -kcp 1 -kep 1 -kt 0 -tol 0.05000000075 $crvName $dummyCrv`)) {
+		$error = 1 ;	
+	}
+	delete $dummyCrv ;
+	return $error ;
+}
+
+global proc int makeChordLengthNurbsCurve() 
+{
+	string $crvs[] ;
+
+    // 0. Grab the select list.
+    //
+    string $selList[] ;
+    $selList = `ls -sl` ;
+
+	// 1. set filter to select only the nurbs curves out.
+    //
+    global int $gSelectNurbsCurvesBit ;
+	global int $gSelectCurvesOnSurfacesBit;
+
+	// 2. Run filter looking for curves, cos.
+	//
+    string $crvList[] ;
+	$crvList = `filterExpand -ex true -sm $gSelectNurbsCurvesBit $selList` ;
+	if( size($crvList) == 0 ) {
+		string $cosList[] ;
+        $cosList = `filterExpand -ex true -sm $gSelectCurvesOnSurfacesBit $selList` ; 
+        if( size($cosList) == 0 ) {
+            warning (uiRes("m_makeChordLengthNurbsCurve.kWarningNoCurveSelected")) ;
+            return 1 ;
+        }
+        else $crvList = $cosList;
+	}
+
+	// 2. Work on the last item if more than one NURBS curve in list.
+    //
+    int $len = size($crvList) ;
+    string $lastCrv = $crvList[$len-1] ;
+    if( $len != 1 ) {
+        string $w = (uiRes("m_makeChordLengthNurbsCurve.kWarningChangingToChordLength")) ;
+        warning `format -s $lastCrv $w` ;
+    }
+
+	// 4. compute the chord length based knot sequence.
+	//
+	float $knots[] = chordLengthKnots($lastCrv) ;
+
+	// 5. rebuild curve so as to match the computed knot sequence.
+	//
+	int $rebuildFailed = matchKnots( $lastCrv, $knots ) ;
+	if( $rebuildFailed ) {
+		error (uiRes("m_makeChordLengthNurbsCurve.kErrorParamtrizationFailed")) ;
+	}
+	select -r $lastCrv ;
+	return !$rebuildFailed ;
+} 

@@ -1,0 +1,286 @@
+// Copyright (C) 1997-2013 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+/**
+ * @file xgmTargetGuideTool.mel
+ * @brief Contains the MEL for the TargetGuide tool.
+ *
+ * <b>CONFIDENTIAL INFORMATION: This software is the confidential and
+ * proprietary information of Walt Disney Animation Studios ("WDAS").
+ * This software may not be used, disclosed, reproduced or distributed
+ * for any purpose without prior written authorization and license
+ * from WDAS. Reproduction of any section of this software must include
+ * this legend and all copyright notices.
+ * Copyright Disney Enterprises, Inc. All rights reserved.</b>
+ *
+ * @author Patrick Witting
+ * @author Ying Liu
+ *
+ * @version Created 02/02/05
+ */
+
+global proc xgmTargetGuideTool(string $parent)
+{
+    global string $xgmTargetGuideToolTarget = "";
+
+    columnLayout -parent $parent;
+    {
+        button -label (uiRes("m_xgmTargetGuideTool.kSetTarget")) -w 340 
+            -ann ((uiRes("m_xgmTargetGuideTool.kSetTargetAnn")))
+            -command "xgmTargetGuideToolSet" xgmTargetGuideToolSet;
+
+        floatSliderGrp -label (uiRes("m_xgmTargetGuideTool.kShapeblend"))
+            -ann ((uiRes("m_xgmTargetGuideTool.kShapeBlendAnn")))
+            -cw3 100 80 240  -field true
+            -minValue 0.0 -maxValue 1.0 -pre 3
+            -fieldMinValue -10.0 -fieldMaxValue 10.0 -value 1 
+            xgmTargetGuideToolShapeBlend;
+
+        floatSliderGrp -label (uiRes("m_xgmTargetGuideTool.kTipsnapamount")) -cw3 100 80 240 -field true
+            -ann ((uiRes("m_xgmTargetGuideTool.kTipSnapAmountAnn"))) 
+            -minValue 0.0 -maxValue 1.0 -pre 3
+            -fieldMinValue -10.0 -fieldMaxValue 10.0 -value 1 
+            xgmTargetGuideToolTipSnap;
+
+        floatSliderGrp -label (uiRes("m_xgmTargetGuideTool.kDistancefalloff")) -cw3 100 80 240 -field true
+            -ann ((uiRes("m_xgmTargetGuideTool.kDistanceFalloffAnn")))
+            -minValue 0.0 -maxValue 1.0 -pre 3
+            -fieldMinValue 0.0 -fieldMaxValue 10.0 -value 0
+            xgmTargetGuideToolDistanceFalloff;
+
+        gridLayout -numberOfColumns 2 -cellWidthHeight 200 25;
+        {
+            button -label (uiRes("m_xgmTargetGuideTool.kMoveSelectedGuides")) -w 180
+                -ann (uiRes("m_xgmTargetGuideTool.kMoveSelectGuidesAnn"))
+                -command "xgmTargetGuideToolMove";
+
+            button -label (uiRes("m_xgmTargetGuideTool.kCleanUp")) -w 140 
+                -ann ((uiRes("m_xgmTargetGuideTool.kCleanUpAnn")))
+                -command "xgmTargetGuideToolClear";
+
+            setParent ..;
+        }
+
+        setParent ..;
+    }
+}
+
+
+proc targetGuideToolShader()
+{
+    string $selOrig[] = `ls -sl`;
+
+    string $obj = "xgmTargetGuideToolTarget";
+    string $shade = ($obj + "Shader");
+    string $shadeSG = ( $obj + "SG" );
+
+    if ( `objExists $shade` )  delete $shade;
+    if ( `objExists $shadeSG` )  delete $shadeSG;
+
+    shadingNode -asShader lambert -n $shade;
+    setAttr ( $shade + ".color" ) -type double3 1 0 0;
+
+    sets -renderable true -noSurfaceShader true -empty -name $shadeSG;
+    connectAttr -f ( $shade + ".outColor" ) ( $shadeSG + ".surfaceShader" );
+
+    select -r $selOrig;
+}
+
+
+proc targetGuideToolMakeSphere()
+{
+    if ( `objExists xgmTargetGuideToolSphere` )  return;
+
+    string $selOrig[] = `ls -sl`;
+
+    sphere -p 0 0 0 -ax 0 1 0 -ssw 0 -esw 360 -r 0.4 -d 3 -ut 0 -tol 0.01
+           -s 8 -nsp 4 -ch 1 -n xgmTargetGuideToolSphere;
+    xgmMakeShader( "xgmTargetGuideToolSphere", 1, 0, 0, 0.6 );
+
+    setAttr xgmTargetGuideToolSphereShape.primaryVisibility 0;
+    setAttr xgmTargetGuideToolSphereShape.intermediateObject 1;
+    setAttr xgmTargetGuideToolSphereShape.intermediateObject 0;
+
+    xgmGroomParent xgmTargetGuideToolSphere;
+
+    select -r $selOrig;
+}
+
+
+global proc xgmTargetGuideToolClear(){
+
+    global string $xgmTargetGuideToolTarget;
+    global string $xgmTargetGuideToolTargetOrigSG;
+
+    // return old target SG
+    if ( `objExists $xgmTargetGuideToolTarget` &&
+         `objExists $xgmTargetGuideToolTargetOrigSG` )
+        sets -e -forceElement $xgmTargetGuideToolTargetOrigSG
+                              $xgmTargetGuideToolTarget;
+
+    if ( `objExists xgmTargetGuideToolTargetSG` )
+        delete xgmTargetGuideToolTargetSG;
+    if ( `objExists xgmTargetGuideToolSphere` )
+        delete xgmTargetGuideToolSphere;
+
+    $xgmTargetGuideToolTarget = "";
+}
+
+
+global proc xgmTargetGuideToolSet()
+{
+    global string $xgmTargetGuideToolTarget;
+    global string $xgmTargetGuideToolTargetOrigSG;
+
+    string $gList[] = xgmSelectedGuides( "Spline", 1 );
+    if ( $gList[0] == "" ){
+        warning (uiRes("m_xgmTargetGuideTool.kNoGuidesSelectedForTarget"));
+        return;
+    }
+
+    // return old target SG
+    if ( `objExists $xgmTargetGuideToolTarget` &&
+         `objExists $xgmTargetGuideToolTargetOrigSG` )
+        sets -e -forceElement $xgmTargetGuideToolTargetOrigSG
+                              $xgmTargetGuideToolTarget;
+
+    $xgmTargetGuideToolTarget = $gList[0];   
+    string $sglist[] = `listConnections -type shadingEngine $gList[0]`;
+    $xgmTargetGuideToolTargetOrigSG = $sglist[0];
+
+    if ( !`objExists xgmTargetGuideToolTargetSG` )
+        targetGuideToolShader;
+    sets -e -forceElement xgmTargetGuideToolTargetSG
+         $xgmTargetGuideToolTarget;
+
+    // move sphere to base, making it if it doesn't exist
+    targetGuideToolMakeSphere;
+
+    string $guide = $gList[0];
+    float $x[3] = `pointPosition -world ( $guide + ".vtx[0]" )`;
+    move -a $x[0] $x[1] $x[2] xgmTargetGuideToolSphere;
+}
+
+
+global proc xgmTargetGuideToolMove()
+{
+    global string $xgmTargetGuideToolTarget;
+
+    if ( $xgmTargetGuideToolTarget == "" ) {
+        warning (uiRes("m_xgmTargetGuideTool.kNoTargetSetSelectAGuideThenHitSetTarget"));
+        return;
+    }
+
+    if ( !`objExists $xgmTargetGuideToolTarget` ) {
+        warning (uiRes("m_xgmTargetGuideTool.kTargetNoLongerExists"));
+        return;
+    }
+
+    string $gList[] = xgmSelectedGuides( "", 0 );
+    if ( $gList[0] == "" ) {
+        warning (uiRes("m_xgmTargetGuideTool.kNoGuidesSelectedForMoveNoActionTaken"));
+        return;
+    }
+
+    float $shapeBlend = `floatSliderGrp -q -v xgmTargetGuideToolShapeBlend`;
+    float $tipSnap = `floatSliderGrp -q -v xgmTargetGuideToolTipSnap`;
+    float $distanceFalloff = `floatSliderGrp -q -v xgmTargetGuideToolDistanceFalloff`;
+
+    string $guide = $xgmTargetGuideToolTarget;
+
+    string $descTarget = python( "xg.guideDescription(\"" + $guide + "\")" );
+
+    float $xTarget[3] = `pointPosition -world ( $guide + ".vtx[0]" )`;
+    float $data[] = `xgmGuideGeom -guide $guide -numVertices`;
+    int $ncvs = $data[0];
+    int $ncvs3 = 3 * $ncvs;
+
+    // get cv array for target
+    float $yTarget[];
+    for ( $i=0; $i<$ncvs; $i++ ) {
+        float $yT[3] = `pointPosition ( $guide + ".vtx[" + $i + "]" )`;
+        $yTarget[$i*3] = $yT[0];
+        $yTarget[$i*3+1] = $yT[1];
+        $yTarget[$i*3+2] = $yT[2];
+    }
+
+    for ( $guide in $gList ) {
+        string $desc = python( "xg.guideDescription(\"" + $guide + "\")" );        
+        if ( $desc != $descTarget ) {
+	    string $fmt = "Description mismatch: ^1s from ^2s target from ^3s. Skipping.\n";
+            warning( `format -s $guide $desc $descTarget $fmt` );
+            continue;
+        }
+
+        float $x[3] = `pointPosition -world ( $guide + ".vtx[0]" )`;
+        float $z[3];
+        for ( $q=0; $q<3; $q++ )
+            $z[$q] = $x[$q] - $xTarget[$q];
+        float $dist = sqrt( $z[0]*$z[0] + $z[1]*$z[1] + $z[2]*$z[2] );
+        float $weight = xgmFalloff( $dist, $distanceFalloff, 2.0 );
+
+        float $blend = $shapeBlend * $weight;
+        float $snap = $tipSnap * $weight;
+
+        // get cv array for guide
+        float $y[], $y0[];  // result position and start position
+        for ( $i=0; $i<$ncvs; $i++ ) {
+            float $yT[3] = `pointPosition ( $guide + ".vtx[" + $i + "]" )`;
+            $y0[$i*3] = $yT[0];
+            $y0[$i*3+1] = $yT[1];
+            $y0[$i*3+2] = $yT[2];
+        }
+
+        // first blend towards the target, using $z as the seperation
+        int $k;
+        for ( $i=0; $i<$ncvs; $i++ ) {
+            for ( $k=0; $k<3; $k++ ) {
+                $y[$i*3+$k] = $blend * ( $yTarget[$i*3+$k] + $z[$k] )
+                                + ( 1.0 - $blend ) * $y0[$i*3+$k];
+            }
+        }
+
+        // get a tip movement vector
+        float $tipMotion[3];
+        int $j=3*($ncvs-1); // start of tip data
+        for ( $k=0; $k<3; $k++ ) {
+            $tipMotion[$k] = $snap * ( $yTarget[$j] - $y[$j] );
+            $j++;
+        }
+
+        // apply the tip movement vector linearly to all the cvs
+        for ( $i=0; $i<$ncvs; $i++ ) {
+            float $weight = (float) ( $i+1 ) / (float) $ncvs;
+            for ( $k=0; $k<3; $k++ ) {
+                $y[$i*3+$k] += $weight * $tipMotion[$k];
+            }
+        }
+
+        // now make a relative move to new position
+        for ( $i=1; $i<$ncvs; $i++ ) {
+            float $x[3];
+            for ( $k=0; $k<3; $k++ ) {
+                $x[$k] = $y[$i*3+$k] - $y0[$i*3+$k];
+            }
+            move -r $x[0] $x[1] $x[2] ( $guide + ".vtx[" + $i + "]" );
+        }
+    }
+}

@@ -1,0 +1,314 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+// 
+// hikDefinitionUtils.mel
+//
+// Description:
+//		Utility methods for HIK Skeleton Definitions. Should not contain
+//		any UI code. All code that references UI or triggers UI
+// 		updates should live in hikDefinitionUI.mel or 
+//		hikDefinitionOperations.mel
+//
+
+///////////////////////////////////////////////////////////////////
+// Local Methods...
+///////////////////////////////////////////////////////////////////
+
+proc setBoneAttr( string $characterName, string $attributeName, int $invertedState )
+{
+	// Does the attribute exists
+	if ( ! `attributeQuery -node $characterName -exists $attributeName` )
+		return;
+		
+	setAttr ( $characterName + "." + $attributeName ) $invertedState;	
+}
+
+// Clear object from a given Characterize field
+proc clearCharacterObject( string $hikCharacterNode, int $pNodeCount, int $deletingBone )
+{
+	if ( size($hikCharacterNode) > 0 )
+	{
+		// Clear the bone
+		hikRemoveSkFromCharacter($hikCharacterNode, $pNodeCount);
+	}
+}
+
+proc setHikCharacterJointLabel(string $mayaNode, string $hikCharacterNode)
+{
+	if (! `objectType -isa "joint" $mayaNode`) {
+		// only joints support labels
+		return;
+	}
+	
+	if ($hikCharacterNode == "LeftShoulder") {
+		$hikCharacterNode = "LeftCollar";
+	} else if ($hikCharacterNode == "RightShoulder") {
+		$hikCharacterNode = "RightCollar";
+	}
+	
+	int $labelInfo[] = jointLabelInfoForString($hikCharacterNode);
+	int $type = $labelInfo[0];
+	int $side = $labelInfo[1];
+	if ($type != -1) {
+		setAttr ($mayaNode+".type") $type;
+	}
+	if ($side != -1) {
+		setAttr ($mayaNode+".side") $side;
+	}
+}
+
+
+
+
+///////////////////////////////////////////////////////////////////
+// Global Methods...
+///////////////////////////////////////////////////////////////////
+
+global proc int hikIsCharacterizationToolUICmdPluginLoaded()
+{
+	return `pluginInfo -query -loaded "mayaCharacterization"`;
+}
+
+global proc int hikIsCharacterizationInValidOrWarningState()
+{
+	if ( ! hikIsCharacterizationToolUICmdPluginLoaded() )
+		return 0;
+		
+	int $characterizationState = `characterizationToolUICmd -query -curcharstatus`;
+	if ( $characterizationState == 0 || $characterizationState == 2 || $characterizationState == 4 )
+	{
+		return 1;
+	}
+	return 0;
+}
+
+
+
+// TODO : Rename the call to setCharacterObject in the Characterization Tool plug-in 
+// and delete the old setCharacterObject() proc
+global proc setCharacterObject( string $mayaNode, string $hikCharacterNode, int $pNodeCount, int $deletingBone )
+{
+	hikSetCharacterObject( $mayaNode, $hikCharacterNode, $pNodeCount, $deletingBone );
+}
+
+// Set Characterize Node to the HIKCharacter passed in
+//	This function is called from the Characterization Tool
+//	plug-in that is built in the Synergy repo. Do not
+//	change or delete this method unless you are also
+//	changing that tool.
+global proc hikSetCharacterObject( string $mayaNode, string $hikCharacterNode, int $pNodeCount, int $deletingBone )
+{
+	// Bone is going away, no need to clear the connections. We make 
+	// this check early so that we don't do operations like finding
+	// the control rig on a bone that is about to be deleted.
+	if ( $deletingBone )
+		return;
+		
+	// Make sure there is no rig
+	string $lDstControlRig = hikGetControlRig($hikCharacterNode);
+	if ( size($lDstControlRig) > 0 )
+	{
+		string $hasRigError = (uiRes("m_hikDefinitionUtils.kCharacterizationHasRig"));
+		print ( $hasRigError + "\n" );
+		return;
+	}
+	
+	if(size($mayaNode))
+	{
+		string	$tmpCharacter = $hikCharacterNode;
+		string $nodeName = GetHIKNodeName($pNodeCount);
+		string $currentNode = $mayaNode;		
+		
+		
+		hikAddSkToCharacter($tmpCharacter, $currentNode, $pNodeCount, 0 /*select */ );
+		hikReadStancePoseTRSOffsetsForNode( $tmpCharacter, $pNodeCount );
+		// print ("setCharacterObject: " + $currentNode + " assigned to " + $tmpCharacter + "." + $nodeName+"\n");
+	}
+	else
+	{
+		clearCharacterObject( $hikCharacterNode, $pNodeCount, $deletingBone );
+	}
+}
+
+// TODO : Rename the call to characterizationInvertBone in the Characterization Tool plug-in 
+// and delete the old characterizationInvertBone() proc 
+global proc characterizationInvertBone( int $nodeId, int $invertedState )
+{
+	hikDefinitionInvertBone($nodeId, $invertedState );
+}
+
+// NOTE: This function is called from the characterization tool.
+// Change with caution.
+global proc hikDefinitionInvertBone( int $nodeId, int $invertedState )
+{
+	string $nodeName = GetHIKNodeName( $nodeId );
+	// print("INVERT: "+$nodeName+" "+$invertedState+"\n");
+
+	string $currentName = hikGetCurrentCharacter();
+
+	if ( $nodeName == "LeftForeArm" )
+	{
+		setBoneAttr( $currentName, "leftElbowInverted", $invertedState );
+	}
+	else if ( $nodeName == "RightForeArm" )
+	{
+		setBoneAttr( $currentName, "rightElbowInverted", $invertedState );
+	}
+	else if ( $nodeName == "LeftLeg" )
+	{
+		setBoneAttr( $currentName, "leftKneeInverted", $invertedState );
+	}
+	else if ( $nodeName == "RightLeg" )
+	{
+		setBoneAttr( $currentName, "rightKneeInverted", $invertedState );
+	}
+}
+
+
+
+
+// Set a Node for a given Character Definition field
+global proc hikAddSkToCharacter(string $pCharacter, string $pNode, int $pNodeId, int $doSelect )
+{
+	string $nodeName	= GetHIKNodeName($pNodeId);
+	string $node[]		= GetHIKNode($pCharacter, $pNodeId); // Get HIKNode Attribute (ex: Character.Hips)
+	if ( $doSelect )
+	{
+		select $pNode;
+	}
+	setHikCharacterJointLabel($pNode,$nodeName);
+
+	// if node assigned to Character Object, disconnect it
+	{
+		string $tmpName   = $pCharacter + "." + $nodeName;
+		string $tmpNode[] = `listConnections $tmpName`;
+		if (size( $tmpNode ) > 0)
+			disconnectAttr ($tmpNode[0] + ".Character") $tmpName;
+	}
+
+	// Check if the node already has a Character attribute
+	string $lAttr[] = `listAttr -st "Character" $pNode`;
+	if(size($lAttr) == 0)
+	{
+		if( $doSelect )
+		{
+			addAttr -shortName ch -longName "Character" -attributeType message;
+		}
+		else
+		{
+			addAttr -shortName ch -longName "Character" -attributeType message $pNode;
+		}
+	}
+
+	// Connect Node.Character to Character Definition field Attribute
+	string $out = $pNode + ".Character";
+	connectAttr -f $out $node[0];
+	
+	
+	//
+	// The historical comment was:
+	//
+	// if pNode is a joint, be sure to turn off segment scale compensate.  
+	// It will cause all sorts of problems, including scaling the reference!
+	// (segment scale compensate tries to adjust the scale of the child bone
+	// in relation to the scale of the parent bone so the bone looks the same
+	// to the user when the parent is being scaled - this totally messes up 
+	// our calculation when we try to write the scale into the bones).
+	//
+	// But: now, we do not want to change the value of this plug as it 
+	// can cause bones to stretch.
+	//
+	
+	int $sscOff = `optionVar -q hikSegmentScaleCompensateIsOff`;
+	if( $sscOff && `nodeType $pNode` == "joint")
+	{
+		string $segmentScaleCompensatePlug = $pNode + ".segmentScaleCompensate";
+		string $skeletonGeneratorNode = hikGetSkeletonGeneratorNode( $pCharacter );
+		if ( size($skeletonGeneratorNode) == 0 && ( `getAttr $segmentScaleCompensatePlug` != 0 ) )
+		{
+			string $fmt = (uiRes("m_hikDefinitionUtils.kSegmentScaleCompensateWarning"));
+			string $warningMessage = `format -s $pNode $fmt`;
+			warning( $warningMessage );
+		}
+		// Turn plug off
+		setAttr $segmentScaleCompensatePlug 0;
+	}
+}
+
+// Remove a Node from a given Character Definition field
+global proc hikRemoveSkFromCharacter(string $pCharacter, int $pNodeId)
+{
+	string $nodeName = GetHIKNodeName($pNodeId);;
+	string $currentNode;
+	string $tmpNode[];
+	
+	//disconnect from Character
+	string $tmpCharObjectName = $pCharacter + "." + $nodeName;
+	if (size(`listConnections $tmpCharObjectName`) > 0)
+	{
+		$tmpNode = `listConnections $tmpCharObjectName`;
+		disconnectAttr ($tmpNode[0] + ".Character") $tmpCharObjectName;
+		$currentNode = $tmpNode[0];
+
+		//delete Character Attr on Object
+		string $lAttr[] = `listAttr -st "Character" $currentNode`;
+		if(size($lAttr) == 1)
+			deleteAttr -at "Character" $currentNode;
+	}
+}
+
+global proc string hikGetCharacterDefinition(string $pObject)
+{
+	string $list[] = `listAttr -string "OutputCharacterDefinition" $pObject`;
+	if(size($list) > 0)
+	{
+		return $pObject;
+	}
+	$CharacterAttr = $pObject;
+	$list = `listAttr -string "InputCharacterDefinitionDst" $pObject`;
+	if(size($list) > 0)
+	{
+		$CharacterAttr += ".InputCharacterDefinitionDst";
+	}
+	else
+	{
+		$CharacterAttr += ".InputCharacterDefinition";
+	}
+	string $Character[] = `listConnections $CharacterAttr`;
+	return $Character[0];
+}
+
+global proc hikConnectCharacterDefinition(string $pOutput, string $pInput)
+{
+	string $Input = $pInput+ ".InputCharacterDefinition";
+
+	if(size(`listAttr -string "OutputCharacterDefinition" $pOutput`) > 0)
+	{
+		connectAttr -f ($pOutput + ".OutputCharacterDefinition") $Input;
+	}
+	else
+	{
+		connectAttr -f ($pOutput + ".InputCharacterDefinition") $Input;
+	}	
+}
+
+

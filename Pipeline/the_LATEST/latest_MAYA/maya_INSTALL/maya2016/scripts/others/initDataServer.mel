@@ -1,0 +1,135 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+proc int catchdevice(string $dev, string $server)
+{
+  return catch( `defineDataServer -d $dev -s $server` );
+}
+
+proc string buildConfigClause(string $config)
+{
+	int $debug = 0;
+	string $func  = "buildConfigClause";
+
+	if ($debug) trace(" // config: " + $config + "\n");
+
+	// strip off leading white space
+	$config = substitute("^[ 	]*", $config, "" );
+
+	if ( "" != match("^-", $config ) ) {
+		if ($debug) trace("// " + $func + ": explicit config option specified\n" );
+		return " " + $config + " ";
+	}
+
+	// Search for the config file in the follow places
+	// if absolute path... use it
+	// .
+	// $MAYA_USER_CONFIG/mocap
+	// /usr/autodesk/userconfig/maya/mocap
+	//
+	string $configPath[] = { ".", 
+							 "$MAYA_USER_CONFIG/mocap", 
+							 "/usr/autodesk/userconfig/maya/mocap" };
+	
+	string $iFoundIt = searchPathArray($config,$configPath);
+
+	if ($debug) trace("// " + $func + ": config file :" + $iFoundIt + "\n" );
+
+	// set the config flag and return
+	if ( $iFoundIt == "" )
+		return " ";
+
+	return " -c " + $iFoundIt + " ";
+}	 
+
+global proc int initDataServer(string $dev, string $server, string $host, 
+					string $config, string $options, int $napTime )
+{
+	if (!`licenseCheck -m "edit" -typ "complete"`) {
+		return -1;
+	}
+
+	int $debug  = 0;
+	int $result = 0; // success
+
+	// First check the list of extant devices
+	string $devList[] = `listInputDevices`;
+	string $aDev; 
+	for ( $aDev in $devList) {
+		if ( $aDev == $dev )
+			return $result;
+	}
+
+	// Now try to define
+	if ( catchdevice($dev, $server ) ) 
+	{
+		if (`about -evalVersion`)
+		{
+			// The evaluation version of Maya cannot launch external
+			// programs, they will have to launch it themselves.
+			//
+			error((uiRes("m_initDataServer.kDataServerNotRunning")));
+			return -1; // failure;
+		}
+		
+		// Ack, we could find it, try to launch..
+		if ( $debug ) trace("Server not running, attempt to launch " + $server + "\n");
+
+		// $result = -1; // failure
+		if ( $host == "localhost" )
+		{
+			// Build the command string... 
+			$config = buildConfigClause($config);
+			string $cmd = $server + " -d " + $config + $options;
+			if (`about -win`)
+			{
+				$cmd = "start " + $cmd;
+			}
+			else
+			{
+				$cmd = $cmd + " &";
+			}
+			if ( $debug )
+				system("echo \$PATH");  // GG: ignore, debug only
+			system( $cmd);  // GG: okay for NT
+			if ( $napTime > 0) 
+			{
+				// This will take a brief nap, so bring up the wait cursor...
+				waitCursor -st true;
+
+				if ( $napTime < 10 )
+					$napTime = 10;
+				$cmd = "sleep " + $napTime;
+				system( $cmd);  // GG: need "sleep" for NT
+				
+				// We have awakened...
+				waitCursor -st false;
+			}
+			if ( catchdevice($dev, $server ) )
+			{	
+				$result = -1; // failure
+			}
+		}
+		else // we could support remote launch here...
+			$result = -1; // failure
+	}
+	return $result;		
+}

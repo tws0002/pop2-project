@@ -1,0 +1,378 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  2003
+//
+// Description: convert selection between related hair nodes 
+//	
+
+
+proc selectFolliclesFromSurfaces()
+{
+	// Add follicles indirectly selected to the current selection
+	string $selAdd[];
+	int $newCount;
+	string $nurbs[] = `ls -sl -dag -type nurbsSurface`;
+	int $i, $j;
+	for( $i = 0; $i < size( $nurbs ); $i++ ){
+		string $source = ( $nurbs[$i] + ".local" );
+		if( `connectionInfo -is $source` ){
+			string $con[] = `connectionInfo -dfs $source`;
+			for( $j = 0; $j < size( $con );	$j++ ){
+				string $buffer[];
+				int $numTokens = `tokenize $con[$j] "." $buffer`;
+				if( $numTokens > 1 ){
+					string $nodeName =  $buffer[0];
+					if( nodeType( $nodeName ) == "follicle" ){
+						$selAdd[$newCount] = $nodeName;
+						$newCount++;
+					}
+				}
+			}
+		}
+	}
+
+	string $meshes[] = `ls -sl -dag -type mesh`;
+	for( $i = 0; $i < size( $meshes ); $i++ ){
+		string $source = ( $meshes[$i] + ".outMesh" );
+		if( `connectionInfo -is $source` ){
+			string $con[] = `connectionInfo -dfs $source`;
+			for( $j = 0; $j < size( $con );	$j++ ){
+				string $buffer[];
+				int $numTokens = `tokenize $con[$j] "." $buffer`;
+				if( $numTokens > 1 ){
+					string $nodeName =  $buffer[0];
+					if( nodeType( $nodeName ) == "follicle" ){
+						$selAdd[$newCount] = $nodeName;
+						$newCount++;
+					}
+				}
+			}
+		}
+	}
+
+	select -add $selAdd;
+}
+
+proc selectHairSystemsFromPfxHair()
+{
+	// Add hairSystems indirectly selected to the current selection
+	string $selAdd[];
+	int $newCount;
+	string $pfxHair[] = `ls -sl -dag -type pfxHair`;
+	int $i;
+	for( $i = 0; $i < size( $pfxHair ); $i++ ){
+		string $hsys = sourceNodeNameFromConnection( $pfxHair[$i] + ".renderHairs" );
+		if( size( $hsys ) > 0 ){
+			$selAdd[$newCount] = $hsys;
+			$newCount++;
+		}
+	}
+	select -add $selAdd;
+}
+
+proc selectFolliclesFromHairSystems()
+{
+	// Add follicles indirectly through selected hairsystems to the current selection
+	string $selAdd[];
+	int $newCount;
+	string $hsys[] = `ls -sl -dag -type hairSystem`;
+	int $i;
+	for( $i = 0; $i < size( $hsys ); $i++ ){
+		$selAdd = stringArrayCatenate( 
+					$selAdd, hairCurvesFromSystem( $hsys[$i] ));
+	}
+	select -add $selAdd;
+}
+
+proc selectFolliclesFromConstraints()
+{
+	// Add follicles indirectly through selected constraints to the current selection
+	string $selAdd[];
+	int $newCount;
+	string $constraints[] = `ls -sl -dag -type hairConstraint`;
+	int $i, $j;
+	for( $i = 0; $i < size( $constraints ); $i++ ){
+		string $constraint = $constraints[$i];
+		float $indices[] = `getAttr ($constraint + ".curveIndices" )`;
+		int $numIndices = size( $indices );
+		if( $numIndices < 1 ){
+			continue;
+		}
+		string $hsys = destinationNodeNameFromConnection( $constraint + ".outPin" );
+		if( size( $hsys ) > 0 ){
+			// find the matching curves on the hairsystem
+			for( $j = 0; $j < $numIndices; $j++ ){
+				string $follicle = 	sourceNodeNameFromConnection( $hsys + ".inputHair[" + $indices[$j] + "]" );
+				if( size( $follicle ) > 0 ){
+					$selAdd[$newCount] = $follicle;
+					$newCount++;
+				}
+			}
+		}
+	}
+	select -add $selAdd;
+}
+
+proc convertSelectionToTform( string $sel[] )
+{
+	int $i;
+	for( $i = 0; $i < size($sel) ; $i++ ){
+		string $tforms[] = listTransforms( $sel[$i] );
+		$sel[$i] = $tforms[0];
+	}
+}
+
+global proc convertHairSelection( string $to )
+{
+	string $newSel[];
+	int $newCount = 0;
+	int $i;
+
+	selectFolliclesFromSurfaces();
+	if( "follicles" == $to ){
+		selectFolliclesFromConstraints();
+		selectHairSystemsFromPfxHair();
+		selectFolliclesFromHairSystems();
+		$newSel = getSelectedHairCurves();
+		convertSelectionToTform( $newSel );
+		$newCount = size( $newSel );
+	} else if( "hairSystems" == $to ){
+		selectFolliclesFromConstraints();
+		$newSel = getSelectedHairSystems();
+		$newCount = size( $newSel );
+	} else if( "pfxHair" == $to ){
+		selectFolliclesFromConstraints();
+		string $hsys[] = getSelectedHairSystems();
+		for( $i = 0; $i < size( $hsys ); $i++ ){
+			string $pfxHair = destinationNodeNameFromConnection( 
+				$hsys[$i] + ".outputRenderHairs" );
+			if( $pfxHair != "" ){
+				string $tforms[] = listTransforms( $pfxHair );
+				$newSel[$newCount] = $tforms[0];
+				$newCount++;
+			}
+		}
+		if( $newCount > 0 ){
+			displayHairCurves "current" 1;
+		}
+	} else if( "startCurves" == $to ){
+		selectFolliclesFromConstraints();
+		selectHairSystemsFromPfxHair();
+		selectFolliclesFromHairSystems();
+		string $follicles[] = getSelectedHairCurves();
+		for( $i = 0; $i < size( $follicles ); $i++ ){
+			string $start = sourceNodeNameFromConnection ( 
+						$follicles[$i] + ".startPosition" );
+			if( size( $start ) > 0 ){
+				string $tforms[] = listTransforms( $start );
+				$newSel[$newCount] = $tforms[0];
+				$newCount++;
+			}
+		}
+		if( $newCount > 0 ){
+			displayHairCurves "start" 1;
+		}
+	} else if( "startCurveEndCvs" == $to ){
+		selectFolliclesFromConstraints();
+		selectHairSystemsFromPfxHair();
+		selectFolliclesFromHairSystems();
+		string $follicles[] = getSelectedHairCurves();
+		for( $i = 0; $i < size( $follicles ); $i++ ){
+			string $start = sourceNodeNameFromConnection ( 
+						$follicles[$i] + ".startPosition" );
+			if( size( $start ) > 0 ){
+				// sure this is visible
+				setAttr( $start + ".intermediateObject" ) 0;
+				setAttr( $start + ".visibility" ) 1;
+				//find number of CVs in curve
+            	int $numCVs = `getAttr -size ($start + ".controlPoints")`;
+
+				if( $numCVs > 1 ){
+               		//select last curve CV
+               		$newSel[$newCount] = ($start + ".cv[" + $numCVs + "]") ;
+					$newCount++;
+				}
+			}
+		}
+	} else if( "restCurves" == $to ){
+		selectFolliclesFromConstraints();
+		selectHairSystemsFromPfxHair();
+		selectFolliclesFromHairSystems();
+		string $follicles[] = getSelectedHairCurves();
+		for( $i = 0; $i < size( $follicles ); $i++ ){
+			string $rest = sourceNodeNameFromConnection ( 
+						$follicles[$i] + ".restPosition" );
+			if( size( $rest ) > 0 ){
+				string $tforms[] = listTransforms( $rest );
+				$newSel[$newCount] = $tforms[0];
+				$newCount++;
+			}
+		}
+		if( $newCount > 0 ){
+			displayHairCurves "rest" 1;
+		}
+	} else if( "restCurveEndCvs" == $to ){
+		selectFolliclesFromConstraints();
+		selectHairSystemsFromPfxHair();
+		selectFolliclesFromHairSystems();
+		string $follicles[] = getSelectedHairCurves();
+		for( $i = 0; $i < size( $follicles ); $i++ ){
+			string $rest = sourceNodeNameFromConnection ( 
+						$follicles[$i] + ".restPosition" );
+			if( size( $rest ) > 0 ){
+				setAttr( $rest + ".intermediateObject" ) 0;
+				setAttr( $rest + ".visibility" ) 1;
+				//find number of CVs in curve
+            	int $numCVs = `getAttr -size ($rest + ".controlPoints")`;
+				if( $numCVs > 1 ){
+               		//select last curve CV
+               		$newSel[$newCount] = ($rest + ".cv[" + $numCVs + "]") ;
+					$newCount++;
+				}
+			}
+		}
+	} else if( "startAndRestEndCvs" == $to ){
+		selectFolliclesFromConstraints();
+		selectHairSystemsFromPfxHair();
+		selectFolliclesFromHairSystems();
+		string $follicles[] = getSelectedHairCurves();
+		for( $i = 0; $i < size( $follicles ); $i++ ){
+			string $rest = sourceNodeNameFromConnection ( 
+						$follicles[$i] + ".restPosition" );
+			if( size( $rest ) > 0 ){
+				setAttr( $rest + ".intermediateObject" ) 0;
+				setAttr( $rest + ".visibility" ) 1;
+				//find number of CVs in curve
+            	int $numCVs = `getAttr -size ($rest + ".controlPoints")`;
+
+				if( $numCVs > 1 ){
+               		//select last curve CV
+               		$newSel[$newCount] = ($rest + ".cv[" + $numCVs + "]") ;
+					$newCount++;
+				}
+			}
+			string $start = sourceNodeNameFromConnection ( 
+						$follicles[$i] + ".startPosition" );
+			if( size( $start ) > 0 ){
+				// sure this is visible
+				setAttr( $start + ".intermediateObject" ) 0;
+				setAttr( $start + ".visibility" ) 1;
+				//find number of CVs in curve
+            	int $numCVs = `getAttr -size ($start + ".controlPoints")`;
+
+				if( $numCVs > 1 ){
+               		//select last curve CV
+               		$newSel[$newCount] = ($start + ".cv[" + $numCVs + "]") ;
+					$newCount++;
+				}
+			}
+		}
+	} else if( "currentCurves" == $to ){
+		// current curves only..ignore pfxHair nodes
+		selectFolliclesFromConstraints();
+		selectHairSystemsFromPfxHair();
+		selectFolliclesFromHairSystems();
+		string $follicles[] = getSelectedHairCurves();
+		// determine output current position curves
+		for( $i = 0; $i < size( $follicles ); $i++ ){
+			string $out = destinationNodeNameFromConnection ( 
+						$follicles[$i] + ".outCurve" );
+
+			if( size( $out ) > 0 ){
+				string $tforms[] = listTransforms( $out );
+				$newSel[$newCount] = $tforms[0];
+				$newCount++;
+			}
+		}
+		if( $newCount > 0 ){
+			displayHairCurves "current" 1;
+		}
+	} else if( "current" == $to ){
+		selectHairSystemsFromPfxHair();
+		selectFolliclesFromConstraints();
+		selectFolliclesFromHairSystems();
+		string $follicles[] = getSelectedHairCurves();
+		// determine output current position curves
+		for( $i = 0; $i < size( $follicles ); $i++ ){
+			string $out = destinationNodeNameFromConnection ( 
+						$follicles[$i] + ".outCurve" );
+
+			if( size( $out ) > 0 ){
+				string $tforms[] = listTransforms( $out );
+				$newSel[$newCount] = $tforms[0];
+				$newCount++;
+			}
+		}
+		// determine pfxHair selections 
+		string $hsys[] = getSelectedHairSystems();
+		for( $i = 0; $i < size( $hsys ); $i++ ){
+			string $pfxHair = destinationNodeNameFromConnection( 
+				$hsys[$i] + ".outputRenderHairs" );
+			if( $pfxHair != "" ){
+				string $tforms[] = listTransforms( $pfxHair );
+				$newSel[$newCount] = $tforms[0];
+				$newCount++;
+			}
+		}
+		if( $newCount > 0 ){
+			displayHairCurves "current" 1;
+		}
+	} else if( "constraints" == $to ){
+		selectHairSystemsFromPfxHair();
+		selectFolliclesFromHairSystems();
+		string $follicles[] = getSelectedHairCurves();
+		for( $i = 0; $i < size( $follicles ); $i++ ){
+			string $con[] = `connectionInfo -dfs ($follicles[$i] + ".outHair")`;
+			if( size( $con ) > 0 ){
+				string $buffer[];
+				int $numTokens = `tokenize $con[0] ".[]" $buffer`;
+				if( $numTokens == 3 ){
+					int $index = $buffer[2];
+					string $hsys = $buffer[0];
+					string $con[] = `listConnections -source true -sh true ($hsys + ".inputHairPin")`;
+					int $j;
+					for( $j = 0; $j < size( $con ); $j++ ){
+						string $constraint = $con[$j];
+						float $indices[] = `getAttr ($constraint + ".curveIndices" )`;
+						int $k;
+						for( $k = 0; $k < size($indices); $k++ ){
+							if( $indices[$k] == $index ){
+								string $tforms[] = listTransforms( $constraint );
+								$newSel[$newCount] = $tforms[0];
+								$newCount++;
+							}
+						}		
+					}
+				}
+			}
+		}
+	} else {
+		string $fmt = (uiRes("m_convertHairSelection.kCantConvertHairSelection"));
+		warning ( `format -s $to $fmt` );
+		return;
+	}
+
+	select -r $newSel;
+
+}

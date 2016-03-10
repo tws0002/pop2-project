@@ -1,0 +1,90 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  2005
+//
+//  Description:
+//		
+//
+
+global proc string[] findExistingCaches(string $shape)
+//
+// Check whether there is already a cache attached to this node.
+//
+{
+	string $result[];
+
+	// Important: must prune dagObjects or otherwise caches on
+	// other shapes in the history will be found.
+	// For example, nRigid objects when an nCloth object is selected,
+	// or the wrap shape on a deformed object.
+	//
+	// Unfortunately, prune dagObjects doesn't recognize intermediate shapes as dag objects
+	// in particular, in the case where we select a mesh downstream from an nCloth,
+	// and there is an upstream mesh with its own geom cache too, we don't want to know about it
+	// we assume you're either interested in geometry caching that  mesh, or nCaching the nCloth
+	// If you meant to cache an upstream mesh you would have selected it
+
+	string $history[];
+	if(nodeType($shape) != "nCloth") {
+		$history = `listHistory -pdo 1 $shape`;
+	} else {
+		$history = `listHistory -lv 1 $shape`;
+	}
+
+	for ($historyNode in $history) {
+		if (nodeType($historyNode) == "cacheFile") {
+			$result[size($result)] = $historyNode;
+		} else if (nodeType($shape) == "nCloth" && nodeType($historyNode) == "cacheBlend") {
+			string $blendHistory[] = `listHistory -lv 1 $historyNode`;
+			for ($historyNodeB in $blendHistory) {
+				if (nodeType($historyNodeB) == "cacheFile") {
+					$result[size($result)] = $historyNodeB;
+				}
+			}
+		}
+	}
+
+	if (size($result) == 0 && nodeType($shape) != "nCloth" &&  nodeType($shape) != "nParticle") {
+		// although we prune most dag nodes, nCloth and nParticles are exceptions
+		// because the caches are upstream of the nThing node on
+		// nCloth and nParticle shapes
+		//
+		string $allHistory[] = `listHistory $shape`;
+		int $allCount = size($allHistory);
+		for ($ii = 1; $ii < $allCount; $ii++) {
+			string $historyNode = $allHistory[$ii];
+			if (nodeType($historyNode) == "nCloth") {
+				$result = findExistingCaches($historyNode);
+				break;
+			}
+
+			string $isDag[] = `ls -type dagNode $historyNode`;
+			if (size($isDag) > 0) {
+				break;
+			}
+		}
+	}
+	
+	return $result;
+}

@@ -1,0 +1,179 @@
+// Copyright (C) 1997-2013 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+/**
+ * @file xgmGuidesReshapeTool.mel
+ * @brief Contains the code for the GuidesReshape tool.
+ *
+ * <b>CONFIDENTIAL INFORMATION: This software is the confidential and
+ * proprietary information of Walt Disney Animation Studios ("WDAS").
+ * This software may not be used, disclosed, reproduced or distributed
+ * for any purpose without prior written authorization and license
+ * from WDAS. Reproduction of any section of this software must include
+ * this legend and all copyright notices.
+ * Copyright Disney Enterprises, Inc. All rights reserved.</b>
+ *
+ * @author Ying Liu
+ *
+ * @version Created 07/21/05
+ */
+
+global proc xgmGuidesReshapeTool( string $parent )
+{
+    columnLayout -parent $parent;
+    {
+        intFieldGrp -label (uiRes("m_xgmGuidesReshapeTool.kControlPointsCount")) 
+            -ann ( (uiRes("m_xgmGuidesReshapeTool.kControlPointsCountAnn")) )
+            -value1 4 -cc "xgmGRTControlPointsCountChangedCB"
+            xgmGuideReshapeCPCount;
+
+        button -label (uiRes("m_xgmGuidesReshapeTool.kCreateGuideDeformers")) -w 340 
+            -ann (uiRes("m_xgmGuidesReshapeTool.kCreateGuideDeformersAnn"))
+            -command "xgmGuidesReshapeToolCreate";
+
+        rowLayout -nc 2 -width 340 -cw2 170 170;
+        {
+            button -label (uiRes("m_xgmGuidesReshapeTool.kAccept")) -w 170 -align "center"
+                -ann (uiRes("m_xgmGuidesReshapeTool.kAcceptAnn"))
+                -command "xgmGuidesReshapeToolAccept";
+            button -label (uiRes("m_xgmGuidesReshapeTool.kCancel")) -w 170 -align "center" 
+                -ann (uiRes("m_xgmGuidesReshapeTool.kCancelAnn"))
+                -command "xgmGuidesReshapeToolCancel";
+
+            setParent ..;
+        }
+    }  
+}
+
+
+global proc xgmGRTControlPointsCountChangedCB()
+{
+    // Make sure it has a valid minimum value.
+    int $cpCount = `intFieldGrp -query -value1 xgmGuideReshapeCPCount`;
+    if ( $cpCount < 4 )
+        intFieldGrp -edit -value1 4 xgmGuideReshapeCPCount;
+}
+
+
+global proc xgmGuidesReshapeToolCreate()
+{  
+    // global variable for guide curves and control curves
+    global string $guideReshapeCurves[];
+    global string $controlCurves[];
+
+    clear $guideReshapeCurves;
+    clear $controlCurves;
+    
+    int $lockLength = 1;
+    int $hide = 1;
+
+    // Convert the guides to curves
+    xgmCreateCurvesFromGuides $hide $lockLength;    
+    $guideReshapeCurves = xgmSelectedCurves( 1 );    
+    int $totalGuides = `size $guideReshapeCurves`;
+    if ( $totalGuides == 0 ) {
+        warning( (uiRes("m_xgmGuidesReshapeTool.kNoGuidesAreSelectedToReshape")) );
+        return;
+    }
+    
+    int $cpCount = `intFieldGrp -query -value1 xgmGuideReshapeCPCount`;
+    int $spans = $cpCount - 2;
+    
+    for ( $i = 0; $i < $totalGuides; $i++ ) {
+        // The maximum spans should not exceed the original one.
+        int $guideSpans = `getAttr ( $guideReshapeCurves[$i] + ".spans" )`;
+        if ( $spans > $guideSpans ) {
+            $spans = $guideSpans;
+            warning (uiRes("m_xgmGuidesReshapeTool.kTheNewSpanExceedsTheOriginalUseTheOldSpan"));
+        }
+
+        // Create control curves by rebuilding every guide curve.    
+        $controlCurve = 
+            `rebuildCurve -rebuildType 0 -constructionHistory 0 -degree 2 
+                -spans $spans -replaceOriginal false $guideReshapeCurves[$i]`;
+
+        // Lock the base position of the control curve
+        // since the guide base position should not be changed.
+        setAttr -lock on ( $controlCurve[0] + ".cv[0]" );
+ 
+        // Attach the wire deformer    
+        wire -dropoffDistance 0 100.0 -wire $controlCurve[0] 
+            $guideReshapeCurves[$i];
+            
+        // Turn off the geomotry display of the control wire 
+        // and display the cvs only
+        toggle -geometry -cv $controlCurve[0];           
+
+        $controlCurves[$i] = $controlCurve[0];
+    }
+    
+    // Select a control point
+    changeSelectMode -component;
+    int $last = `getAttr ( $controlCurves[0] + ".spans" )`;
+    select -add ( $controlCurves[$i-1] + ".cv[" + $last + "]" );
+}
+
+
+global proc xgmGuidesReshapeToolAccept()
+{
+    global string $guideReshapeCurves[];
+    global string $controlCurves[];
+
+    if ( $controlCurves[0] == "" || $guideReshapeCurves[0] == "" )
+        return;      
+    
+    // Select the guide curves.
+    changeSelectMode -object;
+    select -replace $guideReshapeCurves;
+
+    // Changed curves back to guides
+    xgmSelectedCurvesToGuidesByName;
+
+    // Delete the control curves
+    for ( $curve in $controlCurves )
+        delete $curve;    
+
+    clear $controlCurves;
+    clear $guideReshapeCurves;
+}
+
+
+global proc xgmGuidesReshapeToolCancel()
+{
+    global string $guideReshapeCurves[];
+    global string $controlCurves[];
+
+    if ( $controlCurves[0] == "" || $guideReshapeCurves[0] == "" )
+        return;      
+
+    // Delete the control curves
+    for ( $curve in $controlCurves )
+        delete $curve;    
+
+    // Restore the curves back to guides
+    string $guides[] = xgmRestoreGuidesFromCurves( $guideReshapeCurves );
+    select -r $guides;
+    changeSelectMode -object;
+    
+    // Clear the arrays
+    clear $controlCurves;
+    clear $guideReshapeCurves;   
+}

@@ -1,0 +1,325 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  13 May 1997
+//
+//  Description:
+//      This file contains scripts which define and create a filter for
+//	detecting maya objects that utilize image files somewhere in thier history.
+//	Limitations:
+//		The filter created within can only be used to test the current state
+//		of the model.  Subsequent changes to the objects in the model may 
+//		change whether they pass this filter.  Most UI tools using this filter
+//		*will not* reapply the filter for every change to the model.
+
+global proc fixImageFileNames() 
+//
+//  Procedure Name:
+//      fixImageFileNames
+//
+//  Description:
+//		Go thru every existing file texture/image plane and reset the image 
+//	file name attribute to be a lone file name instead of a full path.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+//	Examples:
+//      fixImageFileNames;
+//      
+{
+	string $filter = `itemFilter -classification "builtIn" -byType file`;
+
+	string $fileTextures[] = `lsThroughFilter $filter`;
+	string $longName;
+	string $plugName;
+	string $tokens[];
+	int $numTokes;
+	string $test;
+	string $printMsg = (uiRes("m_imageFileFilter.kChangeResult")) ;
+	
+	for ($file in $fileTextures) {
+		$plugName = $file + ".fileTextureName";
+		string $longName = `getAttr $plugName`;
+		tokenize($longName,"/",$tokens);
+		$numTokes = `size $tokens`;
+		if($numTokes > 1) {
+			$numTokes -= 1;		
+			print `format -stringArg $plugName -stringArg $longName -stringArg  $tokens[$numTokes] $printMsg` ;
+			setAttr -type "string" $plugName $tokens[$numTokes];
+		}
+	}
+	deleteUI $filter;
+
+	$filter = `itemFilter -classification "builtIn" -byType imagePlane`;
+	string $imagePlanes[] = `lsThroughFilter $filter`;
+	for ($plane in $imagePlanes) {
+		$plugName = $plane + ".imageName";
+		string $longName = `getAttr $plugName`;
+		tokenize($longName,"/",$tokens);
+		$numTokes = `size $tokens`;
+		if($numTokes > 1) {
+			$numTokes -= 1;
+			print `format -stringArg $plugName -stringArg $longName -stringArg $tokens[$numTokes] $printMsg` ;
+			setAttr -type "string" $plugName $tokens[$numTokes];
+		}
+	}
+	deleteUI $filter;
+}
+
+//////////////////////////////////////////////////////////////////////
+//
+//  Procedure Name:
+//      imageFilesInHistory
+//
+//  Description:
+//      Test for whether "thing" possesses a image file somewhere in
+//	its history.
+//		
+//  Input Arguments:
+//      $thing - name of some Maya object
+//
+//  Return Value:
+//      Array of names of all imagefiles present in the history
+//		
+//	Examples:
+//      imageFilesInHistory bobsFileTexture
+//      
+//      Returns "/topDirectory/bobsPixDir/bobsImageFile"
+//      
+global proc string[] imageFilesInHistory(string $thing)
+{
+	string $retVal[];
+	
+	string $history[];
+	catch( $history = `listHistory $thing` );
+
+	string $type;
+	string $temp,$temp2;
+	int $count = 0;
+
+	for ($node in $history) {
+		$type = `nodeType $node`;
+	
+		if ($type == "imagePlane") {
+			// check the value of the "imageName" attribute
+			$temp = ($node + ".imageName");
+			$temp2 = `getAttr $temp`;		
+		} else if ($type == "file") {
+			// check the value of the "fileTextureName" attribute
+			$temp = ($node + ".fileTextureName");
+			$temp2 = `getAttr $temp`;	
+		} else {
+			$temp2 = "";	
+		}
+
+		$numLetters = `size $temp2`;
+		if($numLetters > 0) {
+			$retVal[$count] = $temp2;
+			$count++;
+		}
+	}
+
+	return $retVal;
+}
+
+//////////////////////////////////////////////////////////////////////
+//
+//  Procedure Name:
+//      thingUsesImageFile
+//
+//  Description:
+//      Test for whether "thing" uses imagefiles.
+//		
+//  Input Arguments:
+//      $thing - name of some Maya object
+//
+//  Return Value:
+//      nonzero - object is currently using a imagefile.
+//		zero  - object currently isn't using a imagefile.
+//
+//	Examples:
+//      thingUsesImageFile bobsFileTexture;  // returns 1
+//      thingUsesImageFile checker1;  // returns 0
+//      
+global proc int thingUsesImageFile(string $thing)
+{
+	string $images[] = `imageFilesInHistory $thing`;
+	int $retVal = `size $images`;
+
+	return $retVal;
+}
+
+//////////////////////////////////////////////////////////////////////
+//
+//  Procedure Name:
+//      thingsUseImageFile
+//
+//  Description:
+//      Test for given array of things : does each "thing" use imagefiles?
+//		
+//  Input Arguments:
+//      $things - array of Maya object names
+//
+//  Return Value:
+//		Array of strings valued at either
+//      != "0" - object is currently using an image file.
+//		== "0"  - object currently isn't using an image file.
+//
+//	Examples:
+//		string $things[];
+//		$things[0] = "bobsFileTexture";
+//		$things[1] = "checker1";
+//      string $returns[] = `thingsUseImageFile $things`;  // returns "1" "0"
+//      
+global proc string[] thingsUseImageFile(string $things[])
+{
+	string $retVal[];
+	int $count = 0;
+
+	for($thing in $things) {
+		if(`thingUsesImageFile $thing`) {
+			$retVal[$count] = $thing;
+			$count++;
+		}
+	}
+
+	return $retVal;
+}
+//////////////////////////////////////////////////////////////////////
+//
+//  Procedure Name:
+//      lsImageFiles
+//
+//  Description:
+//      List all image files currently being used in the current model.
+//		
+//  Input Arguments:
+//      none
+//
+//  Return Value:
+//      string[] - the names of all images used in the system
+//
+//	Examples:
+//		string $pix[] = `lsImageFiles`;
+//		// /topDir/userName/images/picture1.jpg picture2.rgb /tmp/picture3.gif
+//      
+
+global proc string[] lsImageFiles()
+{
+ 	string $images[];
+ 	int $numImages = 0;
+ 	int $unique;
+
+	string $filter = `itemFilter -classification "builtIn" -byType file`;
+
+	string $fileTextures[] = `lsThroughFilter $filter`;
+	string $longName;
+	string $plugName;
+	
+	for ($file in $fileTextures) {
+		$plugName = $file + ".fileTextureName";
+		string $longName = `getAttr $plugName`;
+		if($longName != "") {
+			// uniqueness test
+			if($numImages == 0) {
+				$images[$numImages] = $longName;
+				$numImages++;
+			} else {
+				$unique = true;
+				for($image in $images) {
+					if($image == $longName) {
+						$unique = false;
+						break;
+					}
+				}
+				if($unique) {
+					$images[$numImages] = $longName;
+					$numImages++;
+				}
+			}
+		}
+	}
+	deleteUI $filter;
+
+	$unique = true;
+	$filter = `itemFilter -classification "builtIn" -byType imagePlane`;
+	string $imagePlanes[] = `lsThroughFilter $filter`;
+	for ($plane in $imagePlanes) {
+		$plugName = $plane + ".imageName";
+		string $longName = `getAttr $plugName`;
+		if($longName != "") {
+			// uniqueness test
+			if($numImages == 0) {
+				$images[$numImages] = $longName;
+				$numImages++;
+			} else {
+				$unique = true;
+				for($image in $images) {
+					if($image == $longName) {
+						$unique = false;
+					}
+				}
+				if($unique) {
+					$images[$numImages] = $longName;
+					$numImages++;
+				}
+			}
+		}
+	}
+	deleteUI $filter;
+
+	return $images;
+}
+
+//////////////////////////////////////////////////////////////////////
+//
+//  Procedure Name:
+//      imageFileFilter
+//
+//  Description:
+//      create the image file filter
+//		
+//  Input Arguments:
+//      none
+//
+//  Return Value:
+//      the names of the filter created
+//
+global proc string imageFileFilter()
+{
+	string $retVal = "DefaultUsesImageFileFilter";
+	
+	if(!`itemFilter -exists DefaultUsesImageFileFilter`) {
+		$retVal = `itemFilter 
+				  	-byScript thingUsesImageFile 
+				  	-secondScript thingsUseImageFile
+					-classification "builtIn"
+				  DefaultUsesImageFileFilter`;
+	}
+
+	return $retVal;
+}

@@ -1,0 +1,32 @@
+import maya
+
+maya.stringTable['y_xgImportFile.kImportCollectionsOrDescriptionsValidator'] = u'Import Collections or Descriptions'
+maya.stringTable['y_xgImportFile.kAddDescriptionToExistingCollection'] = u'Add Description to existing Collection:'
+maya.stringTable['y_xgImportFile.kBrowseForFiles2'] = u'Browse for files'
+maya.stringTable['y_xgImportFile.kFileName'] = u'File Name'
+maya.stringTable['y_xgImportFile.kBindingsAnn'] = u'If the imported file contains patch\nbinding information, use it to bind the\nimported descriptions to the same\npatches.'
+maya.stringTable['y_xgImportFile.kCreateNewCollectionNamed'] = u'Create new Collection named:'
+maya.stringTable['y_xgImportFile.kFileNameDescFile'] = u'File Name'
+maya.stringTable['y_xgImportFile.kPleaseSelectAPolygonSurfaceTip'] = u'There is no polygon surface (or faces) to bind to.'
+maya.stringTable['y_xgImportFile.kOverwrite'] = u'Overwrite "%s"'
+maya.stringTable['y_xgImportFile.kCollectionAlreadyExistsOnDisk'] = u'Collection <%s> already exists on disk:\n\n%s'
+maya.stringTable['y_xgImportFile.kImportCollectionsOrDescriptions'] = u'Import Collections or Descriptions'
+maya.stringTable['y_xgImportFile.kFileDoesNotExist2'] = u"The file doesn't exist."
+maya.stringTable['y_xgImportFile.kFileNameAnn'] = u'Full path name for the XGen Collection file.'
+maya.stringTable['y_xgImportFile.kImportAnn'] = u'Import the specified file.'
+maya.stringTable['y_xgImportFile.kImport'] = u'Import'
+maya.stringTable['y_xgImportFile.kFileDoesNotExist'] = u"The file doesn't exist."
+maya.stringTable['y_xgImportFile.kCancel'] = u'Cancel'
+maya.stringTable['y_xgImportFile.kBindGeometryAnn'] = u'Bind the imported description to the selected geometry. If the file\ncontains grooming information, the new description will have\ngrooming enabled.'
+maya.stringTable['y_xgImportFile.kCancelAnn'] = u'Cancel the file import.'
+maya.stringTable['y_xgImportFile.kCollection'] = u'Collection'
+maya.stringTable['y_xgImportFile.kIncludePatchBindings'] = u'Include patch bindings'
+maya.stringTable['y_xgImportFile.kBrowseForFiles'] = u'Browse for files'
+maya.stringTable['y_xgImportFile.kDescriptionTab'] = u'Description'
+maya.stringTable['y_xgImportFile.kImportFail'] = u'Import operation failed.'
+maya.stringTable['y_xgImportFile.kFileNameAnn2'] = u'Full path name for the XGen Description file.'
+maya.stringTable['y_xgImportFile.kNamespaceAnn'] = u'Optionally specify a\nnamespace to use for the\nimported XGen Collection'
+maya.stringTable['y_xgImportFile.kBindGeometry'] = u'Bind Selected Geometry'
+maya.stringTable['y_xgImportFile.kCreateInstead'] = u'Create "%s" instead'
+maya.stringTable['y_xgImportFile.kNamespace'] = u'NameSpace'
+

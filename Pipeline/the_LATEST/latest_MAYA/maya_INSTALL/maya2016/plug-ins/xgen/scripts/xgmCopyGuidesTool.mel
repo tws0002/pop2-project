@@ -1,0 +1,152 @@
+// Copyright (C) 1997-2013 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+/**
+ * @file xgmCopyGuidesTool.mel
+ * @brief Contains the XgmCopyGuidesTool MEL procedure.
+ *
+ * <b>CONFIDENTIAL INFORMATION: This software is the confidential and
+ * proprietary information of Walt Disney Animation Studios ("WDAS").
+ * This software may not be used, disclosed, reproduced or distributed
+ * for any purpose without prior written authorization and license
+ * from WDAS. Reproduction of any section of this software must include
+ * this legend and all copyright notices.
+ * Copyright Disney Enterprises, Inc. All rights reserved.</b>
+ *
+ * @author Ernie Petti
+ * @author Thomas V Thompson II
+ *
+ * @version Created 12/17/02
+ */
+
+/**
+ * User interface for copying and pasting guide attributes.
+ */
+global proc xgmCopyGuidesTool(string $parent)
+{
+    // Create a rowLayout to store the three command buttons.
+    rowLayout -parent $parent
+        -nc 2 -cat 1 "left" 1 -cat 2 "right" 1
+        -cw 1 115 -cw 2 115;
+    {
+        // Create a button to copy the selected guide.
+        button -l (uiRes("m_xgmCopyGuidesTool.kCopy")) -w 115 -al "center"
+            -ann (uiRes("m_xgmCopyGuidesTool.kCopyAnn"))
+            -c "xgmCopyGuides(\"copy\")";
+        
+        // Create a button to paste over the selected guides.
+        button -l (uiRes("m_xgmCopyGuidesTool.kPaste")) -w 115 -al "center"
+            -ann (uiRes("m_xgmCopyGuidesTool.kPasteAnn"))
+            -c "xgmCopyGuides(\"paste\")";
+        
+        setParent ..;
+    }
+}
+
+
+/**
+ * Procedure to copy and paste curves.
+ */
+global proc xgmCopyGuides( string $state )
+{
+    global string $xgmCopyGuide;
+    global string $xgmCopyGuideType;
+    global string $xgmGuideAttrList[];
+    int $attrSet[];
+    float $attrVal[];
+    int $numAttrs = size($xgmGuideAttrList), $i;
+    string $selOrig[] = `ls -sl`;
+    
+    if ( $state == "copy" ) {
+        // Only copy one thing, the first guide in the selection
+        string $cmd = "ls -sl -dag "+xgmBuildGuideTypeArgList("");
+        string $sel[] = eval($cmd);
+        if ( size($sel) == 0 ) {
+            warning((uiRes("m_xgmCopyGuidesTool.kNoGuidesSelected1")));
+            $xgmCopyGuide = "";
+            return;
+        }
+        string $oneXform[] =
+            `listRelatives -p -path -type "transform" $sel[0]`;
+        $xgmCopyGuide = $oneXform[0];
+        xgmBakeGuideVertices;
+    } else if ( $state == "paste" ) {
+        if ( $xgmCopyGuide == "" ) {
+            warning((uiRes("m_xgmCopyGuidesTool.kNoGuideCopiedSoNothingToPaste")));
+            return;
+        }
+        string $cmd = "ls -sl -dag "+xgmBuildGuideTypeArgList("");
+        string $sel[] = eval($cmd);
+        if ( size($sel) == 0 ) {
+            warning((uiRes("m_xgmCopyGuidesTool.kNoGuidesSelected2")));
+            return;
+        }
+        xgmBakeGuideVertices;
+        string $guides[] = `listRelatives -p -path -type "transform" $sel`;
+        // Get the copy guide to the origin
+        float $data[] = `xgmGuideGeom -guide $xgmCopyGuide -numVertices`;
+        int $ncvs = $data[0];
+        float $cvs[];
+        for ( $i=0,$j=0; $i<$ncvs; $i++ ) {
+            float $pt[3]=`pointPosition -local ($xgmCopyGuide+".vtx["+$i+"]")`;
+            if ( $i==0 ) {
+                $cvs[0] = $pt[0];
+                $cvs[1] = $pt[1];
+                $cvs[2] = $pt[2];
+            } else {
+                $cvs[$j  ] = $pt[0]-$cvs[0];
+                $cvs[$j+1] = $pt[1]-$cvs[1];
+                $cvs[$j+2] = $pt[2]-$cvs[2];
+            }
+            $j+=3;
+        }
+        for ( $guide in $guides ) {
+            $data = `xgmGuideGeom -guide $guide -numVertices`;
+            int $pncvs = $data[0];
+            if ( $pncvs != $ncvs ) {
+                select -r $guide;
+                xgmChangeCVCount($ncvs);
+				string $fmt = (uiRes("m_xgmCopyGuidesTool.kChangingCVs"));
+                warning `format -s $guide $fmt`;
+            }
+            float $base[3];
+            for ( $i=0,$j=0; $i<$ncvs; $i++ ) {
+                float $pt[3]=`pointPosition -local ($guide+".vtx["+$i+"]")`;
+                if ( $i==0 ) {
+                    $base[0] = $pt[0];
+                    $base[1] = $pt[1];
+                    $base[2] = $pt[2];
+                } else {
+                    float $vec[3];
+                    $vec[0] = $cvs[$j  ]+$base[0]-$pt[0];
+                    $vec[1] = $cvs[$j+1]+$base[1]-$pt[1];
+                    $vec[2] = $cvs[$j+2]+$base[2]-$pt[2];
+                    move -r $vec[0] $vec[1] $vec[2] ($guide+".vtx["+$i+"]");
+                }
+                $j+=3;
+            }
+        }
+    } else {
+        string $fmt = (uiRes("m_xgmCopyGuidesTool.kUnknownState"));
+        warning( `format -s $state $fmt` );
+    }
+    select -r $selOrig;
+}

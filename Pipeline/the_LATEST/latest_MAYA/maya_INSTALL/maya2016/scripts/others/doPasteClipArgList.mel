@@ -1,0 +1,310 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Nov, 1999
+//
+//  Procedure Name:
+//      doPasteClipArgList
+//
+//  Description:
+//      Paste a clip
+//
+//  Input Arguments:
+//  $version: The version of this option box.  Used to know how to 
+//  interpret the $args array.
+//  
+//  $args
+//  Version 1
+//  [0]     $pasteMethod : method to use for the paste
+//              "byAttrName", "byAttrOrder", "byNodeName"
+//
+//  Version 2
+//  [0]     $pasteMethod : method to use for the paste
+//              "byAttrName", "byAttrOrder", "byNodeName", "byCharacterMap", "byMapOrAttrName"
+//  [1]     $timeMethod : start time for paste
+//              "currentTime", "timeline", "clipboard"
+//
+//  Version 3
+//  [2]     $character :  specific character to paste
+//
+//  Version 4
+//  [1]     $timeMethod : additional time method supported -> "specify"
+//  [3]     $subcharacters : do subcharacters
+//  [4]     $time : the time to use if $timeMethod = specify
+//
+//  Version 5
+//  [5]     $track : track to paste to (-1 means next available)
+//  [6]     $group : group to paste to
+//
+//  Version 6
+//  [7]     $absRelFlag : initialize the absolute/relative settings
+//
+proc selectAllSubcharacters( string $characters[] ) 
+{
+	for ($character in $characters) {
+		string $list[] = `sets -nodesOnly -query $character`;
+		for ( $item in $list ) {
+			if ( "character" == `nodeType $item` ) {
+				string $subchar[];
+				$subchar[0] = $item;
+				selectAllSubcharacters( $subchar );
+				select -add $item;
+			}
+		}
+	}
+}
+
+proc int
+askIfTheyWantToMapCharacters(string $targets[], string $pasteMethod)
+// check to see if there is a map between the character
+// and the target
+//
+{
+	if ( ! `optionVar -exists askAboutCharMap`) {
+		optionVar -intValue askAboutCharMap 1;
+	}
+	
+	if ( ! `optionVar -q askAboutCharMap` ) {
+		return 0;
+	}
+	
+	string $clipClipboard[] = `clip -q -copy $targets[0]`;
+	int $allClipLibrary = 1;
+	for ($clipCh in $clipClipboard) {
+		if (nodeType($clipCh) != "clipLibrary") {
+			$allClipLibrary = 0;
+			break;
+		}
+	}
+
+	if ($allClipLibrary) {
+		// there will never be a map from a clipLibrary
+		//
+		return 0;
+	}
+	
+	
+	string $mapMissingList[];
+	for ($targetCh in $targets) {
+		int $foundMap = 0;
+		for ($clipCh in $clipClipboard) {
+			if ($targetCh == $clipCh) {
+				$foundMap = 1;
+				break;
+			}
+			
+			if (nodeType($clipCh) == "character") {
+				string $characterMap = `characterMap -q $clipCh $targetCh`;
+				if (size($characterMap)) {
+					$foundMap = 1;
+					break;
+				}
+			}
+		}
+		if (! $foundMap) {
+			$mapMissingList[size($mapMissingList)] = $targetCh;
+		}
+	}
+
+	int $missCount = size($mapMissingList);
+	if ($missCount > 0) {
+		if ($pasteMethod == "byAttrName" ||
+			$pasteMethod == "byMapOrAttrName") {
+			$pasteMethod = "attribute name";
+		} else if ($pasteMethod == "byAttrOrder") {
+			$pasteMethod = "attribute creation order";
+		} else {
+			$pasteMethod = "node name";
+		}
+		
+		// One or more maps are missing. Build an error string that is
+		// as informative as possible.
+		//
+		int $ii;
+		int $clipCount = size($clipClipboard);
+		string $tempClip;
+		for ($ii = 0; $ii < $clipCount; $ii++) {
+			if ($ii > 0) {
+				$tempClip += ", ";
+			}
+			$tempClip += $clipCh;
+		}
+		string $tempMissCount;
+		for ($ii = 0; $ii < $missCount; $ii++) {
+			if ($ii > 0) {
+				$tempMissCount += ", ";
+			}
+			$tempMissCount += $mapMissingList[$ii];
+		}
+		
+		string $warningStr;
+		$warningStr = (uiRes("m_doPasteClipArgList.kClipboardWarnings"));
+		$warningStr = `format -s $tempClip -s $tempMissCount -s $pasteMethod $warningStr`;
+		
+		string $no = (uiRes("m_doPasteClipArgList.kNo"));
+		string $confirm = `confirmDialog -message $warningStr -button (uiRes("m_doPasteClipArgList.kYes")) -button $no -defaultButton $no -cancelButton $no -dismissString $no`;
+
+		if ($confirm == $no) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+global proc
+doPasteClipArgList( string $version, string $args[] )
+{
+	int    $versionNo   = $version;
+	string $pasteMethod = $args[0];
+
+	if ($pasteMethod != "byAttrName" &&
+		$pasteMethod != "byAttrOrder" &&
+		$pasteMethod != "byCharacterMap" &&
+		$pasteMethod != "byMapOrAttrName" &&
+		$pasteMethod != "byMapOrNodeName" &&
+		$pasteMethod != "byNodeName") {
+		string $errString = (uiRes("m_doPasteClipArgList.kNotValidPasteMethodErr"));
+		$errString = `format -s $pasteMethod $errString`;
+		error($errString);
+	}
+
+	string $timeMethod = "clipboard";
+	int $doSubcharacters = 0;
+	if ($versionNo >= 2) {
+		$timeMethod = $args[1];
+		if ($timeMethod != "clipboard" &&
+			$timeMethod != "currentTime" &&
+			$timeMethod != "specify" &&
+			$timeMethod != "timeline") {
+			string $errString = (uiRes("m_doPasteClipArgList.kNotValidPasteTimeErr"));
+			$errString = `format -s $timeMethod $errString`;
+			error($errString);
+		}
+	}
+
+	string $sel[];
+	if (($versionNo >= 3) && ($args[2] != "")) {
+		$sel[0] = $args[2];
+	}
+	else {
+		$sel = `getCharactersForAction`;
+	
+		int $nchar = size($sel);
+		if ($nchar == 0) {
+			error (uiRes("m_doPasteClipArgList.kMustSelectCharErr"));
+			return;
+		}
+	}
+
+	if ($versionNo >= 4) {
+		$doSubcharacters = $args[3];
+	}
+
+	int $toTrack = -1;
+	string $toGroup;
+	if ($versionNo >= 5) {
+		$toTrack = $args[5];
+		$toGroup = $args[6];
+	}
+
+	string $absRelFlag = "";
+	if ($versionNo >= 6) {
+		$absRelFlag = $args[7];
+	}
+	
+	string $startFlags = "";
+	if ($timeMethod == "currentTime") {
+		string $ctime = `currentTime -q`;
+		$startFlags = ("-startTime "+$ctime);
+	} else if ($timeMethod == "timeline") {
+		float $min = `playbackOptions -q -min`;
+		$startFlags = ("-startTime "+$min);
+	} else if ($timeMethod == "specify") {
+		float $time = $args[4];
+		$startFlags = ("-startTime "+$time);
+	}
+
+	if ($doSubcharacters) {
+		string $startingSel[] = `ls -sl`;
+		select -r $sel;;
+		selectAllSubcharacters($sel);
+		string $subchars[] = `ls -sl`;
+		int $ii;
+		for ($ii = 0; $ii < size($subchars); $ii++) {
+			$sel[$ii] = $subchars[$ii];
+		}
+		select -r $startingSel;
+	}
+
+	if ($pasteMethod != "byCharacterMap") {
+		if (askIfTheyWantToMapCharacters($sel, $pasteMethod)) {
+			return;
+		}
+	}
+	
+	int $failCount = 0;
+	for ($ch in $sel) {
+
+		string $scheduler = `character -query -scheduler $ch`;
+
+		string $fmt = "clip ^1s -pasteInstance -sc 1 ^2s -mapMethod \"^3s\" ^4s;" ;
+		string $cmd = `format -s $absRelFlag -s $startFlags -s $pasteMethod -s $ch $fmt`;
+
+		string $newClips[];
+		if (catch($newClips = `evalEcho $cmd`)) {
+			$failCount++;
+		} else {
+
+			for ($clip in $newClips) {
+
+				if (($toGroup != "") || ($toTrack != -1)) {
+					$clipIndex = getClipIndex ($clip, $scheduler);
+					if ($toGroup != "") {
+						if ($toTrack != -1) {
+							clipSchedule -group true -groupIndex $clipIndex -track $toTrack -groupName $toGroup $scheduler;
+						} else {
+							clipSchedule -group true -groupIndex $clipIndex -groupName $toGroup $scheduler;
+						}
+					} else if ($toTrack != -1) {
+						clipSchedule -clipIndex $clipIndex -track $toTrack $scheduler;
+					}
+				}
+
+				// connect the new clip into nodes in the graph that handle ghosting
+				ghostAppendedClip( $scheduler, { "", $clip }, 1 );
+			}
+		}
+	}
+
+	if (size($sel) > 0 && $failCount > 0) {
+		if ($failCount == size($sel)) {
+			error( (uiRes("m_doPasteClipArgList.kPasteFailedErr")) );
+		} else {
+			int $success = size($sel) - $failCount;
+			int $size = size($sel);
+			string $errString = (uiRes("m_doPasteClipArgList.kPastedTo"));
+			$errString = `format -s $success -s $size $errString`;
+			print($errString);
+		}
+	}
+}

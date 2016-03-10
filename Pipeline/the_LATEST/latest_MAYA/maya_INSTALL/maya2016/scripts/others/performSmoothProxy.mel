@@ -1,0 +1,1208 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+//  Procedure Name:
+//      performSmoothProxy
+//
+//  Description:
+//        perform a smooth of the selected polygon objects with history
+//		  where the lo res mesh is connected to the hi res mesh
+//         
+//  Input Arguments:
+//        $option : Whether to set the options to default values.
+//  Return Value:
+//        command string 
+//
+
+
+global proc int polySmoothProxySetupNode(int $mth,
+										 int $sdt,
+										 int $ovb,
+										 int $ofb,
+										 int $ofc,
+										 int $ost,
+										 int $ocr,
+										 int $dv,
+										 int $peh,
+										 int $bndry,
+										 float $cont,
+										 int $kb,
+										 int $ksb,
+										 int $khe,
+										 int $suv,
+										 int $kmb,
+										 int $kt,
+										 int $niter,
+										 int $ediv,
+										 float $volume,
+										 float $roundness,
+										 // cage attributes
+										 int $base,
+										 float $transparency, 
+										 int $smoothLayerDisplay,
+										 int $loresInLayer,
+										 int $hiresInLayer,
+										 int $mirror,
+										 int $mirrorAxis,
+										 float $mergeTolerance,
+										 int $shareTransform,
+										 int $renderable,
+										 int $toggleProxies
+										 )
+{
+	// get the selection items
+	string $sel[]=`polyCheckSelection "polySmoothProxy" "o" 0`;
+
+	if (size($sel) == 0) {
+		string $msg = (uiRes("m_performSmoothProxy.kSelectMeshError"));
+		error ($msg);
+		return 1;
+	} else if (size($sel) > 1) {
+		string $msg = (uiRes("m_performSmoothProxy.kSelectMeshWarning"));
+		warning ($msg);
+		select -replace $sel[0];
+	}
+
+	string $transform[] = `listRelatives -fullPath -parent $sel[0]`;
+	string $lores = $transform[0];
+	string $loresShape[] = `listRelatives -pa -shapes $lores`;
+
+	//check loresShape for an existing output to a smoothProxy
+	string $attachedSmoothProxies[] = `listConnections -type "polySmoothProxy" -s 0 -d 1 $loresShape[0]`;
+	if (size($attachedSmoothProxies))
+	{
+		if ($toggleProxies == 0)
+		{
+			string $msg = (uiRes("m_performSmoothProxy.kSelectMultipleError"));
+			error ($msg);
+			return 1;
+		}
+		
+		string $proxy;
+		
+		for ($proxy in $attachedSmoothProxies)
+		{
+			string $sourceMeshes[] = `listConnections -source 1 -destination 0 ($proxy+".inputPolymesh")`;
+
+			string $sourceNodes[] = `listConnections -shapes 1 -source 1 -destination 0 ($proxy+".inputPolymesh")`;
+			
+			for($sourceNode in $sourceNodes)
+			{
+				if (`nodeType $sourceNode` == "polyMergeVert")
+				{
+					string $msg = (uiRes("m_performSmoothProxy.kMirroredToggleError"));
+					error ($msg);
+					return 1;
+				}
+			}
+
+            // Get the shading groups assigned to sourceNode.
+            //
+            string $shaderGroups[] = `listSets -type 1 -object $sourceNodes[0]`;
+			
+            // Delete the source shading groups.
+            //
+			string $shaderGroup;
+			for ($shaderGroup in $shaderGroups)
+			{
+				
+				if (!endsWith($shaderGroup, "SG"))
+				{
+					continue;
+				}
+				
+				string $lambertShaders[] = `listConnections -type "lambert" -exactType 1 -source 1 -destination 0 ($shaderGroup + ".surfaceShader")`;
+		
+				string $lambertShader;
+
+				for ($lambertShader in $lambertShaders)
+				{
+					delete $lambertShader;
+				}
+
+				delete $shaderGroup;
+			}
+
+			string $parent = `firstParentOf $sourceMeshes[0]`;
+
+			string $destShapes[] = `listConnections -shapes 1  -source 0 -destination 1 ($proxy+".output")`;
+
+			if (size($destShapes) > 0)
+			{
+				string $destShaderGroups[] = `listSets -type 1 -object $destShapes[0]`;
+				if (size($destShaderGroups) > 0)
+				{
+                    // NOTE: components will not handled properally in this situation.
+                    sets -e -forceElement $destShaderGroups[0] $sourceNodes[0];
+				}
+			}
+
+
+			if ($parent != "")
+			{
+				if (endsWith($parent, "SmoothProxyGroup"))
+				{
+
+					// get the parent's parent; we want to move our object to
+					// this.
+					string $grandParent = `firstParentOf $parent`;
+					
+					if ($grandParent != "")
+					{
+						parent -relative -shape $sourceMeshes[0] $grandParent;
+					}
+					else
+					{
+						parent -relative -world $sourceMeshes[0];
+					}
+
+					delete $parent;
+				}
+			}
+		}
+		
+		return 0;
+	}
+
+	// make a hires surface. Remove shader
+	// from base if base argument is set that way (value 1)
+	// properties
+ 	string $result[];
+	int $removeShaders = ($base == 0);
+	if($removeShaders) {
+		$result = `polyDuplicateAndConnect -renameChildren -removeOriginalFromShaders  `;
+	} else {
+		$result = `polyDuplicateAndConnect -renameChildren`;
+	}
+	string $hires = $result[0];
+
+	// mirroring
+	// for the mirroring, duplicate the hires and make a mirror copy
+	// these two nodes will be combined and have the verts merged
+	// this resultant mesh will then become the new hires
+	float $scaleValue[3];//scale value for mirrored portions of the mesh
+	if($mirror){
+
+		//get the bounding box of the mesh to move the pivot in the 
+		//specified mirroring direction so that the user doesn't have to
+		float $bbox[] = `polyEvaluate -boundingBox $lores`;
+		if (size($bbox) < 6) {
+			string $msg = (uiRes("m_performSmoothProxy.kBoundingBoxError"));
+			error ($msg);
+			return 0;
+		}
+		float $xmin = $bbox[0];	
+		float $xmax = $bbox[1];
+		float $ymin = $bbox[2];	
+		float $ymax = $bbox[3];
+		float $zmin = $bbox[4];	
+		float $zmax = $bbox[5];
+		float $xcen = ($xmin + $xmax) / 2.0;
+		float $ycen = ($ymin + $ymax) / 2.0;
+		float $zcen = ($zmin + $zmax) / 2.0;
+
+		//scale across the appropriate axis
+		switch ($mirrorAxis){
+		case 1:
+			//+X
+			$scaleValue = {-1,1,1};
+			xform -a -ws -pivots $xmax $ycen $zcen $lores;
+			xform -a -ws -pivots $xmax $ycen $zcen $hires;
+			break;
+		case 2:
+			//+Y
+			$scaleValue = {1,-1,1};
+			xform -a -ws -pivots $xcen $ymax $zcen $lores;
+			xform -a -ws -pivots $xcen $ymax $zcen $hires;
+			break;
+		case 3:
+			//+Z
+			$scaleValue = {1,1,-1};
+			xform -a -ws -pivots $xcen $ycen $zmax $lores;
+			xform -a -ws -pivots $xcen $ycen $zmax $hires;
+			break;
+		case 4:
+			//-X
+			$scaleValue = {-1,1,1};
+			xform -a -ws -pivots $xmin $ycen $zcen $lores;
+			xform -a -ws -pivots $xmin $ycen $zcen $hires;
+			break;
+		case 5:
+			//-Y
+			$scaleValue = {1,-1,1};
+			xform -a -ws -pivots $xcen $ymin $zcen $lores;
+			xform -a -ws -pivots $xcen $ymin $zcen $hires;
+			break;
+		case 6:
+			//-Z
+			$scaleValue = {1,1,-1};
+			xform -a -ws -pivots $xcen $ycen $zmin $lores;
+			xform -a -ws -pivots $xcen $ycen $zmin $hires;
+			break;
+		}
+
+		if ($mirror == 1){
+			// duplicate the mesh - this is the full option
+			string $mirrorNode[] = `duplicate -returnRootsOnly $hires`;
+
+			// find the input to the new mesh node (not necessarily a shape,
+			// could be a groupParts node for example);
+			string $incoming[] = eval("listConnections -p on " + $hires + ".inMesh");
+
+			// hook up the mirror mesh
+			eval("connectAttr " + $incoming[0] + " " + $mirrorNode[0] + ".inMesh");
+
+			scale -relative $scaleValue[0] $scaleValue[1] $scaleValue[2] $mirrorNode[0];
+
+			//combine the two hires nodes
+			string $combinedLores[] = `polyUnite -constructionHistory 1 $hires $mirrorNode[0]`;
+			$hires = $combinedLores[0];
+
+			//merge their verts
+			polyMergeVertex -distance $mergeTolerance -constructionHistory 1 $combinedLores[0];
+		} else {
+			// this is the half option - user sees one half lo res and one half hi res
+			scale -relative $scaleValue[0] $scaleValue[1] $scaleValue[2] $hires;
+
+		}
+		
+	}
+
+	// find the input to the new mesh node (not necessarily a shape,
+	// could be a groupParts node for example);
+	string $incoming[] = eval("listConnections -p on " + $hires + ".inMesh");
+
+	// break the surface-surface connections
+	eval("disconnectAttr " + $incoming[0] + " " + $hires + ".inMesh");
+
+	// create the polySmooth node and hook up the lores mesh
+	string $smoothNode;
+	$smoothNode = `createNode polySmoothProxy`;
+	eval("setAttr " + $smoothNode + ".maya2008Above 1");
+	eval("connectAttr " + $incoming[0] + " " + $smoothNode + ".inputPolymesh");
+
+	// the $groupName is used primarily for when the user decides to not share the transform
+	// and instead create a new group above both shapes' transforms
+	string $groupName = $lores; 
+
+	// group the lores and hires objects in one of two ways
+	if ($shareTransform){
+
+		// change what the hires object is;
+		// up until this point hires points to the transform - the opposite is 
+		// required for the parenting of both shapes under the same transform
+		// to do this, get both the name and the fullPath name to the hiresShape.
+		string $hiresShapeFullPath[] = `listRelatives -fullPath -shapes $hires`;
+		string $hiresShape[] = `listRelatives -pa -shapes $hires`;
+		string $loresTransform[] = `listRelatives -pa -parent $lores`;
+
+		// parent
+		parent -relative -shape $hiresShape[0] $lores;
+
+		//delete the hires and change some more names around
+		delete $hires;
+		$hires = $hiresShape[0];
+		$groupName = $loresTransform[0];
+		
+	}else{
+		// First turn off inheritsTransform to allow grouping of 
+		// up/downstream objects
+		inheritTransform -off -p $hires;
+		
+		// create new group with these two objects. If the group
+		// already existed then the new node would already have been
+		// added to the existing group
+		if ( !catch($groupName = `group -relative -name ($transform[0] + "SmoothProxyGroup") $lores $hires`) )
+		{
+			string $buffer[];
+			$numTokens = tokenize($lores,"|",$buffer);
+			if ($numTokens > 1) {
+				$lores = ($groupName + "|" + $buffer[$numTokens-1]);
+			} else {
+				$lores = ($groupName + $lores);
+			}
+		} 
+		
+		$loresShape = `listRelatives -pa -shapes $lores`;
+		inheritTransform -on -p $hires;
+	}
+
+	// If we are supposed to inherit some setting from smooth mesh preview...
+	if ($mth == 2)
+	{
+		$mth = 0;
+		$sdt = `getAttr ($lores + ".smoothDrawType")`;
+		$ovb = `getAttr ($lores + ".ovb")`;
+		$ofb = `getAttr ($lores + ".ofb")`;
+		$ofc = `getAttr ($lores + ".ofc")`;
+		$ost = `getAttr ($lores + ".ost")`;
+		$ocr = `getAttr ($lores + ".ocr")`;
+		$dv = `getAttr ($lores + ".smoothLevel")`;
+		$bndry = `getAttr ($lores + ".boundaryRule")`;
+		$cont = `getAttr ($lores + ".continuity")`;
+		$suv = `getAttr ($lores + ".smoothUVs")`;
+		$kb = `getAttr ($lores + ".keepBorder")`;
+		$khe = `getAttr ($lores + ".keepHardEdge")`;
+		$kmb = `getAttr ($lores + ".keepMapBorders")`;
+	}
+
+	// set the smoothed proxy object to not display the
+	// smooth mesh preview.
+	eval("setAttr " + $hires + ".displaySmoothMesh 0" );
+
+	// set attributes on the smooth node appropriately
+	eval("setAttr " + $smoothNode + ".mth " + $mth );
+	eval("setAttr " + $smoothNode + ".sdt " + $sdt );
+	eval("setAttr " + $smoothNode + ".ovb " + $ovb );
+	eval("setAttr " + $smoothNode + ".ofb " + $ofb );
+	eval("setAttr " + $smoothNode + ".ofc " + $ofc );
+	eval("setAttr " + $smoothNode + ".ost " + $ost );
+	eval("setAttr " + $smoothNode + ".ocr " + $ocr );
+	eval("setAttr " + $smoothNode + ".bnr " + $bndry );
+	eval("setAttr " + $smoothNode + ".c " + $cont );
+	eval("setAttr " + $smoothNode + ".kb " + $kb );
+	eval("setAttr " + $smoothNode + ".khe " + $khe );
+	eval("setAttr " + $smoothNode + ".kmb " + $kmb );
+	eval("setAttr " + $smoothNode + ".suv " + $suv );
+	eval("setAttr " + $smoothNode + ".dpe " + $ediv );
+	eval("setAttr " + $smoothNode + ".ps " + $volume );
+	eval("setAttr " + $smoothNode + ".ro " + $roundness );
+	eval("setAttr " + $smoothNode + ".ll " + $niter );
+	eval("setAttr " + $smoothNode + ".el " + $dv );
+	eval("setAttr " + $smoothNode + ".peh " + $peh );
+
+	// now hook up output hires poly
+	eval("connectAttr " + $smoothNode + ".out " + $hires + ".inMesh");
+
+	// prevent topology operations on the hires mesh
+	eval("setAttr " + $hires + ".allowTopologyMod 0");
+
+	// ensure smooth operates on all the faces of the input
+	// geometry. If this were not here and the user added more faces
+	// to the input mesh, the new faces would not be subdivided.
+  	string $compAttr = $smoothNode + ".ics";
+  	setAttr $compAttr -type "componentList" 1 "f[*]";
+
+	// if user requested new transparent shader, oblige
+	if(2 == $base) {
+		// should check for existing shader first!
+		$shader = `shadingNode -asShader lambert`;
+		
+		// set transparency as requested
+		if($transparency > 1.0) $transparency = 1.0;
+		if($transparency < 0.0) $transparency = 0.0;
+		setAttr ($shader + ".transparency") -type float3 $transparency $transparency $transparency;
+		$sg = `sets -renderable true -noSurfaceShader true -empty -name ($shader + "SG")`;
+		connectAttr -f ($shader + ".outColor") ($sg+".surfaceShader");
+
+		select -replace $loresShape[0];
+		sets -e -forceElement $sg;
+	}
+
+	if($loresInLayer == 1) {
+		//create layers and assign geometry
+		//there should be an option to add to existing layers
+		string $baseLayer = `createDisplayLayer -name ($transform[0] + "ProxyMesh") -empty`;
+		editDisplayLayerMembers -noRecurse $baseLayer $lores;
+	}
+
+	if($hiresInLayer == 1) {
+		string $smoothLayer = `createDisplayLayer -name ($transform[0] + "SmoothMesh") -empty`;
+		setAttr ($smoothLayer + ".displayType") $smoothLayerDisplay;
+		if($smoothLayerDisplay < 0) $smoothLayerDisplay = 0;
+		if($smoothLayerDisplay > 2) $smoothLayerDisplay = 2;
+		editDisplayLayerMembers -noRecurse $smoothLayer $hires;
+	}
+
+	// complete mirroring
+	// instance the orignal base mesh and scale by -1 across the appropriate axis
+	if ($mirror == 1){
+		//instance the lores
+		string $instance[] = `instance $lores`;
+		//and scale the instance
+		scale -relative $scaleValue[0] $scaleValue[1] $scaleValue[2] $instance[0];
+		connectAttr -f ($loresShape[0] + ".isHistoricallyInteresting") 
+			($smoothNode + ".isHistoricallyInteresting");
+	}
+
+	// set lores rendering attributes off if specified
+	// and make sure hires render attrs are on - if user started with mirroring
+	// and then unmirrored and made a new smoothProxy setup without mirroring,
+	// the hires will inherit the rendering attribute settings which are off
+	if ($renderable == 0){
+		eval("setAttr " + $loresShape[0] + ".castsShadows 0");
+		setAttr ($loresShape[0] + ".receiveShadows") 0;
+		setAttr ($loresShape[0] + ".primaryVisibility") 0;
+		setAttr ($loresShape[0] + ".visibleInReflections") 0;
+		setAttr ($loresShape[0] + ".visibleInRefractions") 0;
+		setAttr ($hires + ".castsShadows") 1;
+		setAttr ($hires + ".receiveShadows") 1;
+		setAttr ($hires + ".primaryVisibility") 1;
+		setAttr ($hires + ".visibleInReflections") 1;
+		setAttr ($hires + ".visibleInRefractions") 1;
+		eval("setAttr " + $smoothNode + ".mth " + $mth );
+	}
+	// initial refresh shows hires mesh in component mode, so force it to object mode
+	// then select the lores object for tweaking
+	refresh;
+	select -r $loresShape[0];
+
+	return 0;
+}
+
+
+proc setOptionVars (int $forceFactorySettings)
+{
+// -mth/method option
+	if ($forceFactorySettings || !`optionVar -exists polySmoothMethod`)
+		optionVar -intValue polySmoothMethod 1;
+	if ($forceFactorySettings || !`optionVar -exists polyInheritFromSMP`)
+		optionVar -intValue polyInheritFromSMP 0;
+//   cage options
+	if ($forceFactorySettings || !`optionVar -exists polySmoothBaseMeshDisplay`)
+		optionVar -intValue polySmoothBaseMeshDisplay 3;
+	if ($forceFactorySettings || !`optionVar -exists polySmoothTransparency`)
+		optionVar -floatValue polySmoothTransparency 0.75;
+	if ($forceFactorySettings || !`optionVar -exists polySmoothSmoothDisplay`)
+		optionVar -intValue polySmoothSmoothDisplay 3;
+	if ($forceFactorySettings || !`optionVar -exists polySmoothLoRenderable`)
+		optionVar -intValue polySmoothLoRenderable 1;
+	if ($forceFactorySettings || !`optionVar -exists polySmoothLoInLayer`)
+		optionVar -intValue polySmoothLoInLayer 0;
+	if ($forceFactorySettings || !`optionVar -exists polySmoothHiInLayer`)
+		optionVar -intValue polySmoothHiInLayer 0;
+	if ($forceFactorySettings || !`optionVar -exists polySmoothMirror`)
+		optionVar -intValue polySmoothMirror 1;
+	if ($forceFactorySettings || !`optionVar -exists polySmoothMirrorAxis`)
+		optionVar -intValue polySmoothMirrorAxis 1;
+	if ($forceFactorySettings || !`optionVar -exists polySmoothMirrorMergeVertexTolerance`)
+		optionVar -floatValue polySmoothMirrorMergeVertexTolerance 0.001;
+	if ($forceFactorySettings || !`optionVar -exists polySmoothShareTransform`)
+		optionVar -intValue polySmoothShareTransform 0;
+	if ($forceFactorySettings || !`optionVar -exists polySmoothToggleProxies`)
+		optionVar -intValue polySmoothToggleProxies 1;
+//   -df/divisions option 
+	if ($forceFactorySettings || !`optionVar -exists proxySubdivisionType`)
+		optionVar -intValue proxySubdivisionType 2;
+	if ($forceFactorySettings || !`optionVar -exists proxySmoothOsdVertBoundary`)
+		optionVar -intValue proxySmoothOsdVertBoundary 1; // Smooth: Sharp Edges and Corners
+	if ($forceFactorySettings || !`optionVar -exists proxySmoothOsdFvarBoundary`)
+		optionVar -intValue proxySmoothOsdFvarBoundary 3; // Smooth: All Sharp
+	if ($forceFactorySettings || !`optionVar -exists proxySmoothOsdFvarPropagateCorners`)
+		optionVar -intValue proxySmoothOsdFvarPropagateCorners 0;
+	if ($forceFactorySettings || !`optionVar -exists proxySmoothOsdSmoothTriangles`)
+		optionVar -intValue proxySmoothOsdSmoothTriangles 1;
+	if ($forceFactorySettings || !`optionVar -exists proxySmoothOsdCreaseMethod`)
+		optionVar -intValue proxySmoothOsdCreaseMethod 0; // Normal
+	if ($forceFactorySettings || !`optionVar -exists proxyDivisions`)
+		optionVar -intValue proxyDivisions 1;
+//    -bnr/boundaryRule option 
+	if ($forceFactorySettings || !`optionVar -exists proxyBoundaryRule`)
+		optionVar -intValue proxyBoundaryRule 1;
+//   -c/continuity option 
+	if ($forceFactorySettings || !`optionVar -exists proxyContinuity`)
+		optionVar -intValue proxyContinuity 1;
+// -kb/-keepBorder option: Keep edges on geometry border
+	if ($forceFactorySettings || !`optionVar -exists proxySmoothKeepBorder`)
+		optionVar -intValue proxySmoothKeepBorder 1;	
+// -khe/-keepHardEdge option: Keep hard edges
+	if ($forceFactorySettings
+			|| !`optionVar -exists proxySmoothKeepHardEdge`)
+		optionVar -intValue proxySmoothKeepHardEdge 0;	
+// -peh/-propagateEdgeHardness option: Pass on the edge hardness values to the 
+// smoothed mesh
+	if ($forceFactorySettings || !`optionVar -exists polySmoothProxyPropEHardness`)
+		optionVar -intValue polySmoothProxyPropEHardness 0;	
+// -suv/-smoothUVs option: Smooth UV values
+		if ($forceFactorySettings
+			|| !`optionVar -exists polySmoothSmoothUVs`)
+		optionVar -intValue polySmoothSmoothUVs 1;
+// -kmb/-keepMapBorders option: Perserve the UV Map Border (Smooth UVs on only)
+	if ($forceFactorySettings || !`optionVar -exists polySmoothKeepMapBorders`)
+		optionVar -intValue polySmoothKeepMapBorders 2;
+
+// linear smooth options
+	if ($forceFactorySettings
+			|| !`optionVar -exists proxySmoothNumIter`)
+		optionVar -intValue proxySmoothNumIter 1;	
+
+	if ($forceFactorySettings
+			|| !`optionVar -exists proxySmoothEdivisions`)
+		optionVar -intValue proxySmoothEdivisions 1;	
+
+	if ($forceFactorySettings
+			|| !`optionVar -exists proxySmoothVolume`)
+		optionVar -floatValue proxySmoothVolume 0.1;	
+
+	if ($forceFactorySettings
+			|| !`optionVar -exists proxySmoothRoundness`)
+		optionVar -floatValue proxySmoothRoundness 1.0;	
+}
+
+proc int proxySubdivisionTypeFromMenu (string $parent)
+{
+    setParent $parent;
+
+	// Convert from 1-based menu index to subdiv type enum
+    int $termItem = `radioButtonGrp -q -sl proxySubdivisionType`;
+    if ($termItem == 2) {
+        return 2; // kOpenSubdivCatmullClarkUniform
+    } else {
+        return 0; // kCatmullClark (default)
+    }
+}
+
+proc int proxySubdivisionTypeToMenu ()
+{
+	int $subd = `optionVar -q proxySubdivisionType`;
+	if ($subd > 1) { $subd -= 1; } // enum value of 1 is unused
+	return $subd + 1; // Menus are 1-based
+}
+
+global proc polySmoothProxyVisibility()
+//  Description:
+//		Dim/show any bevel options as required by the output surface type
+//
+{
+	// smooth methods
+	int $method = `radioButtonGrp -q -select polySmoothMethod`;
+	int $inheritSMP = `checkBoxGrp -query -value1 polySmoothInheritSMP`;
+
+	if ($inheritSMP){
+		frameLayout -e -vis 0 -collapse true exponentialSmoothingLayout;
+		frameLayout -e -vis 0 -collapse true linearSmoothingLayout;
+		radioButtonGrp -edit -enable false polySmoothMethod;
+	} else if(1 == $method) { // exponential options
+		frameLayout -e -vis 1 -collapse false exponentialSmoothingLayout;
+		frameLayout -e -vis 0 -collapse true linearSmoothingLayout;
+		radioButtonGrp -edit -enable true polySmoothMethod;
+	} else if(2 == $method) { // linear options
+		frameLayout -e -vis 0 -collapse true exponentialSmoothingLayout;
+		frameLayout -e -vis 1 -collapse false linearSmoothingLayout;
+		radioButtonGrp -edit -enable true polySmoothMethod;
+	}
+
+
+	// control of base shader display. Only enable transparency slider
+	// if base shader is set to option 2 (assign new transparent shader)
+	int $base = `radioButtonGrp -q -select polySmoothBaseMeshDisplay`;
+	if(3 == $base) {
+		floatSliderGrp -e -enable  true polySmoothTransparency;
+	} else {
+		floatSliderGrp -e -enable false polySmoothTransparency;
+	}
+
+	// control of smooth layer display
+	int $layer = `checkBoxGrp -q -v1 polySmoothHiInLayer`;
+	if(0 == $layer) {
+		radioButtonGrp -e -enable false polySmoothSmoothDisplay;
+	} else {
+		radioButtonGrp -e -enable  true polySmoothSmoothDisplay;
+	}
+
+	// control of mirroring
+	int $mirror = (`radioButtonGrp -q -select polySmoothMirror` - 1);
+	if (0 == $mirror){
+		radioButtonGrp -e -enable false polySmoothMirrorAxis;
+		radioButtonGrp -e -enable false polySmoothMirrorAxisNeg;
+		floatSliderGrp -e -enable false	polySmoothMirrorMergeVertexTolerance;
+		//shareTransform is not supporting mirroring because the mirroring uses
+		//instancing and instances need separate transforms
+		checkBoxGrp -e -enable true polySmoothShareTransform;
+	} else {
+		radioButtonGrp -e -enable true polySmoothMirrorAxis;
+		radioButtonGrp -e -enable true polySmoothMirrorAxisNeg;
+		floatSliderGrp -e -enable true polySmoothMirrorMergeVertexTolerance;
+		//turn off the shareTransform checkBox if mirroring is on
+		checkBoxGrp -e -enable false -value1 false polySmoothShareTransform;
+	}
+
+}
+
+global proc performSmoothProxySetup (string $parent, int $forceFactorySettings)
+{
+	setOptionVars($forceFactorySettings);
+	setParent $parent;
+
+// -mth/method option
+	int $ival = `optionVar -query polySmoothMethod`;		
+	radioButtonGrp -edit -select $ival polySmoothMethod;
+
+	int $ival = `optionVar -query polyInheritFromSMP`;		
+	checkBoxGrp -edit -value1 $ival polySmoothInheritSMP;
+
+// display options
+	$ival = `optionVar -query polySmoothShareTransform`;		
+	checkBoxGrp -edit -value1 $ival polySmoothShareTransform;
+
+	$ival = `optionVar -query polySmoothToggleProxies`;		
+	checkBoxGrp -edit -value1 $ival polySmoothToggleProxies;
+
+	$ival = `optionVar -query polySmoothBaseMeshDisplay`;		
+	radioButtonGrp -edit -select $ival polySmoothBaseMeshDisplay;
+
+	float $fval = `optionVar -query polySmoothTransparency`;
+	floatSliderGrp -edit -value $fval polySmoothTransparency;
+
+	$ival = `optionVar -query polySmoothSmoothDisplay`;		
+	radioButtonGrp -edit -select $ival polySmoothSmoothDisplay;
+
+	$ival = `optionVar -query polySmoothLoRenderable`;		
+	checkBoxGrp -edit -value1 $ival polySmoothLoRenderable;
+
+	$ival = `optionVar -query polySmoothLoInLayer`;		
+	checkBoxGrp -edit -value1 $ival polySmoothLoInLayer;
+
+	$ival = `optionVar -query polySmoothHiInLayer`;		
+	checkBoxGrp -edit -value1 $ival polySmoothHiInLayer;
+
+	// mirror options
+	$ival = `optionVar -query polySmoothMirror`;		
+	radioButtonGrp -edit -select $ival polySmoothMirror;
+
+	$ival = `optionVar -query polySmoothMirrorAxis`;
+	if ($ival >= 4)
+		radioButtonGrp -edit -select ($ival-3) polySmoothMirrorAxisNeg;
+	else
+		radioButtonGrp -edit -select $ival polySmoothMirrorAxis;
+
+	$fval = `optionVar -query polySmoothMirrorMergeVertexTolerance`;
+	floatSliderGrp -edit -value $fval polySmoothMirrorMergeVertexTolerance;
+
+	// smooth options
+    $ival = `proxySubdivisionTypeToMenu`;
+    radioButtonGrp -e -sl $ival proxySubdivisionType;
+
+    $ival = `optionVar -query proxySmoothOsdVertBoundary`; // 1-2
+    radioButtonGrp -edit -select $ival proxySmoothOsdVertBoundary; // 1-2
+
+    $ival = `optionVar -query proxySmoothOsdFvarBoundary`; // 0-3
+    radioButtonGrp -edit -select ($ival+1) proxySmoothOsdFvarBoundary; // 1-4
+
+    $ival = `optionVar -query proxySmoothOsdFvarPropagateCorners`; 
+    checkBoxGrp -edit -value1 $ival proxySmoothOsdFvarPropagateCorners; 
+
+    $ival = `optionVar -query proxySmoothOsdSmoothTriangles`; 
+    checkBoxGrp -edit -value1 $ival proxySmoothOsdSmoothTriangles; 
+
+    $ival = `optionVar -query proxySmoothOsdCreaseMethod`; // 0-1
+    radioButtonGrp -edit -select ($ival+1) proxySmoothOsdCreaseMethod; // 1-2 
+
+	$ival = `optionVar -query proxyDivisions`;
+	intSliderGrp -edit -value $ival proxyDivisions;
+
+	$ival = `optionVar -query proxyBoundaryRule`;
+	if ($ival < 0 || $ival > 2)
+		$ival = 1;
+	radioButtonGrp -edit -select ($ival + 1) proxyBoundaryRule;
+
+	$fval = `optionVar -query proxyContinuity`;
+	floatSliderGrp -edit -value $fval proxyContinuity;
+
+	$ival = `optionVar -query proxySmoothKeepBorder`;		
+	checkBoxGrp -edit -value1 $ival proxySmoothKeepBorder;
+
+	$ival = `optionVar -query proxySmoothKeepHardEdge`;		
+	checkBoxGrp -edit -value1 $ival proxySmoothKeepHardEdge;
+
+	$ival = `optionVar -query polySmoothProxyPropEHardness`;		
+	checkBoxGrp -edit -value1 $ival polySmoothProxyPropEHardness;
+
+	$ival = `optionVar -query polySmoothSmoothUVs`;
+	checkBoxGrp -edit -value1 $ival polySmoothSmoothUVs;
+
+	$ival = `optionVar -query polySmoothKeepMapBorders`;
+	radioButtonGrp -edit -select $ival polySmoothKeepMapBorders;
+
+	// linear options
+	$ival = `optionVar -query proxySmoothNumIter`;
+	intSliderGrp -edit -value $ival proxySmoothNumIter;
+
+	$ival = `optionVar -query proxySmoothEdivisions`;
+	intSliderGrp -edit -value $ival proxySmoothEdivisions;
+
+	$fval = `optionVar -query proxySmoothVolume`;
+	floatSliderGrp -edit -value $fval proxySmoothVolume;
+
+	$fval = `optionVar -query proxySmoothRoundness`;
+	floatSliderGrp -edit -value $fval proxySmoothRoundness;
+
+	polySmoothProxyVisibility();
+	proxySmoothSubdivisionTypeChanged();
+}
+
+global proc performSmoothProxyCallback (string $parent, int $doIt)
+{
+	setParent $parent;
+	optionVar -intValue polySmoothMethod
+		`radioButtonGrp -q -select polySmoothMethod`;
+	optionVar -intValue polyInheritFromSMP
+		`checkBoxGrp -q -value1 polySmoothInheritSMP`;
+
+	optionVar -intValue polySmoothShareTransform
+		`checkBoxGrp -q -value1 polySmoothShareTransform`;
+	optionVar -intValue polySmoothToggleProxies
+		`checkBoxGrp -q -value1 polySmoothToggleProxies`;
+	optionVar -intValue polySmoothBaseMeshDisplay
+		`radioButtonGrp -q -select polySmoothBaseMeshDisplay`;
+	optionVar -floatValue polySmoothTransparency
+		`floatSliderGrp -query -value polySmoothTransparency`;
+	optionVar -intValue polySmoothSmoothDisplay
+		`radioButtonGrp -q -select polySmoothSmoothDisplay`;
+	optionVar -intValue polySmoothLoRenderable
+		`checkBoxGrp -q -value1 polySmoothLoRenderable`;
+	optionVar -intValue polySmoothLoInLayer
+		`checkBoxGrp -q -value1 polySmoothLoInLayer`;
+	optionVar -intValue polySmoothHiInLayer
+		`checkBoxGrp -q -value1 polySmoothHiInLayer`;
+	optionVar -intValue polySmoothMirror
+		`radioButtonGrp -q -select polySmoothMirror`;
+	optionVar -floatValue polySmoothMirrorMergeVertexTolerance
+		`floatSliderGrp -query -value polySmoothMirrorMergeVertexTolerance`;
+
+	int $mirrorAxis = `radioButtonGrp -q -select polySmoothMirrorAxis`;
+	int $mirrorAxisNeg = `radioButtonGrp -q -select polySmoothMirrorAxisNeg`;
+	if ($mirrorAxis)
+		optionVar -intValue polySmoothMirrorAxis $mirrorAxis;
+	else
+		optionVar -intValue polySmoothMirrorAxis ($mirrorAxisNeg + 3);
+
+	optionVar -intValue proxySubdivisionType
+		`proxySubdivisionTypeFromMenu $parent`;
+	optionVar -intValue proxySmoothOsdVertBoundary
+		`radioButtonGrp -query -select proxySmoothOsdVertBoundary`; // 1-2 --> 1-2
+	optionVar -intValue proxySmoothOsdFvarBoundary
+		(`radioButtonGrp -query -select proxySmoothOsdFvarBoundary` - 1); // 1-4 --> 0-3
+	optionVar -intValue proxySmoothOsdFvarPropagateCorners
+		`checkBoxGrp -query -value1 proxySmoothOsdFvarPropagateCorners`;
+	optionVar -intValue proxySmoothOsdSmoothTriangles
+		`checkBoxGrp -query -value1 proxySmoothOsdSmoothTriangles`;
+	optionVar -intValue proxySmoothOsdCreaseMethod
+		(`radioButtonGrp -query -select proxySmoothOsdCreaseMethod` - 1); // 1-2 --> 0-1
+	optionVar -intValue proxyDivisions
+		`intSliderGrp -query -value proxyDivisions`;
+	optionVar -intValue proxyBoundaryRule
+		(`radioButtonGrp -query -select proxyBoundaryRule` - 1);
+	optionVar -floatValue proxyContinuity
+		`floatSliderGrp -query -value proxyContinuity`;
+	optionVar -intValue proxySmoothKeepBorder
+		`checkBoxGrp -query -value1 proxySmoothKeepBorder`;
+	optionVar -intValue proxySmoothKeepHardEdge
+		`checkBoxGrp -query -value1 proxySmoothKeepHardEdge`;
+	optionVar -intValue polySmoothProxyPropEHardness
+		`checkBoxGrp -query -value1 polySmoothProxyPropEHardness`;
+	optionVar -intValue polySmoothSmoothUVs
+		`checkBoxGrp -query -value1 polySmoothSmoothUVs`;
+	optionVar -intValue polySmoothKeepMapBorders
+		`radioButtonGrp -query -select polySmoothKeepMapBorders`;
+
+	// linear options
+	optionVar -intValue proxySmoothNumIter
+		`intSliderGrp -query -value proxySmoothNumIter`;
+	optionVar -intValue proxySmoothEdivisions
+		`intSliderGrp -query -value proxySmoothEdivisions`;
+	optionVar -floatValue proxySmoothVolume
+		`floatSliderGrp -query -value proxySmoothVolume`;
+	optionVar -floatValue proxySmoothRoundness
+		`floatSliderGrp -query -value proxySmoothRoundness`;
+
+	if ($doIt) {
+		performSmoothProxy 0;
+		addToRecentCommandQueue "performSmoothProxy 0" "SmoothProxy";
+	}
+}
+
+global proc proxySmoothSubdivisionTypeChanged()
+{
+	int $isOpenSubdiv = (`radioButtonGrp -q -sl proxySubdivisionType` == 2);
+	int $isMayaCC = ! $isOpenSubdiv;
+
+	frameLayout -edit -vis $isOpenSubdiv -collapse (!$isOpenSubdiv) proxySmoothOpenSubdivFrame;
+	frameLayout -edit -vis $isMayaCC     -collapse (!$isMayaCC)     proxySmoothMayaCCFrame;
+}
+
+proc smoothProxyOptions ()
+{
+	string $commandName = "performSmoothProxy";
+	string $callback = ($commandName + "Callback");
+	string $setup = ($commandName + "Setup");
+	   
+	string $layout = getOptionBox();
+	setParent $layout;
+	setUITemplate -pushTemplate DefaultTemplate;
+
+	tabLayout -scr true -tv false;
+	string $parent = `columnLayout -adjustableColumn 1`;
+
+	checkBoxGrp 
+		-label "" 
+		-label1 (uiRes("m_performSmoothProxy.kInheritSMPOptions"))
+		-cc1 "polySmoothProxyVisibility()"
+		polySmoothInheritSMP;
+
+	radioButtonGrp -nrb 2 
+		-label (uiRes("m_performSmoothProxy.kPolySmoothSubdivisionMethod"))
+		-label1 (uiRes("m_performSmoothProxy.kPolySmoothSubdExp")) -da1 0
+		-label2 (uiRes("m_performSmoothProxy.kPolySmoothSubdLin")) -da2 1 -select 1
+		-cc1 "polySmoothProxyVisibility()"
+		-cc2 "polySmoothProxyVisibility()"
+		polySmoothMethod;
+
+	frameLayout -label (uiRes("m_performSmoothProxy.kExponentialSmoothingLayout")) 
+		-collapsable true -collapse false
+		exponentialSmoothingLayout;
+
+	columnLayout;
+
+	intSliderGrp -label (uiRes("m_performSmoothProxy.kProxyDiv")) -min 1 -max 15 -s 1 proxyDivisions;
+
+    radioButtonGrp
+		-numberOfRadioButtons 2
+		-vertical
+        -label (uiRes("m_performSmoothProxy.kSubdivisionType"))
+		-label1 (uiRes("m_performSmoothProxy.kCatmullClark"))
+		-label2 (uiRes("m_performSmoothProxy.kOpenSubdivUniform"))
+        -changeCommand "proxySmoothSubdivisionTypeChanged"
+        proxySubdivisionType;
+
+	frameLayout 
+		-label (uiRes("m_performSmoothProxy.kOpenSubdivFrame")) 
+		proxySmoothOpenSubdivFrame;
+	columnLayout;
+
+	radioButtonGrp 
+		-numberOfRadioButtons 2 
+		-vertical
+		-label  (uiRes("m_performSmoothProxy.kLabel_osdVertBoundary"))
+		-label1 (uiRes("m_performSmoothProxy.kLabel_osdVertBoundary_EdgeAndCorner"))
+		-label2 (uiRes("m_performSmoothProxy.kLabel_osdVertBoundary_EdgeOnly"))
+		proxySmoothOsdVertBoundary;
+
+	radioButtonGrp 
+		-numberOfRadioButtons 4 
+		-vertical
+		-label  (uiRes("m_performSmoothProxy.kLabel_osdFvarBoundary"))
+		-label1 (uiRes("m_performSmoothProxy.kLabel_osdFvarBoundary_None"))
+		-label2 (uiRes("m_performSmoothProxy.kLabel_osdFvarBoundary_EdgeAndCorner"))
+		-label3 (uiRes("m_performSmoothProxy.kLabel_osdFvarBoundary_EdgeOnly"))
+		-label4 (uiRes("m_performSmoothProxy.kLabel_osdFvarBoundary_AllSharp"))
+		proxySmoothOsdFvarBoundary;
+
+	checkBoxGrp 
+		-label1 (uiRes("m_performSmoothProxy.kLabel_osdFvarPropagateCorners"))
+		proxySmoothOsdFvarPropagateCorners;
+
+	checkBoxGrp 
+		-label1 (uiRes("m_performSmoothProxy.kLabel_osdSmoothTriangles"))
+		proxySmoothOsdSmoothTriangles;
+
+	radioButtonGrp 
+		-numberOfRadioButtons 2 
+		-vertical
+		-label  (uiRes("m_performSmoothProxy.kLabel_osdCreaseMethod"))
+		-label1 (uiRes("m_performSmoothProxy.kLabel_osdCreaseMethod_Normal"))
+		-label2 (uiRes("m_performSmoothProxy.kLabel_osdCreaseMethod_Chaikin"))
+		proxySmoothOsdCreaseMethod;
+
+	setParent ..; // column
+	setParent ..; // OpenSubdiv Frame
+
+	frameLayout 
+		-label (uiRes("m_performSmoothProxy.kMayaCCFrame")) 
+		proxySmoothMayaCCFrame;
+	columnLayout;
+;
+
+	radioButtonGrp 
+		-numberOfRadioButtons 3 
+		-vertical
+		-label (uiRes("m_performSmoothProxy.kBoundaryRule"))
+		-label1 (uiRes("m_performSmoothProxy.kLegacy"))
+		-label2 (uiRes("m_performSmoothProxy.kCreaseAll"))
+		-label3 (uiRes("m_performSmoothProxy.kCreaseEdges"))
+		proxyBoundaryRule;
+
+	floatSliderGrp -label (uiRes("m_performSmoothProxy.kProxyContinuity")) -min 0 -max 1 -s 1 proxyContinuity;
+	checkBoxGrp -label1 (uiRes("m_performSmoothProxy.kPolySmoothUVs"))
+	    -on1 ("disable -v false polySmoothKeepMapBorders;")
+	    -of1 ("disable -v true polySmoothKeepMapBorders;")
+		polySmoothSmoothUVs;
+
+
+	  // Properties to preserve
+	  //
+	checkBoxGrp 
+		-label1 (uiRes("m_performSmoothProxy.kPropagateEdgeHardness"))
+		polySmoothProxyPropEHardness;
+
+	radioButtonGrp 
+		-numberOfRadioButtons 3 
+		-vertical
+		-label (uiRes("m_performSmoothProxy.kMapBorders"))
+		-label1 (uiRes("m_performSmoothProxy.kDoNotSmooth"))
+		-label2 (uiRes("m_performSmoothProxy.kSmoothInternal"))
+		-label3 (uiRes("m_performSmoothProxy.kSmoothAll"))
+		polySmoothKeepMapBorders;
+
+	checkBoxGrp 
+		-label (uiRes("m_performSmoothProxy.kPreserve")) 
+		-label1 (uiRes("m_performSmoothProxy.kGeometryBorders"))
+		proxySmoothKeepBorder;
+		
+	checkBoxGrp 
+		-label1 (uiRes("m_performSmoothProxy.kHardEdges"))
+		proxySmoothKeepHardEdge;
+
+	setParent ..; // column
+	setParent ..; // MayaCC Frame
+
+		setParent $parent;
+	setParent $parent;
+
+	frameLayout -label (uiRes("m_performSmoothProxy.kLinearSmoothingControls")) 
+		-collapsable true -collapse false
+		linearSmoothingLayout;
+
+		columnLayout;
+
+	  intSliderGrp -label (uiRes("m_performSmoothProxy.kProxySmoothNumIterLabel"))  -min 1 -max 15 -s 1 proxySmoothNumIter;
+
+	  // linear options
+	  intSliderGrp -label (uiRes("m_performSmoothProxy.kProxyDivPerFace"))   -min 1 -max 10 -s 1 proxySmoothEdivisions;
+	  floatSliderGrp -label (uiRes("m_performSmoothProxy.kProxyPushStrength"))  -min -1 -max 1 -s 0.1  proxySmoothVolume;
+	  floatSliderGrp -label (uiRes("m_performSmoothProxy.kProxyRoundness")) -min -10 -max 10 -s 0.1 proxySmoothRoundness;
+
+	  setParent $parent;
+	setParent $parent;
+
+	//mirror control
+	frameLayout -label (uiRes("m_performSmoothProxy.kProxySetupFram")) 
+		-collapsable true
+		-collapse false;
+
+	  columnLayout;
+
+	  radioButtonGrp -nrb 3 -label (uiRes("m_performSmoothProxy.kPolySmoothMirrorBehaviour"))
+		-label1 (uiRes("m_performSmoothProxy.kSmoothMirrorNone")) -da1 0
+		-label2 (uiRes("m_performSmoothProxy.kSmoothMirrorInternal")) -da2 1
+		-label3 (uiRes("m_performSmoothProxy.kSmoothMirrorAll")) -da3 2 
+		-select 1
+		-changeCommand "polySmoothProxyVisibility()"
+		polySmoothMirror;
+
+	  radioButtonGrp -nrb 3 -label (uiRes("m_performSmoothProxy.kPolySmoothMirrorAxisLabel"))
+		-label1 (uiRes("m_performSmoothProxy.kPolySmoothMirrorAxisX")) -da1 0
+		-label2 (uiRes("m_performSmoothProxy.kPolySmoothMirrorAxisY")) -da2 1
+		-label3 (uiRes("m_performSmoothProxy.kPolySmoothMirrorAxisZ")) -da3 2 
+		-select 1
+		polySmoothMirrorAxis;
+
+	  radioButtonGrp -nrb 3
+		-shareCollection polySmoothMirrorAxis
+		-label1 (uiRes("m_performSmoothProxy.kPolySmoothMirrorAxisXNeg")) -da1 0
+		-label2 (uiRes("m_performSmoothProxy.kPolySmoothMirrorAxisYNeg")) -da2 1
+		-label3 (uiRes("m_performSmoothProxy.kPolySmoothMirrorAxisZNeg")) -da3 2 
+		polySmoothMirrorAxisNeg;
+
+		floatSliderGrp
+			-field true
+			-minValue 0.0
+			-maxValue 10.0
+			-value `optionVar -query polySmoothMirrorMergeVertexTolerance`
+			-fieldMinValue 0.0 
+			-fieldMaxValue 100.0
+			-label (uiRes("m_performSmoothProxy.kPolySmoothMirrorMergeVertTolerance"))
+			-enable (`optionVar -query polySmoothMirror` - 1)
+			polySmoothMirrorMergeVertexTolerance;
+
+		checkBoxGrp -label1 (uiRes("m_performSmoothProxy.kPolySmoothShareTransform"))
+			polySmoothShareTransform;
+
+		checkBoxGrp -label1 (uiRes("m_performSmoothProxy.kPolySmoothSubdivProxy"))
+			polySmoothToggleProxies;
+
+	  setParent ..;
+	setParent ..;
+
+	// display settings
+
+	frameLayout -label (uiRes("m_performSmoothProxy.kPolySmoothDisplaySettings"))
+		-collapse false
+		-collapsable true
+		polySmoothDisplaySettings;
+
+	  columnLayout;
+
+	  radioButtonGrp -nrb 3 -label (uiRes("m_performSmoothProxy.kPolySmoothBaseMeshDisplay"))
+		-label1 (uiRes("m_performSmoothProxy.kPolySmoothBaseMeshDisplayRemove")) -da1 0
+		-label2 (uiRes("m_performSmoothProxy.kPolySmoothBaseMeshDisplayKeep")) -da2 1
+		-label3 (uiRes("m_performSmoothProxy.kPolySmoothBaseMeshDisplayTransp")) -da3 2 -select 3
+		-cc1 "polySmoothProxyVisibility()"
+		-cc2 "polySmoothProxyVisibility()"
+		-cc3 "polySmoothProxyVisibility()"
+		polySmoothBaseMeshDisplay;
+
+	  // cage display controls
+	  floatSliderGrp -label (uiRes("m_performSmoothProxy.kPolySmoothSubdivProxyTransparency")) -min 0 -max 1 polySmoothTransparency;
+
+	  // cage renderable
+	  checkBoxGrp -label1 (uiRes("m_performSmoothProxy.kPolySmoothSubdivProxyRender")) polySmoothLoRenderable;
+
+	  // cage layers
+	  checkBoxGrp -label1 (uiRes("m_performSmoothProxy.kPolySmoothSubdivProxyInLayer")) polySmoothLoInLayer;
+	  checkBoxGrp -label1 (uiRes("m_performSmoothProxy.kPolySmoothMeshInLayer")) 
+		-cc "polySmoothProxyVisibility()" polySmoothHiInLayer;
+	
+	  radioButtonGrp -nrb 3 -label (uiRes("m_performSmoothProxy.kPolySmoothSmoothLayerDisplay"))
+		-label1 (uiRes("m_performSmoothProxy.kPolySmoothSmoothLayerDisplayNormal")) -da1 0
+		-label2 (uiRes("m_performSmoothProxy.kPolySmoothSmoothLayerDisplayTemp")) -da2 1
+		-label3 (uiRes("m_performSmoothProxy.kPolySmoothSmoothLayerDisplayRef")) -da3 2 -select 1
+		polySmoothSmoothDisplay;
+
+	  setParent ..;
+	setParent ..;
+
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit -label (uiRes("m_performSmoothProxy.kPolySmoothLabel"))
+	       -command ($callback + " " + $parent + " " + 1)
+		$applyBtn;
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + $parent + " " + 0 + "; hideOptionBox")
+		$saveBtn;
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + " " + $parent + " " + 1)
+		$resetBtn;
+			 
+
+	setOptionBoxTitle (uiRes("m_performSmoothProxy.kSubdivProxyOptionsTitle"));
+
+	//	Customize the 'Help' menu item text.
+	//
+	setOptionBoxHelpTag( "SmoothProxy" );
+
+	eval (($setup + " " + $parent + " " + 0));      
+	showOptionBox();
+}
+
+
+// Helper method for loading all the parameters needed by 
+// polySmoothProxySetupNode()
+//
+proc string assembleCmd()
+{
+	string $cmd = "";
+
+	setOptionVars(false);
+	int $mth = `optionVar -query polySmoothMethod` - 1;
+	int $inherit = `optionVar -query polyInheritFromSMP`;
+	if ($inherit)
+		$mth = 2;
+
+	int $base = `optionVar -query polySmoothBaseMeshDisplay` -1;
+	int $sd = `optionVar -query polySmoothSmoothDisplay` -1;
+	int $ll = `optionVar -query polySmoothLoInLayer`;
+	int $hl = `optionVar -query polySmoothHiInLayer`;
+	float $tr = `optionVar -query polySmoothTransparency`;
+	int $mirror = (`optionVar -query polySmoothMirror` - 1);
+	int $mirrorAxis = `optionVar -query polySmoothMirrorAxis`;
+	int $sdt = `optionVar -query proxySubdivisionType`;
+	int $ovb = `optionVar -query proxySmoothOsdVertBoundary`;
+	int $ofb = `optionVar -query proxySmoothOsdFvarBoundary`;
+	int $ofc = `optionVar -query proxySmoothOsdFvarPropagateCorners`;
+	int $ost = `optionVar -query proxySmoothOsdSmoothTriangles`;
+	int $ocr = `optionVar -query proxySmoothOsdCreaseMethod`;
+	int $dv = `optionVar -query proxyDivisions`;
+	int $bndry = `optionVar -query proxyBoundaryRule`;
+	float $cont = `optionVar -query proxyContinuity`;
+	int $kb = `optionVar -query proxySmoothKeepBorder`;
+	int $ksb = `optionVar -query proxySmoothKeepSelectionBorder`;	// OBSOLETE
+	int $khe = `optionVar -query proxySmoothKeepHardEdge`;
+	int $peh = `optionVar -query polySmoothProxyPropEHardness`;
+	int $kt = `optionVar -query proxySmoothKeepTesselation`;		// OBSOLETE
+	int $kmb = `optionVar -query polySmoothKeepMapBorders` - 1;
+	int $suv = `optionVar -query polySmoothSmoothUVs`;
+	float $mergeTolerance = `optionVar -query polySmoothMirrorMergeVertexTolerance`;
+	int $shareTransform = `optionVar -query polySmoothShareTransform`;
+	int $toggleProxies = `optionVar -query polySmoothToggleProxies`;
+	int $renderable = `optionVar -query polySmoothLoRenderable`;
+
+	// linear options
+	int $niter = `optionVar -query proxySmoothNumIter`;
+	int $ediv = `optionVar -query proxySmoothEdivisions`;
+	float $volume = `optionVar -query proxySmoothVolume`;
+	float $roundness = `optionVar -query proxySmoothRoundness`;
+	
+	// Get the current value of the "Convert Selection" option var. Then
+	// set the value of the optionVar to do the selection conversion
+	// and finally set it back to2 the original value, after the operation
+	// has been performed. This is so that the operation succeeds even when
+	// the object (not faces) is selected and "Convert Selection" is not
+	// toggled on.
+	//
+	int $origConvertSelVarValue = `optionVar -query polyAutoConvertAction`;
+	optionVar -intValue polyAutoConvertAction 1;
+	
+	// hook up node to shape manually, setup cage controls
+	$cmd = "polySmoothProxySetupNode( " + $mth + "," +
+		   							  $sdt + "," +
+									  $ovb + "," +
+									  $ofb + "," +
+									  $ofc + "," +
+									  $ost + "," +
+									  $ocr + "," +
+									  $dv + "," + $peh + "," + $bndry + ", " + $cont + "," +
+									  $kb + "," + $ksb + "," + $khe + "," + $suv + "," +
+									  $kmb + "," + $kt + "," + $niter + "," +
+									  $ediv + "," + $volume + "," + $roundness + "," +
+									  $base + "," + $tr + "," + $sd + "," + $ll + "," + $hl + "," +
+									  $mirror + "," + $mirrorAxis + "," + 
+									  $mergeTolerance + "," + $shareTransform + "," + $renderable + "," +  $toggleProxies + ")";
+	
+	// Set the "Convert Selection" option var back to original state.
+	//
+	optionVar -intValue polyAutoConvertAction $origConvertSelVarValue;
+	
+	return $cmd;
+}
+
+global proc string performSmoothProxy (int $option)
+{
+	string $cmd="";
+
+	switch ($option) {
+	case 0:
+		eval( assembleCmd() );
+		break;
+
+	case 1:
+		smoothProxyOptions;
+		break;
+
+	default:
+		$cmd = assembleCmd();
+	}
+
+	return $cmd;
+}
+

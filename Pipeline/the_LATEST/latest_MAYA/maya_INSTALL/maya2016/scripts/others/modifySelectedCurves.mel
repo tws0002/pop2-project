@@ -1,0 +1,473 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  2003
+//
+
+
+proc vector[] getNewFrame( vector $newDir, vector $frame[] )
+{
+	vector $out[3];
+	$out[0] = $newDir;
+	vector $cvec = $frame[0] ^ $newDir;
+	float $len = mag( $cvec );
+	if( $len > 0.0000001 ){
+		$cvec = $cvec/$len;
+		if( $len > 1.0 ){
+			// avoid out of range in following asin call
+			$len = 1.0;
+		}
+		float $a = asin( $len )/2.0;
+		float $c = cos( $a );
+		float $s = sin( $a );
+		vector $w = $cvec ^ $frame[2];
+		$out[2] = ($c*$c)*$frame[2] + (2*$s*$c)*$w
+				+ ($s*$s * ($frame[2]*$cvec)) * $cvec
+				+ $s*$s * ($cvec ^ $w);
+		$out[1] = $newDir ^ $out[2];
+	} else {
+		// the newDir is either the same as
+		// the oldDir or the opposite
+		if( $frame[0] * $newDir < 0 ){
+			$out[2] = -1 * $frame[2];
+		} else {
+			$out[2] = $frame[2];
+		}
+		$out[1] = $frame[0] ^ $out[2];
+	}
+	return $out;
+}
+
+proc vector[] getStartDefFrame( vector $along )
+{
+	vector $out[3];
+	$len = mag( $along );
+	$along = $along/$len;
+	float $ang = atan2( $along.x, $along.z );
+
+	vector $twist = <<(-cos($ang)),0,sin($ang)>>;
+	vector $cross = $twist ^ $along;
+	float $len = mag( $cross );
+	$cross /= $len;
+
+   // vector $twist = $along ^ $cross;
+
+	$out[0] = $along;
+	$out[1] = $cross;
+	$out[2] = $twist;
+	return $out;	
+}
+
+proc deflectionsFromCurve( float $points[], vector $deflections[] )
+{
+	int $arraySize = size($points);
+	int $totalCvs = $arraySize/3; // array is xyz triples
+	if( $totalCvs < 3 ){
+		return;
+	}
+	vector $p1 = <<$points[0], $points[1], $points[2]>>;
+	vector $p2 = <<$points[3], $points[4], $points[5]>>;
+	vector $along = $p2 - $p1;
+	vector $frame[] = getStartDefFrame( $along );
+	$deflections[0] = $along; 
+	vector $pLast = $p1;
+	int $i;
+	for( $i = 1; $i < $totalCvs; $i++ ){
+		int $base = $i*3;
+		$p1 = <<$points[$base], $points[$base+1], $points[$base+2]>>;
+		vector $dif = $p1 - $pLast;
+		$deflections[$i] = << ($dif * $frame[0]),
+							 ($dif * $frame[1]),
+							 ($dif * $frame[2]) >>;
+		float $len = mag( $dif );
+		if( $len > 0.0000001 ){
+			$dif /= $len;
+			$frame = getNewFrame( $dif, $frame );
+		}
+		$pLast = $p1;
+	}
+}
+proc curveFromDeflections( vector $deflections[], float $points[] )
+{
+	int $arraySize = size($points);
+	int $totalCvs = $arraySize/3; // array is xyz triples
+	if( $totalCvs > size($deflections) ){
+		print( (uiRes("m_modifySelectedCurves.kArrayErrorDeflections")) );
+		return;
+	}
+	vector $p1 = <<$points[0], $points[1], $points[2]>>;
+	vector $along = $deflections[0];
+	vector $frame[] = getStartDefFrame( $along );
+	vector $pLast = $p1;
+	for( $i = 1; $i < $totalCvs; $i++ ){
+		int $base = $i*3;
+		vector $def = $deflections[$i];
+// print ( "def = " + $def.x + ", " + $def.y + ", " + $def.z + "\n" );
+		vector $worldDef= $def.x * $frame[0] + $def.y * $frame[1] + $def.z * $frame[2];
+		$p1 = $pLast + $worldDef;
+		$points[$base]   = $p1.x;
+		$points[$base+1] = $p1.y;
+		$points[$base+2] = $p1.z;
+		$pLast = $p1;
+		float $len = mag( $worldDef );
+		if( $len > 0.0000001 ){
+			$worldDef /= $len;
+			$frame = getNewFrame( $worldDef, $frame );
+		}
+		$pLast = $p1;
+	}
+}
+
+
+proc scaleCurvature( float $points[], int $numCvs, float $scaleFactor, float $maxCurvature, vector $deflections[] )
+{
+	$maxCurvature *= 2;
+	deflectionsFromCurve( $points, $deflections );	
+	int $i;
+	for( $i=1; $i < $numCvs; $i++ ){
+		vector $def = $deflections[$i];
+		float $len = mag( $def );
+		float $ang = (1.0 - $def.x/$len );
+		float $s = sin( $ang * 0.5 * 3.141592653589793  );
+		$ang *= $scaleFactor;
+		if( $ang > $maxCurvature ){
+			$ang = $maxCurvature;
+		}
+		float $s2 = sin( $ang * 0.5 * 3.141592653589793 );
+		float $sratio = 1.0;
+		if( $s > 0.000001 ){
+			$sratio = $s2/$s;
+		}
+		$def = <<   (1.0-$ang) * $len, 
+					$def.y * $sratio,
+					$def.z * $sratio >>;
+		float $newLen = mag( $def );
+		if( $newLen > 0.000001 ){
+			$deflections[$i] = $def * ($len/$newLen);
+		}
+	}
+	curveFromDeflections( $deflections, $points );	
+}
+
+proc smoothArray( float $points[], int $numCvs )
+{
+	int $arraySize = size($points);
+	int $totalCvs = $arraySize/3; // array is xyz triples
+	if( $numCvs < 3 || $totalCvs < $numCvs ){
+		return;
+	}
+
+	// start and end points are pinned
+	vector $prev    = << $points[0], $points[1], $points[2] >>;
+	vector $current = << $points[3], $points[4], $points[5] >>;
+
+	for( $i = 1; $i < $numCvs-1; $i++ ){
+		int $base = $i*3;
+		int $nextBase = $base+3;
+		vector $next = << $points[$nextBase], $points[$nextBase+1], $points[$nextBase+2] >>;
+		vector $newPos = $current * 0.4 + ($next + $prev) * 0.3;
+		
+		$points[$base] = $newPos.x;
+		$points[$base+1] = $newPos.y;
+		$points[$base+2] = $newPos.z;
+
+		$prev = $current;
+		$current = $next;	
+	}
+}
+
+proc curlLine( float $points[], int $numCvs, float $curlAmount, float $curlFrequency )
+{
+	int $arraySize = size($points);
+	int $totalCvs = $arraySize/3; // array is xyz triples
+	if( $numCvs < 3 || $totalCvs < $numCvs ){
+		return;
+	}
+	float $smoothPoints[] = $points;
+	int $i;
+	int $smoothness = 4;
+	for( $i = 0; $i < $smoothness; $i++ ){
+		smoothArray( $smoothPoints, $totalCvs );
+	}
+	vector $p1 = <<$smoothPoints[0], $smoothPoints[1], $smoothPoints[2]>>;
+	vector $p2 = <<$smoothPoints[3], $smoothPoints[4], $smoothPoints[5]>>;
+	vector $along = $p2 - $p1;
+	vector $frame[] = getStartDefFrame( $along );
+	vector $pLast = $p1;
+	vector $offset = <<0,0,0>>;
+	for( $i = 1; $i < $numCvs; $i++ ){
+		int $base = $i*3;
+		$p1 = <<$points[$base], $points[$base+1], $points[$base+2]>>;
+		vector $ps = <<$smoothPoints[$base], $smoothPoints[$base+1], $smoothPoints[$base+2]>>;
+		
+		vector $dif = $ps - $pLast;
+		float $len = mag( $dif );
+		float $param = $curlFrequency * (float)$i;
+		float $curl = $curlAmount;
+		if( $param < 2.0 ){
+				// ramp up start of curl
+			$curl *= ($param * 0.5);
+		}
+		vector $offset = (sin( $param ) * $frame[1] + cos( $param) * $frame[2]) * $curl;
+		$p1 += $offset;
+		$points[$base]  = $p1.x;
+		$points[$base+1]  = $p1.y;
+		$points[$base+2]  = $p1.z;
+		if( $len > 0.0000001 ){
+			$dif /= $len;
+			$frame = getNewFrame( $dif, $frame );
+		}
+		$pLast = $ps;
+	}
+	for( $i = $numCvs; $i < $totalCvs; $i++ )
+	{
+		// offset remaining cvs(if any) to avoid a jump at the last point
+		int $base = $i*3;
+		$p1 = <<$points[$base], $points[$base+1], $points[$base+2]>>;
+		$p1 += $offset;
+		$points[$base]  = $p1.x;
+		$points[$base+1]  = $p1.y;
+		$points[$base+2]  = $p1.z;
+	}
+}
+
+proc bendLine( float $points[], int $numCvs, float $bendAmount, float $bendRotate, vector $deflections[] )
+{
+	deflectionsFromCurve( $points, $deflections );	
+	int $i;
+	float $yBend = $bendAmount * $bendRotate;
+	float $zBend = $bendAmount * (1.0-$bendRotate);
+
+	for( $i=1; $i < $numCvs; $i++ ){
+		vector $def = $deflections[$i];
+		float $len = mag( $def );
+		float $yb = $yBend;
+		float $zb = $zBend;
+		if( $i < 5.0 ){
+			$yb *= (float)$i /5.0;
+			$zb *= (float)$i /5.0;
+		}
+		$def = << $def.x, $def.y+$yb, $def.z+$zb >>;
+		float $newLen = mag( $def );
+		if( $newLen > 0.000001 ){
+			$deflections[$i] = $def * ($len/$newLen);
+		}
+	}
+	curveFromDeflections( $deflections, $points );	
+}
+
+proc straightenLine( float $points[], int $numCvs, float $straightness, int $preserveLength )
+{
+	int $arraySize = size($points);
+	int $totalCvs = $arraySize/3; // array is xyz triples
+	if( $numCvs < 3 || $totalCvs < $numCvs ){
+		return;
+	}
+	if( $preserveLength ){
+		// determine start direction
+		vector $p1 = <<$points[0], $points[1], $points[2]>>;
+		vector $p2 = <<$points[3], $points[4], $points[5]>>;
+		vector $dir = $p2 - $p1;
+		float $len = mag( $dir );
+		if( $len > 0.0 ){
+			$dir = $dir/$len;
+		}
+		// build straight line from start direction
+		int $i;
+		vector $pNew, $pLast;
+		for( $i = 0; $i < $numCvs; $i++ ){
+			int $base = $i*3;
+			if( $i == 0 ){
+				$pNew = $p1;	
+				$p2 = $p1;
+			} else {
+				$p2 = <<$points[$base], $points[$base+1], $points[$base+2]>>;
+				vector $dif = $p2 - $p1;
+				$len = mag( $dif );
+				if( $straightness == 1.0 ){
+					$pNew = $pLast + ($dir * $len); 
+				} else {
+					$dif /= $len;
+					vector $newDir = $dir * $straightness + $dif * (1.0-$straightness);
+					float $newLen = mag($newDir);
+					$pNew = $pLast + ($newDir * ($len/$newLen)); 
+				}
+			}
+			$points[$base] = $pNew.x;
+			$points[$base+1] = $pNew.y;
+			$points[$base+2] = $pNew.z;
+			$pLast = $pNew;
+			$p1 = $p2;
+		}	
+		vector $offset = $pNew - $p2;
+		for( $i = $numCvs; $i < $totalCvs; $i++ ){
+			int $base = $i*3;
+			$p1 = <<$points[$base], $points[$base+1], $points[$base+2]>>;
+			$p1 += $offset;
+			$points[$base] = $p1.x;
+			$points[$base+1] = $p1.y;
+			$points[$base+2] = $p1.z;
+		}
+	} else {
+		int $endIndex = (($numCvs-1) * 3);
+		vector $p1 = <<$points[0], $points[1], $points[2]>>;
+		vector $p2 =  <<$points[$endIndex], 
+						$points[$endIndex+1], 
+						$points[$endIndex+2]>>;
+		vector $dir = $p2 - $p1;
+		$dir = $dir/((float)$numCvs-1); // offset per span
+		// build straight line from start direction
+		int $i;
+		vector $pNew, $pLast;
+		for( $i = 0; $i < $numCvs; $i++ ){
+			int $base = $i*3;
+			if( $i == 0 ){
+				$pNew = $p1;	
+			} else {
+				$pNew = $pLast + $dir;
+			}
+			if( $straightness == 1.0 ){
+				$points[$base] = $pNew.x;
+				$points[$base+1] = $pNew.y;
+				$points[$base+2] = $pNew.z;
+			} else {
+				$points[$base] = $pNew.x * $straightness +$points[$base] * (1.0-$straightness) ;
+				$points[$base+1] = $pNew.y * $straightness +$points[$base+1] * (1.0-$straightness) ;
+				$points[$base+2] = $pNew.z * $straightness +$points[$base+2] * (1.0-$straightness) ;
+			}
+			$pLast = $pNew;
+		}
+	}
+}
+
+
+
+proc smoothLine( float $points[], int $numCvs, float $smoothAmount, float $dummy )
+{
+	int $i;
+	int $smoothness = $smoothAmount + 1.0;
+	for( $i = 0; $i < $smoothness; $i++ ){
+		smoothArray( $points, $numCvs );
+	}
+}
+
+global proc modifySelectedCurves ( string $operation, float $arg1, float $arg2 )
+{
+	// check for hairCurve current curves and reject with warning
+	if( warnIfOutputCurvesSelected( true ) ){
+		return;
+	}
+
+
+	if( ($operation == "curvature" && $arg1 == 1.0) 
+	   ||($operation == "curl" && $arg1 == 0.0) 
+	   ||($operation == "straighten" && $arg1 == 0.0) ){
+		return; // nothing to do
+	}
+
+	string $sel[] = `ls -sl`;
+	int $i, $j;
+	vector $deflections[];
+	for( $i=0; $i < size( $sel ); $i++){
+		string $obj = $sel[$i];
+		string $sh[] = `ls -s -dag $obj`;
+		if( nodeType( $obj ) == "nurbsCurve" 
+			|| nodeType( $obj ) == "bezierCurve"
+			|| ((size($sh) > 0 )&& nodeType($sh[0]) == "nurbsCurve") 
+			|| ((size($sh) > 0 )&& nodeType($sh[0]) == "bezierCurve") ){
+			
+			string $arrayRange = "";
+			string $buffer[];
+			int $numTokens = `tokenize $obj ".[:]" $buffer`;	
+			int $numCvs = 0;
+				string $curve;
+			if( $numTokens > 1 ){
+				// this must be a cv selection.. 
+				// grow range to end of curve, but only change
+				// deflections for initial range
+				if( $numTokens == 4 ){
+					// check to see if there are trailing cvs beyond selection that need offsetting	
+					int $totalCvs = `getAttr -size ($buffer[0] + ".cp")`;
+					int $endCv = $totalCvs-1;
+					string $sh[] = `ls -shapes -dag $buffer[0]`;
+					$curve = $sh[0];
+					int $startCv = $buffer[2];
+					int $lastCv   = $buffer[3];
+					$numCvs = $lastCv - $startCv + 1;
+					$arrayRange = ($buffer[0] + ".cv["+$startCv+":"+$endCv+"]");
+				} else {
+					continue; // don't know how to handle this selection
+				}
+			} else if( $numTokens == 1 ){
+				// this must be a selected nurbsCurve
+				string $sh[] = `ls -shapes -dag $obj`;
+				$curve = $sh[0];
+				$numCvs = `getAttr -size ($obj + ".cp")`;
+				$arrayRange = ($obj + ".cv["+0+":"+($numCvs-1)+"]");
+			} else {
+				continue; // don't know how to handle this selection
+			}
+			if( $numCvs < 3 ){
+				continue; // can't straighten 2 or fewer cvs
+			}
+
+			int $lockLength = false;
+			if( `attributeExists "lockLength" $curve` && `getAttr ($curve + ".lockLength")` ){
+				$lockLength = true;
+				evalEcho ( "setAttr "+$curve+".lockLength false");
+			}
+
+			float $points[] = `getAttr $arrayRange`;
+			int $arraySize = size($points);
+			int $totalCvs = $arraySize/3; // array is xyz triples
+			if( $numCvs > $totalCvs ){
+				print( (uiRes("m_modifySelectedCurves.kArrayErrorCurvature")) );
+				return;
+			}
+
+			if( $operation == "curvature" ){
+				scaleCurvature( $points, $numCvs, $arg1, $arg2, $deflections);
+			} else if ( $operation == "curl"){
+				curlLine( $points, $numCvs, $arg1, $arg2 );
+			} else if ( $operation == "smooth"){
+				smoothLine( $points, $numCvs, $arg1, $arg2 );
+			} else if ( $operation == "straighten"){
+				straightenLine( $points, $numCvs, $arg1, (int)$arg2 );
+			} else if ( $operation == "bend"){
+				bendLine( $points, $numCvs, $arg1, $arg2, $deflections );
+			} else {
+				warning( (uiRes("m_modifySelectedCurves.kUnknownOperator")) );
+			}
+
+
+			string $cmd = ("setAttr " + $arrayRange);
+			for( $j = 0; $j < $arraySize; $j++ ){
+				$cmd += (" " + $points[$j]);
+			}
+			evalEcho( $cmd );
+			if( $lockLength ){
+				evalEcho ( "setAttr "+$curve+".lockLength true");
+			}
+		}
+	}
+}

@@ -1,0 +1,167 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+// Creation Date:  Oct 1, 2004
+//
+//  Procedure Name:
+//      proxyRemove
+//
+//  Description:
+//      Removes a reference node as a proxy.
+//
+//  Input Arguments:
+//      Name of reference node
+//
+//  Return Value:
+//      None.
+//
+
+global proc proxyRemove(string $currentProxyName)
+//
+//	Description:
+//
+//		Given an existing proxy, get rid of it. We do this by breaking the
+//	link to the proxy manager, and deleting the reference file. If the proxy
+//	manager ends up with a single proxy, we delete it too, and the remaining
+//	proxy reverts to being a normal reference.
+//
+{
+	// First, check if the currentProxyName corresponds to a valid reference
+	//
+	if( !`exists isValidReference` || !`exists isActiveProxy` ){
+		source "proxyUtils.mel";
+	}
+	if( isValidReference( $currentProxyName ) == 0 ){
+		error((uiRes("m_proxyRemove.kInvalidReference")));
+		return;
+	}
+	
+	string $warningMsg = isOperationAllowedOnReference("removeProxy", $currentProxyName);
+	if($warningMsg != "")
+	{
+		warning $warningMsg;
+		return;
+	}
+
+	// Next, check if the reference node is connected to a proxy manager.
+	//
+	string $currPlug = `connectionInfo -sfd ($currentProxyName + ".proxyMsg")`;
+	string $proxyManager;
+	if( $currPlug == "" ){
+		// No proxy manager, not a proxy
+		//
+		string $errorMsg= (uiRes("m_proxyRemove.kNotProxy"));
+		error(`format -s $currentProxyName $errorMsg`);
+		return;
+	} else {
+		$proxyManager = `plugNode $currPlug`;
+	}
+
+	// Next, check if the reference is the active proxy - we don't allow
+	// removal of the active proxy.
+	//
+	if( isActiveProxy( $currentProxyName ) ){
+		string $errorMsg = (uiRes("m_proxyRemove.kActiveProxyNode"));
+		error( `format -s $currentProxyName $errorMsg`);
+		return;
+	}
+	// Now warn the user that removing a proxy in not undoable.
+	//
+	string $message = (uiRes("m_proxyRemove.kRemoveProxyMsg"));
+	$message = `format -s $currentProxyName $message`;
+	string $remove = (uiRes("m_proxyRemove.kRemove"));
+	string $cancel = (uiRes("m_proxyRemove.kCancel"));
+	string $result = `confirmDialog -title (uiRes("m_proxyRemove.kRemoveProxy"))
+						-message $message -button $remove -button $cancel -defaultButton $cancel`;
+
+	if ($result != $remove) {
+		return;
+	}
+
+	// Figure out how many proxies are left.
+	//
+	string $refConnections[] = `listConnections -t reference ($proxyManager + ".proxyList")`;
+	int $numProxies = `size($refConnections)`;
+
+	if( $numProxies == 2 ){
+		// If the proxy manager had two connections remaining,
+		// remove the connections and delete the proxy manager.
+		//
+
+		// First, break the connection from the proxy manager to the proxy.
+		//
+		disconnectAttr $currPlug ($currentProxyName + ".proxyMsg");
+
+		// Then, cleanup the msg other connection so we don't remove the active
+		// reference when we remove the proxy manager.
+		//
+		int $activeIndex = 0;
+		if( $refConnections[0] == $currentProxyName ){
+			$activeIndex = 1;
+		}
+		string $activePlug = ($refConnections[$activeIndex] + ".proxyMsg");
+		$currPlug = `connectionInfo -sfd $activePlug`;
+		disconnectAttr $currPlug $activePlug;
+		delete $proxyManager;
+	} else {
+		// Go through the connections and break/re-establish them such that the
+		// multi is not sparse.
+		//
+		// First, locate the multi that's needs to be disconnected.
+		//
+		int	$proxyIndex = 0;
+		int $freeIndex = -1;
+		while( $proxyIndex < $numProxies ){
+			string $proxyPlug=$proxyManager + ".proxyList["+$proxyIndex + "]";
+			if( $freeIndex >= 0 ){
+				string $freePlug=$proxyManager+".proxyList["+$freeIndex + "]";
+				// Disconnect this plug, and reconnect one lower
+				//
+				string $dstPlugs[] = `connectionInfo -dfs $proxyPlug`;
+				int $dstSize = size($dstPlugs);
+				if( $dstSize > 0 ){
+					int $dstIndex =0;
+					while( $dstIndex < $dstSize ){
+						disconnectAttr $proxyPlug $dstPlugs[$dstIndex];
+						connectAttr $freePlug $dstPlugs[$dstIndex];
+						$dstIndex++;
+					}
+					$freeIndex++;
+					string $srcPlug = `connectionInfo -sfd $proxyPlug`;
+					if( size($srcPlug) > 0 ){
+						disconnectAttr $srcPlug $proxyPlug;
+						connectAttr $srcPlug $freePlug;
+					}
+				}
+			} else if( $proxyPlug == $currPlug ){
+				disconnectAttr $currPlug ($currentProxyName + ".proxyMsg");
+				$freeIndex = $proxyIndex;
+			}
+			$proxyIndex++;
+		}
+	}
+	
+	// Finally, remove the file reference.
+	//
+	file -removeReference -referenceNode $currentProxyName;
+}

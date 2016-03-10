@@ -1,0 +1,20 @@
+Absolute To Relative Paths
+************************************************************************
+This page is for the express reference of people that need to use the tool. It
+will have the most updated visuals. If you're looking for the developer page,
+the :doc:`abs2reldocumentation`, or the :doc:`abs2rel` project description,
+please go to the following links above.
+
+.. Note::
+ Although it should work for any program, I've only tested it in Maya currently.
+ Use with a bit of caution.
+
+The abs2rel script is meant to speed up the process batch renaming files/folders
+within applications so that absolute paths can very quickly become relative
+without much user interaction. The script was actually originally designed as a
+companion for another script but I figured that this tool was too useful to
+not make a quick GUI out of it (Hence why they both basically have the same GUI)
+
+
+
+

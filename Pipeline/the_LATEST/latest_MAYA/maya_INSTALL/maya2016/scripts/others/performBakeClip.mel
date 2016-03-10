@@ -1,0 +1,304 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Jan 14, 2000
+//
+//  Description:
+//      This script is the bake clip option box
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+
+proc setOptionVars (int $forceFactorySettings)
+{
+	if ($forceFactorySettings || 
+		!`optionVar -exists bakeClipName`) {
+		optionVar -stringValue bakeClipName "mergedClip";
+	}
+
+	if ( $forceFactorySettings ||
+		 !`optionVar -exists mergeClipKeepOriginals`) {
+		optionVar -intValue mergeClipKeepOriginals 0;
+	}
+}
+
+//
+//  Procedure Name:
+//      bakeClipSetup
+//
+//  Description:
+//		Update the state of the option box UI to reflect the option values.
+//
+//  Input Arguments:
+//      parent               - Top level parent layout of the option box UI.
+//                             Required so that UI object names can be 
+//                             successfully resolved.
+//
+//	forceFactorySettings     - Whether the option values should be set to
+//                             default values.
+//
+//  Return Value:
+//      None.
+//
+global proc bakeClipSetup (string $parent, int $forceFactorySettings)
+{
+	// Retrieve the option settings.
+	setOptionVars( $forceFactorySettings );
+
+	setParent $parent;
+	
+	// Set the clip name.
+	//
+	string $bakeClipName = `optionVar -query bakeClipName`;
+	textFieldGrp -e -text $bakeClipName bakeClipNameGrp;
+
+	int $keep = `optionVar -query mergeClipKeepOriginals`;
+	switch ($keep) {
+	case 1:
+			radioButtonGrp -e -sl 1 mergeKeepMethod;
+			break;
+	default:
+	case 0:
+			radioButtonGrp -e -sl 1 mergeNoKeepMethod;
+			break;
+	}
+}
+
+//
+//  Procedure Name:
+//      bakeClipCallback
+//
+//  Description:
+//		Update the option values with the current state of the option box UI.
+//
+//  Input Arguments:
+//      parent - Top level parent layout of the option box UI.  Required so
+//               that UI object names can be successfully resolved.
+//
+//		doIt	- Whether the command should execute.
+//
+//		clipEd	- The name of the Clip Editor.
+//
+//  Return Value:
+//      None.
+//
+global proc bakeClipCallback (string $parent, int $doIt, string $clipEd)
+{
+    setParent $parent;
+
+	string $bakeClipName = `textFieldGrp -q -text bakeClipNameGrp`;
+	optionVar -stringValue bakeClipName $bakeClipName;
+
+    int $keep = 0;
+	if (`radioButtonGrp -q -sl mergeKeepMethod` == 1) {
+		$keep = 1;
+	}
+	optionVar -intValue mergeClipKeepOriginals $keep;
+	
+	if ($doIt)
+		performBakeClip false $clipEd;
+}
+
+
+proc string bakeClipWidgets( string $parent )
+{
+	setParent $parent;
+	
+	string $tabForm = `columnLayout -adj true`;
+
+	textFieldGrp	-label (uiRes("m_performBakeClip.kName")) 
+					-text (uiRes("m_performBakeClip.kMergedClipText"))  bakeClipNameGrp;
+
+	// whether to move originals to visor or put merged clip in visor
+	radioButtonGrp -numberOfRadioButtons 1
+		-label (uiRes("m_performBakeClip.kMergedClip")) 
+		-label1 (uiRes("m_performBakeClip.kAddToTrax")) 
+		mergeNoKeepMethod;
+
+	radioButtonGrp -numberOfRadioButtons 1
+		-label1 (uiRes("m_performBakeClip.kAddToVisor")) 
+		-shareCollection mergeNoKeepMethod
+		mergeKeepMethod;
+
+	return $tabForm;
+}
+
+global proc bakeClipOptions (string $clipEd)
+{
+	string $commandName = "bakeClip";
+
+	string $applyTitle = "Merge Clip";
+	
+	// Build the option box "methods"
+	//
+	string $callback = ($commandName + "Callback");
+	string $setup = ($commandName + "Setup");
+
+	//	Get the option box.
+	//
+	//  The value returned is the name of the layout to be used as
+	//	the parent for the option box UI.
+	//
+	string $layout = getOptionBox();
+	setParent $layout;
+
+	setOptionBoxCommandName($commandName);
+
+	setUITemplate -pushTemplate DefaultTemplate;
+	waitCursor -state 1;
+	tabLayout -scr true -tv false;	// To get the scroll bars
+
+	string $parent = `columnLayout -adjustableColumn 1`;
+
+	bakeClipWidgets $parent;
+
+	waitCursor -state 0;
+	setUITemplate -popTemplate;
+
+	//	'Apply' button.
+	//
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit
+		-label (uiRes("m_performBakeClip.kMergeClip"))
+		-command ($callback + " " + $parent + " " + 1 + " \"" + $clipEd + "\"")
+		$applyBtn;
+
+	//	'Save' button.
+	//
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + $parent + " " + 0 + "\"" + $clipEd + "\"; hideOptionBox")
+		$saveBtn;
+
+	//	'Reset' button.
+	//
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + " " + $parent + " " + 1)
+		$resetBtn;
+
+	//	Set the option box title.
+	//
+	setOptionBoxTitle (uiRes("m_performBakeClip.kMergeClipOptions"));
+
+	//	Customize the 'Help' menu item text.
+	//
+	setOptionBoxHelpTag( "MergeClip" );
+
+	//	Set the current values of the option box.
+	//
+	eval (($setup + " " + $parent + " " + 0));	
+	
+	//	Show the option box.
+	//
+	showOptionBox();
+}
+
+
+//
+//  Procedure Name:
+//      assembleCmd
+//
+//  Description:
+//		Construct the command that will apply the option box values.
+//
+//  Input Arguments:
+//      The name of the clip editor used to call this option box.
+//
+//  Return Value:
+//      None.
+//
+proc string assembleCmd(string $clipEd)
+{
+	string $cmd;
+
+	setOptionVars(false);
+
+	string $bakeClipName = `optionVar -query bakeClipName`;
+
+	int $keep = `optionVar -query mergeClipKeepOriginals`;
+
+	$cmd =	"doMergeClipArgList 1 { " +
+				"\"" + $bakeClipName + "\"" +		
+				",\"" + $clipEd + "\"" +
+				",\"" + $keep + "\"" +		
+			" };";
+
+	return $cmd;
+}
+
+//
+//  Procedure Name:
+//      performBakeClip
+//
+//  Description:
+//		Add a bake between two clips. A bake node will be created and 
+//		a weighting curve will be added to the bake node.
+//
+//  Input Arguments:
+//      0 - Execute the command.
+//      1 - Show the option box dialog.
+//      2 - Return the command.
+//
+//  Return Value:
+//      None.
+//
+global proc string performBakeClip (int $action, string $clipEd)
+{
+	string $cmd = "";
+
+	switch ($action) {
+
+		//	Execute the command.
+		//
+		case 0:
+			//	Retrieve the option settings
+			//
+			setOptionVars(false);
+
+			//	Get the command.
+			//
+			$cmd = `assembleCmd($clipEd)`;
+
+			//	Execute the command with the option settings.
+			//
+			if ($cmd != "")
+			    evalEcho($cmd);
+			break;
+
+		//	Show the option box.
+		//
+		case 1:
+			bakeClipOptions($clipEd);
+			break;
+		case 2:
+			//	Get the command.
+			//
+			$cmd = `assembleCmd($clipEd)`;
+	}
+	return $cmd;
+}

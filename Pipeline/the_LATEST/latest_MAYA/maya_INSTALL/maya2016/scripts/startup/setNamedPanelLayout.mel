@@ -1,0 +1,175 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+global proc setNamedPanelLayout( string $whichNamedLayout ) {
+	global string $gMainPane;
+
+	string $configName = `getPanel -cwl $whichNamedLayout`;
+	int	   $fixed[];
+	string $labels[];
+	string $types[];
+	string $create[];
+	string $edit[];
+	string $panelType;
+	string $panelName;
+	string $visPanels[4];
+	int    $exists = false;
+	int	   $i,$numberOfPanels;
+
+	if ( ($whichNamedLayout == localizedPanelLabel( "Stereo Persp" ) )||
+	     ($whichNamedLayout == localizedPanelLabel( "Stereo Persp/Outliner" ) )
+	   )		
+	{
+	   //ensure plugin stereoCamera be loaded
+           python("from maya.app.stereo import stereoCameraUtil");
+           python("stereoCameraUtil.loadPlugin()");
+	}
+
+
+	if ($configName == "") {
+		string $msg = (uiRes("m_setNamedPanelLayout.kArrangeNotFound"));
+		warning `format -s $whichNamedLayout $msg`;
+	} else {
+		if (`panelHistory -exists "mainPanelHistory"`) {
+			panelHistory -e -suspend true "mainPanelHistory";
+		}
+
+		if (`paneLayout -exists $gMainPane`) {
+			//  
+			//  get state arrays.
+			//
+			$fixed = `panelConfiguration -q -isFixedState $configName`;
+			$labels = `panelConfiguration -q -labelStrings $configName`;
+			$types = `panelConfiguration -q -typeStrings $configName`;
+			$create = `panelConfiguration -q -createStrings $configName`;
+			$edit = `panelConfiguration -q -editStrings $configName`;
+
+			//  build an array of visible panels and make sure that 
+			//  they are parented to the main pane.
+			//
+			$numberOfPanels = `panelConfiguration -query -numberOfPanels $configName`;
+			for ($i = 0; $i < $numberOfPanels; $i++) {
+				$panelName = `getPanel -withLabel $labels[$i]`;
+				if ($panelName != "") {
+					if ("" == `panel -q -control $panelName`) {
+						$panelType = `getPanel -typeOf $panelName`;
+						eval ($panelType + " -e -p $gMainPane " + $panelName);
+					}
+
+					if (`panel -q -to $panelName`) {
+						string $msg = (uiRes("m_setNamedPanelLayout.kCantUsePanel"));
+						string $pnl = `panel -q -label $panelName`;
+						warning `format -s $pnl $msg`;
+						$visPanels[$i] = "";
+					} else {
+						$visPanels[$i] = $panelName;
+					}
+
+					if ($fixed[$i]) {
+						//
+						// Reset state.
+						//
+						string $editStr = ("int $menusOkayInPanels = `optionVar -q allowMenusInPanels`; string $editorName; string $panelName = \""+ $panelName + "\"; "+ $edit[$i]);
+						eval ($editStr);
+					}
+				} else {
+					//  Make a new panel
+					//
+					string $makeStr = ("int $menusOkayInPanels = `optionVar -q allowMenusInPanels`; string $editorName; string $panelName;"+$create[$i]);
+					eval ($makeStr);
+					$panelName = `getPanel -wl $labels[$i]`;
+
+					if ("" == $panelName) {
+						string $msg = (uiRes("m_setNamedPanelLayout.kProblem"));
+						warning `format -s $whichNamedLayout $msg`;
+					} else {
+						//  Parent it to main pane.
+						//
+						$panelType = `getPanel -typeOf $panelName`;
+						eval ($panelType + " -e -p $gMainPane " + $panelName);
+						$visPanels[$i] = $panelName;
+
+						//  update the config.
+						//
+						panelConfiguration -e 
+							-replacePanel ($i+1)
+							$fixed[$i]
+							`panel -q -label $panelName` 
+							$types[$i] $create[$i] $edit[$i] $configName;
+					}
+				}
+			}
+			
+			int $configurationChange = true;
+			int $previousNumberOfPanels = `paneLayout -query -numberOfVisiblePanes $gMainPane`;
+			string $currPane;
+
+			if ($numberOfPanels == $previousNumberOfPanels) {
+				$configurationChange = false;
+				for ($i = 0; $i < $numberOfPanels; $i++) {
+					if (0 == $i)      $currPane = `paneLayout -query -pane1 $gMainPane`;
+					else if (1 == $i) $currPane = `paneLayout -query -pane2 $gMainPane`;
+					else if (2 == $i) $currPane = `paneLayout -query -pane3 $gMainPane`;
+					else if (3 == $i) $currPane = `paneLayout -query -pane4 $gMainPane`;
+					
+					if ($visPanels[$i] != $currPane) {
+						$configurationChange = true;
+						break;
+					}
+				}
+			}
+
+			//  reconfigure the main pane.
+			//
+			if ($configurationChange) {
+				paneLayout -e -manage false $gMainPane;
+				for ($i = 0; $i < $numberOfPanels; $i++) {
+					if ("" != $visPanels[$i]) {
+						paneLayout -e -setPane $visPanels[$i] ($i+1) $gMainPane;
+					}
+				}
+				eval `panelConfiguration -q -cfs $configName`;
+				paneLayout -e -manage true $gMainPane;
+				setFocus `paneLayout -q -p1 $gMainPane`;
+			} else {
+				// No change in panels
+				//
+				paneLayout -e -manage false $gMainPane;
+				eval `panelConfiguration -q -cfs $configName`;
+				paneLayout -e -manage true $gMainPane;
+			}
+		}
+
+		if (`panelHistory -exists "mainPanelHistory"`) {
+			panelHistory -e -suspend false "mainPanelHistory";
+		}
+		
+		// MAYA-48298: Always take out property editor panel from Hypershade 
+		// for the "Hypershade/Persp" layout.
+		global string $gLookdevPropertyPanel;
+		if ($whichNamedLayout == localizedPanelLabel("Hypershade/Persp")) {
+			hideHypershadeWindow($gLookdevPropertyPanel);	
+		} 	
+	}
+	
+	updateToolbox();
+}

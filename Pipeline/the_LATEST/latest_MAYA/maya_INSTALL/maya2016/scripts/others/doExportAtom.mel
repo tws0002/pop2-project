@@ -1,0 +1,118 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//	Procedure Name:
+//		doExportAtom
+//
+//	Description:
+//		This mel script is used to export a .atom file and optionally
+//		an offline (.editMA) file containing animation and other drivers
+//		of selected objects in the scene.
+//
+//	Input Arguments:
+//	$version: The version of this option box.  Used to know how to 
+//	interpret the $args array. Currently supported versions are:
+//		Version 1: Maya 2013
+//			$options[0]: .atom file name
+//
+//
+global proc doExportAtom(int $version, string $options[])
+{
+	string $filename = $options[0];
+
+	// Enable file command support for channels, constraints and
+	// expressions so that the file command does not temporarily
+	// disconnect them (even if we do not export them, we may want to
+	// bake them)
+	//
+	int $chnlOpt = `file -q -chn`;
+	int $conOpt = `file -q -constraints`;
+	int $expOpt = `file -q -expressions`;
+	file -chn 1; file -constraints 1; file -expressions 1;
+
+	// Check whether we should create an offline file to store
+	// constraints or setDrivenKey info
+	//
+	int $sdk = exportAnimGetSDK();
+	int $con = exportAnimGetConstraint();
+	string $exportEditsFile;
+	if ($sdk || $con) {
+		int $hierarchy = exportAnimGetHierarchy();
+		string $sel[];
+		if ($hierarchy) {
+			$sel = `ls -sl`;
+			select -hierarchy;
+		}
+
+		if ($con) {
+			// deselect constraints or they won't be exported
+			if (!$hierarchy)
+				$sel = `ls -sl`;
+			select -d `ls -sl -type constraint`;
+		}
+		
+		$exportEditsFile = dirname($filename);
+		$exportEditsFile += ("/" + basename($filename,".atom"));
+		$exportEditsFile += ".editMA";
+
+		string $exportCmd = ("exportEdits -f -type \"editMA\" -selected ");
+		if ($sdk) {
+			$exportCmd += ("-includeSetDrivenKeys ");
+		}
+		if ($con) {
+			$exportCmd += ("-includeConstraints ");
+		}
+		$exportCmd += ("\""+$exportEditsFile+"\"");
+		if (catchQuiet(`eval $exportCmd`)) {
+			$exportEditsFile = "";
+		}
+
+		if ($hierarchy || $con) {
+			// Restore the selection
+			//
+			select -r $sel;
+		}
+	}
+
+	// Generate the export atom command
+	//
+	string $cmd = "file -force -options \"precision=8";
+
+	if (size($exportEditsFile) > 0) {
+		$cmd += (";exportEdits="+$exportEditsFile);
+	}
+	
+	if (! `exists animExportGetCommand`) {
+		source "exportAnimSharedOptions";
+	}
+	$cmd += animExportGetCommand();
+	
+	$cmd += "\" -typ \"atomExport\" -es ";
+	$cmd += ("\""+$filename+"\"");
+	evalEcho $cmd;
+
+	// Restore the file options to their previous values
+	//
+	file -chn $chnlOpt;
+	file -constraints $conOpt;
+    file -expressions $expOpt;
+}

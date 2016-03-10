@@ -1,0 +1,183 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+// Creation Date:  30 October 1996
+//
+// Description:
+//     Declares 'shellWnd' command for creating the "Command Shell" window
+//     as an alternate command input.
+//
+
+
+//
+//  Procedure Name:
+//      cmdShellPrompt
+//
+//  Description:
+//      Prompts user to enter a new string for the prompt used by the cmdShell widget.
+//      The new value is saved to the option-variable "cmdShellPrompt".
+//
+//  Return Value:
+//      None.
+//
+global proc cmdShellPrompt () 
+{
+	string $returnValue;
+	string $shellNewPrompt;
+	string $shellOldPrompt = `cmdShell -q -prompt cmdShellWnd|shellForm|shell`;
+	
+	string $ok = (uiRes("m_shellWnd.kOK"));
+	$returnValue = `promptDialog 
+					-title (uiRes("m_shellWnd.kChangePromptTitle")) 
+					-message (uiRes("m_shellWnd.kEnterNewPromptString"))  
+					-text $shellOldPrompt
+					-button $ok  -button (uiRes("m_shellWnd.kCancel")) -defaultButton $ok 
+					-parent cmdShellWnd`;
+					
+	if ($returnValue == $ok) {
+		$shellNewPrompt = `promptDialog -q`;
+		if ($shellNewPrompt != "") {
+			cmdShell -edit -prompt $shellNewPrompt cmdShellWnd|shellForm|shell;
+			optionVar -stringValue cmdShellPrompt $shellNewPrompt;
+		}
+	}
+}
+
+
+//  Procedure Name:
+//      historyLengthPrompt
+//
+//  Description:
+//      Prompts user to enter a new integer for the number of history lines 
+//	used by the cmdShell widget.
+//
+//  Return Value:
+//      None.
+//
+global proc historyLengthPrompt () 
+{
+	string $returnValue;
+        string $shellNewLengthStr;
+	int $shellNewLength;
+	int $shellOldLength = `cmdShell -q -numberOfHistoryLines cmdShellWnd|shellForm|shell`;
+
+	// Loop until an acceptable integer is entered into the modal prompt dialog (won't accept text garbage)
+
+	string $ok  = (uiRes("m_shellWnd.kOKButton"));
+	for (;;) {
+
+		$returnValue = `promptDialog -title (uiRes("m_shellWnd.kChangeHistoryLengthTitle"))  
+		            -message (uiRes("m_shellWnd.kEnterNewHistoryLength"))  
+					-text $shellOldLength -button $ok  -button (uiRes("m_shellWnd.kCancelButton")) -defaultButton $ok 
+					-parent cmdShellWnd`;
+					
+		if ($returnValue != $ok)
+			break;
+
+		$shellNewLengthStr = `promptDialog -q`;
+                $shellNewLength = (int) $shellNewLengthStr;
+
+		// Determine if the number entered is within a reasonable bound (1000 was chosen arbitrarily)
+
+		int $isWithinBounds = $shellNewLength >= 0 && $shellNewLength <= 1000;
+
+		// Convert the string to an integer and back, and if the string is still the same then the
+		// string entered must have been a proper integer. Also, this way float values aren't accepted!
+
+		if($shellNewLengthStr == (string) $shellNewLength && $isWithinBounds) {
+			cmdShell -edit -numberOfHistoryLines $shellNewLength cmdShellWnd|shellForm|shell;
+			optionVar -intValue cmdShellHistoryLength $shellNewLength;
+			break;
+		} else {
+			string $errorMsg = (uiRes("m_shellWnd.kInvalidEntry"));
+			catch( error(`format -s $shellNewLengthStr $errorMsg`));
+		}
+	}
+
+}
+
+
+//  Procedure Name:
+//      shellWnd
+//
+//  Description:
+//      This procedure creates a window with a cmdShell widget in it
+//      as an alternate cmd input from the command window.
+//
+//  Return Value:
+//      None.
+//
+global proc shellWnd () 
+{
+	if (`window -exists cmdShellWnd`) {
+		showWindow cmdShellWnd;
+		return;
+	}
+//
+// Load option-variable values related to the command shell.
+//
+	string $shellPrompt;
+	if (`optionVar -exists cmdShellPrompt`) {
+		$shellPrompt = `optionVar -q cmdShellPrompt`;
+	} else {
+		$shellPrompt = "mel: ";
+		optionVar -stringValue cmdShellPrompt $shellPrompt;
+	}
+
+	int $shellHistoryLength;
+	if (`optionVar -exists cmdShellHistoryLength`) {
+		$shellHistoryLength = `optionVar -q cmdShellHistoryLength`;
+	} else {
+		$shellHistoryLength = 10;
+		optionVar -intValue cmdShellHistoryLength $shellHistoryLength;
+	}
+//
+// Create the Command Shell window
+//
+	window -rtf 0 -widthHeight 530 300 -menuBar true 
+		-title (uiRes("m_shellWnd.kCommandShell"))  
+		-iconName (uiRes("m_shellWnd.kShell"))  cmdShellWnd;
+	setUITemplate -pushTemplate NONE;
+
+	menu -label (uiRes("m_shellWnd.kOptions"))  -familyImage "menuIconOptions.png";
+		menuItem -label (uiRes("m_shellWnd.kChangePrompt"))  -command "cmdShellPrompt";
+		menuItem -label (uiRes("m_shellWnd.kChangeHistoryLength"))  -command "historyLengthPrompt";
+		menuItem -label (uiRes("m_shellWnd.kClear"))  -command "cmdShell -edit -clear cmdShellWnd|shellForm|shell";
+	setParent -m ..;
+
+    formLayout shellForm;
+		cmdShell -prompt $shellPrompt -numberOfHistoryLines $shellHistoryLength shell;
+		
+	formLayout -edit
+		-af shell "top" 0 
+		-af shell "left" 0
+		-af shell "bottom" 0 
+		-af shell "right" 0
+		shellForm;
+		
+	setParent ..;
+
+	setUITemplate -popTemplate;
+	showWindow cmdShellWnd;
+}
+

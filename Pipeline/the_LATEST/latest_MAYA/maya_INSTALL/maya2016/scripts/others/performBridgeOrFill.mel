@@ -1,0 +1,103 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+// Check if the current selection are edges forming a hole in a poly mesh
+global proc int isOneHoleSelected()
+{
+	// if the current selection is anything else than poly edges, return false
+	string $edges[] = `filterExpand -sm 32 -ex false`;
+	string $all[] = `ls -sl`;
+	if ( size($edges) != size($all) || size($edges) == 0 )
+		return false;
+
+	// check all the edges if they are at border, return false if there is any which is inside
+	string $edgeInfo[];
+	string $edgeFaces[] = `polyInfo -ef $edges`;	// list of faces using the edge
+	for ( $n=0; $n<size($edges); $n+=1 )
+	{
+		clear $edgeInfo;
+		tokenize $edgeFaces[$n] $edgeInfo;
+		if ( size($edgeInfo) > 3 )
+			return false;
+	}
+
+	// then go through all the edges, and check if they are all connected
+	string $edgeVertices[] = `polyInfo -ev $edges`;
+	int $edgeProcessed[];
+	$edgeProcessed[0] = true;
+	for ( $n=1; $n<size($edgeVertices); $n+=1 )
+		$edgeProcessed[$n] = false;
+
+	int $vertices[];	// this array will contain the vertices which are used by the edges
+	clear $edgeInfo;
+	tokenize $edgeVertices[0] $edgeInfo;
+	$vertices[0] = $edgeInfo[2];
+	$vertices[1] = $edgeInfo[3];
+	int $edgeCount = 1;
+
+	while ( $edgeCount != size($edgeVertices) )
+	{
+		int $progress = false;
+		for ( $n=1; $n<size($edgeVertices); $n+=1 )
+		{
+			if ( !$edgeProcessed[$n] )
+			{
+				// check all edges which are not yet processed, and see if they are connected to the previously processed edges
+				tokenize $edgeVertices[$n] $edgeInfo;
+				int $v0 = $edgeInfo[2];
+				int $v1 = $edgeInfo[3];
+				for ( $t=0; $t<size($vertices); $t+=1 )
+				{
+					if ( $v0 == $vertices[$t] )
+						$v0 = -1;
+					if ( $v1 == $vertices[$t] )
+						$v1 = -1;
+				}
+				if ( $v0 == -1 || $v1 == -1 )
+				{
+					// a new edges is found which is connected to the so far processed ones, so mark this processed as well, and register its vertices
+					$progress = true;
+					$edgeProcessed[$n] = true;
+					$edgeCount += 1;
+					if ( $v0 >= 0 )
+						$vertices[size($vertices)] = $v0;
+					if ( $v1 >= 0 )
+						$vertices[size($vertices)] = $v1;
+				}
+			}
+		}
+		if ( !$progress )
+			return false;
+	}
+
+	// finally if all the edges are at borders and connected, check if they form a closed hole
+	return size($vertices) == size($edgeVertices);
+}
+
+// this proc performs a bridge operation, unless a single hole formed by edges is selected, in which case it performs hole filling
+global proc performBridgeOrFill()
+{
+	if ( isOneHoleSelected() )
+		FillHole;
+	else
+		BridgeEdge;
+}
+

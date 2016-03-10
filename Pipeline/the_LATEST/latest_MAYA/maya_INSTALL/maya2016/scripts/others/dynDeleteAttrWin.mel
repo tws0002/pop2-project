@@ -1,0 +1,380 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  31 Oct 1996
+//
+//  Description:
+//  	Removing dynamic attributes from a selected node.
+//
+//	Contents
+//		getAttrListDDA		Return a complete list of render attributes.
+//		doDeleteDDA			Add a predefined attribute to an object.
+//		doItDDA				Do the actual deleteAttr command.
+//		okayDDA				Okay button callback.
+//		deleteDDA			Add button callback.
+//		createWinDDA		Create the window and controls.
+//		registerDDA			Register all the callbacks.
+//		resetDDA			Reset the dialog when posting.
+//		dynDeleteAttrWin	Main entry point. Create and post dialog.
+//
+
+
+// Static data used by this dialog.
+//
+global string	$gObjectsDDA[];			// List of selected objects.
+
+
+//  ========== getAttrListDDA ==========
+//
+//  Description:
+//      Return a complete list of dynamic attributes for the selected
+//      object.
+//
+proc string[]  getAttrListDDA()
+{
+	global string	$gObjectsDDA[];		// List of selected objects.
+
+	string $attrAry[], $attrFullName[];
+
+	int $i = 0, $j = 0, $lim = size($gObjectsDDA);
+
+	// Since containers store their published names for attributes and for
+	// anchors in the attributeAliasList dynamic attribute, we want to exclude
+	// it from the list of deletable items, so as to not tempt users to delete
+	// something they really shouldn't be deleting.
+	//
+	if( `objectType -isa "container" $gObjectsDDA[0]` || ($lim != 1) ){
+		for ( ; $i < $lim; $i++) {
+			int $isContainer = `objectType -isa "container" $gObjectsDDA[$i]`;
+			string $attrs[] = `listAttr -ud $gObjectsDDA[$i]`;
+			for ($j = 0 ; $j < size($attrs); $j++) {
+				if( $isContainer && ( $attrs[$j] == "attributeAliasList" ) ){
+					continue;
+				}
+				string $fName = $attrs[$j];
+				if( $lim != 1){
+					$fName += " ( " + $gObjectsDDA[$i] + " )";
+				}
+				$attrFullName[size($attrFullName)] = $fName;
+			}
+		}
+	} else {
+		$attrFullName = `listAttr -ud $gObjectsDDA`;
+	}
+	$attrAry = sort($attrFullName);
+
+	return $attrFullName;
+}
+
+
+//  ========== doDeleteDDA ==========
+//
+//  Description:
+//		Deletes the specified dynamic attribute of an object.
+//
+
+proc  doDeleteDDA( string $attr, string $object )
+{
+	deleteAttr ($object+"."+$attr);
+}
+
+
+
+//  ========== doItDDA ==========
+//
+//  Description:
+//		Execute the actual deleteAttr command. This depends on
+//		the current dialog mode. 
+//
+
+proc int  doItDDA()
+{
+	global string	$gObjectsDDA[];		// List of selected objects.
+	global string	$gDeleteAttrWin;
+
+	setParent $gDeleteAttrWin;
+
+	string	$itemAry[] = `textScrollList -q -si attrLst`;
+
+	for ($n = 0; $n < size( $gObjectsDDA ); $n++)
+	{
+		for ($i = 0; $i < size( $itemAry ); $i++)
+		{
+			textScrollList -e -ri $itemAry[$i] attrLst;
+			doDeleteDDA( $itemAry[$i], $gObjectsDDA[$n] );
+		}
+	}
+
+	dynUpdateAttrWin;		// Inform the add window to update itself.
+	dynUpdateRenameAttrWin;	// Inform the rename window to update itself.
+
+	return( 1 );
+}
+
+
+
+//  ========== okayDDA ==========
+//
+//  SYNOPSIS
+//		Okay button callback.
+//
+
+global proc  okayDDA()
+{
+	global string $gDeleteAttrWin;
+	if (`doItDDA`) window -e -vis 0 $gDeleteAttrWin;
+}
+
+
+
+//  ========== deleteDDA ==========
+//
+//  Description:
+//		Delete button callback. Delete the selected attribute
+//
+
+global proc deleteDDA()
+{
+	if (`doItDDA`) resetDDA();
+}
+
+global proc enableBtnsDDA()
+{
+	global string $gDeleteAttrWin;
+	setParent $gDeleteAttrWin;
+
+	if (`textScrollList -q -nsi attrLst` == 0) {
+		disable -v on okBtn;
+		disable -v on deleteBtn;
+	} else {
+		disable -v off okBtn;
+		disable -v off deleteBtn;
+	}
+}
+
+//  ========== createWinDDA ==========
+//
+//  SYNOPSIS
+//		Create the window and all the controls.
+//
+
+proc  createWinDDA()
+{
+	global string $gDeleteAttrWin;
+	
+	window 
+		-title (uiRes("m_dynDeleteAttrWin.kDeleteAttribute"))  
+		-minimizeButton false 
+		-maximizeButton false 
+		-width 285 
+		-height 410 
+		-retain
+		$gDeleteAttrWin;
+	
+	formLayout -nd 100 workLyt;
+	
+	// Create user controls.
+	//
+	button -label (uiRes("m_dynDeleteAttrWin.kOK"))  -h 26 okBtn;
+	button -label (uiRes("m_dynDeleteAttrWin.kDelete"))  -h 26 deleteBtn;
+	button -label (uiRes("m_dynDeleteAttrWin.kClose"))  -h 26 cancelBtn;
+
+	// Create a scrolled list for the attribute names.
+	//
+	textScrollList -allowMultiSelection true -sc "enableBtnsDDA" attrLst;	
+
+	// Add attributes to scrolled list.
+	//
+	string	$attrAry[] = getAttrListDDA();
+	
+	for ($i = 0; $i < size( $attrAry ); $i++)
+	{
+		textScrollList -e -a $attrAry[$i] attrLst;
+	}	
+
+	separator -horizontal true sep1;
+	formLayout -e
+		-af attrLst left 0
+		-af attrLst top 0
+		-af attrLst right 0
+		-ac attrLst bottom 5 sep1
+
+		-af okBtn left 5
+		-ap okBtn right 3 33
+		-af okBtn bottom 5
+
+		-ap deleteBtn left 2 33
+		-ap deleteBtn right 3 66
+		-af deleteBtn bottom 5
+		
+		-ap cancelBtn left 2 66
+		-af cancelBtn right 5
+		-af cancelBtn bottom 5 
+
+		-af sep1 left 0
+		-af sep1 right 0
+		-ac sep1 bottom 5 okBtn
+		workLyt;
+
+	disable okBtn;
+	disable deleteBtn;
+}
+
+
+
+//  ========== registerDDA ==========
+//
+//  SYNOPSIS
+//		Register the callbacks.
+//
+
+proc registerDDA()
+{
+	global string $gDeleteAttrWin;
+	setParent $gDeleteAttrWin;
+
+	button -e -c ("okayDDA") okBtn;
+	button -e -c ("deleteDDA") deleteBtn;
+	button -e -c ("window -e -vis 0 "+$gDeleteAttrWin) cancelBtn;
+}
+
+
+//  ========== resetDDA ==========
+//
+//  Description:
+//		Called when the dialog is posted,
+//
+
+global proc  resetDDA()
+{
+	global string   $gObjectsDDA[];		// List of selected objects.
+	global string	$gDeleteAttrWin;
+
+	setParent $gDeleteAttrWin;
+
+	textScrollList -e -deselectAll attrLst;
+}
+
+
+//  ========== dynDeleteAttrWin ==========
+//
+//  SYNOPSIS
+//		Create and show the Delete attribute dialog. All the dynamic 
+//		attributes are listed.  User can select and delete the attributes
+//
+
+global proc int  dynDeleteAttrWin( string $objects[] ) 
+{
+	global string	$gDeleteAttrWin = "DeleteAttrWin";
+	global string	$gObjectsDDA[];
+	global int		$gDynDeleteAttrUpdateJob = 0;
+
+	// If $objects[] is empty, then use the current selection list.
+	//
+	if (size( $objects ) == 0)
+	{
+		string	$pObjects[] = `selectedNodes`;
+
+		if (size( $pObjects ) == 0)
+		{
+			// If the window is not yet open, just issue an error.
+			// If it is already open, disable the Okay and Delete buttons
+			//
+			if ( `window -exists $gDeleteAttrWin` && `window -q -vis $gDeleteAttrWin` ){
+				setParent $gDeleteAttrWin;
+				textScrollList -e -deselectAll attrLst;
+				disable okBtn;
+				disable deleteBtn;
+				window -e -title (uiRes("m_dynDeleteAttrWin.kNothingSelected")) $gDeleteAttrWin;
+				return( 1 );
+			} else {
+				error (uiRes("m_dynDeleteAttrWin.kNoObjectsSelected"));
+				return( 0 );
+			}
+		}
+		else
+		{
+			$gObjectsDDA = $pObjects;
+		}
+	}
+	else
+	{
+		$gObjectsDDA = $objects;
+	}
+
+
+	// The window is created only once.
+	//
+	if ( ! `window -exists $gDeleteAttrWin`) {
+		createWinDDA;
+		registerDDA;
+	} else {
+		// Add attributes to scrolled list.
+		//
+		setParent $gDeleteAttrWin;
+
+		string	$attrAry[] = getAttrListDDA();
+		textScrollList -e -ra attrLst;
+
+		for ($i = 0; $i < size( $attrAry ); $i++)
+		{
+			textScrollList -e -a $attrAry[$i] attrLst;
+		}	
+
+		disable okBtn;
+		disable deleteBtn;
+	}
+
+	// Set the window title to indicate if one or more objects
+	// are selected.
+	//
+	setParent $gDeleteAttrWin;
+
+	if (size( $gObjectsDDA ) > 1)
+	{
+		
+		string $deleteAttribTitle = (uiRes("m_dynDeleteAttrWin.kDeleteAttribTitle"));
+		window -e -title (`format -s $gObjectsDDA[0] $deleteAttribTitle`) $gDeleteAttrWin;
+	}
+	else
+	{
+		string $windowTitle		  = (uiRes("m_dynDeleteAttrWin.kWindowTitle"));
+		window -e -title (`format -s $gObjectsDDA[0] $windowTitle`) $gDeleteAttrWin;
+	}
+
+	// Create a script job that will update the window
+	// the next time the selection changes.
+	//
+	if ( $gDynDeleteAttrUpdateJob == 0 ){
+		$gDynDeleteAttrUpdateJob =
+			`scriptJob -protected
+				-parent $gDeleteAttrWin
+				-event "SelectionChanged" "dynUpdateDeleteAttrWin"`;
+	}
+
+	// Reset the dialog and post it.
+	//
+	resetDDA;
+	showWindow $gDeleteAttrWin;
+	return( 1 );
+}

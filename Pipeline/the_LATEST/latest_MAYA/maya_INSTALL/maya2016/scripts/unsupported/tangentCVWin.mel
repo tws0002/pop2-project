@@ -1,0 +1,208 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:	Jan 9, 1998
+//
+//  Description:
+//      Type: tangentCVWin <-- creates a window to use this script 
+//		interactively. Basically it's a way of moving surface cv's 
+//		to help create tangency.
+//
+//	Notes: it's really helpful for corners where 3 or more surfaces come 
+//		together and you need to keep tangency between those surfaces.
+//
+//	Example:
+//		For a corner where 4 surfaces come together: while in CV component 
+//		selection mode select the 4 cv's which are on the corners of each 
+//		surface and press the "cv's that move" button (you should have done
+//		the "tangentCVWin" command before this). Then select the surrounding 
+//		cvs and press the "cv's that don't" button. Then press the "Make cv's 
+//		tangent" button at the bottom of the window - this will move those 
+//		first cv's so their xyz position is an average of all the other cv's
+//		you select.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+
+global proc string[] cvSel ()
+{
+	// This procedure reads in a selection of cv's & outputs their
+	// names
+
+	string $objs[1];
+	$objs = `ls -sl`;
+	string $result[1];
+	int $counter = 0;
+	
+	for ($z = 0; $z < size($objs); $z++)
+	{
+		
+		string $tmp = $objs[$z];
+		string $tmp2[1];
+		string $object;
+
+		// replace ".cv" with "." for ease of tokenizing
+
+		string $tmp3 = `substitute ".cv" $tmp "."`;
+		tokenize($tmp3, ".", $tmp2);
+		$object = $tmp2[0];
+		string $sets[1];
+		tokenize ($tmp2[1], "][", $sets);
+		// separate them into min & max
+
+		string $u[1];
+		string $v[1];
+		tokenize ($sets[0], ":", $u);
+		tokenize ($sets[1], ":", $v);
+		clear ($tmp2);
+		clear ($sets);
+		int $umin;
+		int $umax;
+		int $vmin;
+		int $vmax;
+
+		$umin = $u[0];
+		if (size($u[1]) != 0 )
+		{
+			$umax = $u[1];
+		}
+		else
+		{
+			$umax = $umin;
+		}
+		int $vmin = $v[0];
+		if (size($v[1]) != 0)
+		{
+			$vmax = $v[1];
+		}
+		else
+		{
+			$vmax = $vmin;
+		}
+
+		for ($x = $umin; $x <= $umax; $x++)
+		{
+			for ($y = $vmin; $y <= $vmax; $y++)
+			{
+				$result[$counter] = ($object + ".cv["+$x +"]["+$y+"]");
+				$counter = $counter+1;
+			}
+		}       
+	}
+	clear ($objs);
+	return ($result);
+}
+
+global proc makeTangent (string $moveCvs[], string $tangentCvs[])
+{
+	float $xAverage=0.0;
+	float $yAverage=0.0;
+	float $zAverage=0.0;
+
+	for ($cv in $tangentCvs)
+	{
+		$currentPos = `xform -q -ws -t $cv`;
+		$xAverage = $xAverage + $currentPos[0];
+		$yAverage = $yAverage + $currentPos[1];
+		$zAverage = $zAverage + $currentPos[2];
+	}
+
+	$xAverage = $xAverage/size ($tangentCvs);
+	$yAverage = $yAverage/size ($tangentCvs);
+	$zAverage = $zAverage/size ($tangentCvs);
+	
+	for ($cv in $moveCvs)
+	{
+		move $xAverage $yAverage $zAverage $cv;
+	}
+}
+
+global proc makeCVsTangent ()
+{
+	$moveCvs = `textScrollList -q -ai cvMoveCVTextScrollList`;
+	$tangentCvs = `textScrollList -q -ai cvTangentCVTextScrollList`;
+	makeTangent $moveCvs $tangentCvs;
+}
+
+global proc buildTangentCVWindow ( string $win )
+{
+	window 
+		-title (uiRes("m_tangentCVWin.kMakeCVsTangent"))
+		$win;
+
+	columnLayout topCVWindowLayout;
+		rowColumnLayout
+			-nc 2
+			-cw 1 200
+			-cw 2 200
+			cvRowColumnLayout;
+
+		button -w 200 -l (uiRes("m_tangentCVWin.kCVsThatMove")) cvReloadLeftButton;
+		button -w 200 -l (uiRes("m_tangentCVWin.kCVsThatDontMove")) cvReloadRightButton;
+		textScrollList 
+			-w 200
+			-h 300
+			-nr 12 
+			cvMoveCVTextScrollList;
+		textScrollList 
+			-w 200
+			-h 300
+			-nr 12
+			cvTangentCVTextScrollList;
+		
+		setParent topCVWindowLayout;
+	button -w 400 -l (uiRes("m_tangentCVWin.kMakeCvsTangent2")) makeTangentButton;
+}
+
+global proc loadCVs ( string $scrollList)
+{
+	$selectedCvs = `cvSel`;
+	textScrollList -e -ra $scrollList;
+	for ($item in $selectedCvs)
+	{
+		textScrollList -e -a $item -w 200 -h 300 $scrollList;
+	}
+	textScrollList -e -w 200 -h 300 $scrollList;
+}
+
+global proc createCallBacksCVWindow ()
+{
+	button -e -c "loadCVs \"cvMoveCVTextScrollList\"" cvReloadLeftButton;
+	button -e -c "loadCVs \"cvTangentCVTextScrollList\""  cvReloadRightButton;
+	button -e -c makeCVsTangent makeTangentButton;
+}
+
+global proc tangentCVWin ()
+{
+	$win = "tangentCVWin";
+    if (!`window -exists $win`) {
+    	buildTangentCVWindow $win;    
+		createCallBacksCVWindow;
+	}
+	showWindow $win;
+		
+}

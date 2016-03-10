@@ -1,0 +1,346 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// provided at the time of installation or download, or which otherwise accompanies 
+
+global proc ilrTextureResamplingSetDirectoryCallback(string $path, string $type)
+{
+	int $err = true;
+
+	if (`file -query -exists $path`) {
+		$path = `file -query -expandName $path`;
+ 		if (!endsWith($path, "/")) {
+ 			$path += "/";
+ 		}
+		string $typeList[] = `file -query -type $path`;
+		if (size($typeList) > 0 && $typeList[0] == "directory") {
+			setAttr -type "string" TurtleUIOptions.trDirectory $path;
+			$err = false;
+		}
+	}
+
+	if ($err) {
+		error($path + " is not a valid directory!");
+	}
+}
+
+global proc ilrTextureResamplingCallback(string $shape,
+                                         string $srcUVSetName,
+                                         string $trgUVSetName,
+                                         string $texture,
+                                         string $directory,
+                                         string $fileName,
+                                         int $width,
+                                         int $height,
+                                         int $fileFormat,
+                                         int $edgeDilation,
+                                         float $red,
+                                         float $green,
+                                         float $blue)
+{
+	//
+	// Use the texture baker to sample the texture, using the destination uv set for layout,
+	// but the source uv set when reading the texture (shading)
+	//
+
+	// Create a shading group and assign the texture to the shape
+	//
+	string $connections[] = `listConnections ($shape + ".instObjGroups")`;
+	string $oldsg = (size($connections) ? $connections[0] : "");
+	string $sg = `sets -renderable true -noSurfaceShader true -empty -name ($texture + "SG")`;
+	connectAttr -force ($texture + ".outColor") ($sg + ".surfaceShader");
+    sets -edit -forceElement $sg $shape;
+
+	// Make a uv link so the source uv set will be used when reading the texture
+	//
+	// uvLink needs the full path to the uvSetName attribute, soo we must
+	// search the uvSets and construct the full path to the source uv set
+	//
+	string $srcUVSetNameAttr = "";
+	int $numUVSets = `getAttr -size ($shape + ".uvSet")`;
+	for ($i = 0; $i < $numUVSets; $i++)
+	{
+		string $uvSetName = `getAttr ($shape + ".uvSet[" + $i + "].uvSetName")`;
+		if ($uvSetName == $srcUVSetName)
+		{
+			$srcUVSetNameAttr = $shape + ".uvSet[" + $i + "].uvSetName";
+		}
+	}
+	if (size($srcUVSetNameAttr) == 0)
+	{
+		error("UV set " + $srcUVSetName + " was not found for shape " + $shape);
+		return;
+	}
+	
+	// Make the link
+	//	
+	uvLink -make -uvSet $srcUVSetNameAttr -texture $texture;
+
+	// Create the texture bake command
+	//
+	string $cmd = "ilrTextureBakeCmd";
+	$cmd += " -target " + "\"" + $shape + "\"";
+	$cmd += " -width " + $width;
+	$cmd += " -height " + $height;
+	$cmd += " -camera " + "\"persp\"";
+	$cmd += " -directory " + "\"" + $directory + "\"";
+	$cmd += " -fileName " + "\"" + $fileName + "\"";
+	$cmd += " -fileFormat " + $fileFormat;
+	$cmd += " -uvSet " + "\"" + $trgUVSetName + "\"";
+	$cmd += " -edgeDilation " + $edgeDilation;
+	$cmd += " -backgroundColor " + $red + " " + $green + " " + $blue;
+	$cmd += " -fullShading";
+	$cmd += " -useRenderView 1";
+	
+	print($cmd + "\n");
+
+	// Display render view window
+	//
+	if (true)
+	{
+		ilrRenderWindow;
+	}
+
+	// Run the command
+	//
+	catch ( eval($cmd) );
+	
+	// Restore old shader connection
+	//
+	if (size($oldsg))
+	{
+		sets -edit -forceElement $oldsg $shape;
+    }
+    
+    // Clean up
+    //
+    delete $sg;
+}
+
+global proc string ilrGetTextureResamplingCmdString()
+{
+	string $cmd = "ilrTextureResamplingCallback";
+
+	string $sel[] = `ls -selection`;
+	if (!size($sel)) {
+		error("No shape selected!");
+		return "";
+	}
+	if (size($sel) > 1) {
+		warning("More than one shape selected! Only first shape will be used.");
+	}
+	$shapes = `listRelatives -shapes $sel[0]`;
+
+	if (!size($shapes)) {
+		error("No shape selected!");
+		return "";
+	}
+	$shape = longNameOf($shapes[0]);
+	if (!size($shape)) {
+		error("No shape selected!");
+		return "";
+	}
+	$cmd += " \"" + $shape + "\"";
+
+	string $srcUVSet = `getAttr TurtleUIOptions.trSourceUvSet`;
+	if (!size($srcUVSet)) {
+		error("No source uv set specified!");
+		return "";
+	}
+	$cmd += " \"" + $srcUVSet + "\"";
+
+	string $trgUVSet = `getAttr TurtleUIOptions.trTargetUvSet`;
+	if (!size($trgUVSet)) {
+		error("No target uv set specified!");
+		return "";
+	}
+	$cmd += " \"" + $trgUVSet + "\"";
+
+	string $connections[] = `listConnections TurtleUIOptions.trTexture`;
+	if (!size($connections)) {
+		error("No texture specified!");
+		return "";
+	}
+	$cmd += " \"" + $connections[0] + "\"";
+
+	string $directory = `getAttr TurtleUIOptions.trDirectory`;
+	if (!size($directory)) {
+		error("No directory specified!");
+		return "";
+	}
+	$cmd += " \"" + $directory + "\"";
+
+	string $fileName = `getAttr TurtleUIOptions.trFile`;
+	if (!size($fileName)) {
+		error("No file name specified!");
+		return "";
+	}
+	$cmd += " \"" + $fileName + "\"";
+
+	string $width = `getAttr TurtleUIOptions.trWidth`;
+	if (!size($width)) {
+		error("No width specified!");
+		return "";
+	}
+	$cmd += " " + $width;
+
+	string $height = `getAttr TurtleUIOptions.trHeight`;
+	if (!size($height)) {
+		error("No height specified!");
+		return "";
+	}
+	$cmd += " " + $height;
+
+	string $fileFormat = `getAttr TurtleUIOptions.trFileFormat`;
+	if (!size($fileFormat)) {
+		error("No file format specified!");
+		return "";
+	}
+	$cmd += " " + $fileFormat;
+
+	string $edgeDilation = `getAttr TurtleUIOptions.trEdgeDilation`;
+	if (!size($edgeDilation)) {
+		error("No edge dilation specified!");
+		return "";
+	}
+	$cmd += " " + $edgeDilation;
+
+	float $backGroundColor[] = `getAttr TurtleUIOptions.trBackgroundColor`;
+	if (!size($backGroundColor)) {
+		error("No background color specified!");
+		return "";
+	}
+	$cmd += " " + $backGroundColor[0];
+	$cmd += " " + $backGroundColor[1];
+	$cmd += " " + $backGroundColor[2];
+
+	print($cmd + "\n");
+
+	return $cmd;
+}
+
+global proc ilrTextureResamplingEditor()
+{
+	// Remove any existing UI to avoid duplicate element names
+	//
+	if(`window -query -exists ilrTextureResamplingMainWindow`) {
+		deleteUI ilrTextureResamplingMainWindow;
+	}
+
+	// Build the UI
+	//
+	string $oldParent = `setParent -query`;
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	string $window = `window -title "Turtle Texture Resampling Editor" -resizeToFitChildren true ilrTextureResamplingMainWindow`;
+	string $form = `formLayout`;
+	string $body = `columnLayout -rowSpacing 2 -adjustableColumn true`;
+
+		attrNavigationControlGrp -label "Texture"
+			-attribute "TurtleUIOptions.trTexture"
+			-columnAlign 1 "right" 
+			ilrTextureResamplingTextureField;
+		
+		attrControlGrp -label "Source UV Set" 
+			-attribute "TurtleUIOptions.trSourceUvSet"
+			ilrTextureResamplingSrcUVSetField;
+			
+		attrControlGrp -label "Target UV Set" 
+			-attribute "TurtleUIOptions.trTargetUvSet"
+			ilrTextureResamplingTrgUVSetField;
+
+		rowLayout -numberOfColumns 2
+		          -columnWidth2 377 20
+		          -columnAttach 1 "left" 0
+		          -columnAttach 2 "left" 5;
+			
+			attrControlGrp -label "Directory"
+				-attribute "TurtleUIOptions.trDirectory"
+				ilrTextureResamplingDirectoryField;
+			
+			symbolButton -image "navButtonBrowse.xpm" ilrTextureResamplingDirectoryBrowserButton;
+			
+			button -edit -command ("fileBrowser \"ilrTextureResamplingSetDirectoryCallback\" \"Set Directory\" \"\" 4") ilrTextureResamplingDirectoryBrowserButton;
+
+		setParent ..;
+
+		attrControlGrp -label "File Name" 
+			-attribute "TurtleUIOptions.trFile"
+			ilrTextureResamplingFileNameField;
+		
+		attrControlGrp -label "Width" 
+			-attribute "TurtleUIOptions.trWidth"
+			ilrTextureResamplingWidthField;
+			
+		attrControlGrp -label "Height" 
+			-attribute "TurtleUIOptions.trHeight"
+			ilrTextureResamplingHeightField;
+
+		attrEnumOptionMenuGrp -label "File Format" 
+			-attribute "TurtleUIOptions.trFileFormat"
+			-columnAlign 1 "right" 
+			ilrTextureResamplingFileFormatField;
+
+		attrControlGrp -label "Edge Dilation" 
+			-attribute "TurtleUIOptions.trEdgeDilation"
+			ilrTextureResamplingEdgeDilationField;
+			
+		attrColorSliderGrp -label "Background Color" 
+			-attribute "TurtleUIOptions.trBackgroundColor"
+			-columnAlign 1 "right" 
+			-showButton false
+			ilrTextureResamplingBackgroundColorField;
+ 			
+	setParent $form;
+	string $buttonForm = `formLayout -parent $form`;
+ 	string $applyBtn = `button -label "Apply" -command "eval(ilrGetTextureResamplingCmdString())"`;
+ 	string $closeBtn = `button -label "Close" -command ("deleteUI -window " + $window)`;
+
+	formLayout -edit
+		-attachForm     $applyBtn "left"   0
+		-attachForm     $applyBtn "bottom" 0
+		-attachPosition $applyBtn "right"  2 50
+
+		-attachPosition $closeBtn "left"   2 50
+		-attachForm     $closeBtn "bottom" 0
+		-attachForm     $closeBtn "right"  0
+		$buttonForm;
+
+	formLayout -edit
+		-attachForm    $body         "top"    4
+		-attachForm    $body         "left"   4
+		-attachControl $body         "bottom" 4 $buttonForm
+		-attachForm    $body         "right"  4
+
+		-attachNone    $buttonForm   "top"
+		-attachForm    $buttonForm   "left"   4
+		-attachForm    $buttonForm   "bottom" 4
+		-attachForm    $buttonForm   "right"  4
+		$form;
+
+	// Show the window
+	//
+	showWindow $window;
+
+	setUITemplate -popTemplate;
+	setParent $oldParent;
+}

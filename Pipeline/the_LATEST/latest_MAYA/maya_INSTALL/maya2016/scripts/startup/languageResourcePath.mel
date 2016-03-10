@@ -1,0 +1,131 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Jul 11 2005
+//
+//  Description:
+//      Helper script to centralize access to localized
+//      resources like res.mel scripts and icons.  
+//
+//      Takes the name of a resource file and returns a
+//      path to the language-appropriate version of the given file.
+//        For English, we return the name of the given file, unchanged.
+//        For other languages, the returned path points into the
+//      "localization kit" that holds all the resources for
+//      a given language.
+//        
+//        The resulting path, if not empty, is guaranteed to point
+//        to the localized version of the file.
+//    
+
+//
+// Returns the corresponding subfolder of a resource file.
+// "plug-ins" for .pres.mel
+// "scripts"  for .res.mel and _res.py
+// "icons"    for .xpm and .png
+//
+proc string getSubFolderForResourceType(string $resourceFile)
+{
+    string $subFolder = "";
+    if( size( match( "pres.mel$", $resourceFile ) ) ) {
+        $subFolder = "/plug-ins";
+    } else if( size( match( "mel$", $resourceFile ) ) ) {
+        $subFolder = "/scripts";
+    } else if( size( match( "py$", $resourceFile ) ) ) {
+        $subFolder = "/scripts";
+    } else if( size( match( "xpm$", $resourceFile ) ) ) {
+        $subFolder = "/icons";
+    } else if( size( match( "png$", $resourceFile ) ) ) {
+        $subFolder = "/icons";
+    }
+    return $subFolder;
+}
+
+//
+// Returns the environment variable separator for the current OS
+//
+proc string getEnvironmentVariableSeparator()
+{
+    string $pathSep = ":";
+    if (`about -win`)
+    {
+       $pathSep = ";";
+    }
+    return $pathSep;
+}
+
+global proc string languageResourcePath( string $file ) 
+{
+    string $path = $file;
+    
+    int $isLocalized = `about -uiLanguageIsLocalized`;
+    if( $isLocalized ) {
+        $scriptPath = `about -localizedResourceLocation`;
+        string $resourceSubfolder = getSubFolderForResourceType($file);
+        if ( $scriptPath != "") {
+            $path = ($scriptPath + $resourceSubfolder + "/" + $file);
+        }
+        
+        // Did we find the localization resource in Maya's resource folder?
+        if( `filetest -r $path` )
+        {
+            return $path;
+        }
+
+        // We didn't find  the localization resource in Maya's resource folder,
+        // lets try in the MAYA_PLUG_IN_RESOURCE_PATH folders.
+        string $searchPath = `getenv("MAYA_PLUG_IN_RESOURCE_PATH")`;
+        if (size($searchPath) > 0)
+        {
+            // Search path strings are separated with different 
+            // characters depending on the platform. 
+            string $pathSep = getEnvironmentVariableSeparator(); 
+            string $searchArray[] = stringToStringArray($searchPath, $pathSep);
+
+            for ( $dir in $searchArray ) {
+                $pluginResPath = ($dir + $resourceSubfolder + "/" + $file); 
+                
+                // Did we find the localization resource in one of
+                // the MAYA_PLUG_IN_RESOURCE_PATH folders?
+                if( `filetest -r $pluginResPath` )
+                {
+                    return $pluginResPath;
+                }
+                else
+                {
+                    // On MacOS, it might be that the resource is actually in
+                    // a folder with the lproj extension. Lets check for this case.
+                    if (`about -macOS`) {
+                        $pluginResPath = ($dir + ".lproj" + $resourceSubfolder + "/" + $file); 
+                        if( `filetest -r $pluginResPath` ) {
+                            return $pluginResPath;
+                        }
+                    }
+                }
+            }
+        }            
+    }
+    
+    // We didn't find the localization resource anywhere
+    return $path;
+}

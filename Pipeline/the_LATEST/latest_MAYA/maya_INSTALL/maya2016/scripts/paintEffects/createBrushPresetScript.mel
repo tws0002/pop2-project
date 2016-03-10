@@ -1,0 +1,160 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+proc string processString( string $inputStr )
+//
+//	Description:
+//		This proc will process the input string for output as an
+//		arg in a "bPset" command.
+//		Mainly, this proc changes all occurrences of carriage
+//		returns and line feeds to "\r" and "\n" respectively.
+//
+{
+	string $attr = $inputStr;
+	
+	// Use "substitute" repeatedly until there are no more 
+	// substitutions.
+	//
+	int $numChecks = size($attr);
+	int $i = 0;
+	for( ; $i < $numChecks; $i ++ ) {
+		string $tmp  = `substitute "\n" $attr "\\n"`;
+		$tmp  = `substitute "\r" $tmp "\\r"`;
+		if( $tmp == $attr ) {
+		 	break; 	// no more substitutions necessary
+		} else {
+			$attr = $tmp;
+			// there were some substitutions here, 
+			// so keep trying to substitute
+		}
+	}
+    $attr = `substituteAllString $attr "\"" "\\\""`;
+    $attr = `substituteAllString $attr "\'" "\\\'"`;
+	return $attr;
+}
+
+proc string getNodeValues(string $nodeName)
+{
+	int $mode = 0;
+	float $scalefac;
+	string $atrs[] = `listAttr -k -w -s -m $nodeName`;
+	string $atr;
+	string $reslt = "brushPresetSetup();";
+	// Set up the pre-set so that it will create the default brush if it doesn't exist.
+
+	// Loop through the attributes. If we find any with connections, check if they are to
+	// an anim node, if so, we will try to create a script to recreate that node and connection.
+	for ($atr in $atrs) 
+	{
+		string $objName = $nodeName +"." + $atr;
+		if( !objExists( $objName )){
+			continue;
+		}
+		if ( `connectionInfo -isDestination ($objName)` ) {
+			// It is a destination of a connection.
+			// This section of the code assumes that it is alright to break up the bPset() calls.
+            // Get all nodes connected to this brush attr "$nodeName.atr"
+			string $connections[] = `listConnections $objName`;
+            // Get the name of the attribute on the source node.
+			string $sourceAttr = `connectionInfo -sfd $objName`;
+			// Clip off just the attribute name of sourceAttr.
+			string $buffer[];
+			int $num = `tokenize $sourceAttr "." $buffer`;
+			$sourceAttr = $buffer[$num-1];
+			string $connection;
+
+	        // For every node connected to this attribute.
+			for ($connection in $connections) {
+				if (`nodeType $connection` != "time") { // Do not attempt to duplicate the time node. 
+					if (isAnimCurve( $connection )) {
+						string $animCommands[] = `getCopyAnimCurveCommands( $connection )`;
+						string $animCommand;
+						for ($animCommand in $animCommands) {
+							$reslt = $reslt + $animCommand;
+						}
+						// Finally, add script to connect the newly created to the proper attribute.
+						$reslt = $reslt + "bPsetNewNodeName( $animCurve ); ";
+						$reslt = $reslt + "bPsetConnect( \"" + $sourceAttr + "\", \"" + $atr + "\");";
+					}
+					// else, it is not an anim curve. Ignore it for the time being.
+                    // Find all writable, multi, scalar attributes on this node.
+                    //	string $lAtrs[] = `listAttr -multi -write -scalar $connection`;
+                    //	string $lAtr;
+					//	for ($lAtr in $lAtrs) {
+					//		// For each attribute found, create a script which will recreate the attribute's settings.
+					//		string $gAtr = "getAttr " + $connection +"." + $lAtr;
+					//		$reslt = $reslt + "setAttr (bPNewNodeName() + \"." + $lAtr + "\") " + eval($gAtr) + ";";
+					//	}
+				}
+			}
+		} else {
+			// No connection, just do a setAttr.
+			string $gAtr = "getAttr " + $objName;
+			$reslt = $reslt + "bPset \"" + $atr + "\" " + eval($gAtr) + "; ";
+		}
+	}
+	$reslt = $reslt + "\nbPsetName \"imageName\" \"" + `getAttr ($nodeName +".imageName")` + "\";\n";
+	$reslt = $reslt + "bPsetName \"leafImage\" \"" + `getAttr ($nodeName +".leafImage")` + "\";\n";
+	$reslt = $reslt + "bPsetName \"flowerImage\" \"" + `getAttr ($nodeName +".flowerImage")` + "\";\n";
+	$reslt = $reslt + "bPsetName \"creationScript\" \"" + `getAttr ($nodeName +".creationScript")` + "\";\n";
+	$reslt = $reslt + "bPsetName \"runtimeScript\" \"" + `getAttr ($nodeName +".runtimeScript")` + "\";\n";
+	if( objExists($nodeName +".notes") ) {
+		string $str = `getAttr ($nodeName +".notes")`;
+		$str = processString( $str );
+		$reslt = $reslt + "bPsetNotes \"notes\" \"" + $str + "\";\n";
+	}
+	$reslt = $reslt + "brushPresetApply();";
+
+	return $reslt;
+}
+
+proc string getPressureSettings()
+{
+	global string $gCreatorWireCtx;
+	string $whichCtx = $gCreatorWireCtx;
+
+	int $mapping = `dynWireCtx -q -pm1 $whichCtx`;
+	float $min   = `dynWireCtx -q -ps1 $whichCtx`;
+	float $max   = `dynWireCtx -q -px1 $whichCtx`;
+	string $str = ("presetSetPressure 1 " + $mapping + " " + $min + " " + $max + ";\n");
+
+	int $mapping = `dynWireCtx -q -pm2 $whichCtx`;
+	float $min   = `dynWireCtx -q -ps2 $whichCtx`;
+	float $max   = `dynWireCtx -q -px2 $whichCtx`;
+	$str = $str + ("presetSetPressure 2 " + $mapping + " " + $min + " " + $max + ";\n");
+
+	int $mapping = `dynWireCtx -q -pm3 $whichCtx`;
+	float $min   = `dynWireCtx -q -ps3 $whichCtx`;
+	float $max   = `dynWireCtx -q -px3 $whichCtx`;
+	$str = $str + ("presetSetPressure 3 " + $mapping + " " + $min + " " + $max + ";\n");
+
+	return $str;
+	
+}
+
+
+global proc string createBrushPresetScript( string $brushName )
+{
+	// Create a command for this button
+	string $shelfCommand = `getNodeValues $brushName`;
+	$shelfCommand = $shelfCommand + "\n" +getPressureSettings();
+	return $shelfCommand;
+}

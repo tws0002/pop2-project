@@ -1,0 +1,385 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+// Set tool to 
+// setToolTo evalTileCtx;
+global proc evalTileContextPress()
+{
+    // Get whatever it was selected
+    string $sl[] = `ls -sl`;
+
+	string $tileWarn = (uiRes("m_evalTileContext.kNoTileObjectSelected"));
+    if (size($sl) == 0) {
+		warning $tileWarn;
+		setToolTo selectSuperContext;	
+    }
+
+    string $obj = $sl[0];
+    if (nodeType($obj) == "transform") {
+		string $rel[] = `listRelatives -s $obj`;
+		$obj = $rel[0];
+    }
+
+    string $struct[] = MdGetSubdDAGStructure($obj);
+
+    if (size($struct) == 0) {
+		// exist this context 
+		// until something gets selected
+		warning $tileWarn;
+		setToolTo selectSuperContext;	
+    }
+
+    // list of all tiles (shapes) for this subdiv
+
+    global string $MdTileSubdECDisplayAxes = 0;
+
+    global string $MdTileSubdECSelection[];
+    global string $MdTileSubdECTiles[];
+    global string $MdTileSubdECTileInfo;
+    global string $MdTileSubdECTileInfoParent;
+
+    // save selection
+    $MdTileSubdECSelection = $sl;
+
+    $MdTileSubdECTiles = `listRelatives $struct[2]`;
+
+    if (objExists($MdTileSubdECTileInfoParent) == false) {
+		string $parent[] = `listRelatives -p $struct[0]`;
+	
+		//print ("Setup: " + $parent[0] + "\n");
+		//	$MdTileSubdECTileInfoParent = `createNode transform -n "tmpParent" -p $parent[0]`;
+		$MdTileSubdECTileInfoParent = `createNode transform -n "tmpParent"`;
+		
+		select -r $MdTileSubdECTileInfoParent $parent[0];
+		MdConnectNodesExtractMatrix();
+		select -cl;
+		
+		//print ("Created new parent: " + $MdTileSubdECTileInfoParent + "\n");
+    }
+	
+    //print ("New parent: " + $MdTileSubdECTileInfoParent + "\n");
+    // Now create a tileSubdInfoNode and create it to the 
+    // we need the parent
+    $MdTileSubdECTileInfo = MdConnectTileSubdInfoToShape($struct[0], $MdTileSubdECTileInfoParent);
+
+    select -r $MdTileSubdECTileInfo;
+
+    //print ("Info: " + $MdTileSubdECTileInfo + "\n");
+
+    if ($MdTileSubdECDisplayAxes ) {
+		MdConnectConeShapeToInfoSurface($MdTileSubdECTileInfo, $MdTileSubdECTileInfoParent);
+    }
+
+    // callback function
+    // 0 - setup
+    global string $MdTileSubdECCB;
+    if ($MdTileSubdECCB != "") {
+		string $cmd = ($MdTileSubdECCB + "( 0, \"" + $MdTileSubdECTileInfo + "\")");
+		catch(eval($cmd));
+    }
+
+    //    print "Context was correctly set\n";
+
+    select -cl;
+}
+
+global proc evalTileContextDrag()
+{
+    //    print "evalTileContexDrag\n"; 
+    global string $ContextSL[];
+
+    string $sl[] = `ls -sl -fl`;
+
+    draggerContext -e -sp screen evalTileCtx;
+    draggerContext -e -pr sketchPlane evalTileCtx;
+    float $ws[] = `draggerContext -query -dragPoint evalTileCtx`;
+    
+    //     print ("View plane:   " + $ws[0] + " " + $ws[1] + " " + $ws[2] + "\n");
+	//     print ("object plane: " + $op[0] + " " + $op[1] + " " + $op[2] + "\n");
+    
+    global string $MdTileSubdECTiles[];
+    global string $MdTileSubdECTileInfo;
+
+    float $wp[]=  `geoUtils -co -uv -oi -sp $ws[0] $ws[1] $MdTileSubdECTiles`;
+
+    //    print $wp;
+
+    if (size($wp) > 0) {
+		//print ("object: " + $MdTileSubdECTileInfo + "\n");
+		setAttr ($MdTileSubdECTileInfo + ".parameterU") $wp[0];
+		setAttr ($MdTileSubdECTileInfo + ".parameterV") $wp[1];
+		setAttr ($MdTileSubdECTileInfo + ".tileIndex" ) $wp[2];
+    }
+
+    // callback function
+    // 1 - setup
+    global string $MdTileSubdECCB;
+    if ($MdTileSubdECCB != "") {
+		string $cmd = ($MdTileSubdECCB + "( 1,\"" +  $MdTileSubdECTileInfo + "\")");
+		catch(eval($cmd));
+    }
+
+    refresh();
+}
+
+global proc evalTileContextRelease()
+{
+    global string $MdTileSubdECTileInfo;
+    global string $MdTileSubdECSelection[];
+    select -r $MdTileSubdECSelection;
+
+    // 2 - release
+    global string $MdTileSubdECCB;
+    if ($MdTileSubdECCB != "") {
+		string $cmd = ($MdTileSubdECCB + "( 2, \"" + $MdTileSubdECTileInfo + "\")");
+		catch(eval($cmd));
+    }
+}
+
+//
+//
+//
+global string $MdTileSubdECCB = "ETCCreateTestCurve";
+
+global proc ETCCreateTestCurve(int $what, string $info)
+{
+    //    print ("Test curve: " + $info + "\n");
+
+    switch ($what) {
+		case 0:
+			string $tx = `curve -d 3 -p 0 0 0 -p -0.0978641 0.631212 0 -p -0.125825 1.414126 0 -p 0.0978642 1.74966 0 -k 0 -k 0 -k 0 -k 1 -k 1 -k 1`;
+			
+			setAttr ($info + ".evalPos") 1;
+			
+			connectAttr -f ($info + ".outPosition") ($tx + ".translate");
+			string $angle = `createNode angleBetween`;
+			setAttr ($angle + ".vector1") 0 1 0;
+			connectAttr -f ($info + ".outNormal") ($angle + ".vector2");
+			connectAttr -f ($angle + ".euler") ($tx + ".rotate");
+			// setAttr ($tx + ".scale") .01 .3 .01;
+			
+			//	print ("PArent: " + $info + "\n");
+			
+			string $pars[] = `listRelatives -p $info`;
+			parent -r $tx $pars[0];
+			
+			break;
+    }
+}
+
+//
+//
+//
+// Some other dragger contexts to demonstrate placing curves
+//
+//
+
+global proc ETCduplicateCPObjects(string $tileSrc, string $instanceObj, string $directionMesh)
+{
+    if (nodeType($tileSrc) == "transform") {
+		string $rel[] = `listRelatives -s $tileSrc`;
+		$tileSrc = $rel[0];
+    }
+
+    string $struct[] = MdGetSubdDAGStructure($tileSrc);
+
+    if (size($struct) == 0) {
+		// exist this context 
+		// until something gets selected
+		warning (uiRes("m_evalTileContext.kNoTileObjectGiven"));
+    }
+
+    string $tiles[] = `listRelatives $struct[2]`;
+
+    int $nn[] = `polyEvaluate -v $directionMesh`;
+    int $n = $nn[0];
+
+    //    print ("Num vt: " + $n + "\n");
+    string $parent = `createNode transform -n "group"`;
+
+    for ($i=0; $i < $n; $i++) {
+
+		float $p[] = `pointPosition ($directionMesh + ".vtx[" + $i + "]")`;
+		float $cp[] = `geoUtils -co -p -cp $p[0] $p[1] $p[2] $tiles`;
+	
+		if (0) {
+			string $newObjs[] = `instance $instanceObj`;
+			move $cp[0] $cp[1] $cp[2] $newObjs[0];
+			parent $newObjs[0] $parent;
+			
+		}
+    }
+}
+
+
+global proc ETCTraceCPObjects(string $tileSrc, string $instanceObj, string $directionMesh)
+{
+    if (nodeType($tileSrc) == "transform") {
+		string $rel[] = `listRelatives -s $tileSrc`;
+		$tileSrc = $rel[0];
+    }
+	
+    string $struct[] = MdGetSubdDAGStructure($tileSrc);
+
+    if (size($struct) == 0) {
+		// exist this context 
+		// until something gets selected
+		warning (uiRes("m_evalTileContext.kNoTileObjectGiven2"));
+    }
+	
+    string $tiles[] = `listRelatives $struct[2]`;
+
+    if (size($tiles) == 0) {
+		warning (uiRes("m_evalTileContext.kNoTiles"));
+		return;
+    }
+
+    int $nn[] = `polyEvaluate -v $directionMesh`;
+    int $n = $nn[0];
+
+    //    print ("Num vt: " + $n + "\n");
+    string $parent = `createNode transform -n "group"`;
+
+    for ($i=0; $i < $n; $i++) {
+
+		float $pn[] = `geoUtils -p -n -ev -vi $i $directionMesh`;
+		float $cp[] = `geoUtils -co -p -pd $pn[0] $pn[1] $pn[2] $pn[3] $pn[4] $pn[5] $tiles`;
+	
+		if (size($cp) > 0) {
+			string $newObjs[] = `instance $instanceObj`;
+			move $cp[0] $cp[1] $cp[2] $newObjs[0];
+			parent $newObjs[0] $parent;
+		} else {
+			string $fmt = (uiRes("m_evalTileContext.kNoHit"));
+			print `format -s $i $fmt`;
+		}
+    }
+}
+
+global proc evalTileContext() 
+{
+    if (`draggerContext -q -ex evalTileCtx`) {
+		deleteUI evalTileCtx;
+    }
+ 
+    // This creates the context
+    draggerContext 
+		-pressCommand    "evalTileContextPress"
+		-dragCommand     "evalTileContextDrag"
+		-releaseCommand  "evalTileContextRelease"
+		-cursor          "crossHair"
+		-image1          "evalTileContext.xpm"
+		evalTileCtx;
+
+    setToolTo evalTileCtx;
+}
+
+
+global 
+proc ETShrinkWrap(string $src, string $dst)
+{
+    if (nodeType($src) == "transform") {
+		string $rel[] = `listRelatives -s $src`;
+		$src = $rel[0];
+    }
+	
+    if (nodeType($dst) == "transform") {
+		string $rel[] = `listRelatives -s $dst`;
+		$dst = $rel[0];
+    }
+
+    int $nn[] = `polyEvaluate -v $src`;
+    int $n = $nn[0];
+	
+    for ($i=0; $i < $n; $i++) {
+		
+		float $sp[] = `pointPosition ($src + ".vtx[" + $i + "]")`;
+		float $pn[] = `geoUtils -p -cp $sp[0] $sp[1] $sp[2] $dst`;
+		
+		if (size($pn) > 0) {
+			move $pn[0] $pn[1] $pn[2] ($src + ".vtx[" + $i + "]");
+		}
+    }
+}
+
+global 
+proc ETShrinkWrapND(string $src, string $dst, int $reverse)
+{
+    if (nodeType($src) == "transform") {
+		string $rel[] = `listRelatives -s $src`;
+		$src = $rel[0];
+    }
+	
+    if (nodeType($dst) == "transform") {
+		string $rel[] = `listRelatives -s $dst`;
+		$dst = $rel[0];
+    }
+    int $nn[] = `polyEvaluate -v $src`;
+    int $n = $nn[0];
+	
+    float $x[], $y[], $z[], $valid[];
+    for ($i=0; $i < $n; $i++) {
+		
+		float $ps[] = `geoUtils -p -n -ev -vi $i $src`;
+		
+		float $pn[];
+		if ($reverse) {
+			$ps[3] = -$ps[3];
+			$ps[4] = -$ps[4];
+			$ps[5] = -$ps[5];
+		}
+		$pn = `geoUtils -p -pd $ps[0] $ps[1] $ps[2] 
+			$ps[3] $ps[4] $ps[5] $dst`;
+		
+		if (size($pn) > 0) {
+			$x[$i] = $pn[0];
+			$y[$i] = $pn[1];
+			$z[$i] = $pn[2];
+			$valid[$i] = 1;
+			//	    move $pn[0] $pn[1] $pn[2] ($src + ".vtx[" + $i + "]");
+		} else {
+			$valid[$i] = 0;
+		}
+    }
+    for ($i=0; $i < $n; $i++) {
+		if ($valid[$i]) {
+			move $x[$i] $y[$i] $z[$i] ($src + ".vtx[" + $i + "]");
+		}
+    }
+}
+
+draggerContext 
+	-pressCommand    "SWmoveSurfacePress"
+	-dragCommand     "SWmoveSurfaceDrag"
+	-releaseCommand  "SWmoveSurfaceRelease";
+
+global proc SWmoveSurfacePress()
+{}
+
+
+global proc SWmoveSurfaceDrag()
+{}
+
+global proc SWmoveSurfaceRelease()
+{}
+
+

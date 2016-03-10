@@ -1,0 +1,266 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Procedure: importSkinMap
+//
+//	Description:
+//		This mel script is used to import a weight map for the skinning
+//		data for each joint that affects the selected skin.
+//
+//	    To use, select the skin or skins, and type "importSkinMap"
+//
+//
+
+proc int checkForLattice(string $obj) {
+	
+	string $cpShape[] = `ls -type controlPoint $obj`;
+	int $isLattice = 0;
+	if (size($cpShape) > 0) {
+		if (nodeType($obj) == "lattice") {
+			$isLattice = 1;
+		}
+	} else {
+		$cpShape = `listRelatives -pa -type controlPoint $obj`;
+		for ($cp in $cpShape) {
+			if (nodeType($cp) == "lattice") {
+				$isLattice = 1;
+				break;
+			}
+		}
+	}
+	if ($isLattice) {
+		string $warnMsg = (uiRes("m_importSkinMap.kSkippingWarn"));
+		warning(`format -s $obj $warnMsg`);
+	}
+	return $isLattice;
+}
+
+global proc int importSkinWeightMap(string $fileName, string $fileType)
+{
+	if (`about -evalVersion`){
+		// Because fopen and fprint are disabled in PLE, 
+		// importSkinWeightMap is not supported.
+		string $importSkinMap = "importSkinWeightMap";
+		string $warn = (uiRes("m_importSkinMap.kWarnMsg"));
+		warning (`format -s $importSkinMap $warn`);
+		return 0;
+	}
+
+	string $ftype[] = `file -q -type $fileName`;
+	if ($ftype[0] != "") {
+		error (uiRes("m_importSkinMap.kFileExportError"));
+		return 0;
+	}
+	
+	source "artAttrSkinCallback.mel";
+	source "artAttrSkinJointMenu.mel";
+
+	// Make sure we are in Skin Paint Weight Tool.
+ 	string $currCtx = `currentCtx`;
+	artAttrSkinToolScript 4;
+
+	string $artCmd = "artAttrSkinPaintCtx -query -exportfiletype `currentCtx`";
+    $fileType = eval( $artCmd );
+
+	// Get the selected skins.
+	int $skinCount = 0;
+	int $latticeFound = 0;
+	string $currentSelection[] = `ls -sl`;
+	string $skins[];
+	string $clusters[];
+	for ($sel in $currentSelection) {
+		if (checkForLattice($sel)) {
+			$latticeFound = 1;
+			continue;
+		}
+		
+		// Find the cluster.
+		string $buff[];
+		tokenize($sel,".",$buff);
+		string $cluster = findRelatedSkinCluster($buff[0]);
+		if ("" != $cluster) {
+			$skins[$skinCount] = $sel;
+			$clusters[$skinCount] = $cluster;
+			$skinCount++;
+		}
+	}
+
+	if (0 == $skinCount) {
+		if ($latticeFound) {
+			error (uiRes("m_importSkinMap.kLatticeError"));
+		} else {
+			error (uiRes("m_importSkinMap.kSkinError"));
+		}
+		return 0;
+	}
+
+	$fileId = fopen( $fileName, "r" );
+	if ($fileId == 0) {
+		string $error = (uiRes("m_importSkinMap.kUnabletoOpenFile"));
+		error(`format -s $fileName $error`);
+		return 0;
+	}
+
+	int $passed = 1;
+
+	// Find the file and directory name.
+	string $buff[];
+	tokenize($fileName,"/",$buff);
+	string $fn = $buff[size($buff)-1];
+	tokenize($fn,"\\",$buff);
+	$fn = $buff[size($buff)-1];	
+	$dir = substring($fileName,1,size($fileName)-size($fn));
+	tokenize($fn,".",$buff);
+	$fn = $buff[0];
+	$dir += $fn;
+
+	// Read in the master file that links the joint 
+	// names to the map names.
+	string $skinNames[];
+	string $jointNames[];
+	string $fileNames[];
+	string $clusterNames[];
+	string $skinNamesForC[];	
+	int $lineCount = 0;
+	
+	string $nextLine = `fgetline $fileId`;
+	while ( size( $nextLine ) > 0 ) {
+		int $numTokens = tokenize($nextLine,$buff);
+		if ($numTokens == 3) {
+			$skinNames[$lineCount] = $buff[0];
+			$jointNames[$lineCount] = $buff[1];
+			$fileNames[$lineCount] = $buff[2];
+			if (`objExists $buff[0]`) {
+				string $relCluster = findRelatedSkinCluster($buff[0]);
+				if ($relCluster != "") {
+					int $found = 0;
+					for ($clusterN in $clusterNames) {
+						if ($clusterN == $relCluster) {
+							$found = 1;
+							break;
+						}
+					}
+					if (! $found) {
+						int $which = size($clusterNames);
+						$clusterNames[$which] = $relCluster;
+						$skinNamesForC[$which] = $buff[0];
+					}
+				}
+			}
+			$lineCount++;
+		}
+		$nextLine = `fgetline $fileId`;
+	}
+	if (catch(`fclose $fileId`)) {
+		string $error = (uiRes("m_importSkinMap.kFileCloseError"));
+		error(`format -s $fileName $error`);
+		$passed = 0;
+	}
+
+	// Import the maps for each joint.
+ 	if ($passed) {
+
+		int $counter;
+		int $oldNormWeights[];
+ 		for ($counter = 0; $counter < size($clusterNames); $counter++) {
+			$oldNormWeights[$counter] = `getAttr ($clusterNames[$counter]+".normalizeWeights")`;
+			setAttr ($clusterNames[$counter]+".normalizeWeights") 0;
+			// set all weights to zero
+			//
+			skinPercent -prw 1.1 $clusterNames[$counter];
+		}
+			
+		// Set the paint operation to 'replace'.
+		artAttrSkinPaintCtx -e -selectedattroper "absolute" `currentCtx`;
+
+ 		$skinCount = 0;
+
+ 		for ($counter = 0; $counter < $lineCount; $counter++) {
+			string $mapFn = ($dir+"/"+$fileNames[$counter]);
+			string $jt = $jointNames[$counter];
+			string $skin = $skinNames[$counter];
+			if (`file -q -ex $mapFn`) {
+				if (`objExists $jt` && `objExists $skin`) {
+
+					// Make the joint a selected node.
+					select -r $skin;
+					artSkinSelectInfluence( "artAttrSkinPaintCtx", $jt );
+
+					// Get the cluster name.
+					string $cluster = findRelatedSkinCluster( $skin );
+					if ( size($cluster) == 0 ) 
+						continue;
+
+					string $format = (uiRes("m_importSkinMap.kImportingFile"));
+					string $infoMsg = `format -stringArg $fileNames[$counter] -stringArg $skin -stringArg $jt $format`;
+					print $infoMsg;
+
+					// Import the attribute map now.
+					artAttrSkinPaintCtx -e -importfileload $mapFn `currentCtx`;
+					getAttr -silent ($cluster+".og[0]");
+				} else {
+					if (! `objExists $jt`) {
+						string $fmt = (uiRes("m_importSkinMap.kSkippingJoint"));
+						string $infoMsg = `format -stringArg $jt $fmt`;
+						print($infoMsg);
+					} else {
+						string $fmt = (uiRes("m_importSkinMap.kSkippingSkin"));
+						string $infoMsg = `format -stringArg $skin $fmt`;
+						print($infoMsg);
+					}
+				}
+			} else {
+				string $fmt = (uiRes("m_importSkinMap.kSkippingFile"));
+				string $infoMsg = `format -stringArg $mapFn $fmt`;
+				print($infoMsg);
+			}
+		}
+
+ 		for ($counter = 0; $counter < size($clusterNames); $counter++) {
+			
+			setAttr ($clusterNames[$counter]+".normalizeWeights") $oldNormWeights[$counter];
+			select -r $skinNamesForC[$counter];
+			skinPercent -normalize true $clusterNames[$counter];
+		}
+ 	}
+
+	// Go back to the original context.
+ 	setToolTo $currCtx;
+	select -r $currentSelection;
+	
+	return $passed;
+}
+
+global proc importSkinMap( string $version, string $args[] ) {
+
+	// set the fileBrowser directory to the images dir if it exists
+	//
+	string $imageDir = (`workspace -q -rd`+"sourceimages\/");
+	if (`file -q -ex $imageDir`) {
+		workspace -dir $imageDir;
+	}
+
+	// bring up the file browser dialog so that they can choose a file name
+	//
+	string $importMap = (uiRes("m_importSkinMap.kImportMap"));
+	fileBrowser("importSkinWeightMap",$importMap,"map",0);
+}

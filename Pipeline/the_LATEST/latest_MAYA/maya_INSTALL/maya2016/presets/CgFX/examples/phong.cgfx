@@ -1,0 +1,262 @@
+//
+// cgfxBuild $Revision: #1 $ (C)2003-2006 NVIDIA Corporation
+//
+// TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THIS SOFTWARE IS
+// PROVIDED *AS IS* AND NVIDIA AND ITS SUPPLIERS DISCLAIM ALL WARRANTIES,
+// EITHER EXPRESS OR IMPLIED, INCLUDING, BUT NOT LIMITED TO, IMPLIED
+// WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE. IN
+// NO EVENT SHALL NVIDIA OR ITS SUPPLIERS BE LIABLE FOR ANY SPECIAL,
+// INCIDENTAL, INDIRECT, OR CONSEQUENTIAL DAMAGES WHATSOEVER (INCLUDING,
+// WITHOUT LIMITATION, DAMAGES FOR LOSS OF BUSINESS PROFITS, BUSINESS
+// INTERRUPTION, LOSS OF BUSINESS INFORMATION, OR ANY OTHER PECUNIARY LOSS)
+// ARISING OUT OF THE USE OF OR INABILITY TO USE THIS SOFTWARE, EVEN IF
+// NVIDIA HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+//
+
+// Uses Phong (default) Specular BRDF //
+
+////////////////////////////////////////////////////////////
+//////////////////////////////////////////// Untweakables //
+////////////////////////////////////////////////////////////
+
+float4x4 WorldITXf : WorldInverseTranspose < string UIWidget="none";>;
+float4x4 WVPXf : WorldViewProjection < string UIWidget="none";>;
+float4x4 WorldXf : World < string UIWidget="none";>;
+float4x4 ViewITXf : ViewInverseTranspose < string UIWidget="none";>;
+
+////////////////////////////////////////////////////////////
+////////////////////////////////////////////// Tweakables //
+////////////////////////////////////////////////////////////
+
+//
+// Ambient //////////////////////////////////
+//
+float3 AmbientColor : DIFFUSE <
+    string UIWidget = "Color";
+    string UIName = "Ambient";
+> = {1,1,1};
+float AmbientIntensity <
+	string UIWidget = "slider";
+	string UIName = "Ambient Intensity";
+	float UIMin = 0;
+	float UIMax = 1;
+> = 0.05;
+
+//
+// Directional0 /////////////////////////////
+//
+float3 Directional0Color : DIFFUSE <
+    string UIWidget = "Color";
+    string UIName = "Directional0";
+> = {1,1,1};
+float Directional0Intensity <
+	string UIWidget = "slider";
+	string UIName = "Directional0 Intensity";
+	float UIMin = 0;
+	float UIMax = 1;
+> = 1;
+
+float3 Directional0Dir : Direction <
+    string Object = "DirectionalLight";
+    string Space = "World";
+    string UIName = "Directional0 Direction";
+> = {0.707,-0.707,-0.707};
+
+//
+// Surface Parameters //////////////////////////////////////
+//
+// SurfColor (Untextured)
+float3 SurfColor : DIFFUSE <
+    string UIWidget = "Color";
+    string UIName = "SurfColor";
+> = {1,1,1};
+
+// AmbiColor (Untextured)
+float3 AmbiColor : AMBIENT <
+    string UIWidget = "Color";
+    string UIName = "AmbiColor";
+> = {1,1,1};
+
+// Incandescence (Untextured)
+float3 Incandescence : AMBIENT <
+    string UIWidget = "Color";
+    string UIName = "Incandescence";
+> = {0,0,0};
+
+float kDiffuse <
+	string UIWidget = "slider";
+	string UIName = "Diffuse Strength";
+	float UIMin = 0;
+	float UIMax = 1;
+> = 0.9;
+
+// Ks (Untextured)
+float Ks : SPECULAR <
+	string UIWidget = "slider";
+	string UIName = "Hilight Strength";
+	float UIMin = 0;
+	float UIMax = 1;
+> = 0.6;
+
+
+float specExpon <
+	string UIWidget = "slider";
+	string UIName = "Highlight Sharpness (Power)";
+	float UIMin = 0;
+	float UIMax = 128;
+> = 12;
+
+////////////////////////////////////////////////////////////
+////////////////////////////////// Structs and Connectors //
+////////////////////////////////////////////////////////////
+
+//
+// Vertex Buffer Structure //////////////////
+//
+struct appdata {
+	float3 Position	: POSITION;
+	float4 UV	: TEXCOORD0;
+	float4 Normal	: NORMAL0;
+	float4 Tangent	: TANGENT0;
+	float4 Binormal	: BINORMAL0;
+};
+
+//
+// Ambient Shader Connector /////////////////
+//
+struct ambiVertexOutput {
+	float4 HPosition	: POSITION;
+	float2 UV		: TEXCOORD0;
+	float3 WorldView	: TEXCOORD4;
+};
+//
+// Directional Shader Connector /////////////
+//
+struct dirVertexOutput {
+	float4 HPosition	: POSITION;
+	float2 UV		: TEXCOORD0;
+	float3 WorldNormal	: TEXCOORD2;
+	float3 WorldPos		: TEXCOORD3;
+	float3 WorldView	: TEXCOORD4;
+};
+
+////////////////////////////////////////////////////////////
+///////////////////////////////////////// Shader Programs //
+////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////
+// Vertex Shaders //////////////////////////////////////////
+////////////////////////////////////////////////////////////
+
+
+//
+// Ambient Vertex Shader ////////////////////
+//
+ambiVertexOutput ambi_vp(appdata IN) {
+	ambiVertexOutput OUT = (ambiVertexOutput)0;
+	float4 Po = float4(IN.Position.xyz, 1.0);
+	float3 Pw = mul(WorldXf, Po).xyz;
+	OUT.UV = IN.UV.xy;
+	OUT.WorldView = normalize(ViewITXf[3].xyz - Pw);
+	OUT.HPosition = mul(WVPXf, Po);
+	return OUT;
+}
+
+//
+// Directional Vertex Shader ////////////////
+//
+dirVertexOutput directional_vp(appdata IN)
+{
+	dirVertexOutput OUT = (dirVertexOutput)0;
+	OUT.WorldNormal = mul(WorldITXf, IN.Normal).xyz;
+	float4 Po = float4(IN.Position.x,IN.Position.y,IN.Position.z,1.0);
+	float3 Pw = mul(WorldXf, Po).xyz;
+	OUT.WorldPos = Pw;
+	OUT.UV = IN.UV.xy;
+	OUT.WorldView = normalize(ViewITXf[3].xyz - Pw);
+	OUT.HPosition = mul(WVPXf, Po);
+	return OUT;
+}
+
+////////////////////////////////////////////////////////////
+// Fragment Shaders ////////////////////////////////////////
+////////////////////////////////////////////////////////////
+
+
+//
+// Ambient Fragment Shader //////////////////
+//
+float4 ambi_fp(ambiVertexOutput IN,
+	uniform float3 SurfColor,
+	uniform float3 AmbiColor,
+	uniform float3 Incandescence,
+	uniform float3 AmbientColor,
+	uniform float AmbientLightIntensity) : COLOR {
+	float3 result = AmbientLightIntensity*SurfColor.xyz*AmbientColor*AmbiColor.xyz + Incandescence.xyz;
+	return float4(result.xyz,1);
+}
+
+//
+// Directional Fragment Shader //////////////
+//
+float4 directional_fp(dirVertexOutput IN,
+	uniform float3 SurfColor,
+	uniform float Kd,
+	uniform float Ks,
+	uniform float SpecExpon,
+	uniform float3 LightColor,
+	uniform float LightIntensity,
+	uniform float3 LightDir) : COLOR {
+	float3 Nn = normalize(IN.WorldNormal);
+	float3 Ln = -normalize(LightDir);
+	float ldn = dot(Ln,Nn);
+	float3 Vn = normalize(IN.WorldView);
+	float3 Hn = normalize(Vn + Ln);
+	float hdn = dot(Hn,Nn);
+	float4 litV = lit(ldn,hdn,SpecExpon);
+	ldn = litV.y * LightIntensity;
+	hdn = Ks * ldn * litV.z;
+	float3 result = ((Kd*ldn*SurfColor.xyz) + hdn) * LightColor;
+	return float4(result.xyz,1.0);
+}
+
+////////////////////////////////////////////////////////////
+////////////////////////////////////////////// Techniques //
+////////////////////////////////////////////////////////////
+
+technique main {
+	// Ambient
+	pass AmbientPass {
+	    VertexProgram = compile vp40 ambi_vp();
+	    DepthTestEnable = true;
+	    DepthMask = true;
+	    CullFaceEnable = false;
+	    BlendEnable = false;
+	    FragmentProgram = compile fp40 ambi_fp(
+			SurfColor,
+			AmbiColor,
+			Incandescence,
+		AmbientColor,
+		AmbientIntensity);
+	}
+	// Directional0
+	pass Directional0Pass {
+		VertexProgram = compile vp40 directional_vp();
+		DepthTestEnable = true;
+		DepthMask = false;
+		DepthFunc = LEqual;
+		CullFaceEnable = false;
+		BlendEnable = true;
+		BlendFunc = int2(One,One);
+		FragmentProgram = compile fp40 directional_fp(
+			SurfColor,
+			kDiffuse,
+			Ks,
+			specExpon,
+			Directional0Color,
+			Directional0Intensity,
+			Directional0Dir);
+	}
+}
+
+///////////////////////////////////////////////////// EOF //

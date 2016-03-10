@@ -1,0 +1,175 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  April 1, 1997
+//
+//  Description:
+//      The projectCurvePreset() procedure executes project curve operation. 
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+
+// currentView -q -c 
+//  gives the current camera.
+//
+
+proc string pieceTogetherCmd(
+	int $doHistory,
+	int $curvePartial,
+	int $viewDir,
+	float $tol )
+//
+//	Description :
+//		Put together a projectCurve  Cmd.
+//
+{
+	string $cmd = "projectCurve" ;
+
+	// history.
+	//
+	$cmd = $cmd + " -ch " ;
+	if( $doHistory == 1 ) $cmd = $cmd + "true" ;	
+	else $cmd = $cmd + "false" ;
+
+	// curve range.
+	//
+	$cmd = $cmd + " -rn " ;
+	if( $curvePartial == 1 ) $cmd = $cmd + "true" ;
+	else $cmd = $cmd + "false" ;
+
+	// projection direction 
+	//
+	$cmd = $cmd + " -un " ;
+	if( $viewDir == 1 ) {
+		$cmd = $cmd + " true " ;
+	} else {
+		$cmd = $cmd + " false " ;
+	}
+
+	$cmd = $cmd + " -tol " + $tol ;
+
+	return $cmd ;
+}
+
+global proc projectCurvePreset(
+	int $doHistory,
+    int $curvePartial,
+	int $viewDir,
+	float $tol ) 
+//
+//	Description :
+//		Proc to do a bevel 
+//
+{
+
+	//---------------------------------------------
+	// Get the list of nurbs curves to be projected
+	// from the select list. 
+	//---------------------------------------------
+	//
+	global int $gSelectNurbsCurvesBit;
+	global int $gSelectIsoparmsBit;
+	global int $gSelectCurvesOnSurfacesBit;
+	global int $gSelectSurfaceEdgeBit;
+	global int $gSelectNurbsSurfacesBit;
+	global int $gSelectMeshEdge;
+
+	string $curveList[] = `filterExpand -ex true -sm $gSelectNurbsCurvesBit -sm $gSelectIsoparmsBit -sm $gSelectMeshEdge -sm $gSelectCurvesOnSurfacesBit -sm $gSelectSurfaceEdgeBit`;
+
+	string $srfList[] = `filterExpand -ex true -sm $gSelectNurbsSurfacesBit` ;
+
+
+	// NOTE : We do the piecing together after the filters. Why ?
+	// If the project direction is based on the view camera, because
+	// of the way the current view direction is determined we want
+	// to ensure the selection list is NOT lost.
+	//
+
+	//---------------------------------------
+	// put together a projectCurve cmd.
+	//---------------------------------------
+	//
+	string $cmd = pieceTogetherCmd(	$doHistory, 
+									$curvePartial,
+									$viewDir,
+									$tol ) ;
+
+	//----------------------------------------
+	// place holders for 1 selection items.
+	//----------------------------------------
+	//
+	int $nitems = 2 ;
+	$cmd = appendToCmdPlaceHoldersForSelectionItems($cmd,$nitems) ;
+	
+
+	//--------------------------------------------
+	// Valid # of items.
+	//--------------------------------------------
+	//
+
+
+	int $curveCount = size($curveList) ;
+	int $srfCount = size($srfList) ;
+	if( $curveCount == 0 ) {
+	   error (uiRes("m_projectCurvePreset.kProjCurveInvalSelection")); 
+	} else if( $srfCount == 0 ) {
+	   error (uiRes("m_projectCurvePreset.kProjSurfaceInvalSelection")); 
+	} else {
+
+		////////////////////////////////////////////////////////////
+		// n curves & m surfaces gives n*m project curve operations. 
+		////////////////////////////////////////////////////////////
+		//
+		string $pair[2] ;
+		string $projectResults[] ;
+		int $i, $j ;
+		for( $i = 0 ; $i < $curveCount ; $i++ ) {
+			$pair[0] = $curveList[$i] ;
+			for( $j = 0 ; $j < $srfCount ; $j++ ) {
+				$pair[1] = $srfList[$j] ;
+				string $results[] = executeCmdOnItems($cmd,$pair);	
+				$projectResults = stringArrayCatenate($projectResults, $results);
+			} // for $j.
+		} // for $i.	
+
+		int $resultCount = size($projectResults) ;
+
+		if( $resultCount > 0 ) {
+			string $selectString;
+        	$selectString = "select -r ";
+
+			for( $i = 0 ; $i < $resultCount ; $i++ ) {
+				$selectString +=  $projectResults[$i] ;
+				$selectString += " ";	
+			}
+
+			$selectString += ";" ;
+			eval($selectString) ;
+		}
+	}
+}
+

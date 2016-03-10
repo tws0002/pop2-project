@@ -1,0 +1,1472 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//
+//
+includeEffectsGlobals();
+
+global proc includeShatterEffectsGlobals()
+{
+	// This does nothing.
+}
+
+
+global proc shatterErrorHandler( string $effect )
+//
+// This is a very simple-minded procedure that just tells the user that some error
+// occured.  You may wish to do more work here if you wish.
+//
+{
+	string $errFmt = (uiRes("m_includeShatterEffectsGlobals.kInvalidShatter"));
+	error(`format -s $effect $errFmt`);
+	waitCursor -state off;
+}
+
+
+global proc string[] createSets( string $object, int $shardIndexList[], int $verbose )
+//
+// Given a shard index list, the proc puts the shard faces into sets and
+// parents the sets under the new shapes transform.
+//
+{
+	string $shard[];
+	string $setList[];
+	int    $faceCount      = size( $shardIndexList );
+	int    $processedFaces = 0;
+
+
+	if ( $verbose == true )
+	{
+		print( (uiRes("m_includeShatterEffectsGlobals.kCreateSets")) );
+	}
+
+	int $shardCount = 0;
+	int $shardIndex = 1;
+
+	// Extract each shard according to its shard index.
+	// Do this until all the shards have been processed.
+	//
+	while ( $processedFaces < $faceCount )
+	{
+		int $shardFaceCount = 0;
+
+		for ( $j = 0; $j < $faceCount; $j++ )
+		{
+			if ( $shardIndex == $shardIndexList[ $j ] )
+			{
+				$shard[ $shardFaceCount ] = $object + ".f[" + $j + "]";
+				$shardFaceCount++;
+				$processedFaces++;
+			}
+
+			// Make sure we really process all the polygons.  
+			//
+			if ( $shardIndexList[$j] == 0 )
+			{
+				$processedFaces++;
+			}
+		}
+
+		// Only do the extraction if there are facets in the shard.
+		//
+		if ( $shardFaceCount > 0 )
+		{
+			$shardCount++;
+
+			if ( $verbose == true )
+			{
+				string $msg = (uiRes("m_includeShatterEffectsGlobals.kCreateSetCount")) ;
+				print `format -stringArg $shardCount -stringArg $shardFaceCount $msg` ;
+				
+			}
+
+			string $setName = $object + "Shard#";
+			$setName = `sets -name $setName $shard`;
+
+			$setList[ $shardCount - 1 ] = $setName;
+		}
+
+		clear( $shard );
+		$shardIndex++;
+	}
+
+	return $setList;
+}
+
+
+global proc extractShards( string $object, int $shardIndexList[], int $verbose )
+//
+// Given a shard index list, the proc extracts the facets in the shard
+// given them non shard edges.
+// shapes.
+//
+{
+	string $shard[];
+	int    $faceCount      = size( $shardIndexList );
+	int    $processedFaces = 0;
+	int    $shardCount = 0;
+	int    $shardIndex = 1;
+
+	// Extract each shard according to its shard index.
+	// Do this until all the shards have been processed.
+	//
+	while ( $processedFaces < $faceCount )
+	{
+		int $shardFaceCount = 0;
+
+		for ( $j = 0; $j < $faceCount; $j++ )
+		{
+			if ( $shardIndex == $shardIndexList[ $j ] )
+			{
+				$shard[ $shardFaceCount ] = $object + ".f[" + $j + "]";
+				$shardFaceCount++;
+				$processedFaces++;
+			}
+
+			if ( $shardIndexList[$j] == 0 )
+			{
+				$processedFaces++;
+			}
+		}
+
+		// Only do the extraction if there are facets in the shard.
+		//
+		if ( $shardFaceCount > 0 )
+		{
+			$shardCount++;
+
+			if ( $verbose == true )
+			{	
+				string $msg = (uiRes("m_includeShatterEffectsGlobals.kExtractShard")) ;
+				print `format -stringArg $shardCount -stringArg $shardFaceCount $msg` ;
+			}
+
+			// Chip off the shard polygons.  We want to duplicate the object so the
+			// face indices remain the same for the next chip off.
+			//
+
+			polyChipOff -kft true -dup true $shard;
+		}
+
+		clear( $shard );
+		$shardIndex++;
+	}
+}
+
+
+global proc string[] separateShards( string $object, int $keepOriginal, int $verbose )
+//
+// Given a shard index list, the proc first extracts the facets in the shard
+// given them non shard edges and then separtes the shards into individual
+// shapes.
+//
+{
+	// Separate the shards into indivual shapes.
+	//
+	if ( $verbose == true )
+	{
+		string $msg = (uiRes("m_includeShatterEffectsGlobals.kSeparateShard")) ;
+		print `format -stringArg $object $msg` ;		
+	}
+
+	// Separate the object into its shards.
+	//
+	string $separatedObjects[];
+
+	int $shellCount[] = `polyEvaluate -shell $object`;
+	if ($shellCount[0] > 1)
+		$separatedObjects = `polySeparate -ch 0 $object`;
+	else
+		return $separatedObjects;
+
+	int $count = size( $separatedObjects );
+
+	int $start = 1;
+
+	if ( $keepOriginal )
+	{
+		$start = 0;
+	}
+
+	// Rename the separated shapes.  The start index determines which
+	// shards we want to rename.  If we are separating an entire object
+	// then we want to skip the first object because this is the original
+	// shape.  We do not want to keep the original shape around.  It will
+	// get deleted in the deleteNonShard proc.
+	//
+	for ( $i = $start; $i < $count; $i++ )
+	{
+		if ( size( $separatedObjects[ $i ] ) > 0 )
+		{
+			rename $separatedObjects[ $i ] "shard#";
+		}
+	}
+
+	$separatedObjects = deleteNonShards( $object, "shard" );
+
+	return $separatedObjects;
+}
+
+
+global proc string[] deleteNonShards( string $object, string $shardName )
+//
+// Given a shard index list, the proc first extracts the facets in the shard
+// given them non shard edges and then separtes the shards into individual
+// shapes.
+//
+{
+	// Create the separted object list and delete any transforms
+	// which are not shards.
+	//
+    string $kids[] = `listRelatives -pa -children $object`;
+	string $shardList[];
+
+	clear( $shardList );
+	$count      = size( $kids );
+	$shardCount = 0;
+
+	clear( $shardList );
+
+	for ( $i = 0; $i < $count; $i++ )
+	{
+		if ( objectExists( $kids[$i] ) )
+		{
+			string $sub = substring( $kids[$i], 1, 5 );
+
+			if ( strcmp($sub, $shardName) != 0 )
+			{
+	 			delete $kids[$i];
+			}
+			else
+			{
+				$shardList[ $shardCount ] = $kids[$i]; 
+				$shardCount++;
+			}
+		}
+	}
+
+	return $shardList;
+}
+
+
+global proc processOriginalObject( string $original, string $newObject, int $op, string $postOp,
+								   int $makeRigid )
+//
+// This procedure either hides or deletes the given object.
+// 
+//    $op = 1 : do nothing
+//    $op = 2 : hide object
+//    $op = 3 : delete object
+//    $op = 4 : make shatter a child of the original object.
+//
+// If the post operation is to create rigid bodies then the original is made 
+// a rigid body also.
+//
+{
+	string $objectParent = $original;
+	string $objectType[] = `ls -st $original`;
+
+
+	// If the object is not a transform then get the objects parent.
+	//
+	if ( strcmp( $objectType[1], "transform") )
+	{
+    	string $parents[] = `listRelatives -parent -pa $original`;
+
+		$objectParent = $parents[0];
+	}
+
+	if ( $op == 2 )
+	{
+		hide $objectParent;
+	}
+	else if ( $op == 3 )
+	{
+		delete $objectParent;
+	}
+	else if ( $op == 4 )
+	{
+		// Add the "shatter" attribute, if it does not already
+		// exists, to the object and make the attribute keyable.
+		//
+		int    $addShatterAttr  = ! `attributeQuery -exists -node $objectParent shatter`;
+		string $shatterAttrName = $objectParent + ".shatter";
+
+		// The shatter attribute should default to true.
+		//
+		if ( $addShatterAttr )
+		{
+			addAttr -ln "shatter" -at bool -dv true $objectParent;
+			setAttr -keyable true $shatterAttrName;
+		}
+		else
+		{
+			setAttr $shatterAttrName true;
+		}
+
+		// Make the visibility of the original shape keyable.
+		//
+		string $visibilityAttrName = $original + ".visibility";
+
+		// Create an expression which makes the visibility a function of
+		// the shatter attribute.
+		//
+		string $exprName = $objectParent + "VisibilityExpr";
+		string $expr = "// Visibility expression between " + $objectParent + " and\n";
+		$expr += "// the shattered object.\n//\n";
+		$expr += $visibilityAttrName + " = ! " + $shatterAttrName;
+		expression -name $exprName -s $expr -o $original -ae 1 -uc all ;
+
+		$visibilityAttrName = $newObject + ".visibility";
+
+		connectAttr $shatterAttrName $visibilityAttrName;
+
+		if ( (!strcmp( $postOp, "rigid bodies")) ||
+	         (!strcmp( $postOp, "rigid bodies with collisions off")) )
+		{
+			string $rigidBodyName;
+
+ 	 		string $children[] = `listRelatives -pa $objectParent`;
+			int    $childCount = size( $children );
+			int	   $isRigid    = false;
+
+			// Check the types of the children and make sure there
+			// is not a rigid body associated with this object
+			// already.
+			//
+			for ( $i = 0; $i < $childCount; $i++ )
+			{
+				string $types[] = `ls -st $children[$i]`;
+
+				if ( $types[1] == "rigidBody" )
+				{
+					$isRigid       = true;
+					$rigidBodyName = $types[0];
+					break;
+				}
+			}
+
+			// If we are suppose to make the original shape a 
+			// rigid body then make sure it is not a rigid body
+			// already.
+			//
+			if ( $makeRigid && ! $isRigid )
+			{
+				$rigidBodyName = `rigidBody -active $objectParent`;
+				$isRigid       = true;
+			}
+
+			// Parent the new shatter object to the orginal.
+			//
+			parent $newObject $objectParent;
+
+			// If the parent is a rigid body then connect the ignore
+			// and visibility flags.
+			//
+			if ( $isRigid )
+			{
+				string $ignoreAttrName = $rigidBodyName + ".ignore";
+				connectAttr $shatterAttrName $ignoreAttrName;
+				$visibilityAttrName = $rigidBodyName + ".visibility";
+
+				$exprName = $rigidBodyName + "VisibilityExpr";
+				$expr  = "// Expression which drives the visibility of the shatter object.\n//\n";
+				$expr += $visibilityAttrName + " = ! " + $shatterAttrName;
+				expression -name $exprName -s $expr -o $rigidBodyName -ae 1 -uc all ;
+			}
+		} else
+		if ( (!strcmp( $postOp, "soft bodies with goals" )) ||
+	              (!strcmp( $postOp, "soft bodies with lattice and goals" )) )
+		{
+			// Add the "goal weight" attribute, if it does not already
+			// exists, to the object.
+			//
+			int $addGoalWeightAttr = ! `attributeQuery -exists -node $objectParent goalWeight`;
+
+			// The shatter attribute should default to true.
+			//
+			if ( $addGoalWeightAttr )
+			{
+				string $goalWeightAttrName = $objectParent + ".goalWeight";
+				addAttr -ln "goalWeight" -at double -dv 0.0 -min 0.0 -max 1.0 $objectParent;
+				setAttr -keyable true $goalWeightAttrName;
+			}
+		}
+	}
+}
+
+
+global proc postProcessShards( string $object, string $shardList[], int $shardIndexList[], 
+							   float $extrude, int $triangulate, string $postOp, string $lsList[], 
+							   string $original, int $makeConnections, int $verbose )
+//
+// This proc does the post processing for the shatter object.  Depending on the
+// postOp input parameter, the shards will be made into rigid or soft bodies.
+//
+{
+	int $shardCount = size( $shardList );
+
+	// Triangulate the surface after the shatter effect.
+	//
+	if ( $triangulate )
+	{
+		for ( $i = 0; $i < $shardCount; $i++ )
+		{
+			if (isValidPolyObject( $shardList[$i] ))
+			{
+				int $faceCount[] = `polyEvaluate -face $shardList[$i]`;
+
+				if ($faceCount[0] > 0)
+				{
+					polyTriangulate -ch 0 ($shardList[$i]+".f[0:"+($faceCount[0]-1)+"]");
+				}
+				delete -ch $shardList[$i];
+			}
+		}
+	}
+
+	// If the extrude value is non-zero then extrude the shards.
+	//
+	if ( ! equiv( $extrude, 0.0, 0.000001 ) )
+	{
+		string $extrusion[];
+
+		// If we are not post processing into sets then extrude each shard.
+		//
+		if ( strcmp( $postOp, "sets" ) )
+		{
+			for ( $i = 0; $i < $shardCount; $i++ )
+			{
+				int $faceCount[] = `polyEvaluate -face $shardList[$i]`;
+
+				// The extude command takes faces so convert the shard into
+				// its faces.
+				//
+				if ( $faceCount[0] > 0 )
+				{
+					$faceCount[0] = $faceCount[0] - 1;
+
+					string $faceList = $shardList[$i] + ".f[0:" + $faceCount[0] + "]";
+
+					if ( $verbose )
+					{
+						string $msg = (uiRes("m_includeShatterEffectsGlobals.kExtrudeFaceList")) ;
+						print `format -stringArg $faceList $msg` ;
+					}
+
+					$extrusion = `polyExtrudeFacet -kft 1 -ltz $extrude $faceList`;
+				}
+			}
+		}
+	}
+
+	if ( $verbose )
+	{
+		string $msg = (uiRes("m_includeShatterEffectsGlobals.kMakeShards")) ;
+		print `format -stringArg $postOp $msg` ;
+	}
+
+	if ( !strcmp( $postOp, "shapes") ) 
+	{
+		for ( $i = 0; $i < $shardCount; $i++ )
+		{
+			xform -cp $shardList[$i];
+		}
+	}
+
+	// Create rigid bodies.
+	//
+	else if ( (!strcmp( $postOp, "rigid bodies")) ||
+	        (  !strcmp( $postOp, "rigid bodies with collisions off")) )
+	{
+		string $rigidBodyName;
+
+		int $collisions = ! strcmp( $postOp, "rigid bodies");
+
+		for ( $i = 0; $i < $shardCount; $i++ )
+		{
+			if ( catch( `xform -cp $shardList[$i]` ) )
+			{
+				print( (uiRes("m_includeShatterEffectsGlobals.kCouldNotApplyCenter")) ) ;
+			}
+
+			$rigidBodyName = `rigidBody -collisions $collisions $shardList[$i]`;
+
+			// Make connections from the shatter attribute to the activeness of the
+			// rigid body.
+			//
+			if ( $makeConnections )
+			{
+				string $activeAttr  = $rigidBodyName + ".active";
+    			string $parents[]   = `listRelatives -parent -pa $original`;
+				string $shatterAttr = $parents[0] + ".shatter";
+
+				connectAttr $shatterAttr $activeAttr;
+			}
+		}
+	}
+
+	// Create soft bodies.
+	//
+	else if ( (!strcmp( $postOp, "soft bodies" )) || 
+	          (!strcmp( $postOp, "soft bodies with goals" )) ||
+	          (!strcmp( $postOp, "soft bodies with lattice" ))      ||
+	          (!strcmp( $postOp, "soft bodies with lattice and goals" )) )
+	{
+		string $springGroupName  = "";
+		string $goalGroupName    = "";
+		string $latticeGroupName = "";
+       	string $softBody;
+  
+		int $withGoals   = ! strcmp( $postOp, "soft bodies with goals" ) || 
+		                   ! strcmp( $postOp, "soft bodies with lattice and goals" );
+		int $withLattice = ! strcmp( $postOp, "soft bodies with lattice" ) ||
+		                   ! strcmp( $postOp, "soft bodies with lattice and goals" );
+
+	    	string $parents[];
+    		string $lsObject[] = `ls $original`;
+    		if (size($lsObject) >0)
+    			$parents = `listRelatives -parent -pa $original`;
+
+		// Get the original shapes parent just in case we need it.
+		//
+   		//string $parents[] = `listRelatives -parent -pa $original`;
+
+		if ( $shardCount > 0 )
+		{
+			$springGroupName = `group -empty -name "springs#"`;
+			parent $springGroupName $object;
+
+			if ( $withGoals )
+			{
+				if ( $withLattice )
+				{
+					$goalGroupName = `group -empty -name "goalLattice#"`;
+				}
+				else
+				{
+					$goalGroupName = `group -empty -name "goalObject#"`;
+				}
+
+				if ( $makeConnections )
+				{
+					if (size($parents) >0)
+						catch(`parent $goalGroupName $parents[0]`);
+				}
+				else
+				{
+					catch(`parent $goalGroupName $object`);
+				}
+			}
+			if ( $withLattice )
+			{
+				$latticeGroupName = `group -empty -name "softBodyLattices#"`;
+				parent $latticeGroupName $object;
+			}
+		}
+
+		for ( $i = 0; $i < $shardCount; $i++ )
+		{
+			xform -cp $shardList[$i];
+
+			int    $walkLength = 1;
+			string $spring[];
+			string $softBodies[];
+			string $lattices[];
+
+			if ( $withGoals && $withLattice )
+			{
+				$lattices   = `lattice -name "shatter#" -divisions 3 3 3 -oc true $shardList[$i]`;
+				$softBodies = `soft -c -d -h 1 -g 0.0 $lattices[1]`;
+				$walkLength = 3;
+			}
+			else if ( $withGoals )
+			{
+				$softBodies = `soft -c -d -h 1 -g 0.0 $shardList[ $i ]`;
+			}
+			else if ( $withLattice )
+			{
+				$lattices   = `lattice -name "shatter#" -divisions 3 3 3 -oc true $shardList[$i]`;
+				$softBodies = `soft -c $lattices[1]`;
+				$walkLength = 3;
+			}
+			else
+			{
+				$softBodies = `soft -c $shardList[ $i ]`;
+			}
+
+       		// Apply springs to the new soft body.  We only want springs around the
+       		// edges of the triangles, so we use walkLength (-wl) springs.  The only need a
+       		// walkLength value of 1 because the polygons are all triangles, so there
+       		// is no need to "span" across the polygon to keep it stiff.  Each polygon
+       		// will not connected yb springs to any other polygon because we used the
+       		// -keepFacesTogether flag in the polyChipOff command.  This makes the
+       		// resulting polygonals share no edges, the the -duplicate flag makes them
+       		// share no vertices.
+       		//
+     		$spring = `spring -wf true -wl $walkLength -urp true -s 100 -d 0.2 $softBodies[0]`;
+
+       		// Hide the soft body particles and the springs.
+       		//
+			if ( $withLattice )
+			{
+				hide $lattices[2];
+
+				// Group the lattices.
+				//
+				int    $index;
+				string $newLatticeList[] = `ls -type lattice`;
+				int    $latticeCount     = size( $newLatticeList );
+
+				for ( $j = 0; $j < $latticeCount; $j++ )
+				{
+					$index = findInStringArray( $newLatticeList[$j], $lsList );
+					
+					if ( $index == -1 )
+					{
+						if ( $withGoals )
+						{
+							// If the lattice name is a copy then it is part of the
+							// goals.
+							//
+							string $sub = substring( $newLatticeList[$j], 1, 6 );
+
+							if ( strcmp( $sub, "copyOf" ) )
+							{
+								parent $newLatticeList[$j] $latticeGroupName;
+							}
+							else
+							{
+								parent $newLatticeList[$j] $goalGroupName;
+							}
+						}
+						else
+						{
+							parent $newLatticeList[$j] $latticeGroupName;
+						}
+					}
+				}
+
+				// Group the base lattices.
+				//
+				clear( $newLatticeList );
+				$newLatticeList = `ls -type baseLattice`;
+				$latticeCount   = size( $newLatticeList );
+
+				for ( $j = 0; $j < $latticeCount; $j++ )
+				{
+					$index = findInStringArray( $newLatticeList[$j], $lsList );
+					
+					if ( $index == -1 )
+					{
+						parent $newLatticeList[$j] $latticeGroupName;
+					}
+				}
+			}
+			else if ( $withGoals )
+			{
+				int    $index;
+				string $newShapes[] = `ls -type shape`;
+				int    $shapeCount  = size( $newShapes );
+
+				for ( $j = 0; $j < $shapeCount; $j++ )
+				{
+					if ( (!isObjectIntermediate( $newShapes[$j] ))
+					   && (findInStringArray( $newShapes[$j], $lsList ) == -1 ))
+					{
+						string $sub = substring( $newShapes[$j], 1, 6 );
+
+						if ( ! strcmp( $sub, "copyOf" ) )
+						{
+							catch(`parent $newShapes[$j] $goalGroupName`);
+						}
+					}
+				}
+
+				catch(`parent $shardList[$i] $object`);
+			}
+			else
+			{
+				hide $softBodies[0];
+			}
+			// Make a connection to the goal active attribute.  
+			//
+			if ( $withGoals && $makeConnections && (size($parents)>0) )
+			{
+				string $goalAttr       = $softBodies[0] + ".goalWeight[0]";
+				string $shatterAttr    = $parents[0] + ".shatter";
+				string $goalWeightAttr = $parents[0] + ".goalWeight";
+
+				string $exprName = $shardList[$i] + "GoalExpr";
+
+				$expr  = "// Expression to drive goal weight of " + $softBodies[0];
+				$expr += " from the goal weight \n";
+				$expr += "// attribute of " + $parents[0] + ".\n";
+				$expr += "//\n";
+				$expr += "if ( " + $shatterAttr + " == 1 ) {\n";
+				$expr += "\t" + $goalAttr + " = " + $goalWeightAttr + ";\n";
+				$expr += "} else {\n";
+				$expr += "\t" + $goalAttr + " = 1;\n";
+				$expr += "}\n";
+
+				expression -name $exprName -s $expr -o $softBodies[0] -ae 1 -uc all ;
+
+				$exprName = $shardList[$i] + "UpdateExpr";
+
+				$expr  = "// Expression to force an update of the soft body ";
+				$expr += $softBodies[0] + "\n";
+				$expr += "// while it is not visible.\n// \n";
+				$expr += "int $minX = " + $softBodies[0] + ".boundingBoxMinX;\n";
+				expression -name $exprName -s $expr -ae 1 -uc all ;
+			}
+
+			hide $spring[0];
+			parent $spring[0] $springGroupName;
+			$lsList = `ls -type shape`;
+		}
+	}
+
+	else if ( ! strcmp( $postOp, "sets" ) )
+	{
+		// Create sets from the shard index list.
+		//
+		string $setList[] = createSets( $object, $shardIndexList, $verbose );
+
+		// If the extrude value is not zero then extrude the sets.
+		//
+		if ( ! equiv( $extrude, 0.0, 0.000001 ) )
+		{
+			int  $setCount = size( $setList );
+
+			for ( $i = 0; $i < $setCount; $i++ )
+			{
+				// The extrude command takes faces so convert the shard into
+				// its faces.
+				//
+				if ( $verbose )
+				{
+					string $msg = (uiRes("m_includeShatterEffectsGlobals.kExtrudeSetList")) ;
+					print `format -stringArg $setList[$i] $msg` ;					
+				}
+	
+				$extrusion = `polyExtrudeFacet -kft 1 -ltz $extrude $setList[$i]`;
+			}
+		}
+	}
+}
+
+
+global proc string[] getSurroundingFaces( string $face )
+{
+	string $faceList[];
+	string $edgeList[] = getEdgeList( $face );
+	int    $edgeCount  = size( $edgeList );
+	int    $faceCount  = 0;
+
+	clear( $faceList );
+
+	// For each edge associated with the face get the faces and
+	// added them to the face list (if the face is not the face
+	// passed into this procedure).
+	//
+	for ( $i = 0; $i < $edgeCount; $i++ )
+	{
+		string $edgeFaceList[] = getFaceList( $edgeList[$i] );
+		int    $edgeFaceCount  = size( $edgeFaceList );
+
+		// Check the face list against the center face.  If it is
+		// unique then and it to the list.
+		//
+		for ( $j = 0; $j < $edgeFaceCount; $j++ )
+		{
+			if ($edgeFaceList[$j] != $face )
+			{
+				$faceList[ $faceCount ] = $edgeFaceList[$j];
+				$faceCount++;
+				break;
+			}
+		}
+	}
+
+	return $faceList;
+}
+
+
+global proc int equiv( float $value, float $target, float $tolerance )
+{
+	if ( ($value >= ($target - $tolerance)) && ($value <= ($target + $tolerance)) )
+	{
+		return 1;
+	}
+
+	return 0;
+}
+
+global proc vector getWorldCoordinatesForVertex( string $object, int $index )
+//
+// Returns a Mel vector holding the world coordinates of the vertex 
+// at the given index in $object.
+//
+{
+	string $vertexName = $object + ".vtx[" + $index + "]";
+	float $v[] = `xform  -ws -q -t $vertexName`;
+	vector $vertex = << $v[0], $v[1], $v[2] >>;
+	return $vertex;
+}
+
+global proc vector getEdgeVertex( string $edge, float $param )
+{
+	vector $edgeVector;
+	vector $vertices[] = getEdgeVerticesInWorldSpace( $edge );
+	float  $param0     = getEdgeParameterization( $edge, $vertices[0] );
+
+	if ( $param0 == 0.0 )
+	{
+		$edgeVector = $vertices[0] + ($vertices[1] - $vertices[0]) * $param;
+	}
+	else
+	{
+		$edgeVector = $vertices[1] + ($vertices[0] - $vertices[1]) * $param;
+	}
+
+	return $edgeVector;
+}
+
+global proc int getVertexCount( string $object )
+//
+// Returns the count of vertices for $object.
+{
+	int $tmp[] = `polyEvaluate -vertex $object`;
+	return $tmp[0];
+}
+
+global proc vector[] getEdgeVertices( string $edge )
+//
+// This procedure returns the world space vertices for the given
+// edge.  The vertex in $edgeVector[0] will be the vertex at 
+// edge parameter 0 and the vertex in $edgeVector[1] with be the
+// vertex at edge parameter 1.
+//
+{
+	vector $edgeVector[];
+	vector $vertices[] = getEdgeVerticesInWorldSpace( $edge );
+	float  $param0     = getEdgeParameterization( $edge, $vertices[0] );
+
+	if ( $param0 == 0.0 )
+	{
+		$edgeVector[0] = $vertices[0];
+		$edgeVector[1] = $vertices[1];
+	}
+	else
+	{
+		$edgeVector[0] = $vertices[1];
+		$edgeVector[1] = $vertices[0];
+	}
+
+	return $edgeVector;
+}
+
+
+global proc vector[] getEdgeVerticesInWorldSpace( string $edge )
+{
+	vector $vertices[2];
+
+	// Convert the edge to vertices.
+	//
+	string $vertexList[] = getVertexList( $edge );
+
+	float $v1[] = `xform -ws -q -t $vertexList[0]`;
+	float $v2[] = `xform -ws -q -t $vertexList[1]`;
+
+	$vertices[0] = << $v1[0], $v1[1], $v1[2] >>;
+	$vertices[1] = << $v2[0], $v2[1], $v2[2] >>;
+
+	return $vertices;
+}
+
+proc string getStartVertex( string $edge0 )
+//
+//  Returns the name of the vertex which is the start
+//  vertex for $edge.  Unfortunately there is no simple one-line
+//  way to query this in Mel. We determine it using poly split.  Here is the method.
+//  The key observation is that if we split an edge with parameter 0.25 in polySplit,
+//  the new vertex introduced on that edge lies closer to the start vertex then
+//  to the end vertex.
+//     1. Find the vertices of the edge, and pick one; call it v0. Let the other be $v1.
+//     2. Find the faces adjacent to the edge, and pick one.
+//     3. Two of the edges of the chosen face have v0 as an endpoint. Pick the
+//        edge which is not $edge0, and call it $edge1.
+//     4. Issue a polySplit command to split $edge0 and $edge1. Use parameter 0.5 for
+//        $edge1 (this is not important) and 0.25 for $edge0 (this is very important).
+//     5. The two new vertices created by polySplit will be appended to the end of the
+//        object's vertex list.  Get these two.  One of them lies on the original $edge0.
+//        To find out which one, re-query the vertices of $edge0,
+//        which will now be a piece of the original $edge0.  One of its vertices will
+//        be one of the new ones.  Call that vertex v2.  We know that v2 lies on the
+//        original $edge0, a parameter distance of 0.25 from the start vertex to the end
+//        vertex, because that is how it was constructed.  
+//     6. Find the distances from v0 to v2 and from v1 to v2.  Whichever of {v0,v1} 
+//        is closer to v2 is the start vertex for $edge.
+//     7. Undo the polySplit operation since we don't really want this new edge.
+{
+	// Get the object name.
+	//
+	string $object = getBaseName( $edge0 );
+
+	// Store the edge index.
+	//
+	int $edge0Index = getIndex( $edge0 );
+
+	// Get the vertices for this edge, and pick one.
+	//
+	string $edge0Vertices[] =  getVertexList( $edge0 );
+	int $v0Index = getIndex( $edge0Vertices[0] );
+	int $v1Index = getIndex( $edge0Vertices[1] );
+
+	// if doesn't work with these, swap the choice.
+	// if fails with both, 
+
+	// Store world coordinates of the vertices also.
+	//
+	vector $v0 = getWorldCoordinatesForVertex( $object, $v0Index );
+	vector $v1 = getWorldCoordinatesForVertex( $object, $v1Index );
+
+	// If we have a degenerate edge, arbitrarily pick 0 since it does not matter, and return.
+	// 
+	if ( mag($v0 - $v1) < 0.0000001 )
+		return 0;
+
+	// Pick a face adjacent to the edge, and get its list of edges.
+	//
+	string $adjoiningFaces[] = getFaceList( $edge0 );
+	string $face = $adjoiningFaces[0];
+
+	// Find edges in $face which have v0 as endpoints.
+	// To do this, we find the edges incident to v0,
+	// find the edges in the face, and intersect the two sets.
+	//
+	string $edgesInFace[]   = getEdgeList( $face );
+
+	string $splitName[];
+	string $startVertex;
+
+	// loop over all edges in face. Any edge which is not $edge0 can be used.
+	// If the split creates two new vertices, we can use it and we are done.
+	// Otherwise, something is degenerate and we go on.
+	//
+	int $i = 0;
+	int $done = false;
+	while ( ($i < size( $edgesInFace )) && (!$done) )
+	{
+		string $edge1 = $edgesInFace[$i];
+		int $edge1Index = getIndex( $edge1 );
+
+		if ($edge1Index != $edge0Index)
+		{
+			// Save the vertex count for the object. We need this to identify the new vertices.
+			//
+			int $vertexCount[] = `polyEvaluate -vertex $object`;
+
+			// Do the split.
+			//
+			$splitName = `polySplit -s 1 -ep $edge0Index 0.25 -ep $edge1Index 0.5 $object`;
+			int $newVertexCount[] = `polyEvaluate -vertex $object`;
+	
+			if ($newVertexCount[0] - $vertexCount[0] == 2)
+			{
+				// Find the unique common vertex between the new vertices and those now in edge 0.
+				//
+				string $newVertices[];
+				$newVertices[0] = $object + ".vtx[" + ($vertexCount[0]) + "]";
+				$newVertices[1] = $object + ".vtx[" + ($vertexCount[0] + 1) + "]";
+
+				string $newEdge0Vertices[] = `polyListComponentConversion -toVertex $edge0`;
+
+				string $commonVertex[];
+				int $newVertices0 = getIndex( $newVertices[0] );
+				int $newVertices1 = getIndex( $newVertices[1] );
+				int $newEdge0Vertices0 = getIndex( $newEdge0Vertices[0] );
+				int $newEdge0Vertices1 = getIndex( $newEdge0Vertices[1] );
+
+				if (($newVertices0 == $newEdge0Vertices0) || ($newVertices0 == $newEdge0Vertices1))
+					$commonVertex[0] = $newVertices[0];	
+				else
+				if (($newVertices1 == $newEdge0Vertices0) || ($newVertices1 == $newEdge0Vertices1))
+				$commonVertex[0] = $newVertices[1];	
+
+				if (size( $commonVertex) > 0)
+				{
+					// Get world coordinate points.
+					//
+					float $tmp[] = `xform -ws -q -t $commonVertex[0]`;
+					vector $v2 = << $tmp[0], $tmp[1], $tmp[2] >>;	
+
+					// Find which end vertex we are closer to.
+					// We are guaranteed to be closer to one or the other,
+					// because we used param value 0.25.
+					//
+					float $distanceTo0 = mag( $v2 - $v0 );
+					float $distanceTo1 = mag( $v2 - $v1 );
+
+					if ($distanceTo0 < $distanceTo1)
+					{
+						$startVertex = $object + ".vtx[" + $v0Index + "]";
+					}
+					else
+					{
+						$startVertex = $object + ".vtx[" + $v1Index + "]"; 
+					}		
+					$done = true;
+				}
+			}
+		}
+
+		$i++;
+	}
+
+	// undo or delete the split.
+	//
+	int $undoOn = `undoInfo -q -state`;
+
+	if ( $undoOn )
+	{
+		$splitName = `undo`;
+	}
+	else
+	{
+		delete $splitName[0];
+	}
+
+	return $startVertex;
+}
+
+
+global proc float getEdgeParameterization( string $edge, vector $splitPos )
+//
+//  Returns the parameterization value for $splitPos along $edge.
+//  This is the value that would be passed into polySplit to split the edge
+//  at $splitPos.  Assumes -- but does not check -- that $vertex does in
+//  fact lie on $edge.
+//
+//  Algorithm:
+//    The main problem is to determine which way the parameterization runs
+//  along the edge (i.e., from which end vertex does it start).  Each polygon has
+//  a "start vertex" and an "end vertex," and the parameterization always runs
+//  from the start vertex to the end vertex.  Once we know the start vertex,
+//  we simply solve for the position of $vertex along the line segment of the edge.
+{
+	// $v0 and $v1 are world space coordinates for the endpoints of $edge.
+	//
+	float $v0[];
+	float $v1[];
+
+	// which is the start vertex?
+	//
+	string $startVertex = getStartVertex( $edge );
+
+	// if (size($startVertex) == 0) return -1;
+
+	// Convert vertex positions to Mel vectors.
+	//
+	string $vertexList[] = getVertexList( $edge );
+	if ($startVertex == $vertexList[0])
+	{
+		$v0 = `xform -ws -q -t $vertexList[0]`;
+		$v1 = `xform -ws -q -t $vertexList[1]`;
+	}
+	else
+	{
+		$v0 = `xform -ws -q -t $vertexList[1]`;
+		$v1 = `xform -ws -q -t $vertexList[0]`;
+	}
+
+	// These two Mel vectors store the coordinates of
+	// the start and end points respectively.
+	//
+	vector $vertex0     = << $v0[0], $v0[1], $v0[2] >>;
+	vector $vertex1     = << $v1[0], $v1[1], $v1[2] >>;
+
+	float $param = 0.0;
+	float $edgeLength  = mag( $vertex1 - $vertex0 );
+	if ($edgeLength > 0.0)
+	{
+		$param = mag( $splitPos - $vertex0 ) / $edgeLength;
+	}
+
+	return $param;
+}
+
+
+global proc string[] getFaceList( string $object )
+{
+	string $faceList[];
+
+	if ( size( $object ) > 0 )
+	{
+		$faceList = `polyListComponentConversion -toFace $object`;
+//		string $faces = `polyListComponentConversion -toFace $object`;
+//		tokenize( $faces, " ", $faceList );
+
+		// Expand the face list.
+		//
+		$faceList = expandList( $faceList );
+	}
+
+	return $faceList;
+}
+
+
+global proc int[] getFaceIndexList( string $object )
+{
+	string $faceList[];
+	int    $faceIndexList[];
+
+	if ( size( $object ) > 0 )
+	{
+		$faceList = `polyListComponentConversion -toFace $object`;
+//		string $faces = `polyListComponentConversion -toFace $object`;
+//		tokenize( $faces, " ", $faceList );
+
+		// Expand the face list.
+		//
+		$faceIndexList = expandIndexList( $faceList );
+	}
+
+	return $faceIndexList;
+}
+
+
+global proc string[] getEdgeList( string $object )
+{
+	string $edgeList[];
+
+	if ( size( $object ) > 0 )
+	{
+		$edgeList = `polyListComponentConversion -toEdge $object`;
+//		string $edges = `polyListComponentConversion -toEdge $object`;
+//		tokenize( $edges, " ", $edgeList );
+
+		// Expand the edge list.
+		//
+		$edgeList = expandList( $edgeList );
+	}
+
+	return $edgeList;
+}
+
+
+global proc string[] getVertexList( string $object )
+{
+	string $vertexList[];
+
+	if ( size( $object ) > 0 )
+	{
+		$vertexList = `polyListComponentConversion -toVertex $object`;
+//		string $vertices = `polyListComponentConversion -toVertex $object`;
+//		tokenize( $vertices, " ", $vertexList );
+
+		// Expand the vertex list.
+		//
+		$vertexList = expandList( $vertexList );
+	}
+
+	return $vertexList;
+}
+
+
+global proc string[] getUVList( string $object )
+{
+	string $uvList[];
+
+	if ( size( $object ) > 0 )
+	{
+		$uvList = `polyListComponentConversion -toUV $object`;
+//		string $uvs = `polyListComponentConversion -toUV $object`;
+//		tokenize( $uvs, " ", $uvList );
+
+		// Expand the uv list.
+		//
+		$uvList = expandList( $uvList );
+	}
+
+	return $uvList;
+}
+
+
+global proc int getIndex( string $indexString )
+{
+	int    $index = 0;
+	string $buffer[];
+
+	if ( $indexString != "" )
+	{
+//		tokenize( $indexString, "/[/]", $buffer );
+		tokenize( $indexString, "[]", $buffer );
+		$index = (int) $buffer[1];
+	}
+
+	return $index;
+}
+
+
+global proc string getBaseName( string $item )
+{
+	string $buffer[];
+
+	if ( $item != "" )
+	{
+		tokenize( $item, ".", $buffer );
+	}
+
+	return $buffer[0];
+}
+
+
+global proc string[] expandList( string $list[] )
+//
+// This procedure takes the given vertex, uv, edge or face list and
+// returns a list which has indiviual items in it.
+//
+// For example, 
+//
+//   if the input list contained:
+//
+//   	$list[0] = shape.f[5:7]
+//   	$list[1] = shape.f[14]
+//
+//   the resultant list would be:
+//
+//		$newList[0] = shape.f[5]
+//		$newList[1] = shape.f[6]
+//		$newList[2] = shape.f[7]
+//		$newList[3] = shape.f[14]
+//
+//
+{
+	string $buffer[];
+	string $newList[];
+
+	clear( $newList );
+
+	int $count = size( $list );
+
+	int $index = 0;
+	for ( $i = 0; $i < $count; $i++ )
+	{
+		string $item = $list[ $i ];
+
+//		tokenize( $item, "/[/]", $buffer );
+		tokenize( $item, "[]", $buffer );
+		string $baseName = $buffer[0];
+//		tokenize( $buffer[1], "/:", $buffer );
+		tokenize( $buffer[1], ":", $buffer );
+
+		int $bufferSize = size( $buffer );
+
+		if ( $bufferSize == 2 )
+		{
+			int $start = (int) $buffer[0];
+			int $end   = (int) $buffer[1];
+
+			for ( $j = $start; $j <= $end; $j++ )
+			{
+				$newList[ $index ] = $baseName + "[" + $j + "]";
+				$index++;
+			}
+		}
+		else
+		{
+			$newList[ $index ] = $item;
+			$index++;
+		}
+	}
+
+	return $newList;
+
+}
+
+
+global proc int[] expandIndexList( string $list[] )
+{
+
+	string $buffer[];
+	int    $indexList[];
+
+	clear( $indexList );
+
+	int $count = size( $list );
+	int $index = 0;
+
+	for ( $i = 0; $i < $count; $i++ )
+	{
+		string $item = $list[ $i ];
+
+//		tokenize( $item, "/[/]", $buffer );
+		tokenize( $item, "[]", $buffer );
+		string $baseName = $buffer[0];
+//		tokenize( $buffer[1], "/:", $buffer );
+		tokenize( $buffer[1], ":", $buffer );
+
+		int $bufferSize = size( $buffer );
+
+		if ( $bufferSize == 2 )
+		{
+			int $start = (int) $buffer[0];
+			int $end   = (int) $buffer[1];
+
+			for ( $j = $start; $j <= $end; $j++ )
+			{
+				$indexList[ $index ] = $j;
+				$index++;
+			}
+		}
+		else if (  $bufferSize == 1 )
+		{
+			int $start = (int) $buffer[0];
+			$indexList[ $index ] = $start;
+			$index++;
+		}
+	}
+
+	return $indexList;
+}
+
+global proc setNotIntermediate( string $shard )
+//
+// Description: sets $shard and all meshes in its hierarchy to be not intermediate.
+{
+	// do the object itself
+	//
+	setAttr ($shard+".intermediateObject") false;
+
+	// now all mesh shapes in its hierarchy
+	//
+	string $meshChildren[] = `ls -objectsOnly -dag -allPaths -geometry -type mesh $shard`;
+	int $idx;
+	for( $idx = 0; $idx < size( $meshChildren ); $idx++ )
+		setAttr ($meshChildren[ $idx ] + ".intermediateObject") false;
+}
+
+global proc int getIndexOfLargestEligibleShard( string $shardList[], string $badShardList[] )
+//
+// Description:
+//   Returns the index of the item in shard list which has the largest
+// bounding box volume and is not $badShardName.  If there are no other
+// items in the list, returns -1.
+// Uses the routine boundingBoxVolume, which is in includeEffectsGlobals.mel.
+{
+	float $maxBoundingVolume = -1.0;
+	int   $listIndex         = -1;
+	int $shardListCount = size( $shardList );
+	for ( $j = 0; $j < $shardListCount; $j++ )
+	{
+		// We are interested only in shards which aren't in the bad shard list
+		//
+		if ( indexInList( $shardList[$j], $badShardList ) == -1 )
+		{
+			float $volume = boundingBoxVolume( $shardList[$j] );
+			if ( $volume > $maxBoundingVolume )
+			{
+				$listIndex = $j;
+				$maxBoundingVolume = $volume;
+			}
+		}
+	}
+	return $listIndex;
+}
+
+global proc int renameItem( string $list[], string $name, string $newName )
+//
+// Description:
+//   Search $list for an item called $name.  If one exists,
+// call the "rename" command to rename the object to $newName,
+// replace the old name in the list with the new name,
+// and return the index in the list.
+// If no item is found, return -1.
+{
+	int $listCount = size( $list );
+	int $result = -1;
+
+	int $k;
+	for ( $k = 0; $k < $listCount; $k++ )
+	{
+		if ( strcmp( $name, $list[$k] ) == 0 )
+		{
+			$list[$k] = `rename $list[$k] $newName`;
+			$result = $k;
+		}
+	}
+	return $result;
+}
+
+
+global proc renameShards( string $shardList[] )
+//
+// Description:
+//   Rename each object in the list to begin with "shard."
+{
+	// Rename the shards.
+	//
+	int $i;
+	int $shardListCount = size( $shardList );
+	for ( $i = 0; $i < $shardListCount; $i++ )
+	{
+		// Make sure the object exists before renaming.
+		//
+		if ( objectExists( $shardList[$i] ) )
+		{
+			string $shardName = `rename $shardList[$i] "shard#"`;
+			$shardList[$i] = $shardName;
+		}
+	}
+}
+
+
+global proc string[] purgeShardList( string $shardList[] )
+//
+// Description:
+//   Delete any objects in the list which have zero faces.
+// Passes back a new array containing only the objects which
+// had more than zero faces.
+{
+	string $validObjects[];
+	clear( $validObjects );
+	int $validObjectCount = 0;
+
+	int $shardListCount = size( $shardList );
+	for ( $i = 0; $i < $shardListCount; $i++ )
+	{
+		// Make sure the object exists first.
+		//
+		if ( (objectExists( $shardList[$i] )) && (objectIsEmpty( $shardList[$i] )) )
+		{
+			delete $shardList[$i];
+		}
+		else
+		{
+			// Add to list of valid objects.
+			$validObjects[ $validObjectCount++ ] = $shardList[ $i ];
+		}
+	}
+	return $validObjects;
+}

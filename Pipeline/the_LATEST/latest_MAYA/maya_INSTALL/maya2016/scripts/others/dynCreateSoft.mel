@@ -1,0 +1,459 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Description:
+//      This script is invoked from the Soft/Rigid body menu to make soft bodies.
+//  See the main procedure ("dynCreateSoft") for arguments and description.
+//
+//  Return Value:
+//      None.
+//
+
+proc int objInList( string $obj, string $list[] )
+//
+// returns true if $obj is in $list, false otherwise
+// This routine does not consider parents, etc.  Considers shape and its transform to be different.
+{
+	int $i = 0;
+	for ($i = 0; $i < size($list); $i++)
+		if ($obj == $list[$i]) return 1;
+
+	return 0;
+}
+
+proc int parentInList( string $obj, string $list[] )
+//
+// returns true if any parent of $obj is in $list, false otherwise
+{
+	string $parents[] = `listRelatives -parent $obj`;
+
+	int $i = 0;
+	for ($i = 0; $i < size($parents); $i++)
+	{
+		if (objInList( $parents[$i], $list )) 
+		{
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
+proc int childInList( string $obj, string $list[] )
+//
+// returns true if any child of $obj is in $list, false otherwise
+{
+	string $children[] = `listRelatives $obj`;
+
+	int $i = 0;
+	for ($i = 0; $i < size($children); $i++)
+	{
+		if (objInList( $children[$i], $list )) 
+		{
+			return 1;
+		}
+	}
+
+	return 0;	
+}
+
+proc string canBeSoft( string $obj )
+//
+// Description:
+//    If $obj is a node which can itself be made soft, 
+// or is the parent transform of such a node, or the parent of a hierarchy 
+// which contains exactly one such node,
+// returns the name of the unique valid node.
+// Otherwise returns an empty string.
+{
+	string $result = "";
+	string $ntype = `nodeType $obj`;
+
+	if (($ntype == "nurbsSurface") ||
+	   ($ntype == "nurbsCurve") ||
+	   ($ntype == "mesh") ||
+	   ($ntype == "lattice"))
+	{
+		$result = $obj;
+	}
+	else
+	if ($ntype == "transform")
+	{
+		int $successCount = 0;
+		string $validObj = "";
+
+		// We have to be a little careful here.  With a deformer,
+		// listRelatives will give us back both the current and 
+		// shapes. So we want only the current shape.
+		// But we also want to include all the children which are
+		// transforms so that we want down hierarchies.
+		// To do this, first do listRelatives -s and check the
+		// first shape only.  Then do a full listRelatives and
+		// recurse only on the children that are transforms.
+		// 
+		string $kidShapes[] = `listRelatives -fullPath -s $obj`;
+		if (size($kidShapes) > 0)
+		{
+			$validObj = canBeSoft( $kidShapes[0] );
+			if (size($validObj) > 0)
+			{
+				$successCount++;
+				$result = $validObj;
+			}
+		}
+
+		// Now do child transforms.
+		//
+		string $kids[] = `listRelatives -fullPath $obj`;
+		int $i;
+		for ($i = 0; $i < size($kids); $i++)
+		{
+			// If we got a valid object here and also above, that
+			// is a failure condition anyway and we will return an
+			// empty string.  So it doesn't matter if we overwrite
+			// the value here.
+			//
+			if (nodeType($kids[$i]) == "transform")
+			{
+				$validObj = canBeSoft( $kids[$i] );
+				if (size($validObj) > 0)
+				{
+					$successCount++;
+					$result = $validObj;
+				}
+			}
+		}
+
+		if ($successCount > 1)
+		{
+			$result = "";
+		}
+	}
+
+	return $result;
+}
+global proc dynCreateSoftHelper( int $hide, int $history, int $goal, float $goalWeight, int $makeCopySoft, string $type ) 
+//
+// Description:
+//    Implement the "duplicate, make copy soft" and "duplicate, make original soft"
+// options of the soft body menu.
+// If $hide is 1, hide the original object;
+// If $history is 1, duplicate the upstream graph ("duplicate -un")
+// If $goal is 1, make the non-soft object a goal using weight $goalWeight. 
+// If $type is "Soft", create legacy softbody. If $type is "NSoft", create nSoftbody.
+{
+	// Get selected objects.  Need to save them in case we wish to hide
+	// them or use them as goals.
+	//
+	string $selList[] = `ls -sl`;
+	string $objList[];
+	string $rigidNodes[] = `ls -type rigidBody`;
+
+	// Build the actual list we will work on.
+	// Screen out any objects whose parents
+	// are already in list, or which are already soft.
+	//
+	int $i;
+	int $objIndex = 0;
+	for (	$i = 0; $i < size( $selList ); $i++ )
+	{
+		string $obj = $selList[ $i ];
+
+		// Is this already a particle object?
+		//
+		if (`particleExists $selList[$i]`)
+		{
+			string $fmt = (uiRes("m_dynCreateSoft.kAlreadyParticle"));
+			error( `format -s $obj $fmt`);
+		}
+		else
+		//	
+		// is this a rigid node or the parent of one?
+		//	
+		if ((!$makeCopySoft) && ((objInList( $obj, $rigidNodes )) ||
+		                          (childInList( $obj, $rigidNodes ))))
+		{
+			string $fmt =(uiRes("m_dynCreateSoft.kBelongsToRigid"));
+			error(`format -s $obj $fmt`);
+		}
+		else
+		{
+			// Get the actual valid geometry is there is one.
+			//
+			string $validObj = canBeSoft($obj);
+			if (0 == size($validObj))
+			{
+				string $fmt = (uiRes("m_dynCreateSoft.kCannotMakeSoftBody"));
+				error(`format -s $obj $fmt`);
+			}
+			else
+			//
+			// is the object in the list already?
+			//
+			if ( (!parentInList( $validObj, $objList )) && 
+		     	     (!objInList( $validObj, $objList )) )
+			{
+				// Add to list.
+				//
+				$objList[ $objIndex ] = $validObj;
+				$objIndex++;
+			}
+		}
+	}
+
+	// do we have any valid objects to work on?
+	//
+	if (size($objList) == 0)
+	{
+		error((uiRes("m_dynCreateSoft.kNoObjectsToMakeSoftBody")));
+	}
+
+	// At this point the pared-down list contains only
+	// objects which can be made soft, so we can proceed to work on them.
+	// Replace original selection list with pared-down list
+	// This is ok because what we are about to do will change the selection anyway.
+	//
+	string $dupObj[];
+
+	int $index = 0;
+	for ($index = 0; $index < size($objList); $index++)
+	{
+		// Duplicate the selected objects.
+		// dupObj stores the return from "duplicate."
+		// Note that this is always the transform of the duplicated object.
+		// Duplicate individually and store only the fifrst item in the result.
+		// This is necessary because when there is a curve on surface,
+		// the names of both the surface and the curve are returned from
+		// duplicate, and we do not want the latter.
+		// 
+		string $result[];
+		select -r $objList[$index];
+		if ($history)
+			$result = `duplicate -un`;
+		else
+			$result = `duplicate`;	
+
+		$dupObj[$index] = $result[0];
+	}
+
+	string $softObj[];
+	if ($makeCopySoft)
+	{
+		// make duplicate soft:
+		// Remove any duplicate rigid bodies just created.
+		// The duplicate operation duplicates all the children
+		// including the rigid body.   We do not want the duplicate
+		// rigid body because then we cannot make it soft.
+		// Note that we can get in this situation only if the user
+		// selected the original geometry of the rigid body shape;
+		// that is a correct workflow and we want to allow it.
+		//
+		string $dupKids[] = `listRelatives -pa $dupObj`;
+		for ($i = 0; $i < size($dupKids); $i++)
+		{
+			if ("rigidBody" == `nodeType $dupKids[$i]`) 
+			{
+				delete $dupKids[$i];
+			}
+		}
+
+		// Now parent copy to world, if it's not already
+		//
+		for ($i = 0; $i < size($dupObj); $i++)
+		{
+			string $theDupObj = $dupObj[$i];
+			if (size(`listRelatives -parent $theDupObj`) > 0)
+				parent -world $dupObj[$i];
+		}
+
+		// Rename the copy according to naming convention established.
+		// Store the new name of the copy.
+		//
+		for ($i = 0; $i < size($dupObj); $i++)
+		{
+			if (size($objList[$i]) > 0)
+			{
+				// we're going to call the new objects copyOfoldObjects
+				// but if they are in a namespace, we'll just take the basename
+				// and put the copy in the current namespace
+
+				string $parentName[] = `listRelatives -parent $objList[$i]`;
+				string $nsNames[];
+				tokenize( $parentName[0], ":", $nsNames );
+				string $realName = $nsNames[size( $nsNames) - 1];
+				string $newName = "copyOf"+ $realName;
+				$dupObj[$i] = `rename $dupObj[$i] $newName`;
+			}
+		}	
+
+		// make copy soft
+		//
+		select -r $dupObj;
+		if ( $type == "Soft" )
+			$softObj = `soft -c`;
+		else
+			$softObj = `nSoft -c`;
+	}
+	else
+	{
+		// make original soft:
+		// if duplicate list has any rigid bodies,
+		// then we can't do this.  Delete the duplicates and exit.
+		//
+		string $dupKids[] = `listRelatives -pa $dupObj`;
+		for ($i = 0; $i < size($dupKids); $i++)
+		{
+			if ("rigidBody" == `nodeType $dupKids[$i]`) 
+			{
+				// suppress cycle check so it doesn't hide our warning
+				//
+				cycleCheck -e off;
+
+				// Warn the user and delete unwanted duplicates
+				//
+				delete $dupObj;
+				error((uiRes("m_dynCreateSoft.kUseMakeCopySoft")));
+			}
+		}
+
+		// Parent original to world, if it's not already
+		//
+		string $copyOfName[];
+		clear( $copyOfName );
+		for ($i = 0; $i < size($objList); $i++)
+		{
+			if (size($objList[$i]) > 0)
+			{
+				string $objParent[] = `listRelatives -parent $objList[$i]`;
+				if (size(`listRelatives -parent $objParent[0]`) > 0)
+				{
+					parent -world $objParent[0];
+					string $selected[] = `ls -sl`;
+					$copyOfName[$i] = $selected[0];
+					$objList[$i] = $selected[0];
+				}
+				else
+				{
+					string $parentName[] = `listRelatives -parent $objList[$i]`;
+					$copyOfName[$i] = $parentName[0];
+				}
+			}
+		}
+
+		// Rename copies according to established naming convetion
+		// Store the new name of the copy.
+		//
+		for ($i = 0; $i < size($dupObj); $i++)
+		{
+			if (size($objList[$i]) > 0)
+			{
+				// we're going to call the new objects copyOfoldObjects
+				// but if they are in a namespace, we'll just take the basename
+				// and put the copy in the current namespace
+
+				string $nsNames[];
+				tokenize($copyOfName[$i] , ":", $nsNames );
+				string $realName = $nsNames[size( $nsNames) - 1];
+				string $newName = "copyOf"+ $realName;
+				$dupObj[$i] = `rename $dupObj[$i] $newName`;
+			}
+		}	
+
+		// Make original soft
+		//
+		select -r $objList;
+		if ( $type == "Soft" )
+			$softObj = `soft -c`;
+		else
+			$softObj = `nSoft -c`;
+	}
+
+	int $objCount = size( $objList );
+	if ($objCount != size($softObj))
+	{
+		warning((uiRes("m_dynCreateSoft.kCouldHaveDuplicates")));
+		return;
+	}
+
+	// If everything got made soft; set up the goals.
+	// Otherwise, issue a warning.
+	//
+	if ($goal)
+	{
+		if ($makeCopySoft)
+		{
+			// Make the original objects goals for the soft objects.
+			// Note: we checked above that objList and softObj are same length
+			//
+			for ($i = 0; $i < $objCount; $i++)
+			{
+				goal -g $objList[$i] -w $goalWeight $softObj[$i];
+			}
+		}
+		else
+		{
+			// Make the duplicate objects goals for the soft objects.
+			// Note: we checked above that objList and softObj are same length
+			//
+			for ($i = 0; $i < $objCount; $i++)
+			{
+				goal -g $dupObj[$i] -w $goalWeight $softObj[$i];
+			}
+		}
+	}
+
+	// If hide was thrown, hide the non-soft objects.
+	//
+	if ($hide)
+	{
+		if ($makeCopySoft)
+		{
+			hide $objList;	
+		}
+		else
+		{
+			hide $dupObj;
+		}
+	}
+
+
+	// Select parent transforms of new particle objects.
+	//
+	select -cl;
+	for( $i = 0; $i < size( $softObj ); $i++)
+	{
+		select -tgl `listRelatives -parent $softObj[$i]`;
+	}
+}
+
+global proc dynCreateSoft( int $hide, int $history, int $goal, float $goalWeight, int $makeCopySoft ) 
+//
+// Description:
+//    Implement the "duplicate, make copy soft" and "duplicate, make original soft"
+// options of the soft body menu.
+// If $hide is 1, hide the original object;
+// If $history is 1, duplicate the upstream graph ("duplicate -un")
+// If $goal is 1, make the non-soft object a goal using weight $goalWeight. 
+{
+	dynCreateSoftHelper( $hide, $history, $goal, $goalWeight, $makeCopySoft, "Soft" );
+}

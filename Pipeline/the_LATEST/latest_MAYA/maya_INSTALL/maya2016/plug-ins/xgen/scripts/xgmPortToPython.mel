@@ -1,0 +1,117 @@
+/**
+ * @file xgmPortToPython.mel
+ * @brief Contains a mel code to be ported to python.
+ *
+ * <b>CONFIDENTIAL INFORMATION: This software is the confidential and
+ * proprietary information of Walt Disney Animation Studios ("WDAS").
+ * This software may not be used, disclosed, reproduced or distributed
+ * for any purpose without prior written authorization and license
+ * from WDAS. Reproduction of any section of this software must include
+ * this legend and all copyright notices.
+ * Copyright Disney Enterprises, Inc. All rights reserved.</b>
+ *
+ * @author Thomas V Thompson II
+ *
+ * @version Created 07/12/09
+ */
+
+//
+// This file is a temporary holding area for mel functions that need to
+// be converted over to python. The names are changed from their original
+// name to py_originalName in order to make finding them easy.
+//
+
+
+/**
+ * This function will return all XGen patches that relate to the current
+ * selection list.  Guides, patches, descriptions, geometry, whatever...it
+ * will all be resolved into the related patches.
+ */
+global proc string[] py_xgmSelectedFindPatches()
+{
+    string $patches[];
+    int    $i = 0;
+
+    string $geoms;
+    string $item;
+    string $items[] = `ls -sl -o`;
+    for ( $item in $items ) {
+        string $xgmType = python("xg.nodeClass(\""+$item+"\")");
+        switch ( $xgmType ) {
+        
+            case "guide":
+                $patches[$i++] = python("xg.guidePatch(\""+$item+"\")");
+                break;
+
+            case "patch":
+                if (`nodeType $item` == "xgmNurbsPatch") {
+                    string $parent[] = `listRelatives -p -path $item`;
+                    $patches[$i++] = $parent[0];
+                } else {
+                    $patches[$i++] = $item;
+                }
+                break;
+
+            case "description":                
+                string $descPatches[];
+                clear $descPatches;
+                catchQuiet ( $descPatches =
+                             python("xg.descriptionPatches(\""+$item+"\")"));
+                $patches = `stringArrayCatenate $patches $descPatches`;
+                $i = size( $patches );
+                break;
+
+            case "palette":
+                string $palPatches[];
+                clear $palPatches;
+                catchQuiet ( $palPatches =
+                             python("xg.palettePatches(\""+$item+"\")"));
+                $patches = `stringArrayCatenate $patches $palPatches`;
+                $i = size( $patches );
+                break;
+
+            case "":
+                // Handle all the non-xgen objects 
+                // Check if there are any children of xgmPalette type
+                string $palettes[] = `listRelatives -pa -ad -ni
+                                            -type xgmPalette $item`;
+                if ( `size $palettes` ) {
+                    for ( $pal in $palettes ) {
+                        string $palPatches[];
+                        clear $palPatches;
+                        catchQuiet ( $palPatches =
+                                    python("xg.palettePatches(\""+$pal+"\")"));
+                        $patches = `stringArrayCatenate 
+                                       $patches $palPatches`;
+                    }
+                    $i = size( $patches );
+                } else { // Collect geometry
+                    string $shapes[] = `ls -g -dag $item`;
+                    for ( $shape in $shapes ) {
+                        // Check if the selected object is related to xgen
+                        string $geomType = `nodeType $shape`;
+                        if ( ($geomType != "mesh") &&
+                             (`match "^nurbs" $geomType` == "") )
+                            continue;                           
+
+                        // Get the transform node
+                        string $parents[] = `listRelatives -p $shape`;
+                        $geoms += "\"" + $parents[0] + "\",";
+                    }                     
+                }
+
+                break;
+
+        } // end of switch
+
+    } // End of for loop
+
+    // Process geometry/tiles altogether for efficiency
+    string $geoPatches[];
+    clear $geoPatches;
+    catchQuiet ( $geoPatches =
+                 python("xg.geometriesPatches(["+$geoms+"])"));
+    $patches = `stringArrayCatenate $patches $geoPatches`;    
+
+    return stringArrayRemoveDuplicates( $patches );
+}

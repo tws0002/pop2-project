@@ -1,0 +1,187 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+proc string getGeomIndexForBlend(string $blend)
+{
+	int $geomIndex = 0;
+	string $geoms[] = `getGeometriesToCache`;
+	if (size($geoms) > 0) {
+		$geomIndex = `cacheFileCombine -object $geoms[0] -q -oi $blend`;
+	}
+	return $geomIndex;
+}
+
+proc string getWeightPlugForBlend(string $plug)
+{
+	int $index;
+	string $buffer[], $buffer2[];
+	tokenize($plug,"[",$buffer);
+	if (size($buffer) < 2) {
+		return "";
+	}
+	tokenize($buffer[1],"]",$buffer2);
+	$index = $buffer2[0];
+
+	clear($buffer);
+	tokenize($plug,".",$buffer);
+	
+	int $geomIndex = getGeomIndexForBlend($buffer[0]);
+	
+	string $result = ($buffer[0]+".inCache["+$geomIndex+"].perPtWeights["+$index+"]");
+	return $result;
+}
+
+global proc artCacheFileSelectNode(
+	string 	$artCommand,
+	string	$node
+)
+// 
+//	Description:
+//		select the cacheFile in the menu & specify it for painting
+//
+{
+	source "artAttrCallback.mel";
+
+	global string $artCacheFileCurrentNode;
+	if (`textScrollList -q -ex cacheFileList`) {
+		if ($node == "") {
+			string $sel[] = `textScrollList -q -si cacheFileList`;
+			$node =  $sel[0];
+		} else {
+			textScrollList -e -si $node cacheFileList;
+			int $index[] = `textScrollList -q -sii cacheFileList`;
+			textScrollList -e -shi $index[0] cacheFileList;
+		}
+	}
+
+	$artCacheFileCurrentNode = $node;
+
+	// Connect the cacheFile node to the cacheBlend node if it isn't already
+	//
+	string $conns[];
+	$conns = `listConnections -p 1 -type cacheBlend ($node+".inRange")`;
+	for ($conn in $conns) {
+		string $weightPlug = getWeightPlugForBlend($conn);
+		string $buffer[];
+		tokenize($conn,".",$buffer);
+		int $geomIndex = getGeomIndexForBlend($buffer[0]);
+		string $perPtPlug = ($node+".perPtWeights["+$geomIndex+"]");
+		if ("" != $weightPlug) {
+			int $exists = `isConnected $perPtPlug ($weightPlug)`;
+			if (! $exists) {
+				connectAttr $perPtPlug ($weightPlug);
+			}
+		}
+	}
+
+	// Notify the context about the change.
+	string $paintAttr = ("cacheFile."+$node+".perPtWeights");
+	artAttrSelected($artCommand,$paintAttr);
+}
+
+
+global
+proc artAttrCacheFileMenu(string $artCommand)
+//
+//	Description:
+// 		Creates a menu that shows all the cacheFiles for the shape
+// 
+{
+	global string $artCacheFileCurrentNode;
+	
+	string $sel[]=`ls -sl`;
+	int $cnt = size($sel);
+	if ($cnt == 0) {
+		// Clean up the existing list
+		textScrollList -e -ra cacheFileList;
+		warning((uiRes("m_artAttrCacheFileMenu.kSelectObjWithPlayCache")));
+		return;
+	}
+	
+	if ( !`textScrollList -q -ex cacheFileList`)
+		return ;
+
+	// Clean up the existing list
+	textScrollList -e -ra cacheFileList;
+	string $cacheFiles[];
+
+	// get the cache file name
+	// the attrSelected value is in the form "nodeType.nodeName.attributeName"
+	string $cmd = "artAttrCtx -q -pna " + `currentCtx` ;
+	string $attrArray = eval($cmd);
+
+	string $nodes[];
+	if (size($attrArray) > 0) {
+		string $allNodes[];	
+		tokenize($attrArray," ", $allNodes);
+		for ($item in $allNodes) {
+			if (nodeType($item) == "cacheFile") {
+				$nodes[size($nodes)] = $item;
+			}
+		}
+	}
+	
+	int $numNodes = size($nodes);
+	int $ii;
+	for ($ii = 0; $ii < $numNodes; $ii++) {
+		string $nodeName = $nodes[$ii];
+		textScrollList -e -append $nodeName cacheFileList;
+	}
+	textScrollList -e -sc ("artCacheFileSelectNode "+$artCommand+" \"\" ") cacheFileList;	
+	
+	// =================================
+	// Set the selection 
+	// =================================
+
+	// check if the previously selected node 
+	// object is valid for the selected surfaces and 
+	// if that's the case, select it again. 
+	for ($ii = 0; $ii < $numNodes; $ii++) {
+		string	$node 	= $nodes[$ii];
+		if ( $node == $artCacheFileCurrentNode )
+		{
+			artCacheFileSelectNode( $artCommand, $node );
+			return;
+		}
+	}
+
+	$cmd = "artAttrCtx -q -attrSelected " + `currentCtx` ;
+	string $attrSelected = eval($cmd);
+	string $tokens[] ;
+	if ( tokenize( $attrSelected, ".",  $tokens) == 3) {
+		for ($ii = 0; $ii < $numNodes; $ii++) {
+			string	$node 	= $nodes[$ii];
+			if ($node == $tokens[1])
+			{
+				artCacheFileSelectNode( $artCommand, $node );
+				return;
+			}
+		}
+	}
+	
+	// Set the selection in the list to the first one.
+	string $node;
+	if ($numNodes > 0) {
+		$node = $nodes[0];
+		artCacheFileSelectNode( $artCommand, $node);
+	}
+	return;
+}

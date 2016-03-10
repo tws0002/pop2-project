@@ -1,0 +1,2346 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//	Creation Date:  Dec 3 1998
+//
+//  Procedure Name:
+//      referenceEditorPanel
+//
+//  Description:
+//      Creates a panel that contains a reference editor.
+//
+//  Input Arguments:
+//      None
+//
+//  Return Value:
+//      None.
+//
+
+global string $gReferenceEditorPanel;
+
+global proc referenceEdFileSelected(string $whichPanel)
+{
+	global string $gReferenceEditorPanel;
+	
+	string $selFileReal[] = `sceneEditor -q -selectItem 
+							 $gReferenceEditorPanel`;
+	string $selRefNodeArray[] = `sceneEditor -q -selectReference $gReferenceEditorPanel`;
+	string $selRefNode = "";
+	string $namespace = (uiRes("m_referenceEditorPanel.kNamespace"));
+	if ( size($selRefNodeArray) > 0 )
+	{
+		// During file IO all node names are relative to the current namespace.
+		// Occasionally this proc will be called while loading a reference.
+		// We're guaranteed that the selected reference node will exist
+		// in a namespace above the current namespace (since the current
+		// namespace is being populated). To make sure that the reference node
+		// name can be found, prepend a ":" to make it an absolute namespace
+		// path (and not one that should be treated relative to the current
+		// namespace).
+		//
+		$selRefNode = ":" + $selRefNodeArray[0];
+	}
+
+	if ( size($selFileReal) == 1
+		 && size($selFileReal[0]) > 0
+		 && `file -q -ex $selFileReal[0]` &&
+		 $selRefNode != "" ) 
+	{
+		button -e -enable true reloadButton;
+
+		string $selFileRaw[];
+		$selFileRaw = `sceneEditor -q -unresolvedName -withoutCopyNumber -selectItem 
+							    $gReferenceEditorPanel`;
+		textField -e -text $selFileRaw[0] unresolvedNameValue;
+		textField -e -enable true unresolvedNameValue;
+
+		textField -e -text $selFileReal[0] resolvedNameValue;
+
+		//	Update the Read Only checkBox
+		//
+		string $selRealNameWithoutCopyNum[] = `sceneEditor -q -withoutCopyNumber -selectItem 
+							    $gReferenceEditorPanel`;
+		int $refWritable = `filetest -w $selRealNameWithoutCopyNum[0]`;
+		checkBoxGrp -edit
+			-value1 (!$refWritable)
+			referenceWritableCheckBox;
+
+		// Set the label according to how the reference was created.
+		//
+		int $usingNamespaces = `file -q -uns $selFileReal[0]`;
+		string $clashType = (uiRes("m_referenceEditorPanel.kRename"));
+		if ( $usingNamespaces ) {
+			$clashType = $namespace;
+		}
+		string $renamePrefix = `file -q -rpr $selFileReal[0]`;
+		
+		text -e -label $clashType fileRenamePrefixLabel;
+		textField -e -text $renamePrefix fileRenamePrefixValue;
+		
+		// We currently only support 'file -e -namespace' for references that
+		// were created using namespaces.
+		//
+		if ( $usingNamespaces ) 
+		{
+			textField -e -enable true fileRenamePrefixValue;
+		} else {
+			textField -e -enable false fileRenamePrefixValue;
+		}
+
+		//Update sharing info
+		int $i;
+		string $selRefFile = `referenceQuery -filename -shortName $selRefNode`;
+		string $sharedNodes[] = `file -q -sharedNodes $selRefFile`;
+		for($i = 0; $i < size($sharedNodes); $i++) {
+			if($sharedNodes[$i] == "displayLayers") { 
+				$sharedNodes[$i] = "Display Layers"; 
+			}
+			else if($sharedNodes[$i] == "shadingNetworks") { 
+				$sharedNodes[$i] = "Shading Networks"; 
+			}
+		}
+		if(size($sharedNodes) > 1) {
+			$sharedNodes[0] = stringArrayToString($sharedNodes, ", ");
+		}
+		text -e -label $sharedNodes[0] sharingValue;
+
+	} else {
+		// Nothing selected.
+		//
+		string $notAvailable = (uiRes("m_referenceEditorPanel.kNotAvalibale"));
+		button -e -enable false reloadButton;
+		textField -e -text $notAvailable unresolvedNameValue;
+		textField -e -enable false unresolvedNameValue;
+		textField -e -text $notAvailable resolvedNameValue;
+		text -e -label $namespace fileRenamePrefixLabel;
+		textField -e -text $notAvailable fileRenamePrefixValue;
+		textField -e -enable false fileRenamePrefixValue;
+		text -e -label $notAvailable sharingValue;
+	}
+}
+
+//	MENU CREATION PROCEDURES
+//
+
+global proc buildReferenceFileMenu(string $parentMenu)
+//
+//	Description:
+//		Builds the submenu for file functionality in the reference editor.
+//
+{
+	global string $gReferenceEditorPanel;
+
+	setParent -menu $parentMenu;
+	
+	if (`menu -query -numberOfItems $parentMenu` == 0) {
+		menuItem 
+			-label (uiRes("m_referenceEditorPanel.kItemCreateReference"))
+			-annotation (uiRes("m_referenceEditorPanel.kCreateRefToFile"))
+			-command ("CreateReference")
+			referenceEdCreateItem;
+
+		menuItem -optionBox true
+			-annotation (uiRes("m_referenceEditorPanel.kCreateRefOptions"))
+			-c ("CreateReferenceOptions")
+			referenceEdFileOptions;
+
+		menuItem 
+			-label (uiRes("m_referenceEditorPanel.kItemImportObjects"))
+			-annotation (uiRes("m_referenceEditorPanel.kImportAllNodes"))
+			-command referenceEdImportCB
+			referenceEdImportItem;
+
+		menuItem 
+			-label (uiRes("m_referenceEditorPanel.kItemExportSelection"))
+			-annotation (uiRes("m_referenceEditorPanel.kExportSelectedNodes"))
+			-command ("ExportSelection")
+			referenceEdExportItem;
+
+		menuItem -optionBox true
+			-annotation (uiRes("m_referenceEditorPanel.kExportSelection"))
+			-c ("ExportSelectionOptions")
+			referenceEdExportOptions;
+
+		menuItem 
+			-label (uiRes("m_referenceEditorPanel.kItemSaveReference"))
+			-annotation (uiRes("m_referenceEditorPanel.kBakeOutmodifications"))
+			-command "referenceEdSaveReference"
+			saveEditsToReference;
+
+		menuItem 
+			-label (uiRes("m_referenceEditorPanel.kExportRefEdits"))
+			-annotation (getRunTimeCommandAnnotation("ExportOfflineFile"))
+			-command "ExportOfflineFileFromRefEd"
+			exportEditsItem;
+			menuItem -optionBox true 
+				-annotation (getRunTimeCommandAnnotation("ExportOfflineFileOptions"))
+				-command ("ExportOfflineFileFromRefEdOptions") 
+				exportEditsOptions;
+
+		menuItem 
+			-label (uiRes("m_referenceEditorPanel.kAssignOfflineFile"))
+			-annotation (getRunTimeCommandAnnotation("ApplyOfflineFileFromRefEd"))
+			-command "AssignOfflineFileFromRefEd"
+			applyEditsItem;
+			menuItem -optionBox true 
+				-annotation (getRunTimeCommandAnnotation("AssignOfflineFileOptions"))
+				-command ("AssignOfflineFileFromRefEdOptions") 
+				applyEditsOptions;
+			
+		menuItem 
+			-label (uiRes("m_referenceEditorPanel.kItemListReference"))
+			-annotation (uiRes("m_referenceEditorPanel.kListModifications"))
+			-command ("string $referenceFile[] = `sceneEditor -q -si $gReferenceEditorPanel`;" +
+				"referenceEditsWindow $referenceFile[0] false;")
+			listEditsToReference;
+			
+		menuItem 
+			-label (uiRes("m_referenceEditorPanel.kItemListUnknownRef"))
+			-ann (uiRes("m_referenceEditorPanel.kItemListUnknownRefAnn"))
+			-command ("string $referenceFile[] = `sceneEditor -q -si $gReferenceEditorPanel`;" +
+				"referenceEditsWindow $referenceFile[0] true;")
+			listUnknownEditsToReference;
+			
+		menuItem -divider true;
+
+		menuItem
+			-label (uiRes("m_referenceEditorPanel.kItemCleanUp"))
+			-annotation (uiRes("m_referenceEditorPanel.kRemoveAllEdits"))
+			-command "referenceEdCleanUpCB"
+			referenceEdCleanUpItem;
+
+		menuItem -divider true;
+
+		menuItem 
+			-label (uiRes("m_referenceEditorPanel.kItemSelectFile"))
+			-annotation (uiRes("m_referenceEditorPanel.kSelectAllNodes"))
+			-command "referenceEdSelectCB"
+			referenceEdSelectItem;
+	}
+
+	updateReferenceFileMenu($parentMenu);
+}
+
+global proc updateReferenceFileMenu(string $parentMenu)
+//
+//	Description:
+//		Updates the file menu in the reference editor.
+//
+{
+	global string $gReferenceEditorPanel;
+
+	string $oldParent = `setParent -q -menu`;
+	setParent -menu $parentMenu;
+
+	//	Disable the export item if the selection list is empty.
+	//
+	int $exportEnable = (size(`ls -sl`) > 0) ? true : false;
+	menuItem -edit -enable $exportEnable referenceEdExportItem;
+	menuItem -edit -enable $exportEnable referenceEdExportOptions;
+
+	//	Disable the clean reference item if there is no reference node.
+	//  Hmm, seems that import and select need a reference too,
+	//
+	int $selectRefEnable = 1;
+	if ( size(`sceneEditor -q -parent $gReferenceEditorPanel`) > 0 ) {
+		string $selRefNode[] = `sceneEditor -q -selectReference $gReferenceEditorPanel`;
+		
+		if (size($selRefNode) == 0 || size($selRefNode[0]) == 0) {
+			$selectRefEnable = 0;
+		}
+	}
+	menuItem -edit -enable $selectRefEnable referenceEdCleanUpItem;
+	menuItem -edit -enable $selectRefEnable referenceEdImportItem;
+	menuItem -edit -enable $selectRefEnable referenceEdSelectItem;
+
+	// Enable/disable 'Save Reference Edits' menu item
+	// 'List Reference Edits' menu should always be enabled. If the reference
+	// is locked/not-shared, we should still be able to see the edits, just
+	// not modify them in any way.
+	//
+	int $enableSaveRef = 0;
+	if ( size(`sceneEditor -q -parent $gReferenceEditorPanel`) > 0 ) {
+		string $selRefNodes[] = `sceneEditor -q -selectReference $gReferenceEditorPanel`;
+		string $selRefFiles[] = `sceneEditor -q -selectItem $gReferenceEditorPanel`;
+		// We can export only one reference at a time
+		if (size($selRefNodes) == 1) {
+			int $isLocked = `getAttr ($selRefNodes[0] + ".locked")`;
+			int $isShared = size(`file -q -sharedNodes $selRefFiles[0]`);
+			
+			if( $isLocked == 0 &&
+				$isShared == 0 ) {
+				$enableSaveRef = 1;
+			}
+		}
+	}
+	menuItem -edit -enable $enableSaveRef saveEditsToReference;
+	menuItem -edit -enable true listEditsToReference;
+
+	setParent -menu $oldParent;
+}
+
+global proc updateReferenceEditMenu(string $parentMenu)
+//
+//	Description:
+//		Updates the edit menu for the reference editor.
+//
+{
+	global string $gReferenceEditorPanel;
+
+	string $oldParent = `setParent -q -menu`;
+	setParent -menu $parentMenu;
+
+	int $enable = false;
+	if ( size(`sceneEditor -q -parent $gReferenceEditorPanel`) > 0 ) {
+		string $selFileReal[] = `sceneEditor -q -selectItem $gReferenceEditorPanel`;
+		$enable = (size($selFileReal) > 0);
+	}
+	menuItem -edit -enable $enable referenceEdSelectItem;
+
+	setParent -menu $oldParent;
+}
+
+global proc buildReferenceReferenceMenu(string $parentMenu)
+//
+//	Description: Build the Reference pull down menu in the reference editor
+//
+//
+{
+	setParent -menu $parentMenu;
+
+	if (`menu -query -numberOfItems $parentMenu` == 0) {
+		menuItem
+			-label (uiRes("m_referenceEditorPanel.kItemReloadRef"))
+			-command referenceEdLoadCB
+			-annotation (uiRes("m_referenceEditorPanel.kReloadSelected"))
+			referenceEdLoadItem;
+
+		menuItem
+			-label (uiRes("m_referenceEditorPanel.kUnloadRef"))
+			-command "referenceEdUnloadCB 0"
+			-annotation (uiRes("m_referenceEditorPanel.kUnloadSelected"))
+			referenceEdUnloadItem;
+
+		menuItem -divider true;
+
+		menuItem
+			-label (uiRes("m_referenceEditorPanel.kItemLoadRelated"))
+			-command referenceEdLoadRelCB
+			-annotation (uiRes("m_referenceEditorPanel.kLoadRefFiles"))
+			referenceEdLoadRelItem;
+
+		menuItem
+			-label (uiRes("m_referenceEditorPanel.kItemUnloadRelated"))
+			-command referenceEdUnloadRelCB
+			-annotation (uiRes("m_referenceEditorPanel.kUnloadRefFiles"))
+			referenceEdUnloadRelItem;
+
+		menuItem -divider true;
+
+		menuItem
+			-label (uiRes("m_referenceEditorPanel.kItemDuplicate"))
+			-command "duplicateReference 1 $gReferenceEditorPanel"
+			-annotation (uiRes("m_referenceEditorPanel.kDuplicateFile"))
+			referenceEdDuplicateItem;
+
+		menuItem
+			-label (uiRes("m_referenceEditorPanel.kItemReplaceRef"))
+			-command referenceEdReplaceCB
+			-annotation (uiRes("m_referenceEditorPanel.kReplaceFile"))
+			referenceEdReplaceItem;
+
+		menuItem 
+			-subMenu true
+			-label (uiRes("m_referenceEditorPanel.kItemRecent"))
+			-annotation (uiRes("m_referenceEditorPanel.kShowRefFiles"))
+			-postMenuCommand ("buildReferenceEdRecentMenu " + $parentMenu)
+			referenceEdRecentFilesItem;
+
+		setParent -menu ..;
+
+		menuItem -divider true;
+
+		menuItem 
+			-label (uiRes("m_referenceEditorPanel.kItemRemove"))
+			-annotation (uiRes("m_referenceEditorPanel.kRemoveSelected"))
+			-command "referenceEdRemoveCB"
+			referenceEdRemoveItem;
+
+		menuItem -divider true;
+
+		menuItem
+			-label (uiRes("m_referenceEditorPanel.kLockRef"))
+			-annotation (uiRes("m_referenceEditorPanel.kLockRefAnnot"))
+			-command referenceEdLockCB
+			referenceEdLockItem;
+
+		menuItem
+			-label (uiRes("m_referenceEditorPanel.kUnlockRef"))
+			-annotation (uiRes("m_referenceEditorPanel.kUnlockRefAnnot"))
+			-command referenceEdUnlockCB
+			referenceEdUnlockItem;
+	}
+	updateReferenceReferenceMenu($parentMenu);
+}
+
+global proc updateReferenceReferenceMenu(string $parentMenu)
+//
+//	Description:
+//		Updates the file menu in the reference editor.
+//
+{
+	global string $gReferenceEditorPanel;
+
+	string $oldParent = `setParent -q -menu`;
+	setParent -menu $parentMenu;
+
+	// And while we're at it, disable everything else that requires at
+	// least reference item selected 
+	//
+	int $selectRefEnable = 1;
+	if ( size(`sceneEditor -q -parent $gReferenceEditorPanel`) > 0 ) {
+		string $selRefNode[] = `sceneEditor -q -selectReference $gReferenceEditorPanel`;
+		
+		if (size($selRefNode) == 0 || size($selRefNode[0]) == 0) {
+			$selectRefEnable = 0;
+		}
+	}
+	menuItem -edit -enable $selectRefEnable referenceEdLoadItem;
+	menuItem -edit -enable $selectRefEnable referenceEdUnloadItem;
+	menuItem -edit -enable $selectRefEnable referenceEdDuplicateItem;
+	menuItem -edit -enable $selectRefEnable referenceEdReplaceItem;
+	menuItem -edit -enable $selectRefEnable referenceEdRemoveItem;
+	menuItem -edit -enable $selectRefEnable referenceEdRecentFilesItem;
+
+	// and we can't unload/reload related references unless
+	// there's something related selected in the model either
+
+	int $relatedEnable = (size(`ls -sl`) > 0) ? true : false;
+	menuItem -edit -enable $relatedEnable referenceEdLoadRelItem;
+	menuItem -edit -enable $relatedEnable referenceEdUnloadRelItem;
+
+	// and we should really only lock an unlocked reference or
+	// unlock a locked one, and if there's more than one reference
+	// selected, its probably too confusing
+
+	int $lockRefEnable = 0;
+	int $unlockRefEnable = 0;
+	if ( size(`sceneEditor -q -parent $gReferenceEditorPanel`) > 0 ) {
+		string $selRefNodes[] = `sceneEditor -q -selectReference $gReferenceEditorPanel`;
+		if (size($selRefNodes) == 1) 
+		{
+			int $isLocked = `getAttr ($selRefNodes[0] + ".locked")`;
+
+			// If this file is locked, or its parent is...
+			string $selRefFile = `referenceQuery -filename -shortName $selRefNodes[0]`;
+			int $isFileLocked = `file -q -lockFile $selRefFile` ||
+								`getAttr -lock ($selRefNodes[0]+".locked")`;
+			if( $isLocked == 1 ) {
+				$unlockRefEnable = ($isFileLocked == 0);
+			} else {
+				$lockRefEnable = 1;
+			}
+		}
+	}
+	menuItem -edit -enable $lockRefEnable referenceEdLockItem;
+	menuItem -edit -enable $unlockRefEnable referenceEdUnlockItem;
+
+	setParent -menu $oldParent;
+}
+
+global proc buildReferenceProxyMenu(string $parentMenu)
+//
+//	Description: Build the Proxy pull down menu in the reference editor
+//
+//
+{
+	setParent -menu $parentMenu;
+
+	if (`menu -query -numberOfItems $parentMenu` == 0) {
+		menuItem
+			-label (uiRes("m_referenceEditorPanel.kItemAddProxy"))
+			-annotation (uiRes("m_referenceEditorPanel.kAddProxy"))
+			-command referenceProxyAddCB
+			referenceProxyAddItem;
+
+		menuItem -optionBox true
+			-annotation (uiRes("m_referenceEditorPanel.kAddProxyAnnot"))
+			-command referenceProxyAddOptionsCB
+			referenceProxyAddOptionsItem;
+
+		menuItem 
+			-subMenu true
+			-label (uiRes("m_referenceEditorPanel.kItemRemProxy"))
+			-annotation (uiRes("m_referenceEditorPanel.kRemoveInteractiveProxy"))
+			-postMenuCommand ("buildReferenceProxyActionMenu " + $parentMenu + " Remove" )
+			referenceProxyRemoveItem;
+		setParent -menu ..;
+
+		menuItem 
+			-subMenu true
+			-label (uiRes("m_referenceEditorPanel.kItemReloadProxy"))
+			-annotation (uiRes("m_referenceEditorPanel.kReloadSpecifiedProxy"))
+			-postMenuCommand ("buildReferenceProxyActionMenu " + $parentMenu + " Switch" )
+			referenceProxySwitchItem;
+		setParent -menu ..;
+
+		menuItem -label (uiRes("m_referenceEditorPanel.kExportProxyAsset"))
+			-annotation (getRunTimeCommandAnnotation("ExportProxyContainer"))
+			-command ExportProxyContainer;
+		menuItem -optionBox true 
+			-annotation (uiRes("m_referenceEditorPanel.kExportProxyContainerOptionsAnnot"))
+			-command ("ExportProxyContainerOptions") 
+			exportProxyContainerOptions;
+	
+		menuItem -divider true;
+
+		menuItem 
+			-subMenu true
+			-label (uiRes("m_referenceEditorPanel.kItemSwitchTagActiveProxy"))
+			-annotation (uiRes("m_referenceEditorPanel.kSwitchesProxyTag"))
+			-postMenuCommand ("buildSwitchActiveProxyTagMenu " + $parentMenu )
+			referenceProxySwitchActiveTagItem;
+		setParent -menu ..;
+
+		menuItem 
+			-subMenu true
+			-label (uiRes("m_referenceEditorPanel.kItemSwitchTagProxy"))
+			-annotation (uiRes("m_referenceEditorPanel.kSwitchSelected"))
+			-postMenuCommand ("buildSwitchSelectedProxyTagMenu " + $parentMenu )
+			referenceProxySwitchSelectedTagItem;
+		setParent -menu ..;
+	}
+	updateReferenceProxyMenu($parentMenu);
+}
+
+global proc updateReferenceProxyMenu(string $parentMenu)
+//
+//	Description:
+//		Updates the proxy menu in the reference editor.
+//
+{
+	global string $gReferenceEditorPanel;
+
+	string $oldParent = `setParent -q -menu`;
+	setParent -menu $parentMenu;
+
+	// Enable/disable Add Proxy menu item
+	int $enableAddProxy = 0;
+	if ( size(`sceneEditor -q -parent $gReferenceEditorPanel`) > 0 ) {
+		string $selFileReal[] = `sceneEditor -q -selectItem -onlyParents
+							 $gReferenceEditorPanel`;
+		if (size($selFileReal) == 1) {
+			// We can add a proxy to only one reference at a time
+			$enableAddProxy = 1;
+		}
+	}
+	menuItem -edit -enable $enableAddProxy referenceProxyAddItem;
+
+	setParent -menu $oldParent;
+}
+
+//	END OF MENU CREATION PROCEDURES
+//
+
+global proc referenceEditorPanel(string $panelName) {
+
+	global string $gMainPane;
+
+	if (!`scriptedPanelType -exists referenceEditorPanel`) {
+		scriptedPanelType 
+			-createCallback "createRefEdPanel"
+			-addCallback "addRefEdPanel"
+			-removeCallback "removeRefEdPanel"
+			referenceEditorPanel;
+
+		setParent $gMainPane;
+		scriptedPanel -unParent -type "referenceEditorPanel" $panelName;
+	}
+
+}
+
+global proc createRefEdPanel(string $whichPanel) {
+//
+//  Description:
+//		createCallback for the scripted panel reference editor. 
+//
+	global string $gReferenceEditorPanel;	
+	$gReferenceEditorPanel = ($whichPanel + "referenceEditorPanel");	
+
+	sceneEditor 
+		-unParent
+		-selectCommand ("refEdUpdateFilter;" +
+		"referenceEdFileSelected \"" + $whichPanel + "\";")
+		$gReferenceEditorPanel;
+
+}
+
+global proc buildReferenceContextHelpItems(string $nameRoot, string $menuParent)
+//
+//  Description:
+//		Build context help menu items for the reference editor.  
+//		
+//  Input Arguments:
+//		$nameRoot - name to use as the root of all item names
+//		$menuParent - the name of the parent of this menu
+//
+//  Return Value:
+//      None
+//
+{
+	menuItem -label (uiRes("m_referenceEditorPanel.kHelp"))
+		-enableCommandRepeat false
+		-command "showHelp ReferenceEditor";
+}
+
+global proc addRefEdPanel( string $whichPanel )
+//
+//  Description:
+//		addCallback for the scripted panel reference editor. 
+//
+{
+	global int $gStandardIdent;
+	int $numDivisions = 100;
+
+	//	variables used for the editor section of the ref ed
+	//
+	string $rp = ($whichPanel + "referenceEditorPanel");//sceneEditor panel
+
+	// Wrap this UI creation as non-undoable, otherwise, undoing back through
+	// the referenceEditor creation will undo some of the connections
+	// made in constructing our editor, leaving it partially functioning
+	//
+	int $undoEnabled = `undoInfo -q -state`;
+	undoInfo -stateWithoutFlush false;
+	
+	//	Add the menu.
+	//
+	string $fileMenu = `menu -label (uiRes("m_referenceEditorPanel.kFile"))
+					   -allowOptionBoxes true
+					   -tearOff true`;
+	menu -edit 
+		-postMenuCommand ("updateReferenceFileMenu " + $fileMenu)
+		$fileMenu;
+	buildReferenceFileMenu($fileMenu);
+	setParent -menu ..;
+
+	string $referenceMenu = `menu -label (uiRes("m_referenceEditorPanel.kReference"))
+							-allowOptionBoxes true
+							-tearOff true`;
+	
+	menu -edit
+		-postMenuCommand ("updateReferenceReferenceMenu " + $referenceMenu)
+		$referenceMenu;
+	buildReferenceReferenceMenu($referenceMenu);
+	setParent -menu ..;
+	
+	string $proxyMenu = `menu -label (uiRes("m_referenceEditorPanel.kProxy"))
+							-allowOptionBoxes true
+							-tearOff true`;
+	
+	menu -edit
+		-postMenuCommand ("updateReferenceProxyMenu " + $proxyMenu)
+		$proxyMenu;
+	buildReferenceProxyMenu($proxyMenu);
+	setParent -menu ..;
+
+	string $viewMenu = `menu -label (uiRes("m_referenceEditorPanel.kView"))
+		-allowOptionBoxes true 
+		-tearOff true
+		referenceEditorViewMenu`;
+	menu -edit
+		-enable true
+		-postMenuCommand ("updateReferenceViewMenu " + $viewMenu)
+		$viewMenu;
+	buildReferenceViewMenu($viewMenu);
+	setParent -menu ..;
+	
+	//	Add support for the Context Sensitive Help Menu.
+	//
+	addContextHelpProc $whichPanel "buildReferenceContextHelpItems";
+
+	//	main form
+	string $edParent = `formLayout`;
+
+	//	add toolbar
+	//
+	string $toolBarForm = `formLayout`;
+
+	int $iconsize = 26;
+
+	iconTextButton
+		-i1 "createReference.png" 
+		-w $iconsize -h $iconsize
+		-annotation (uiRes("m_referenceEditorPanel.kCreateReference"))
+		-command "CreateReference"
+		createRefButton;
+
+	popupMenu -button 3
+		-parent createRefButton
+		-postMenuCommand ("CreateReferenceOptions")
+		createRefButtonPopup;
+
+	iconTextButton
+		-i1 "duplicateReference.png" 
+		-w $iconsize -h $iconsize
+		-annotation (uiRes("m_referenceEditorPanel.kDuplicateReference"))
+		-command ("duplicateReference 1 " + $rp)
+		duplicateRefButton;
+
+	iconTextButton
+		-i1 "selectFileContents.png" 
+		-w $iconsize -h $iconsize
+		-annotation (uiRes("m_referenceEditorPanel.kSelectFileContents"))
+		-command "referenceEdSelectCB"
+		selectContentsButton;
+
+	iconTextButton
+		-i1 "reloadReference.png" 
+		-w $iconsize -h $iconsize
+		-annotation (uiRes("m_referenceEditorPanel.kReloadRefFile"))
+		-command "referenceEdLoadCB"
+		reloadRefButton;
+
+	iconTextButton
+		-i1 "unloadReference.png" 
+		-w $iconsize -h $iconsize
+		-annotation (uiRes("m_referenceEditorPanel.kUnloadRefFile"))
+		-command "referenceEdUnloadCB 0"
+		unloadRefButton;
+
+	iconTextButton
+		-i1 "addProxy.png" 
+		-w $iconsize -h $iconsize
+		-annotation (uiRes("m_referenceEditorPanel.kAddProxyRefFile"))
+		-command "referenceProxyAddCB"
+		addProxyButton;
+
+	popupMenu -button 3
+		-parent addProxyButton
+		-postMenuCommand "referenceProxyAddOptionsCB"
+		addProxyButtonPopup;
+
+	iconTextButton
+		-i1 "removeReference.png" 
+		-w $iconsize -h $iconsize
+		-annotation (uiRes("m_referenceEditorPanel.kRemoveRefFile"))
+		-command "referenceEdRemoveCB"		
+		removeRefButton;
+	
+	//	set optionVars for outliner and model editors - invisible by default
+	//
+	if (!`optionVar -exists refEdEditorVisibility`)
+		optionVar -stringValue refEdEditorVisibility refEdSceneEditorButton;
+
+	string $refEdDisplayEditor = `optionVar -query refEdEditorVisibility`;
+
+	separator -horizontal false -style single rpSeparator1;
+
+	//	display of file list, outliner and viewport are in an iconTextRadioCollection.
+	//	
+	iconTextRadioCollection refEdEditorDisplayCollection; 
+
+	iconTextRadioButton 
+		-w $iconsize -h $iconsize
+		-style "iconOnly"
+ 		-image1 "refEdFileList.png" 
+		-annotation (uiRes("m_referenceEditorPanel.kDisplayFileList"))
+		-onCommand 
+			("paneLayout -e -configuration single refEdEditorPane;" +
+			"optionVar -sv refEdEditorVisibility refEdSceneEditorButton;")
+		refEdSceneEditorButton;
+
+	iconTextRadioButton 
+		-w $iconsize -h $iconsize
+		-style "iconOnly"
+ 		-image1 "refEdOutliner.png" 
+		-annotation (uiRes("m_referenceEditorPanel.kDisplayOuliner"))
+		-onCommand 
+			("paneLayout -e -configuration vertical2 refEdEditorPane;" +
+			"optionVar -sv refEdEditorVisibility refEdOutlinerButton;")
+		refEdOutlinerButton;
+
+	iconTextRadioButton 
+		-w $iconsize -h $iconsize
+		-style "iconOnly"
+ 		-image1 "refEdViewport.png" 
+		-annotation (uiRes("m_referenceEditorPanel.kDisplayViewport"))
+		-onCommand ("paneLayout -e -configuration vertical3 refEdEditorPane;" +
+			"optionVar -stringValue refEdEditorVisibility refEdViewportButton;")
+		refEdViewportButton;
+
+	setParent $edParent;
+
+	formLayout -edit
+		-attachForm		createRefButton         top		0
+		-attachForm		createRefButton         left	0
+		-attachForm		createRefButton			bottom	0
+
+		-attachForm		removeRefButton         top		0
+		-attachForm		removeRefButton         bottom	0
+		-attachControl	removeRefButton			left	0	createRefButton
+		
+		-attachForm		duplicateRefButton		top		0
+		-attachForm		duplicateRefButton		bottom	0
+		-attachControl	duplicateRefButton		left	0	removeRefButton
+
+		-attachForm		selectContentsButton	top		0
+		-attachForm		selectContentsButton	bottom	0
+		-attachControl	selectContentsButton	left	0	duplicateRefButton
+
+		-attachForm		reloadRefButton         top		0
+		-attachForm		reloadRefButton         bottom	0
+		-attachControl	reloadRefButton         left	0	selectContentsButton
+
+		-attachForm		unloadRefButton         top		0
+		-attachForm		unloadRefButton         bottom	0
+		-attachControl	unloadRefButton         left	0	reloadRefButton
+
+		-attachForm		addProxyButton			top		0
+		-attachForm		addProxyButton			bottom	0
+		-attachControl	addProxyButton			left	0	unloadRefButton
+
+		-attachForm		rpSeparator1			top		0
+		-attachForm		rpSeparator1			bottom	0
+		-attachControl	rpSeparator1			left	0	addProxyButton
+
+		-attachForm		refEdSceneEditorButton  top		0
+		-attachForm		refEdSceneEditorButton  bottom	0
+		-attachControl	refEdSceneEditorButton  left	0	rpSeparator1
+
+		-attachForm		refEdOutlinerButton		top		0
+		-attachForm		refEdOutlinerButton		bottom	0
+		-attachControl	refEdOutlinerButton		left	0	refEdSceneEditorButton
+
+		-attachForm		refEdViewportButton		top		0
+		-attachForm		refEdViewportButton		bottom	0
+		-attachControl	refEdViewportButton		left	0	refEdOutlinerButton
+
+		$toolBarForm;
+
+	string $editorsLayout = `formLayout`;
+	string $paneLayout = `paneLayout -p $editorsLayout -configuration "vertical3" refEdEditorPane`;
+	
+	string $rpForm  = `formLayout`;
+	string $sceneEditorFilterField = filterUICreateField($rp, $rpForm);
+
+	sceneEditor -e 
+		-parent $rpForm $rp;
+
+	setParent ..;
+
+	formLayout -edit
+
+		-attachForm    $sceneEditorFilterField	"left" 0
+		-attachForm    $sceneEditorFilterField	"top" 0
+		-attachForm    $sceneEditorFilterField	"right" 0
+
+		-attachControl $rp					"top" 0 $sceneEditorFilterField
+		-attachForm    $rp					"left" 0
+		-attachForm    $rp					"right" 0
+		-attachForm    $rp					"bottom" 0
+
+		$rpForm;
+
+	string $outlinerForm  = `formLayout`;
+
+	global string $gReferenceEditorOutliner;
+	$gReferenceEditorOutliner = `outlinerEditor -parent $outlinerForm`;
+
+	string $outlinerFilterField = filterUICreateField($gReferenceEditorOutliner, $outlinerForm);
+	
+	setParent ..;
+
+	formLayout -edit
+
+		-attachForm    $outlinerFilterField         "left" 0
+		-attachForm    $outlinerFilterField         "top" 0
+		-attachForm    $outlinerFilterField         "right" 0
+
+		-attachControl $gReferenceEditorOutliner	"top" 0 $outlinerFilterField
+		-attachForm    $gReferenceEditorOutliner	"left" 0
+		-attachForm    $gReferenceEditorOutliner	"right" 0
+		-attachForm    $gReferenceEditorOutliner	"bottom" 0
+
+		$outlinerForm;
+
+	//	set up the camera for the modelEditor
+	//
+	global string $gRefEdViewportCamera[];
+	string $cameras[] = `listCameras -perspective`;
+	if ($gRefEdViewportCamera[0] == "" || !`exists $gRefEdViewportCamera[0]` ){
+		// Note the leading colon on the camera name to allow the name to
+		// be found even when in relativeNames mode.
+		//
+		$gRefEdViewportCamera = `ls -cameras ":refEdViewportCamera*"`;
+		if (`size $gRefEdViewportCamera` == 0){
+			$gRefEdViewportCamera[0] = $cameras[0];
+		} 
+	} 
+
+	string $modelEditorForm  = `formLayout`;
+	string $modelEdMenu = `menuBarLayout`;
+
+	global string $gReferenceEditorModelEditor;
+	if ($gReferenceEditorModelEditor == "" || !`exists $gReferenceEditorModelEditor` ){
+		$gReferenceEditorModelEditor = `modelEditor -parent $modelEditorForm`;
+		global string $gScriptedModelEditorTypes[];
+		global string $gScriptedModelEditorList[]; 
+		int $nextAvail = size( $gScriptedModelEditorTypes );
+		$gScriptedModelEditorTypes[$nextAvail] = "referenceEditorPanel"; 
+		$gScriptedModelEditorList[$nextAvail] = $gReferenceEditorModelEditor; 
+	}
+
+	modelEditor -edit 
+		-vs 1 
+		-noUndo 1
+		-camera $gRefEdViewportCamera[0]
+		$gReferenceEditorModelEditor;
+
+	referenceEditorViewportMenuBar $modelEdMenu $gReferenceEditorModelEditor;
+
+		formLayout -edit
+
+		-attachForm    $modelEdMenu         "left" 0
+		-attachForm    $modelEdMenu         "top" 0
+		-attachForm    $modelEdMenu         "right" 0
+
+		-attachControl $gReferenceEditorModelEditor	"top" 0 $modelEdMenu
+		-attachForm    $gReferenceEditorModelEditor	"left" 0
+		-attachForm    $gReferenceEditorModelEditor	"right" 0
+		-attachForm    $gReferenceEditorModelEditor	"bottom" 0
+
+		$modelEditorForm;
+
+	setParent $edParent;
+
+	outlinerEditor -edit 
+		-showDagOnly true 
+		-showSetMembers true
+		-selectCommand ("isolateSelect -loadSelected ($gReferenceEditorModelEditor);") 
+		$gReferenceEditorOutliner;
+
+	// File Particulars
+	//
+
+	formLayout -e
+		-attachForm $paneLayout top 0
+		-attachForm $paneLayout left 0 
+		-attachForm $paneLayout right 0
+		-attachForm $paneLayout bottom 0
+		$editorsLayout;
+
+		frameLayout 
+			-label				(uiRes("m_referenceEditorPanel.kFileParticulars"))
+			-collapsable		true 
+			-collapse			`optionVar -q refEdFilePartCl`
+			-collapseCommand	"optionVar -iv refEdFilePartCl 1"
+			-expandCommand		"optionVar -iv refEdFilePartCl 0"
+			-labelIndent		$gStandardIdent
+			fileInfoFrame;
+
+		string $fInfoForm = `formLayout fileInfoForm`;
+
+		text -label (uiRes("m_referenceEditorPanel.kUnresolvedName")) unresolvedNameLabel;
+		textField 
+			-changeCommand "referenceEdRenameCB" 
+			-enterCommand "referenceEdRenameCB"
+			-enable true
+			unresolvedNameValue;
+		button -label (uiRes("m_referenceEditorPanel.kReload")) -width 90 -c "referenceEdRenameCB" -enable true reloadButton;
+		text -label (uiRes("m_referenceEditorPanel.kResolvedName")) resolvedNameLabel;
+		textField -enable false resolvedNameValue;
+		text fileRenamePrefixLabel;
+		textField 
+			-changeCommand "referenceEdEditNamespaceCB" 
+			-enterCommand "referenceEdEditNamespaceCB" 
+			fileRenamePrefixValue;
+
+		checkBoxGrp
+			-enable 0
+			-numberOfCheckBoxes 1
+			-label1 (uiRes("m_referenceEditorPanel.kReadOnly"))
+			-width 90
+			referenceWritableCheckBox;
+			
+		text -label (uiRes("m_referenceEditorPanel.kSharing")) sharingLabel;
+		text -label (uiRes("m_referenceEditorPanel.kNotApplicable")) sharingValue;
+
+		formLayout -e
+			-attachForm unresolvedNameLabel left 0 
+			-attachForm unresolvedNameLabel top 1
+
+			-attachForm unresolvedNameValue left 100
+			-attachControl unresolvedNameValue right 5 reloadButton 
+			-attachForm unresolvedNameValue top 0
+			
+			-attachForm reloadButton right 5
+			-attachForm reloadButton top 0
+			-attachNone reloadButton left
+						
+			-attachForm resolvedNameLabel left 0 
+			-attachControl resolvedNameLabel top 6 unresolvedNameLabel
+
+			-attachForm resolvedNameValue left 100
+			-attachControl resolvedNameValue top 1 unresolvedNameValue
+			-attachControl resolvedNameValue right 5 reloadButton
+
+			-attachNone referenceWritableCheckBox left
+			-attachForm referenceWritableCheckBox right 5
+			-attachControl referenceWritableCheckBox top 2 unresolvedNameValue
+
+			-attachForm fileRenamePrefixLabel left 0
+			-attachControl fileRenamePrefixLabel top 6 resolvedNameLabel
+
+			-attachForm fileRenamePrefixValue left 100
+			-attachControl fileRenamePrefixValue right 5 reloadButton
+			-attachControl fileRenamePrefixValue top 1 resolvedNameValue
+
+			-attachForm sharingLabel left 0
+			-attachControl sharingLabel top 6 fileRenamePrefixLabel
+
+			-attachForm sharingValue left 100
+			-attachControl sharingValue right 5 reloadButton
+			-attachControl sharingValue top 1 fileRenamePrefixValue
+			-attachForm sharingValue bottom 2
+
+			$fInfoForm;
+
+		formLayout -e
+			-attachForm $toolBarForm top 0
+			-attachForm $toolBarForm left 0
+			-attachForm $toolBarForm right 0
+
+			-attachControl fileInfoFrame top 0 $toolBarForm
+			-attachForm fileInfoFrame left 0
+			-attachForm fileInfoFrame right 0
+
+			-attachControl $editorsLayout top 5 fileInfoFrame
+			-attachForm $editorsLayout left 0
+			-attachForm $editorsLayout right 0
+			-attachForm $editorsLayout bottom 0
+			$edParent;
+		
+		setParent $edParent;
+
+		source ReferenceEdMenu;
+		ReferenceEdMenu($rp);
+
+		referenceEdFileSelected($whichPanel);
+
+	iconTextRadioCollection -edit 
+		-select ($refEdDisplayEditor)
+		refEdEditorDisplayCollection;
+
+	//	Create the selection connection network for the editors.
+	string $inputList = `selectionConnection -worldList`;
+	string $fromEditor1 = `selectionConnection`;//outliner
+	string $fromEditor2 = `selectionConnection`;//model view
+	editor -edit -mainListConnection $inputList $gReferenceEditorOutliner;
+	editor -edit -selectionConnection $fromEditor1 $gReferenceEditorOutliner;
+	editor -edit -mainListConnection $fromEditor1 $gReferenceEditorModelEditor;
+	editor -edit -selectionConnection $fromEditor2 $gReferenceEditorModelEditor;
+	editor -edit -highlightConnection $fromEditor2 $gReferenceEditorModelEditor;
+	undoInfo -stateWithoutFlush $undoEnabled;
+
+}
+	
+global proc removeRefEdPanel(string $whichPanel)
+{
+//
+//  Description:
+//		removeCallback for the scripted panel reference editor. 
+//
+	global string $gReferenceEditorPanel;
+	sceneEditor -e -unParent
+		$gReferenceEditorPanel;
+
+	global string $gScriptedModelEditorTypes[];
+	global string $gScriptedModelEditorList[]; 
+	int $index = -1; 
+	for ( $i = 0; $i < size($gScriptedModelEditorTypes); $i ++ ) { 
+		if ( $gScriptedModelEditorTypes[$i] == "referenceEditorPanel" ) { 
+			$index = $i; 
+			break; 
+		}
+	}
+	if ( $index != -1 ) { 
+		stringArrayRemoveAtIndex( $index, $gScriptedModelEditorTypes ); 
+		stringArrayRemoveAtIndex( $index, $gScriptedModelEditorList ); 
+	}
+
+	// Delete the selectionConnections created in addRefEdPanel.
+	//
+	global string $gReferenceEditorOutliner;
+	if(`editor -exists $gReferenceEditorOutliner`) {
+		string $selectionConnection = `editor -q -mainListConnection $gReferenceEditorOutliner`;
+		if(size($selectionConnection) > 0) {
+			deleteUI $selectionConnection;
+		}
+		
+		$selectionConnection = `editor -q -selectionConnection $gReferenceEditorOutliner`;
+		if(size($selectionConnection) > 0) {
+			deleteUI $selectionConnection;
+		}
+	}
+
+	global string $gReferenceEditorModelEditor;
+	if(`editor -exists $gReferenceEditorModelEditor`) {
+		string $selectionConnection = `editor -q -selectionConnection $gReferenceEditorModelEditor`;
+		if(size($selectionConnection) > 0) {
+			deleteUI $selectionConnection;
+		}
+	}
+}
+
+//	Global procs used by the menus...
+//
+
+global proc referenceEdImportCB()
+//
+//	Description:
+//		Import the contents of a reference file into the scene. The imported
+//		file is no longer referenced.
+//
+{
+	global string $gReferenceEditorPanel;
+	
+	// To guarantee that we don't try to import a child reference after
+	// importing its parent, only get the list of selected parents
+	//
+	string $selRefNode[] = `sceneEditor -q -selectReference -onlyParents
+							$gReferenceEditorPanel`;
+	string $selFileReal[] = `sceneEditor -q -selectItem -onlyParents
+							 $gReferenceEditorPanel`;
+							 
+	int $numNodes = size($selRefNode);
+	int $numFiles = size($selFileReal);
+	// Ideally we'd like to use the reference node form of the command as
+	// all reference nodes are unique but referenced files may not be.
+	// However if there are more files returned than nodes, then we must
+	// resort to the file form of the command.
+	//
+	if ( $numNodes >= $numFiles ) {
+		int $i = 0;
+		for ( $i = 0; $i < $numNodes; $i++ ) {
+			if ( size($selRefNode[$i]) > 0 ) {
+				file -importReference -referenceNode $selRefNode[$i];
+			}
+		}
+	} else {
+		int $i = 0;
+		for ( $i = 0; $i < $numFiles; $i++ ) {
+			if ( size($selFileReal[$i]) > 0 ) {
+				file -importReference $selFileReal[$i];
+			}
+		}
+	}
+}
+
+global proc referenceEdCleanUpCB()
+//
+//	Description:
+//		Cleans up the currently selected reference. Any unresolved information
+//		is removed. This is a potentially dangerous option.
+//
+{
+	global string $gReferenceEditorPanel;
+
+
+	string $selRefNode[] = `sceneEditor -q -selectReference
+							$gReferenceEditorPanel`;
+
+	int $numNodes = size($selRefNode);
+
+	//	If a reference node is not selected, then there is nothing to
+	//	clean up.
+	//
+	if ($numNodes == 0) {
+		return;
+	}
+
+	string $message	   = (uiRes("m_referenceEditorPanel.kCleanupRef"));
+	string $refNode    = $selRefNode[0];
+	
+	int $i = 1;
+	for ( $i = 1; $i < $numNodes; $i++ ) {
+		if ( size($selRefNode[$i]) > 0 ) {
+			$refNode += ", ";
+			$refNode += $selRefNode[$i];
+		}
+	}
+
+	string $clenupMessage = `format -s $refNode $message`;							
+	string $result = `confirmDialog -t (uiRes("m_referenceEditorPanel.kCleanReference"))
+						-message $clenupMessage
+						-button (uiRes("m_referenceEditorPanel.kButtonClean")) 
+						-button (uiRes("m_referenceEditorPanel.kButtonCancel")) 
+						-defaultButton (uiRes( "m_referenceEditorPanel.kButtonCancel"))`;
+	if ($result == (uiRes( "m_referenceEditorPanel.kButtonClean"))) {
+		for ( $i = 0; $i < $numNodes; $i++ ) {
+			if ( size($selRefNode[$i]) > 0 ) {
+				file -cr $selRefNode[$i];
+			}
+		}
+	}
+}
+
+global proc int referenceEdExportAsReference(string $theFile, string $fileType)
+//
+//	Description:
+//		This code is used to create a reference file from a
+//		selection in the current scene. 
+//
+//	Note:
+//		There are currently no options associated with this action so
+//		we must use the currently set Export Selected options. Note that
+//		we cannot ignore history during this operation. This case is
+//		handled in the export code.
+//
+{
+	int $fileExists = `file -q -ex $theFile`;
+
+	int $win32 = `about -nt`;
+	if ($fileExists && !$win32) {
+		string $result = `confirmDialog -m (uiRes("m_referenceEditorPanel.kFileExists")) 
+			-button (uiRes("m_referenceEditorPanel.kItemYes"))
+			-button (uiRes("m_referenceEditorPanel.kItemCancel")) 
+			-defaultButton (uiRes( "m_referenceEditorPanel.kItemCancel"))
+			-parent projectViewerWindow`;
+		if ($result == (uiRes( "m_referenceEditorPanel.kItemCancel"))) {
+			return false;
+		} 
+	}
+        
+        if (`about -evalVersion`) {
+		$fileType = "mayaPLE";
+	} else 	if ($fileType == "") {
+		$fileType = "mayaBinary";
+	}
+
+	string $fileOptions;
+	string $translatorOptions = ($fileType+"Options");
+	if (`optionVar -exists $translatorOptions`) {
+		// Post the new options.
+		$fileOptions = `optionVar -q $translatorOptions`;
+	} 
+	string $clashName = pv_basename($theFile);
+	string $namespaceOption;
+	if (size($clashName) > 0) {
+		// Default to namespace
+		//
+		$namespaceOption = ("-namespace \""+$clashName+"\" ");
+		if (`optionVar -exists exportUseNamespacesDuringFileIO`) {
+			if (!`optionVar -q exportUseNamespacesDuringFileIO`) {
+				$namespaceOption = ("-rpr \""+$clashName+"\" ");
+			}
+		}
+	}
+
+	string $cmd = ("file -f "+$namespaceOption+" -op \""+$fileOptions+"\" -typ "+$fileType+" -er \""+$theFile+"\"");
+	eval($cmd);
+
+	return true;
+}
+
+global proc int referenceEdSaveReference()
+//
+//	Description:
+//		This code is used to save a reference file from a
+//		selection in the reference editor.
+//		All internal edits and connections are moved from 
+//		main scene's reference node to reference file.
+//
+{
+	global string $gReferenceEditorPanel;
+
+	string $selFileReal[] = `sceneEditor -q -selectItem -onlyParents
+							 $gReferenceEditorPanel`;
+							 
+	if (size($selFileReal) == 1) {
+		string $message		   = (uiRes("m_referenceEditorPanel.kSavingReference"));
+		string $fileName	   =  basename($selFileReal[0], "");
+		string $msg			   = `format -s $fileName $message`;	
+		string $result = `confirmDialog -t (uiRes("m_referenceEditorPanel.kSaveRefEdits"))
+					-message $msg
+					-button (uiRes("m_referenceEditorPanel.kOptionSave")) 
+					-button (uiRes("m_referenceEditorPanel.kOptionCancel")) 
+					-defaultButton (uiRes( "m_referenceEditorPanel.kOptionCancel"))`;
+		if ($result == (uiRes( "m_referenceEditorPanel.kOptionSave"))) {
+			file -f -saveReference $selFileReal[0];
+		}
+	}
+	return true;
+}
+
+proc string buildRemoveReferenceMessage( string $references[], int $width, string $namespacesToClear[])
+//
+// Description:
+//		Helper proc for building the message that warn the user that
+//		removing a reference is not undoable. To handle cases where
+//		the user removes many references at once, we format the
+//		message so only $width reference node names appear on a given line.
+//
+{
+	string $message;
+	string $ref;
+	string $ns;
+	string $remRefMsg;
+	int $numRefs = `size($references)`;
+	
+	if ( $numRefs == 1 )
+	{
+		$ref = $references[0];
+		$remRefMsg = (uiRes("m_referenceEditorPanel.kRemoveRef"));			
+	} 
+	else
+	{
+		$remRefMsg = (uiRes("m_referenceEditorPanel.kRemoveRefs"));
+		int $i = 0;
+		int $lines = 0;
+		int $maxLines = 30;
+		while ( ($i < ($numRefs-1)) && ($lines < $maxLines) ) {
+			$ref += "\n";
+			$lines += 1;
+			int $curIndex = $i;		
+			for ( ; $i < ($numRefs-1) && $i < $curIndex + $width; $i++ )
+			{
+				$ref += $references[$i];
+				$ref += ", ";
+			}
+		}
+		$ref += $references[$i];
+		if ($i < ($numRefs)) {
+			$ref += (uiRes("m_referenceEditorPanel.kRemoveRefsOmissions"));
+		}
+	}
+
+	int $nbns = size($namespacesToClear);
+	if ($nbns > 0)
+	{
+		// Warn about non-empty namespace(s)
+		if ( $numRefs == 1 )
+		{
+			$remRefMsg += (uiRes("m_referenceEditorPanel.kWarningRemoveRefNsNotEmpty"));
+		}
+		else
+		{
+			$remRefMsg += (uiRes("m_referenceEditorPanel.kWarningRemoveRefsNsNotEmpty"));
+		}
+	}
+	
+	$message = `format -s $ref $remRefMsg`;
+	return $message;
+}
+
+//
+//	Description:
+//		Removed a single reference by given the remove option.
+//
+proc doRemoveSingleReference(string $refNode, string $removeOption)
+{
+	// Check if the refNode is valid, return if invalid.
+	// 
+	if(size($refNode) <= 0)
+	{
+		return;
+	}
+	
+	string $refNamespace = "";
+	$refNamespace = `referenceQuery -namespace $refNode`;
+	
+	// Deal with a single case of reference removing with remove option.
+	// 
+	if ($removeOption == (uiRes( "m_referenceEditorPanel.kRefMergeWithRootOption")))
+	{
+		file -removeReference -mergeNamespaceWithRoot -referenceNode $refNode;
+	}
+	else if ($removeOption == (uiRes( "m_referenceEditorPanel.kRefMergeWithParentOption")))
+	{		
+		file -removeReference -mergeNamespaceWithParent -referenceNode $refNode;	
+	}
+	else if ($removeOption == (uiRes( "m_referenceEditorPanel.kRefDeleteContentOption")))
+	{		
+		file -removeReference -force -referenceNode $refNode;		
+	}
+	else if ($removeOption == (uiRes( "m_referenceEditorPanel.kRefKeepNamespaceOption"))
+		|| $removeOption == (uiRes( "m_referenceEditorPanel.kRefRemoveOption")))
+	{
+		file -removeReference -referenceNode $refNode;
+	}
+}
+
+global proc referenceEdRemoveCB()
+//
+//	Description:
+//		Removed the file selected in the reference editor.
+//
+{
+	string $remReference		= (uiRes("m_referenceEditorPanel.kRemoveReference"));
+	string $remove				= (uiRes("m_referenceEditorPanel.kRefRemoveOption"));
+	string $removeAnnot			= (uiRes("m_referenceEditorPanel.kRefRemoveAnnot"));
+	string $mergeWithRoot		= (uiRes("m_referenceEditorPanel.kRefMergeWithRootOption"));
+	string $mergeWithRootAnnot	= (uiRes("m_referenceEditorPanel.kRefMergeWithRootAnnot"));
+	string $mergeWithParent		= (uiRes("m_referenceEditorPanel.kRefMergeWithParentOption"));
+	string $mergeWithParentAnnot = (uiRes("m_referenceEditorPanel.kRefMergeWithParentAnnot"));
+	string $deleteContent		= (uiRes("m_referenceEditorPanel.kRefDeleteContentOption"));
+	string $deleteContentAnnot	= (uiRes("m_referenceEditorPanel.kRefDeleteContentAnnot"));
+	string $keepNamespace		= (uiRes("m_referenceEditorPanel.kRefKeepNamespaceOption"));
+	string $keepNamespaceAnnot	= (uiRes("m_referenceEditorPanel.kRefKeepNamespaceAnnot"));
+	string $cancel				= (uiRes("m_referenceEditorPanel.kRefCancelOption"));	
+	string $cancelAnnot			= (uiRes("m_referenceEditorPanel.kRefCancelAnnot"));
+	
+	global string $gReferenceEditorPanel;
+
+	// To guarantee that we don't try to remove a child reference after
+	// removing its parent, only get the list of selected parents
+	//
+	string $selRefNode[] = `sceneEditor -q -selectReference -onlyParents
+							$gReferenceEditorPanel`;
+	string $selFileReal[] = `sceneEditor -q -selectItem -onlyParents
+							 $gReferenceEditorPanel`;
+	string $removeThis[];
+	string $namespacesToClear[];
+	int $numFiles = size($selFileReal);		 
+	int $numRemove;
+	string $message;
+	int $width = 4;
+	int $i = 0;
+	int $j = 0;
+
+	// Compute list of reference files to remove
+	int $nbns = 0;
+	
+	if ( $numFiles > 0 )
+	{
+		$numRemove = $numFiles;
+        // copy array selFileReal to removeThis.
+		for ($i = 0; $i < $numRemove; $i++ )
+		{
+			$removeThis[$i] = $selRefNode[$i];			
+			int $isUsingNamespaces = `file -query -usingNamespaces $selFileReal[$i]`;    
+			if ($isUsingNamespaces)
+			{
+				string $nsname = `file -query -namespace $selFileReal[$i]`;
+				// Don't add the namespace in $namespacesToClear if the namespace is the root namespace.
+				// 
+				int $isRefNsRoot = `namespace -query -isRootNamespace $nsname`;
+			    if(!$isRefNsRoot)
+			    {
+				    string $parentNsArray[] = `file -query -parentNamespace $selFileReal[$i]`;
+				    string $parentNs = stringArrayToString($parentNsArray, ":");
+				    $nsname = $parentNs + ":" + $nsname;
+				    $namespacesToClear[$nbns] = $nsname;
+				    $nbns++;
+				}
+			}		
+		}
+	}
+
+	// Loop through namespace contents to see if some namespaces are non-empty (apart from the
+	// reference), i.e. one element gives 0 for referenceQuery -isNodeReferenced.
+	// Update $namespacesToClear[].
+	// Loop from end to start, since we might remove elements from the array $namespacesToClear.
+	int $nsIsEmpty = true;
+	for ($i = $nbns-1; $i >= 0; $i--)
+	{
+		string $namespace = $namespacesToClear[$i];
+		string $nsContent[] = `namespaceInfo -recurse -dagPath -listOnlyDependencyNodes $namespace`;
+		$nsIsEmpty = true;
+		
+		for ($j = 0; $j < size($nsContent); $j++)
+		{
+			int $isNodeReferenced = `referenceQuery -isNodeReferenced $nsContent[$j]`;
+			if (!$isNodeReferenced)
+			{
+				$nsIsEmpty = false;
+				break;
+			}
+		}
+		if ($nsIsEmpty)
+		{
+			stringArrayRemoveAtIndex($i, $namespacesToClear);
+		}
+	}
+	// Reset $nsIsEmpty == all namespaces are empty (only file reference in them).
+	if (size($namespacesToClear) == 0)
+	{
+		$nsIsEmpty = true;
+	}
+	else
+	{
+		$nsIsEmpty = false;
+	}
+
+	$message = buildRemoveReferenceMessage($removeThis, $width, $namespacesToClear);
+							 
+	// Ideally we'd like to use the reference node form of the command as
+	// all reference nodes are unique but referenced files may not be.
+	// However if there are more files returned than nodes, then we must
+	// resort to the file form of the command.
+	//
+
+	string $result;
+	if ($nsIsEmpty)
+	{
+		$result = `confirmDialog -t $remReference
+							-m $message
+							-button $remove
+							-annotation $removeAnnot
+							-button $cancel
+							-annotation $cancelAnnot
+							-defaultButton (uiRes( "m_referenceEditorPanel.kRefCancelOption"))`;
+	}
+	else
+	{
+		$result = `confirmDialog -t $remReference
+							-m $message
+							-button $mergeWithRoot
+							-annotation $mergeWithRootAnnot
+							-button $mergeWithParent
+							-annotation $mergeWithParentAnnot
+							-button $deleteContent
+							-annotation $deleteContentAnnot
+							-button $keepNamespace
+							-annotation $keepNamespaceAnnot
+							-button $cancel
+							-annotation $cancelAnnot
+							-defaultButton (uiRes( "m_referenceEditorPanel.kRefCancelOption"))`;
+	}
+	
+	for ( $i = 0; $i < $numRemove; $i++ ) {
+		if ( size($removeThis[$i]) > 0 ) {
+			doRemoveSingleReference($removeThis[$i], $result);
+		}
+	}
+
+	if (`window -exists namespaceEditor`)
+	{
+		if ($result != (uiRes("m_referenceEditorPanel.kRefCancelOption")))
+		{
+			updateNamespaceEditor();
+		}
+	}
+}
+
+global proc referenceEdSelectCB()
+//
+//	Description:
+//		A callback to select all of the contents of the file selected
+//		in the reference editor.
+//
+{
+	global string $gReferenceEditorPanel;
+
+	// This command should only work on one reference at a time, however to
+	// make it a little robust we'll only get the selected parents. This way
+	// if a child and parent are selected, we'll just ignore the child 
+	// selection and continue (instead of issuing an error about too many
+	// references being selected).
+	//
+	string $selRefNode[] = `sceneEditor -q -selectReference -onlyParents
+							$gReferenceEditorPanel`;
+	string $selFileReal[] = `sceneEditor -q -selectItem -onlyParents
+							 $gReferenceEditorPanel`;
+							 
+	int $numNodes = size($selRefNode);
+	int $numFiles = size($selFileReal);		 
+	if ( $numNodes == 1 ) {
+		file -selectAll -referenceNode $selRefNode[0];
+	} else if ( $numFiles == 1 ){
+		file -selectAll $selFileReal[0];
+	} else {
+		error (uiRes("m_referenceEditorPanel.kErrorFileContents"));
+	}
+}
+
+global proc referenceEdUnloadCB(int $force)
+//
+//	Description:
+//		A callback to unload a reference.
+//
+{
+	global string $gReferenceEditorPanel;
+
+	// To guarantee that we don't try to import a child reference after
+	// importing its parent, only get the list of selected parents
+	//
+	// Also, only query the reference node as it is enough to uniquely
+	// identify a reference (the reference file is not needed).
+	//
+	string $selRefNode[] = `sceneEditor -q -selectReference -onlyParents
+							$gReferenceEditorPanel`;
+
+	int $numNodes = size($selRefNode);
+	
+	int $i = 0;
+	for ( $i = 0; $i < $numNodes; $i++ ) {
+		if ( size($selRefNode[$i]) > 0 ) {
+			//	Save the connections in the reference node.	
+			//
+            if($force) {
+			    file -force -unloadReference $selRefNode[$i];
+            } else {
+                file -unloadReference $selRefNode[$i];
+            }
+		}
+	}
+}
+
+global proc referenceEdLoadCB()
+//
+//	Description:
+//		A callback to load a reference.
+//
+{
+	global string $gReferenceEditorPanel;
+	
+	// Only query the reference node as it is enough to uniquely
+	// identify a reference (the reference file is not needed).
+	// Also, if both a reference node and reference file
+	// are specified when doing 'file -loadReference' the command
+	// is interpreted as a swap reference and the specified reference
+	// file replaces the previously existing one. If the previous
+	// file had environment variables we want to make sure those
+	// are preserved.
+	//
+	string $selRefNode[] = `sceneEditor -q -selectReference -onlyParents
+							$gReferenceEditorPanel`;
+	int $numNodes = size($selRefNode);
+
+	int $i = 0;
+	for ( $i = 0; $i < $numNodes; $i++ ) {
+		if ( size($selRefNode[$i]) > 0 ) {
+			//	Save the connections in the reference node.	
+			//  Use raw name instead of real so that unexpanded environment 
+			//  variables are not lost.
+			//
+			file -loadReferenceDepth "asPrefs" -loadReference $selRefNode[$i];
+		}
+	}
+}
+
+global proc referenceEdUnloadRelCB()
+//
+//	Description:
+//		A callback to unload the references
+//		containing the selected objects
+//
+{
+	unloadRelatedReferences();
+}
+
+global proc referenceEdLockCB()
+{
+	global string $gReferenceEditorPanel;
+
+	// To guarantee that we don't try to import a child reference after
+	// importing its parent, only get the list of selected parents
+	//
+	string $selRefNode[] = `sceneEditor -q -selectReference -onlyParents
+							$gReferenceEditorPanel`;
+	string $selFileReal[] = `sceneEditor -q -selectItem -onlyParents
+							 $gReferenceEditorPanel`;
+
+	int $numNodes = size($selRefNode);
+	int $numFiles = size($selFileReal);	
+
+	if ( ($numNodes != $numFiles) || ($numNodes == 0) ) {
+		return;
+	}
+
+	int $isLoadedNow = false;
+	$isLoadedNow = !(`file -q -dr $selFileReal[0]`);
+	
+	// If the file is currently loaded then unload it now.
+	//
+	if ($isLoadedNow) 
+	{
+		referenceEdUnloadCB(1);
+	}
+	
+	setAttr ($selRefNode[0] + ".locked") 1;
+
+	// If the file was loaded then reload it now.
+	//
+	if ($isLoadedNow) 		
+	{
+		referenceEdLoadCB();
+	}
+	else
+	{
+		// If the reference was unloaded then we still
+		// want to force a refresh in order to let 
+		// the window pick up the switch and change
+		// the lock icon.  If it was loaded then it
+		// will pick that up itself.
+		//
+		proxyRefreshUI();
+	}
+}
+
+global proc referenceEdUnlockCB()
+{
+	global string $gReferenceEditorPanel;
+
+	// To guarantee that we don't try to import a child reference after
+	// importing its parent, only get the list of selected parents
+	//
+	string $selRefNode[] = `sceneEditor -q -selectReference -onlyParents
+							$gReferenceEditorPanel`;
+	string $selFileReal[] = `sceneEditor -q -selectItem -onlyParents
+							 $gReferenceEditorPanel`;
+
+	int $numNodes = size($selRefNode);
+	int $numFiles = size($selFileReal);	
+
+	if ( ($numNodes != $numFiles) || ($numNodes == 0) ) {
+		return;
+	}
+
+	int $isLoadedNow = false;
+	$isLoadedNow = !(`file -q -dr $selFileReal[0]`);
+
+	// If the file is currently loaded then unload it now.
+	//
+	if ($isLoadedNow)
+	{
+		referenceEdUnloadCB(1);
+	}
+
+	setAttr ($selRefNode[0] + ".locked") 0;
+	
+	// If the file was loaded then reload it now.
+	//
+	if ($isLoadedNow) 		
+	{
+		referenceEdLoadCB();
+	}
+	else
+	{
+		// If the reference was unloaded then we still
+		// want to force a refresh in order to let 
+		// the window pick up the switch and change
+		// the lock icon.  If it was loaded then it
+		// will pick that up itself.
+		//
+		proxyRefreshUI();
+	}
+}
+
+global proc referenceEdLoadRelCB()
+//
+//	Description:
+//		A callback to load the reference
+//		associated with the selected locator
+//
+{
+	loadRelatedReferences();
+}
+
+global proc referenceEdSelectedUpdateList()
+//
+//	Description:
+//		Updates the reference list based on the selected.
+//
+{
+	global string $gReferenceEditorPanel;
+
+	string $selRefNode[] = `sceneEditor -q -selectReference 
+							$gReferenceEditorPanel`;
+	string $selFileReal[] = `sceneEditor -q -selectItem 
+							 $gReferenceEditorPanel`;
+
+	if (size($selFileReal) == 0 || size($selRefNode) == 0) {
+		return;
+	}
+
+	referenceEdUpdateList($selFileReal[0], $selRefNode[0]);
+} // referenceEdSelectedUpdateList
+
+
+global proc referenceEdUpdateList(string $addFile, string $refNode)
+//
+//	Description:
+//		Adds the file to the list replace list.
+//
+{
+	//	Set the length of the list to 5.
+	//
+	int $MAX_SIZE = 5;
+	int $nFn = `getAttr -size ($refNode + ".fn")`;
+	int $nItems = ($nFn >= $MAX_SIZE) ? $MAX_SIZE : $nFn;
+
+	//	Two cases:
+	//    1: The file was never used before, then pop this
+	//      to the top of the list and shove everything 
+	//       else down.
+	//    2: The file was used before, then put the file at the
+	//       top and push everything down to the file's old
+	//       level.
+	//
+	int $usedBefore = false;
+	int $usedItem = 0;
+	for ($i = 0; $i < $nItems; $i++) {
+		string $fileName = `getAttr ($refNode+".fn["+$i+"]")`;
+		if ($fileName == $addFile) {
+			$usedBefore = true;
+			$usedItem = $i;
+			break;
+		}
+	}
+
+	if (!$usedBefore) {
+		if ($nItems < $MAX_SIZE) {
+			$nItems++;
+		}
+	}
+
+	string $newStr = $addFile;
+	string $swap;
+	for ($i = 0; $i < $nItems; $i++) {
+		$swap = `getAttr ($refNode + ".fn["+$i+"]")`;
+		setAttr -type "string" ($refNode+".fn["+$i+"]") $newStr;
+		$newStr = $swap;
+
+		if ($usedBefore && $usedItem == $i) {
+			break;
+		}
+	}
+} // referenceEdUpdateList
+
+proc string findRefNodeToReplace( string $replacedFile )
+//
+// Description:
+//		A helper proc for reference renaming/replacing.
+//		Build a reference node if one does not exist.
+//
+{
+	global string $gReferenceEditorPanel;
+	
+	string $selRefNode[] = `sceneEditor -q -selectReference 
+							$gReferenceEditorPanel`;
+	string $refNode = $selRefNode[0];
+	if (size($refNode) == 0) {
+		//	If a reference node does not exist, create a new one.
+		//
+		if (catch(`file -rfn $refNode $replacedFile`)) {
+			//	If adding the reference node failed, then the replace
+			//	will also fail.
+			//
+			return "";
+		}
+
+		$refNode = `file -q -rfn $replacedFile`;
+	}
+
+	// Add the file to the list of replace files.
+	//
+	referenceEdSelectedUpdateList();
+	
+	return $refNode;
+}
+
+
+global proc referenceEdRenameCB()
+//
+// Description:
+//		Rename the selected reference file. In essence this does a replace
+//		reference on the selected reference node, but without opening the
+//		file browser dialogue. This was added to overcome the limitation of
+//		file browser dialogue which prevents it from accepting environment
+//		variables in the path.
+//
+{
+	global string $gReferenceEditorPanel;
+	string $selFileReal[] = `sceneEditor -q -selectItem 
+							 $gReferenceEditorPanel`;
+
+	if ( size($selFileReal) > 1 ) {
+		error (uiRes("m_referenceEditorPanel.kErrorSelOneRef"));
+		return;
+	}
+	
+	string $newName = `textField -q -text unresolvedNameValue`;
+	string $refNode = findRefNodeToReplace($selFileReal[0]);
+	if ( size($refNode) > 0 ) {
+		file -loadReferenceDepth "asPrefs" -loadReference $refNode $newName;
+	}
+}
+
+global proc referenceEdEditNamespaceCB()
+//
+// Description:
+//		Interface to the 'file -e -namespace' command.
+//
+{
+	global string $gReferenceEditorPanel;
+	string $selFileReal[] = `sceneEditor -q -selectItem 
+							 $gReferenceEditorPanel`;
+
+	if ( size($selFileReal) > 1 ) {
+		error (uiRes("m_referenceEditorPanel.kErrorEditNamespace"));
+		return;
+	}
+	
+	string $newName = `textField -q -text fileRenamePrefixValue`;
+	file -e -ns $newName $selFileReal[0];	
+}
+
+
+global proc referenceEdReplaceCB()
+//
+//	Description:
+//		A callback to replace the currently loaded reference file with 
+//		a new reference file, while still keeping the same reference node.
+//
+{
+	global string $gReferenceEditorPanel;
+
+	string $selFileReal[] = `sceneEditor -q -selectItem 
+							 $gReferenceEditorPanel`;
+
+	if ( size($selFileReal) > 1 ) {
+		error (uiRes("m_referenceEditorPanel.kErrorSelectOne"));
+		return;
+	}
+
+	if (size($selFileReal) == 1 && size($selFileReal[0]) > 0) {
+		global string $gReplaceReferenceNode;
+		$gReplaceReferenceNode = findRefNodeToReplace($selFileReal[0]);
+		if ( size($gReplaceReferenceNode) > 0 ) {
+			projectViewer ReplaceReference;
+		}
+	}	
+}
+
+global proc buildReferenceEdRecentMenu(string $parentMenu)
+//
+//	Description:
+//		Builds the recently selected files for a specific reference. If one
+//		of the items is selected, the reference is replaced with that file.
+//	 	The new file should move to the head of the list.
+{
+	global string $gReferenceEditorPanel;
+
+	string $selRefNode[] = `sceneEditor -q -selectReference 
+							$gReferenceEditorPanel`;
+	string $selFileReal[] = `sceneEditor -q -selectItem 
+							 $gReferenceEditorPanel`;
+
+	string $menu = ($parentMenu + "|referenceEdRecentFilesItem");
+	if (size($selRefNode) != 1) {
+		menu -e -deleteAllItems $menu;
+		return;
+	}
+
+	//	Get the number of files previously used.
+	//
+	int $nListFiles = `getAttr -size ($selRefNode[0]+".fn")`;
+	
+	//	Get the list of files.
+	//
+	int $i, $j;
+	string $fileList[];
+	for ($i = 0, $j = 0; $i < $nListFiles; $i++) {
+		string $nextFile = `getAttr ($selRefNode[0]+".fn["+$i+"]")`;
+		if (size($nextFile) == 0) {
+			continue;
+		}
+		$fileList[$j++] = $nextFile;
+	}
+
+	//	Pack the list, if necessary.
+	//
+	int $nFiles = `size($fileList)`;
+	if ($i != $j) {
+		for ($i = 0; $i < $nListFiles; $i++) {
+			string $fileName;
+			if ($i < $nFiles) {
+				$fileName = $fileList[$i];
+			}
+			setAttr -type "string" ($selRefNode[0]+".fn["+$i+"]") $fileName;
+		}
+	} 
+
+	string $oldParent = `setParent -q -menu`;
+	setParent -menu $parentMenu;
+	
+	//	Check and see if the current menu contains the same names as
+	//	the list in the reference node.
+	//
+	string $localList[] = `menu -q -itemArray $menu`;
+	int $nLocalItems = `size($localList)`;
+	if ($nFiles == $nLocalItems) {
+		int $i;
+		for ($i = 0; $i < $nLocalItems; $i++) {
+			if ($localList[$i] != $fileList[$i]) {
+				break;
+			}
+		}
+		if ($i == $nLocalItems) {
+			return;
+		}
+	}
+
+	menu -e -deleteAllItems $menu;
+	setParent -menu $menu;
+
+	for ($i = 0; $i < $nFiles; $i++) {
+		string $cmd = ("referenceEdSelectedUpdateList();" +
+						"file -lr \"" + $selRefNode[0] + 
+					   "\" \"" + $fileList[$i] + "\";");
+		menuItem -label $fileList[$i] -c $cmd;
+	}
+
+	setParent -menu $oldParent;
+}
+
+global proc buildReferenceProxyActionMenu(string $parentMenu,
+										  string $action)
+//
+//	Description:
+//		Removed the proxy selected in the reference editor.
+//
+{
+	global string $gReferenceEditorPanel;
+
+	string $selRefNode[] = `sceneEditor -q -selectReference 
+							$gReferenceEditorPanel`;
+	string $selFileReal[] = `sceneEditor -q -selectItem 
+							 $gReferenceEditorPanel`;
+
+	string $menu = ($parentMenu + "|referenceProxy" + $action + "Item");
+	int $selSize = size($selRefNode);
+	if( ($action == "Switch" && $selSize == 0 ) ||
+	    ($action == "Remove" && $selSize != 1) ){
+		menu -e -deleteAllItems $menu;
+		return;
+	}
+	string $oldParent = `setParent -q -menu`;
+	setParent -menu $parentMenu;
+	menu -e -deleteAllItems $menu;
+	setParent -menu $menu;
+
+	if( ($selSize > 1) && ($action == "Switch") ){
+		// Multiple switch request, display all the available tags (the union
+		// of the tags for each proxy set), and then do a global load according
+		// to the tag.
+		//
+		global string $gProxyMultiSwitchRefNodes[];
+		$gProxyMultiSwitchRefNodes = $selRefNode;
+
+		// Get the tags for the remaining reference nodes
+		//
+		string $tagList[];
+		int $selIndex = 0;
+		while( $selIndex < $selSize ){
+			$tagList = stringArrayCatenate( $tagList, proxyUsedTags( $selRefNode[$selIndex] ) );
+			$selIndex++;
+		}
+		// Remove duplicates and sort
+		//
+		string $uniqTags[] = stringArrayRemoveDuplicates( $tagList );
+		$tagList = sort( $uniqTags );
+		int $tagSize = size( $tagList );
+	
+		int $tagIndex = 0;
+		while( $tagIndex < $tagSize ){
+			menuItem -label $tagList[$tagIndex] -c ("proxyMultiSwitch " + $tagList[$tagIndex] );
+			$tagIndex++;
+		}
+	} else {
+
+		string $proxyNodes[] = `getRelatedProxies $selRefNode[0]`;
+		if(size($proxyNodes) > 0) {
+			if( !`exists isActiveProxy` ){
+				source "proxyUtils.mel";
+			}
+			int $i;
+			string $proxyLabel;
+			string $proxyTag;
+			string $proxyFile;
+			for( $i=0; $i<size($proxyNodes); $i+=1) {
+				$proxyFile = `reference -rfn $proxyNodes[$i] -q -f -sn`;
+				$proxyTag = `getAttr ($proxyNodes[$i] + ".proxyTag")`;
+				$proxyLabel = ($proxyTag + " (" + $proxyFile + ")");
+				if( isActiveProxy( $proxyNodes[$i] ) ){
+					menuItem -label $proxyLabel -enable false -c ("proxy" + $action + " " + $proxyNodes[$i]);
+				} else {
+					menuItem -label $proxyLabel -enable true -c ("proxy" + $action + " " + $proxyNodes[$i]);
+				}
+			}
+		}
+	}
+	setParent -menu $oldParent;
+}
+
+global proc referenceProxyAddCB()
+//
+//	Description:
+//		A callback to add a proxy to the current reference node.
+//
+{
+	global string $gReferenceEditorPanel;
+
+	string $selFileReal[] = `sceneEditor -q -selectItem 
+							 $gReferenceEditorPanel`;
+
+	if ( size($selFileReal) > 1 ) {
+		error (uiRes("m_referenceEditorPanel.kErrorAddProxies"));
+		return;
+	}
+
+	if (size($selFileReal) == 1 && size($selFileReal[0]) > 0)
+	{
+		if ( !`file -q -uns $selFileReal[0]` )
+		{
+			error (uiRes("m_referenceEditorPanel.kErrorRenameProxy"));
+			return;
+		}
+
+		global string $gAddProxyNode;
+		string $selRefNode[] = `sceneEditor -q -selectReference 
+								$gReferenceEditorPanel`;
+		$gAddProxyNode = $selRefNode[0];
+		
+		if ( size($gAddProxyNode) > 0 ) {
+			projectViewer Proxy;			
+		}
+	}	
+}
+
+global proc referenceProxyAddOptionsCB()
+//
+//	Description:
+//		A callback to add a proxy to the current reference node; this is the
+//	version with an option box.
+//
+{
+	global string $gReferenceEditorPanel;
+
+	string $selFileReal[] = `sceneEditor -q -selectItem 
+							 $gReferenceEditorPanel`;
+
+	if ( size($selFileReal) > 1 ) {
+		error (uiRes("m_referenceEditorPanel.kErrorSelection"));
+		return;
+	}
+	
+	if (size($selFileReal) == 1 && size($selFileReal[0]) > 0)
+	{
+		if ( !`file -q -uns $selFileReal[0]` )
+		{
+			error (uiRes("m_referenceEditorPanel.kErrorRenamePrefix"));
+			return;
+		}
+	
+		global string $gAddProxyNode;
+		string $selRefNode[] = `sceneEditor -q -selectReference 
+								$gReferenceEditorPanel`;
+		$gAddProxyNode = $selRefNode[0];
+		if ( size($gAddProxyNode) > 0 ) {
+			fileOptions Proxy "projectViewer Proxy";
+		}
+	}	
+}
+
+global proc buildSwitchActiveProxyTagMenu(string $parentMenu)
+//
+//	Description:
+//		Switch the proxy tag used for the active proxy.
+//
+{
+	global string $gReferenceEditorPanel;
+
+	string $selRefNode[] = `sceneEditor -q -selectReference 
+							$gReferenceEditorPanel`;
+
+	string $menu = ($parentMenu + "|referenceProxySwitchActiveTagItem");
+	int $selSize = size($selRefNode);
+	if( $selSize != 1 ){
+		// Switching tag is not supported for multiple selections
+		//
+		menu -e -deleteAllItems $menu;
+		return;
+	}
+
+	buildSwitchNodeProxyTagMenu( $parentMenu, "referenceProxySwitchActiveTagItem", $selRefNode[0]);
+}
+
+global proc buildSwitchSelectedProxyTagMenu( string $parentMenu )
+//
+//	Description:
+//		Switch the proxy tag for the selected proxy.
+//
+{
+	global string $gReferenceEditorPanel;
+
+	string $selRefNode[] = `sceneEditor -q -selectReference 
+							$gReferenceEditorPanel`;
+
+	string $menu = ($parentMenu + "|referenceProxySwitchSelectedTagItem");
+	int $selSize = size($selRefNode);
+	if( $selSize != 1 ){
+		menu -e -deleteAllItems $menu;
+		return;
+	}
+	string $oldParent = `setParent -q -menu`;
+	setParent -menu $parentMenu;
+	menu -e -deleteAllItems $menu;
+	setParent -menu $menu;
+
+	string $proxyNodes[] = `getRelatedProxies $selRefNode[0]`;
+	if(size($proxyNodes) > 0) {
+		int $i;
+		int $menuIndex = 1;
+		string $proxyTag;
+		string $proxyFile;
+		string $proxyLabel;
+		string $ann = (uiRes("m_referenceEditorPanel.kSwitchProxyTag"));
+		string $annSwitchProxy;
+		for( $i=0; $i<size($proxyNodes); $i+=1) {
+			$proxyTag = `getAttr ($proxyNodes[$i] + ".proxyTag")`;
+			$proxyFile = `reference -rfn $proxyNodes[$i] -q -f -sn`;
+			$proxyLabel = ($proxyTag + " (" + $proxyFile + ")");
+			$annSwitchProxy = `format -s $proxyLabel $ann`;
+			menuItem 
+				-subMenu true
+				-label $proxyLabel
+				-annotation $annSwitchProxy
+				-postMenuCommand ("buildSwitchNodeProxyTagMenu " + $menu + " referenceProxySwitchSelectedTagMenuItem" + $menuIndex + " " + $proxyNodes[$i])
+				("referenceProxySwitchSelectedTagMenuItem" + $menuIndex);
+			setParent -menu ..;
+			$menuIndex ++;
+		}
+	}
+	setParent -menu $oldParent;
+}
+
+global proc buildSwitchNodeProxyTagMenu(string $parentMenu,
+										string $menuName,
+										string $refNode)
+//
+//	Description:
+//		Build a switch proxy tag menu for the given reference node.
+//
+{
+	string $menu = ($parentMenu + "|" + $menuName);
+
+	string $oldParent = `setParent -q -menu`;
+	setParent -menu $parentMenu;
+	menu -e -deleteAllItems $menu;
+	setParent -menu $menu;
+
+	global string $gAddProxyNode;
+	$gAddProxyNode = $refNode;
+
+	// First item in the menu lets you specify a new tag
+	//
+	menuItem 
+		-label (uiRes("m_referenceEditorPanel.kNewTag")) 
+		-annotation (uiRes("m_referenceEditorPanel.kNewTagAnnot"))
+		-enable true 
+		-c ( "referenceProxyDefineNewTagCB " + $refNode);
+
+	menuItem -divider true;
+
+	// Next, get a list of the available proxy tags (i.e., that are not
+	// currently in use in the current proxy set).
+	//
+	string $availableTags[] = `proxyTags( 1 )`;
+
+	// Next, present the existing and available tags
+	//
+	string $proxyTag;
+	for( $i=0; $i<size($availableTags); $i+=1) {
+		$proxyTag = $availableTags[$i];
+		menuItem -label $proxyTag -enable true -c ("setProxyTag " + $refNode + " " + $proxyTag);
+	}
+	if( size($availableTags) > 0 ){
+		menuItem -divider true;
+	}
+
+	// Next, get a list of all the proxy tags already used (i.e., the tags for
+	// the reference nodes that are in this proxy set).
+	//
+	if( !`exists proxyUsedTags` ){
+		source "proxyTags.mel";
+	}
+	string $usedTags[] = `proxyUsedTags $refNode`;
+
+	// Next, show the unavailable tags
+	//
+	for( $i=0; $i<size($usedTags); $i+=1) {
+		$proxyTag = $usedTags[$i];
+		menuItem -label $proxyTag -enable false;
+	}
+	setParent -menu $oldParent;
+}
+
+global proc referenceProxyDefineNewTagCB( string $refNode )
+//
+//	Description:
+//		A callback to define a new tag and assign it to the given ref node.
+//
+{
+	string $result = `promptDialog
+                 -title (uiRes("m_referenceEditorPanel.kDefineNewProxyTag"))
+                 -message (uiRes("m_referenceEditorPanel.kEnterNewProxyTag"))
+                 -text (uiRes("m_referenceEditorPanel.kProxyTag"))
+                 -button (uiRes("m_referenceEditorPanel.kOK"))
+                 -button (uiRes("m_referenceEditorPanel.kCancel"))
+                 -defaultButton (uiRes( "m_referenceEditorPanel.kOK"))
+                 -cancelButton (uiRes( "m_referenceEditorPanel.kCancel" ))
+                 -dismissString (uiRes( "m_referenceEditorPanel.kCancel" ))`;
+ 
+	// If the result was "OK", then proceed
+	//
+	if ( $result == uiRes( "m_referenceEditorPanel.kOK") ) {
+
+		// Get the tag the user entered
+		//
+		string $proxyTag = `promptDialog -q`;
+		setProxyTag( $refNode, $proxyTag );
+		proxyRefreshUI;
+	}
+}
+
+global proc setProxyTag(string $refNode,
+						string $proxyTag )
+//
+//	Sets the proxy tag for the given node, making sure it is unique amongst the
+//	tags of the proxy set to which the reference node belongs.
+//
+{
+	if( !`exists proxyUsedTags` ){
+		source "proxyTags.mel";
+	}
+	string $usedTags[] = `proxyUsedTags $refNode`;
+	string $warn	   = (uiRes("m_referenceEditorPanel.kNonUniqueProxyTag"));
+	if( stringArrayContains( $proxyTag, $usedTags ) ){
+		warning(`format -s $proxyTag $warn`);
+	} else {
+		setAttr -type "string" ($refNode + ".proxyTag") $proxyTag;
+		proxyRefreshUI;
+	}
+}

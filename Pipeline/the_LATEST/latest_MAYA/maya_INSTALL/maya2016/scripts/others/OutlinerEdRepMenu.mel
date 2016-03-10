@@ -1,0 +1,261 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+// Outliner assembly node selection (filtered and filled in buildSceneAssemblyMenu).
+global string $gSelectedAssemblyNodes[];
+
+// Create an assembly node.
+global proc assemblyCreate(string $assemblyType)
+{		
+	string $assemblyNode = `assembly -type $assemblyType`;
+	string $postCreate = `assembly -q -postCreateUIProc -type $assemblyType`;
+	if (size($postCreate) > 0) {		
+		eval($postCreate + " " + $assemblyNode);
+	}
+}
+
+// Set to 'None' active representation
+// for the selected assembly nodes.
+global proc assemblyActivateNone()
+{
+	global string $gSelectedAssemblyNodes[];
+	for ($assemblyNode in $gSelectedAssemblyNodes) {	
+		assembly -e -active "" $assemblyNode;		
+	}
+	clear($gSelectedAssemblyNodes);
+	resetAE;
+}
+
+// Change the active representation for one or
+// multiple selected assembly node, if the repLabel is the same.
+global proc assemblyActivateRepresentation(string $repLabel)
+{    
+	global string $gSelectedAssemblyNodes[];
+
+	string $nodesToActivate[];
+	int    $count = 0;
+
+	// Remove non-existent objects from the selection.
+	string $node;
+	for ($node in $gSelectedAssemblyNodes) {
+		if (`objExists $node`) {
+			$nodesToActivate[$count] = $node;
+			$count++;
+		}
+	}
+
+	// Activate the representation by label.
+	if ($count > 0) {
+		catch(`assembly -e -activeLabel $repLabel $nodesToActivate`);
+	}
+
+	// Find the activated assembly nodes.
+	// Note that some assembly nodes might be deleted due to representation switch.
+	string $nodesActivated[];
+	$count = 0;
+	for ($node in $nodesToActivate) {
+		if (`objExists $node`) {
+			$nodesActivated[$count] = $node;
+			$count++;
+		}
+	}
+
+	// Use one select command instead of many to reduce selection change callbacks,
+	// which may degrade Maya performance. The selection cmd string is built
+	// recursively to reduce character copy operations in the execution of MEL.
+	if ($count > 0) {
+		select -r $nodesActivated;
+		clear($gSelectedAssemblyNodes);
+	}
+}
+
+// Create representation on an assembly node.
+global proc assemblyCreateRepresentation(string $repType, string $assemblyNode)
+{		
+	string $assemblyType = `nodeType $assemblyNode`;
+	string $repPreCreateUIProc = `assembly -q -repPreCreateUIProc $repType -type $assemblyType`;
+    string $input;
+		
+	if (size($repPreCreateUIProc)){	
+		$input = eval($repPreCreateUIProc);
+    }
+
+    // If the representation had a pre-create UI procedure, and it
+    // returned no representation creation input, consider the user
+    // canceled the representation creation.
+	if (size($repPreCreateUIProc) && size($input) == 0) {
+      return;
+    }
+		
+    string $representation = `assembly -e -createRepresentation $repType -input $input $assemblyNode`;
+    string $repPostCreateUIProc = `assembly -q -repPostCreateUIProc $repType -type $assemblyType`;
+    if (size($repPostCreateUIProc)) {
+      eval($repPostCreateUIProc + " " + $representation);
+    }	
+									
+    if ($representation != ""){			
+      if(`optionVar -q "assemblyLoadRepOnCreation"`){				
+        catch(`assembly -e -active $representation $assemblyNode`);
+      }
+      select -r $assemblyNode;
+    }
+}	
+
+// Build outliner scene assembly sub-menu.
+global proc buildSceneAssemblyMenu(string $parentMenu)
+{
+
+    setParent -menu $parentMenu;
+    menu -edit -deleteAllItems $parentMenu;
+    
+    string $selections[] = `ls -selection`;   
+	
+	// If the selection is empty, propose creation of assembly types.
+    if (size($selections) == 0) {
+		string $assemblyTypes[] = `assembly -q -listTypes`;
+		int $i;
+		for ($i; $i < size($assemblyTypes); $i++) {
+			string $assemblyLabel = `assembly -q -type $assemblyTypes[$i] -label`;			
+			string $createLabelStr = (uiRes("m_OutlinerEdRepMenu.kAssemblyCreateLabel"));
+			string $annCreateLabelStr = (uiRes("m_OutlinerEdRepMenu.kAnnAssemblyCreateLabel"));
+			string $label = `format -s $assemblyLabel $createLabelStr`;	
+			string $ann = `format -s $assemblyLabel $annCreateLabelStr`;	
+			menuItem -label $label 
+                     -annotation $ann 
+                     -command ("assemblyCreate " + $assemblyTypes[$i]);
+			string $optionBox = `assembly -q -createOptionBoxProc -type $assemblyTypes[$i]`;
+			if (size($optionBox) > 0) {	
+				menuItem -optionBox true -command $optionBox;
+			}				
+		}
+		return;
+    }
+	
+	global string $gSelectedAssemblyNodes[];
+	clear($gSelectedAssemblyNodes);	
+	for ($sel in $selections)
+	{		
+		if (!`assembly -query -isa $sel`){
+			continue;				
+		}
+		
+		$gSelectedAssemblyNodes[size($gSelectedAssemblyNodes)] = $sel;
+	}			
+	
+	if(size($gSelectedAssemblyNodes) == 0)
+	{		
+		menuItem -enable false -label (uiRes("m_OutlinerEdRepMenu.kNoSceneAssemblySelected"))
+                 -annotation (uiRes("m_OutlinerEdRepMenu.kAnnNoSceneAssemblySelected"));  
+		return;		
+	}
+    
+    // Base the menu on the capabilities and state of the first assembly selected item
+    string $firstSelectedItem = $gSelectedAssemblyNodes[0];   
+    string $activeRep = `assembly -query -active $firstSelectedItem`;
+	string $assemblyType = `nodeType $firstSelectedItem`;
+
+    radioMenuItemCollection;
+
+    string $repType;    
+	string $createdReps[] = `assembly -q -listRepresentations $firstSelectedItem`;
+
+	for ($createdRep in $createdReps) {		
+		string $label = `assembly -q -repLabel $createdRep $firstSelectedItem`;		
+		string $annRep = (uiRes("m_OutlinerEdRepMenu.kAnnSceneAssemblyRep"));  
+		$repType = `assembly -q -repType $createdRep $firstSelectedItem`;		
+		string $command = "\"assemblyActivateRepresentation \\\"" + $label + "\\\"\"";
+		string $activated = ($activeRep == $createdRep) ? "true -boldFont true " : "false ";
+		string $menuItem = ("menuItem -label \"" + $label + "\" -annotation \"" + $annRep + "\" -radioButton " + $activated
+			   + "-command (" + $command + ")");		
+		eval($menuItem);		
+	}
+		
+	if(size($createdReps) == 0){
+		// add a disabled menu item to inform the user that there's no representations for that assembly node.
+		menuItem -label (uiRes("m_OutlinerEdRepMenu.kNoneRepLabel")) 
+                 -annotation (uiRes("m_OutlinerEdRepMenu.kAnnNoneRepLabel")) 
+                 -enable false;	
+	}
+	else if($activeRep != "")
+	{	
+		// add an unload active representation menu when there's no active representations.
+		menuItem -divider true;
+		menuItem -label (uiRes("m_OutlinerEdRepMenu.kUnloadActiveRepLabel")) 
+                 -annotation (uiRes("m_OutlinerEdRepMenu.kAnnUnloadActiveRepLabel")) 
+                 -command "assemblyActivateNone";		
+	}		
+	
+	menuItem -divider true;
+	
+	string $repTypes[] = `assembly -q -canCreate $firstSelectedItem`;	    
+	string $addRepTypesLabel = (uiRes("m_OutlinerEdRepMenu.kAssemblyCreateRep"));
+	string $annAddRepTypesLabel = (uiRes("m_OutlinerEdRepMenu.kAnnAssemblyCreateRep"));
+    string $isOpeningWindow = (uiRes("m_OutlinerEdRepMenu.kOpenAssemblyWindow"));
+	for ($repType in $repTypes) {		
+		string $typeLabel = `assembly -q -repTypeLabel $repType -type $assemblyType`;
+                
+		string $menuItemLabel = `format -stringArg $typeLabel $addRepTypesLabel`;	
+		string $annMenuItemLabel = `format -stringArg $typeLabel $annAddRepTypesLabel`;	
+		menuItem -label $menuItemLabel -annotation $annMenuItemLabel -enable (size($gSelectedAssemblyNodes) == 1)                 
+				 -command ("assemblyCreateRepresentation \"" + $repType + "\" \"" + $firstSelectedItem + "\"") $repType;  
+                
+        if(size(`assembly -q -repPreCreateUIProc $repType -type $assemblyType`)){
+			string $cmd = "assemblyCreateRepresentation \\\"" + $repType + "\\\" \\\"" + $firstSelectedItem + "\\\"";
+            $menuItemLabel += $isOpeningWindow;
+            menuItem -e -label $menuItemLabel $repType; 
+            menuItem 
+                -optionBox true			    
+                -command ("assemblyCreateRepresentationOptionBox \""+$cmd+"\"");
+        }
+		
+	} 				
+    
+    // List edits for tracking members   
+    if(`assembly -query -isTrackingMemberEdits $firstSelectedItem`){
+        menuItem -divider true;
+
+        menuItem -label (uiRes("m_OutlinerEdRepMenu.kListAssemblyEdits"))
+          -annotation (uiRes("m_OutlinerEdRepMenu.kListAssemblyEditsAnnot"))
+          -command ("assemblyEditsWindow \"" + $firstSelectedItem + "\"");
+    }
+	
+    // Representation delete will undergo rework in the near future.
+    // PPT, 25-Jan-2012.
+    int $showDelete = 0;
+    if ($showDelete)
+    {
+        // Delete representation submenu
+        menuItem -divider true;
+        menuItem -subMenu true 
+				 -label (uiRes("m_OutlinerEdRepMenu.kDeleteRepresentation"));
+
+        string $createdReps[] = `assembly -q -listRepresentations $firstSelectedItem`;
+        for ($rep in $createdReps)
+        {
+            string $repType = `representation -q -representationType $rep`;
+            string $label = `representation -q -label $rep`;
+            string $command = "assembly -e -deleteRepresentation " + $rep + " " + $firstSelectedItem;
+            menuItem -label $label -command $command;
+        }
+
+        setParent -menu ..;
+    }
+}

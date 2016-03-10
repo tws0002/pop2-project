@@ -1,0 +1,112 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+// Procedure to assign a material to a shading group
+// Moved out of buildShaderMenus.mel since it was being called from
+// several tests and other places at times when it was not available
+global proc assignSG (string $material, string $item)
+{
+	string $assignString = $item;
+	string $nodes[] = (`listHistory -future true $material`);
+    string $shadingGroup = "";
+	for ($node in $nodes) {
+		if(( `nodeType $node` == "shadingEngine" )
+		 ||( `nodeType $node` == "materialFacade" ))
+        {
+            $shadingGroup = $node;
+		}
+	}
+
+    // No shading group ?
+
+    if ($shadingGroup == "") {
+        $shadingGroup = `sets -renderable true -noSurfaceShader true
+            -empty -name ($material+"SG")`;
+
+        defaultNavigation -connectToExisting
+            -source $material -destination $shadingGroup;
+    }
+
+	string $objs[];
+
+	//
+	// The $item is always an object, never a component (ie face).
+	// If the current selection contains faces of the specified item, then
+	// we would rather assign the new shader to the specifically selected
+	// faces rather than the object as a whole. In particular, this allows
+	// users to select faces of a poly object and use the RMB menu to
+	// assign shaders to them.
+	// 
+
+	string $selection[] = `ls -selection`;
+	int $i;
+
+	for ($i = 0; $i < size($selection); $i++)
+	{
+		if (`match ($item + "\\.f\\[.*\\]") $selection[$i]` != "")
+		{
+			// One part of the currently selection is faces of the
+			// specified item. We will add the selected faces to the list
+			// of objects to which the shader will be assigned.
+			//
+			$objs[size($objs)] = $selection[$i];
+			$assignString = ("the selected faces of " + $item);
+		}
+	}
+
+	if (size($objs) == 0)
+	{
+		// Try again with the shape. Face selection will be names
+		// after the shape when other shapes are parented below the
+		// transform.
+		string $shapes[] = `listRelatives -s $item`;
+		if (size($shapes) > 0 )
+		{
+			string $shape = $shapes[0];
+			for ($i = 0; $i < size($selection); $i++)
+			{
+				if (`match ($shape + "\\.f\\[.*\\]") $selection[$i]` != "")
+				{
+					$objs[size($objs)] = $selection[$i];
+					$assignString = ("the selected faces of " + $shape);
+				}
+			}
+		}
+	}
+
+	if (size($objs) == 0)
+	{
+		// There were no faces of the specified item in the current
+		// selection. Therefore, we will assign the shader to the entire
+		// object specified.
+		//
+		$objs[0] = $item;
+	}
+
+    sets -e -forceElement $shadingGroup $objs;
+
+    print (
+		"// Result: Assigned " 
+		+ $shadingGroup 
+		+ " to " 
+		+ $assignString 
+		+ "//\n");
+}

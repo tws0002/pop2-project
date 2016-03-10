@@ -1,0 +1,122 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Oct. 31/97
+//
+//  Description:
+//      animSweep operates on NURBS curves, generally that are animated.
+//	It will take snapshots of the curve at each of the times between a
+//	min and max time with an increment, copy the curves
+//
+//  Input Arguments:
+//		float	minTime		- start time of sweep
+//		float	maxTime		- end time of sweep
+//		int		ts			- if true, use the time slider range for the
+//							  min/max times of the sweep; otherwise use
+//							  minTime and maxTime.
+//		float	by			- increment for snapshot of objects to sweep
+//		float	hist		- if true, keep history on after the sweep is
+//							  finished, so that changes to the original
+//							  animated object will affect the swept object
+//		int		deg			- degree of swept surface produced
+//		int		uniform		- if true, make the swept surface w. uniform knots
+//		int		close		- if true, make the swept surface closed
+//		int		poly		- if true, make the swept surface a polygonal object
+//
+//  Return Value:
+//      Returns the number of swept surfaces that were produced
+//	(one per selected animated curve)
+//
+
+
+proc int animSweepOne(string $curve, float $minTime, float $maxTime, int $ts,
+			float $by, int $hist, int $deg, int $uniform, int $close, int $poly)
+{
+	// Note that we want to query the time slider range at the time we
+	// execute the command, so that if the action was dragged to the
+	// shelf, it will re-query the time slider range each time it is executed.
+	//
+	if ($ts == 1)
+	{
+		$minTime = `playbackOptions -query -minTime`;
+		$maxTime = `playbackOptions -query -maxTime`;
+	}
+
+	string $result[] = `snapshot -startTime $minTime -endTime $maxTime
+						-increment $by -constructionHistory $hist $curve`;
+
+	if (size($result) == 0)
+	{
+	    string $errMsg = (uiRes("m_animSweep.kCouldNotSnapshot"));
+		error(`format -s $curve $errMsg`);
+		return 0;
+	}
+
+	// Do the loft
+	//
+	if (catch (`loft
+				-uniform $uniform -close $close
+				-degree $deg -polygon $poly
+				-ch $hist
+				$result[0]`))
+	{
+	    string $errMsg = (uiRes("m_animSweep.kCouldNotLoft"));
+		error(`format -s $curve $errMsg`);
+		return 0;
+	}
+
+	// If construction history is off, delete the curves that snapshot
+	// generated (which will also delete the snapshot node)
+	//
+	if (!$hist)
+	{
+		delete $result[0];
+	}
+
+	return 1;
+}
+
+global proc int animSweep(float $minTime, float $maxTime, int $ts,
+						  float $by, int $hist,
+						  int $deg, int $uniform, int $close, int $poly)
+{
+	// Walk through all the shapes on the selection list, and
+	// anim sweep all the nurbsCurve shapes
+	//
+	int $processed = 0;
+	string $result[] = `ls -sl -dag -lf -showType`;
+	for ($i = 0; $i < size($result); $i+=2)
+	{
+		if ($result[$i+1] == "nurbsCurve")
+		{
+			animSweepOne($result[$i], $minTime, $maxTime, $ts, $by, $hist,
+						$deg, $uniform, $close, $poly);
+			$processed = 1;
+		}
+	}
+
+	if ($processed == 0)
+		warning( (uiRes("m_animSweep.kNoCurvesToAnim")) );
+
+	return 1;
+}

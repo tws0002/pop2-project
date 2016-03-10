@@ -1,0 +1,897 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// hikCharacterControlsUtils.mel
+//
+// Description:
+//		Utils methods for the unified character controls window
+//
+//		All the procedures that are related directly to the character and 
+//		everything that is common to all sections of the HIK character control.
+//
+
+
+///////////////////////////////////////////////////////////////////
+// Local Methods...
+///////////////////////////////////////////////////////////////////
+
+
+
+proc moveAnimSrc( string $newSrc, string $plug )
+{
+	float $val = `getAttr $plug`;
+	
+	string $connections[] = `listConnections -s 1 -d 0 -plugs 1 $plug`;
+	
+	if( size( $connections ) > 0 )
+	{
+		disconnectAttr $connections[0] $plug; 
+		connectAttr -force $connections[0] $newSrc;
+	}
+	else
+	{
+		setAttr $newSrc $val;
+	}
+	connectAttr -force $newSrc $plug;
+}
+
+
+proc getSolverRelatedNodesToDelete(string $pCharacter,string $outputNodes[])
+{
+	// if this character is connected to character solver, identify all the nodes associated with
+	// the solve.  This may be used for clean up operations such as character deletion.
+	
+	string $solvers[] = `listConnections -s 0 -d 1 -type HIKSolverNode $pCharacter`;
+	if(size($solvers) > 0)
+	{
+		string $solver = $solvers[0];
+
+		// Solver input nodes:
+
+		string $InputPropertySetStatePlug = $solver + ".InputPropertySetState";
+		string $PropertySetStateNode[] = `listConnections -s 1 -d 0 -type HIKProperty2State $InputPropertySetStatePlug`;
+		if(size($PropertySetStateNode) > 0)
+		{
+			appendStringArray($outputNodes,$PropertySetStateNode,size($PropertySetStateNode));
+		}
+
+		string $InputCharacterStatePlug = $solver + ".InputCharacterState";
+		string $FK2StateNode[] = `listConnections -s 1 -d 0 -type HIKFK2State $InputCharacterStatePlug`;
+		if(size($FK2StateNode) > 0)
+		{
+			appendStringArray($outputNodes,$FK2StateNode,size($FK2StateNode));
+		}
+
+		string $InputEffectorStatePlug = $solver + ".InputEffectorState";
+		string $pinning2StateNode[] = `listConnections -s 1 -d 0 -type HIKPinning2State $InputEffectorStatePlug`;
+		if(size($pinning2StateNode) > 0)
+		{
+			appendStringArray($outputNodes,$pinning2StateNode,size($pinning2StateNode));
+			string $pinningStateInputPlug = $pinning2StateNode[0] + ".InputEffectorState";
+
+			string $effector2StateNode[] = `listConnections -s 1 -d 0 -type HIKEffector2State $pinningStateInputPlug`;
+			if(size($effector2StateNode) > 0)
+			{
+				appendStringArray($outputNodes,$effector2StateNode,size($effector2StateNode));
+			}
+		}
+		
+		// Solver output nodes:
+			
+		string $OutputCharacterStatePlug = $solver + ".OutputCharacterState";
+		
+		string $state2SKNode[] = `listConnections -s 0 -d 1 -type HIKState2SK $OutputCharacterStatePlug`;
+		if(size($state2SKNode) > 0)
+		{
+			appendStringArray($outputNodes,$state2SKNode,size($state2SKNode));
+		}
+		
+		string $state2FKNode[] = `listConnections -s 0 -d 1 -type HIKState2FK $OutputCharacterStatePlug`;
+		if(size($state2FKNode) > 0)
+		{
+			appendStringArray($outputNodes,$state2FKNode,size($state2FKNode));
+			// string $computeLocals[] = `listConnections -s 0 -d 1 -type ComputeLocal $state2FKNode[0]`;
+			// appendStringArray($outputNodes,$computeLocals,size($computeLocals));
+		}
+		
+		string $state2IKNode[] = `listConnections -s 0 -d 1 -type HIKEffectorFromCharacter $OutputCharacterStatePlug`;
+		if(size($state2IKNode) > 0)
+		{
+			appendStringArray($outputNodes,$state2IKNode,size($state2IKNode));
+			// string $computeLocals[] = `listConnections -s 0 -d 1 -type ComputeLocal $state2IKNode[0]`;
+			// appendStringArray($outputNodes,$computeLocals,size($computeLocals));
+		}
+		
+		$outputNodes[size($outputNodes)] = $solver;
+	}
+}
+
+
+
+
+proc renameConnectedAnimBlendNodes(string $rigNode,string $newCharacterName)
+{
+	string $buffer[];
+	string $newObjectName;
+	
+	string $layerBlendNodes[] = `listConnections -s 1 -d 0 -type animBlendNodeBase $rigNode`;
+	for($blendNode in $layerBlendNodes)
+	{
+	
+		tokenize($blendNode,"_",$buffer);
+		if(size($buffer) > 3 && ($buffer[1] == "Ctrl"))
+		{
+			$newObjectName = $newCharacterName;
+			int $count = 0;
+			for($buf in $buffer)
+			{
+				if($count != 0)
+				{
+					$newObjectName += "_";
+					$newObjectName += $buf;
+				}
+				$count++;
+			}
+			
+			// There may be duplicates in the array of blend nodes, so the node may already be renamed.
+			string $tempBuf[] = `ls $blendNode`;
+			if(size($tempBuf) > 0)
+			{
+				rename $blendNode $newObjectName;
+			}
+
+		}
+	}
+}
+
+proc getRetargeterRelatedNodesToDelete(string $pCharacter,string $outputNodes[])
+{
+	// Internal function called by hikDeleteCharacter
+	// TODO: Currently only identify the first retargeter node. In theory all retargeter nodea assotiated to the current character should be identified for destruction 
+
+	// if this character is connected to a retargeter, we will delete that
+	// retargeter, and all the de-concentrator nodes:
+
+	string $retargetersPlug[] = `listConnections -s 0 -d 1 -p 1 -type HIKRetargeterNode $pCharacter`;
+	
+    for( $retargeterPlug in $retargetersPlug )
+	{
+		string $buffers[];
+		string $retargeter;
+		tokenize($retargeterPlug, ".",$buffers);
+		if(size($buffers) > 1)
+		{
+			$retargeter = $buffers[0];
+			if($buffers[1] == "InputCharacterDefinitionSrc")
+			{
+				// Connected as source character, so we don't want to delete the destination character stuff
+
+                // If this retargeter is a direct retargeter we dont even want to delete it
+                // To determine if it is a direct retargeter we check if it is connect to FK nodes
+        		string $fkConnections[] = `listConnections -type HIKState2FK ($retargeter+".OutputCharacterState")`;
+
+		        if( size( $fkConnections ) == 0 )
+		        {
+					// Direct retargetter, skip it
+					continue;
+				}
+
+                // not a direct retargeter
+             	string $srcPropertySetStatePlug = $retargeter + ".InputSrcPropertySetState";
+			    string $srcPropertySetState[] = `listConnections -s 1 -d 0 -type HIKProperty2State $srcPropertySetStatePlug`;
+			    if(size($srcPropertySetState) > 0)
+			    {	                
+				    appendStringArray($outputNodes,$srcPropertySetState,size($srcPropertySetState));
+                }
+				
+			}
+			else
+			{
+				// Connected as destination character, so we don't want to delete the source character stuff
+				string $dstPropertySetStatePlug = $retargeter + ".InputDstPropertySetState";
+				string $dstPropertySetState[] = `listConnections -s 1 -d 0 -type HIKProperty2State $dstPropertySetStatePlug`;
+				if(size($dstPropertySetState) > 0)
+				{
+					appendStringArray($outputNodes, $dstPropertySetState, size($dstPropertySetState));
+				}
+			}
+		}
+
+
+		string $inputCharacterStatePlug = $retargeter + ".InputCharacterState";	            
+		string $srcStateNode[] = `listConnections -s 1 -d 0 -type HIKSK2State $inputCharacterStatePlug`;
+		if(size($srcStateNode) > 0)
+		{	                
+			appendStringArray($outputNodes, $srcStateNode, size($srcStateNode));
+		}
+		
+		string $retargeterOuputPlug = $retargeter + ".OutputCharacterState";
+		string $retargetOutputNodes[] = `listConnections -s 0 -d 1 $retargeterOuputPlug`;
+		for($node in $retargetOutputNodes)
+		{                        
+			$outputNodes[size($outputNodes)] = $node;
+			// string $computeLocals[] = `listConnections -s 0 -d 1 -type ComputeLocal $node`;
+			// appendStringArray($outputNodes,$computeLocals,size($computeLocals));
+			if(`nodeType $node`=="HIKEffectorFromCharacter")
+			{
+				string $outputEffectorStatePlug = $node + ".OutputEffectorState";
+				string $state2EffectorNode[] = `listConnections -s 0 -d 1 -type HIKState2Effector $outputEffectorStatePlug`;
+				if(size($state2EffectorNode) > 0)
+				{
+					$outputNodes[size($outputNodes)] = $state2EffectorNode[0];
+					// $computeLocals = `listConnections -s 0 -d 1 -type ComputeLocal $state2EffectorNode[0]`;
+					// appendStringArray($outputNodes,$computeLocals,size($computeLocals));
+				}
+			}
+		}
+		
+		$outputNodes[size($outputNodes)] = $retargeter;                                
+		
+	}
+}
+
+proc disconnectSrcCharacterFromRetargeter(string $retargeter)
+{    
+	string $inputCharacterSrcPlug = $retargeter + ".InputCharacterDefinitionSrc";	            
+	string $srcCharacterPlug[] = `listConnections -s 1 -d 0 -p 1 -type HIKCharacterNode $inputCharacterSrcPlug`;
+	if(size($srcCharacterPlug) > 0)
+	{
+		disconnectAttr $srcCharacterPlug[0] $inputCharacterSrcPlug;
+	}
+
+	string $inputCharacterStatePlug = $retargeter + ".InputCharacterState";	            
+	string $srcStatePlug[] = `listConnections -s 1 -d 0 -p 1 $inputCharacterStatePlug`;
+	if(size($srcStatePlug) > 0)
+	{
+		disconnectAttr $srcStatePlug[0] $inputCharacterStatePlug;
+	}
+}
+
+
+///////////////////////////////////////////////////////////////////
+// Global Methods...
+///////////////////////////////////////////////////////////////////
+
+// Get IK Nodes of a Rig, from a Character
+global proc string[] hikGetRigIkNodes(string $pCharacter)
+{
+	int $i;
+	string $lIKNodes[];
+	int $lMatched = 0;
+	string $curIKNode;
+	string $lControlRig = hikGetControlRig($pCharacter);
+
+	if($lControlRig != "")
+	{
+		for($i = 0; $i < GetHIKEffectorCount(); $i++)
+		{
+			$curIKNode = hikGetIKEffectorNode($pCharacter, $i);
+
+			if( $curIKNode != "" )
+				$lIKNodes[$lMatched++] = $curIKNode;
+		}
+	}
+
+	return $lIKNodes;
+}
+
+// Get Pinning2State Nodes from a Character
+global proc string hikGetPinning2StateFromCharacter(string $pCharacter)
+{
+	string $lPinning2State[];
+	string $lSolvers[] = hikGetSolverFromCharacter($pCharacter);
+	if(size($lSolvers))
+	{
+		string $lPinning2StateAttr = $lSolvers[0] + ".InputEffectorState";
+		$lPinning2State = `listConnections -type HIKPinning2State $lPinning2StateAttr`;
+	}
+
+    if( size( $lPinning2State )>0 )
+    {
+        return $lPinning2State[0];
+    }
+    else
+    {
+	    return "";
+    }
+}
+
+// Get FK2State Nodes from a Character
+global proc string hikGetFK2StateFromCharacter(string $pCharacter)
+{
+	string $lFK2State[];
+	string $lSolvers[] = hikGetSolverFromCharacter($pCharacter);
+	if(size($lSolvers))
+	{
+		string $lFK2StateAttr = $lSolvers[0] + ".InputCharacterState";
+		$lFK2State = `listConnections -type HIKFK2State $lFK2StateAttr`;
+	}
+    if( size( $lFK2State )>0 )
+    {
+        return $lFK2State[0];
+    }
+    else
+    {
+	    return "";
+    }
+}
+
+// Get Eff2State Nodes from a Character
+global proc string hikGetEff2StateFromCharacter(string $pCharacter)
+{
+	string $lEff2State[];
+	string $lPinning2State = hikGetPinning2StateFromCharacter($pCharacter);
+	if(size($lPinning2State))
+	{
+		string $lEff2StateAttr = $lPinning2State + ".InputEffectorState";
+		$lEff2State = `listConnections -type HIKEffector2State $lEff2StateAttr`;
+	}
+
+    if( size( $lEff2State )>0 )
+    {
+        return $lEff2State[0];
+    }
+    else
+    {
+	    return "";
+    }
+
+}
+
+
+//
+// This function is called from the characterization tool
+// plug-in.  Change this method with caution.
+//
+global proc hikDeleteCharacter(string $pCharacter)
+// Deletes the named character.
+{
+	global string $gHIKCurrentCharacter;
+	// Set the new Current Character if necessary
+	if($gHIKCurrentCharacter == $pCharacter)
+	{
+		string $lCharacters[] = hikGetSceneCharacters();
+		int $i;
+		for($i = 0; $i < (size($lCharacters)); $i++)
+		{
+			if( $lCharacters[$i] == $pCharacter)
+			{
+				if( $i < (size($lCharacters)-1) )
+					$gHIKCurrentCharacter = $lCharacters[$i+1];
+				else
+				{
+					if($i == (size($lCharacters)-1) && $i>0)
+						$gHIKCurrentCharacter = $lCharacters[$i-1];
+					else
+						$gHIKCurrentCharacter = "";
+				}
+			}
+		}
+	}
+
+	string $fmt = (uiRes("m_hikCharacterControlsUtils.kHikCharDel"));
+	string $messageHIKCharacterDeleted = `format -s $pCharacter $fmt`;
+	string $nodesToDelete[];
+	// -------------------------------------------------------------------------
+	//identify all nodes that are to be deleted, without deleting anything yet.
+	string $rigFKNodes[] = hikGetRigFKNodes($pCharacter,1);
+	appendStringArray($nodesToDelete,$rigFKNodes,size($rigFKNodes));
+
+	string $rigIKNodes[] = hikGetRigIkNodes($pCharacter);
+	appendStringArray($nodesToDelete,$rigIKNodes,size($rigIKNodes));
+	
+	getSolverRelatedNodesToDelete($pCharacter,$nodesToDelete);
+	getRetargeterRelatedNodesToDelete($pCharacter,$nodesToDelete);
+	
+	$nodesToDelete[size($nodesToDelete)] = $pCharacter;
+
+	// ------------------------------------------------------------------------
+	// disconnect nodes that we may want to keep from the network, to prevent
+	// them from being deleted automatically when the other nodes are deleted.
+
+	string $retargeters[] = `listConnections -s 0 -d 1 -type HIKRetargeterNode $pCharacter`;
+	if(size($retargeters) > 0)
+	{
+		disconnectSrcCharacterFromRetargeter($retargeters[0]);
+	}
+
+
+	// -------------------------------------------------------------------------
+	// delete the nodes identified to be deleted.
+	for($node in $nodesToDelete)
+	{
+		// deleting other nodes may cause the current node to be already deleted.
+		// make sure it is still there before trying to delete it.
+		if(size(`ls $node`) > 0)
+		{
+			delete $node;
+		}
+		string $fmt = (uiRes("m_hikCharacterControlsUtils.kDeleting"));
+		string $str = `format -s $node $fmt`;
+		print($str);
+	}
+
+	print ($messageHIKCharacterDeleted);
+
+}
+
+global proc hikBindEffectors2PropState( string $pControlSet, string $pPropState )
+{
+	// Bind all effector Pull and Resist attrs to their equivalent attr in the prop2State structure
+	// PropState values are used for retargettig but they are also those containing the effectors pull and resist values in FBX and MoBu
+
+	string $pullMatches[] = {
+							"CtrlResistHipsPosition",
+							"CtrlPullLeftFoot",
+							"CtrlPullRightFoot",
+							"CtrlChestPullLeftHand",
+							"CtrlChestPullRightHand",
+							"CtrlPullLeftKnee",
+							"CtrlPullRightKnee",
+							"CtrlPullLeftElbow",
+							"CtrlPullRightElbow",
+							"",
+							"CtrlResistChestPosition",
+							"CtrlPullLeftToeBase",
+							"CtrlPullRightToeBase",
+							"",
+							"",
+							"CtrlPullHead",
+							"",
+							"",
+							"CtrlPullLeftFingerBase",
+							"CtrlPullRightFingerBase" };
+							
+	string $stiffnessMatches[] = { 
+							"CtrlResistHipsOrientation",
+							"",
+							"",
+							"",
+							"",
+							"CtrlResistLeftKnee",
+							"CtrlResistRightKnee",
+							"CtrlResistLeftElbow",
+							"CtrlResistRightElbow",
+							"ParamCtrlSpineStiffness",
+							"CtrlResistChestOrientation",
+							"",
+							"",
+							"CtrlResistLeftCollar",
+							"CtrlResistRightCollar",
+							"ParamCtrlNeckStiffness" };
+
+
+	int $LastEffectorId = GetHIKEffectorCount();
+	
+	for($i = 0; $i < $LastEffectorId; $i++)
+	{
+		$hikeffectorname = GetHIKEffectorName($i);
+		$AttrName = $pControlSet + "." + $hikeffectorname;
+		string $effectors[] = `listConnections -s 1 -d 0 -type "hikIKEffector" $AttrName`;
+		
+		if( size( $effectors ) >0 )
+		{
+			if( $i < size($pullMatches) ) 
+			{
+				if( $pullMatches[$i] != "" )
+				{	
+					moveAnimSrc( ($effectors[0]+".pull"), ($pPropState+"."+$pullMatches[$i]) ); 
+				}
+			}
+			
+			if( $i < size($stiffnessMatches) ) 
+			{
+				if( $stiffnessMatches[$i] != "" )
+				{	
+					moveAnimSrc( ($effectors[0]+".stiffness"), ($pPropState+"."+$stiffnessMatches[$i]) ); 
+				}			
+			}
+		}
+	}
+}
+
+
+
+global proc hikConnectCharacterStateObject(string $pOutput, string $pInput)
+{
+	string $attrOut = $pOutput + ".OutputCharacterState";
+	string $attrIn = $pInput + ".InputCharacterState";
+	connectAttr -f $attrOut $attrIn;
+}
+
+global proc hikConnectEffectorStateObject(string $pOutput, string $pInput)
+{
+	string $attrOut = $pOutput + ".OutputEffectorState";
+	string $attrIn = $pInput + ".InputEffectorState";
+	catchQuiet( `connectAttr -f $attrOut $attrIn` );
+
+    if (`attributeExists "OutputEffectorStateNoAux" $pOutput`)
+    {
+	    string $attrOutNoAux = $pOutput + ".OutputEffectorStateNoAux";
+	    string $attrInNoAux = $pInput + ".InputEffectorStateNoAux";
+
+		catchQuiet( `connectAttr -f $attrOutNoAux $attrInNoAux` );
+
+    }
+
+}
+
+global proc hikAddCharacterToLayer( string $pCharacter, string $controlRigLayerName, int $addExtraAttributes )
+{
+	string $lControlRig = hikGetControlRig($pCharacter);
+
+	if( $lControlRig != "" )	
+	{
+		if( $controlRigLayerName == "" )
+		{
+			$controlRigLayerName = `animLayer ($pCharacter+"_Layer")`;
+		}
+	
+		for($i = 0; $i < hikGetNodeCount(); $i++)
+		{
+			string $node = hikGetSkNode($lControlRig, $i);
+
+			if( size( $node ) > 0 )
+			{
+				string $txPlug = $node + ".tx";
+				string $tyPlug = $node + ".ty";
+				string $tzPlug = $node + ".tz";
+				
+				string $rxPlug = $node + ".rx";
+				string $ryPlug = $node + ".ry";
+				string $rzPlug = $node + ".rz";
+					
+				if( !hikIsRotateOnlyFK( $i ) )
+				{
+					animLayer -e -at $txPlug $controlRigLayerName;
+					animLayer -e -at $tyPlug $controlRigLayerName;
+					animLayer -e -at $tzPlug $controlRigLayerName;
+				}
+				animLayer -e -at $rxPlug $controlRigLayerName;
+				animLayer -e -at $ryPlug $controlRigLayerName;
+				animLayer -e -at $rzPlug $controlRigLayerName;
+			}
+		}
+		
+		string $rigIKNodes[] = hikGetIkNodesFromControlRig($lControlRig, 1 );   	
+	
+		for($node in $rigIKNodes)
+		{
+			string $txPlug = $node + ".tx";
+			string $tyPlug = $node + ".ty";
+			string $tzPlug = $node + ".tz";
+			string $rxPlug = $node + ".rx";
+			string $ryPlug = $node + ".ry";
+			string $rzPlug = $node + ".rz";
+			
+			string $reachT = $node + ".reachTranslation";
+			string $reachR = $node + ".reachRotation";
+			
+			animLayer -e -at $txPlug $controlRigLayerName;
+			animLayer -e -at $tyPlug $controlRigLayerName;
+			animLayer -e -at $tzPlug $controlRigLayerName;
+			animLayer -e -at $rxPlug $controlRigLayerName;
+			animLayer -e -at $ryPlug $controlRigLayerName;
+			animLayer -e -at $rzPlug $controlRigLayerName;
+
+			if( $addExtraAttributes )
+			{			
+				// Add reaches as well
+				animLayer -e -at $reachT $controlRigLayerName;
+				animLayer -e -at $reachR $controlRigLayerName;
+			}
+		}
+		
+		// Set rotation accumulation by layer
+		//
+		setAttr ( $controlRigLayerName + ".rotationAccumulationMode" ) 1;
+	}
+}
+
+
+
+global proc hikRenameConnectedNodes( string $pCharacter, int $rigOnly, string $pRigName, string $origName )
+{
+	//Get all the control rig nodes so we can rename them too.
+	string $rigFKNodes[] = hikGetRigFKNodes($pCharacter,1);				    	        
+	string $rigIKNodes[] = hikGetRigIkNodes($pCharacter);
+
+	string $lControlRig = hikGetControlRig($pCharacter);
+	
+	string $newCharacterName = $pCharacter;
+	string $newObjectName;			
+
+	if ( $rigOnly )
+	{
+		$newCharacterName = $pRigName;
+	}
+
+	string $buffer[];
+	
+	if ( ! $rigOnly )
+	{
+		string $lSKNodes[] = hikGetSkeletonNodes($pCharacter);
+		for ($sk in $lSKNodes) {
+			tokenize($sk,"_",$buffer);
+			if(size($buffer) == 2 && ($buffer[0] == $origName))
+			{
+				$newObjectName = $newCharacterName + "_" + $buffer[1] ;
+				rename $sk $newObjectName;	
+			}
+		}
+	}
+		
+	tokenize($lControlRig,"_",$buffer);
+	if(size($buffer) == 2 && ($buffer[1] == "ControlRig"))
+	{
+		$newObjectName = $newCharacterName + "_" + $buffer[1] ;
+		rename $lControlRig $newObjectName;	
+	}
+	
+	
+	for($fkNode in $rigFKNodes)
+	{	
+		// rename any layer blend nodes too, if they exist			
+		renameConnectedAnimBlendNodes($fkNode,$newCharacterName);
+		
+		tokenize($fkNode,"_",$buffer);
+		if(size($buffer) == 3 && ($buffer[1] == "Ctrl"))
+		{
+			$newObjectName = $newCharacterName + "_" + $buffer[1] + "_" + $buffer[2];
+			rename $fkNode $newObjectName;
+		}
+	}
+	
+	for($ikNode in $rigIKNodes)
+	{						
+		renameConnectedAnimBlendNodes($ikNode,$newCharacterName);
+		
+		tokenize($ikNode,"_",$buffer);
+		if(size($buffer) == 3 && ($buffer[1] == "Ctrl"))
+		{
+			$newObjectName = $newCharacterName + "_" + $buffer[1] + "_" + $buffer[2];
+			rename $ikNode $newObjectName;
+		}
+	}
+	
+	if ( ! $rigOnly )
+	{
+		// Check if the character has been packed into a cnotainer.  If so, repackage the container
+		// so it gets the updated name:
+		string $currentContainer = `container -q -findContainer $newCharacterName`;
+		if($currentContainer != "")
+		{
+			hikCharacterPackage( $newCharacterName );
+		}
+	}	
+}
+
+global proc string hikGetStateToGlobalSk( string $pCharacter, int $pCreate )
+{
+	string $list1[] = `listConnections -type HIKState2GlobalSK ($pCharacter+".OutputCharacterDefinition")`;
+
+	if( size( $list1 ) > 0 )
+	{
+		return $list1[0];
+	} 
+	else if( $pCreate )
+	{
+		// does not exist yet, 
+		
+		// From not the Character will have a custom Rig and we assume bones arent directly driven
+		// so character must be deactivated first
+		hikEnableCharacter( $pCharacter, 0 );
+
+		
+		// create it
+		string $node = `createNode "HIKState2GlobalSK"`;
+
+		connectAttr ($pCharacter+".OutputCharacterDefinition") ($node+".InputCharacterDefinition" );
+
+		string $list2[] = `listConnections -type HIKState2SK ($pCharacter+".OutputCharacterDefinition")`;
+
+		if( size( $list2 ) > 0 )
+		{
+			string $currentSources[] = `listConnections -s 1 -d 0 -plugs 1 ($list2[0]+".InputCharacterState")`;
+
+			if( size($currentSources)>0 )
+			{
+				connectAttr $currentSources[0] ($node+".InputCharacterState");
+			}
+		}
+		return $node;
+	}
+	else
+	{
+		return "";
+	}
+
+}
+
+
+// NOTE: The following method is also called from hikcharactertoolcmd.cpp,
+//       if you are about to modify it's name make sure to update the 
+//       cpp file too.
+//
+global proc int hikIsCharacterEnabled( string $pCharacter )
+{
+	string $lGlobal2SkNode = hikGetStateToGlobalSk( $pCharacter, 0  );
+
+	if( $lGlobal2SkNode != "" )
+	{
+		string $name = RetargeterGetName( $pCharacter );
+		return RetargeterIsConnected( $name );
+	}
+	else
+	{
+		// No custom Rig, look if characterized skeleton is driven
+
+		// If hips rotation is driven by the characterstate we can assume it is active 
+		string $nodeName = GetHIKNodeName(1);
+		string $skNode[] = `listConnections -s 1 -d 0 ($pCharacter+"."+$nodeName)`;
+	
+		if( size($skNode) > 0 )
+		{
+			string $state2sk[] = hikGetState2SKFromCharacter( $pCharacter );
+		
+			if( size($state2sk)>0 )
+			{	
+				if( `isConnected ($state2sk[0]+"."+$nodeName+"Rx") ($skNode[0]+".rotateX")` )
+				{
+					return true;
+				}
+				else
+				{
+					// There maybe a pairblend between the 2 nodes
+					// If the state2sk is connected to a pair blend then assume constraint is active
+					string $pairBlend[] = `listConnections -type "pairBlend" -s 0 -d 1 ($state2sk[0]+"."+$nodeName+"R")`;
+				
+					if( size( $pairBlend ) > 0 )
+					{
+						return true;
+					}
+					/* This code should not be required because we connect the compound plug
+					else
+					{
+						string $pairBlend[] = `listConnections -type "pairBlend" -s 0 -d 1 ($state2sk[0]+"."+$nodeName+"Rx")`;
+							
+						if( size( $pairBlend ) > 0 )
+						{
+							return true;
+						}
+					}
+					*/
+				}
+			}
+		}
+		return false;
+	}
+}
+
+global proc hikEnableCharacter( string $pCharacter, int $activateAndDirtyFlags )
+{
+	// Valid $activateAndDirtyFlags values are:
+	//
+	//   0, off, or false : deactivate and dirty the character
+	//   1,  on, or true  : activate   and dirty the character
+	//   2,               : deactivate and keep current pose 
+	//                      (used when unlocking the character in order to keep actual stance pose)
+
+	// NOTE: Currently $activateAndDirtyFlags=2 is never used. Is this intentional?
+
+	int $activate = ($activateAndDirtyFlags==1);
+	int $dirty    = ($activateAndDirtyFlags <2);
+
+	string $lGlobal2SkNode = hikGetStateToGlobalSk( $pCharacter, 0  );
+
+	if( $lGlobal2SkNode != "" )
+	{
+		string $name = RetargeterGetName( $pCharacter );
+		if ( $activate == 0 || $activate == 2 )
+			RetargeterDisconnect( $name );
+		else if ( $activate == 1 )
+			RetargeterConnect( $name );
+	}
+	else
+	{
+
+		// Always call the disconnect first because connectSkToCharacterState should be called 
+		// for disconnected state only
+
+		string $state2sk[] = hikGetState2SKFromCharacter( $pCharacter);
+		if( size($state2sk)>0 )
+		{
+			hikDisconnectSkFromCharacterState( $state2sk[0], $pCharacter, $dirty );
+
+			// Activate if not in CustomRig mode
+			if( hikGetStateToGlobalSk( $pCharacter, 0 )=="" )
+			{
+				if( $activate )
+				{
+					// Just ensure that the Rig gets connected
+					hikConnectSkFromCharacterState( $state2sk[0], $pCharacter, 0 );
+				}
+			}
+		}
+	}
+
+	if( !$activate || !hikIsCharacterInputTypeLive( $pCharacter ))
+	{
+		hikSetLiveState( $pCharacter, 0 );
+	}
+	else
+	{
+		hikSetLiveState( $pCharacter, 1 );
+	}
+
+	hikShowHideSkOrRigOnSourceInput( $pCharacter );
+}
+
+global proc string hikGetSolverNodeFromCharacter(string $pCharacter)
+{	
+	string $solverNode[] = `listConnections -s 0 -d 1 -type HIKSolverNode $pCharacter`;
+	if(size($solverNode) > 0)
+	{
+		return $solverNode[0];
+	}
+	return "";
+
+}
+
+global proc int hikIsBaseAnimationLayer(string $layer)
+{
+	return size( `animLayer -q -parent $layer` ) > 0 ;
+}
+
+// Get Rig Property2State Nodes from a Character
+global proc string hikGetProperty2StateFromCharacter(string $pCharacter)
+{
+	string $lProperty2State[] = `listConnections -s 1 -d 0 -type HIKProperty2State ($pCharacter+".propertyState" )`; 
+
+	if( size( $lProperty2State ) < 1 )
+	{
+		// If no property state associated to the character try to find if there is a solver with an associated property2State object
+		string $lSolvers[] = hikGetSolverFromCharacter($pCharacter);
+		if(size($lSolvers))
+		{
+			string $lProperty2StateAttr = $lSolvers[0] + ".InputPropertySetState";
+			$lProperty2State = `listConnections -type HIKProperty2State $lProperty2StateAttr`;
+		}
+	}
+	
+	if( size( $lProperty2State ) < 1 )
+	{
+		return "";
+	}
+	else
+	{
+		return $lProperty2State[0];
+	}
+}
+
+// Get State2SK Nodes from a Character
+global proc string[] hikGetState2SKFromCharacter(string $pCharacter)
+{
+	string $lState2SKAttr = $pCharacter + ".OutputCharacterDefinition";
+	return `listConnections -type HIKState2SK $lState2SKAttr`;	
+}
+

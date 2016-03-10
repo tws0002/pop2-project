@@ -1,0 +1,355 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//	Procedure Name:
+//		AEanimClipTemplate
+//
+//	Description Name;
+//		Creates the attribute editor controls for the animClip node
+//
+//	Input Value:
+//		nodeName
+//
+//	Output Value:
+//		None
+//
+//
+
+
+//	Procedure Name:
+//	checkInstancedClip: do dimming based on the instance state
+//
+//
+global proc checkInstancedClip ( string $nodeName )
+{
+	if (size($nodeName) == 0)
+		return;
+
+	string $nodeAttr = $nodeName + ".clipInstance";
+	int $isInstance = `getAttr $nodeAttr`;
+	int $isSource = !$isInstance;
+
+	editorTemplate -dimControl $nodeName "enable"      ($isSource);
+	editorTemplate -dimControl $nodeName "weight"      ($isSource);
+	editorTemplate -dimControl $nodeName "weightStyle" ($isSource);
+	editorTemplate -dimControl $nodeName "startFrame"  ($isSource);
+	editorTemplate -dimControl $nodeName "preCycle"    ($isSource);
+	editorTemplate -dimControl $nodeName "postCycle"   ($isSource);
+	editorTemplate -dimControl $nodeName "scale"       ($isSource);
+	editorTemplate -dimControl $nodeName "hold"        ($isSource);
+	editorTemplate -dimControl $nodeName "sourceStart" ($isSource);
+	editorTemplate -dimControl $nodeName "sourceEnd"   ($isSource);
+	editorTemplate -dimControl $nodeName "pose"        ($isInstance);
+}
+
+//	Procedure Name
+//	checkAnimClipTimeWarpAE: do dimming based on the connection state of
+//							 the timeWarp attribute.
+//
+global proc checkAnimClipTimeWarpAE( string $nodeName )
+{
+	if (size($nodeName) == 0)
+		return;
+
+	string $nodeAttr = $nodeName + ".timeWarp";
+	int $isConnected = `connectionInfo -id $nodeAttr`;
+	int $dim = (! $isConnected);
+	editorTemplate -dimControl $nodeName "timeWarpEnable" ($dim);
+	editorTemplate -dimControl $nodeName "timeWarp" ($dim);
+}
+
+
+proc clipChannelDeleteChildUI(string $children[], int $count)
+//
+// Delete the last $count elements from the $children array.
+//
+{
+	if ($count == 0)
+		return;
+
+	int $total = size($children);
+	int $start = $total - $count;
+	if ($start <= 0)
+		return;
+
+	string $cmd;
+	for ( $ii = $start; $ii < $total; $ii++)
+		if (size($children[$ii]))
+			$cmd += ($children[$ii] + " ");
+
+	if (size($cmd))
+		eval ("deleteUI " + $cmd);
+}
+
+proc clipChannelDisableUI(string $children[])
+//
+// Disable the per-channel buttons and delete all channel controls.
+//
+{
+	clipChannelDeleteChildUI($children,size($children));
+	button -e -enable false allAbsButton;
+	button -e -enable false allRelButton;
+	button -e -enable false relativeRootsButton;
+	text -e -enable false absoluteTitleTxt;	
+	text -e -enable false relativeTitleTxt;
+
+}
+
+global proc setClipChannelOffsets(int $toWhat, string $clipName, string $charName)
+//
+// Set all the the channels on the specified character's clip based on the
+// $toWhat flag, where:	
+// 		$toWhat: 0 = relative, 1 = absolute, 2 = defaults
+//
+{
+	// Find the attributes from the character that are in the clip.
+	//
+	string $sched = `character -q -sc $charName`;
+	if (size($sched) == 0) {
+		return;
+	}
+
+	int $clipIndex = `clipSchedule -name $clipName -q -ci $sched`;
+	string $cmd = ("clipSchedule -ci "+$clipIndex+" ");
+	switch ($toWhat) {
+	case 0: 
+		$cmd += "-allRelative";
+		break;
+	case 1:
+		$cmd += "-allAbsolute";
+		break;
+	case 2:
+	default:
+		$cmd += "-defaultAbsolute";
+		break;
+	}
+	$cmd += (" "+$sched);
+	evalEcho $cmd;
+	
+}
+
+proc clipChannelHookupClipButtons(string $clipName, string $charName)
+//
+// Enable the channel buttons and hookup the appropriate callbacks.
+//
+{
+	button -e -enable true allAbsButton;
+	button -e -enable true allRelButton;
+	button -e -enable true relativeRootsButton;
+	text -e -enable true absoluteTitleTxt;
+	text -e -enable true relativeTitleTxt;
+	button -e -c ("setClipChannelOffsets(1,\""+$clipName+"\",\""+$charName+"\")") allAbsButton;
+	button -e -c ("setClipChannelOffsets(0,\""+$clipName+"\",\""+$charName+"\")") allRelButton;
+	button -e -c ("setClipChannelOffsets(2,\""+$clipName+"\",\""+$charName+"\")") relativeRootsButton;	
+}
+
+global proc clipChannelOffsetsNew( string $attrName )
+{
+	frameLayout -borderVisible false -collapsable true -labelVisible false -collapse false clipChannelOffsetLayout;
+	setUITemplate -pst attributeEditorTemplate;
+	formLayout channelButtonForm;
+		button -label (uiRes("m_AEanimClipTemplate.kAllAbsolute"))  
+			-annotation (uiRes("m_AEanimClipTemplate.kSetallthechannelstoabsoluteAnnot"))  allAbsButton;
+		button -label (uiRes("m_AEanimClipTemplate.kAllRelative"))  
+			-annotation (uiRes("m_AEanimClipTemplate.kSetallthechannelstorelativeAnnot"))  allRelButton;
+		button -label (uiRes("m_AEanimClipTemplate.kRelativeRoots"))
+			-annotation (uiRes("m_AEanimClipTemplate.kSetRelativeRootsAnnot"))  relativeRootsButton;
+
+		formLayout -e
+			-af  allAbsButton top 5
+			-ap  allAbsButton left 0  2
+			-ap  allAbsButton right 0  32
+			-af  allAbsButton bottom 5
+
+			-af  allRelButton top 5
+			-ap  allRelButton left 0  34
+			-ap  allRelButton right 0  66
+			-af  allRelButton bottom 5
+			
+			-af relativeRootsButton top 5
+			-ap relativeRootsButton left 0  68
+			-ap relativeRootsButton right 0  98
+			-af relativeRootsButton bottom 5 
+			
+			channelButtonForm;
+		setParent ..;
+	setParent ..;
+
+	rowLayout -nc 2 
+		-width 10 
+		-cw 1 50 
+		-cw 2 50 
+		-cal 1 "center" 
+		-cal 2 "left"
+		-cat 1 "right" 0
+		-cat 2 "left" 7
+		channelOffsetTitle;
+		text -fn "boldLabelFont" -label (uiRes("m_AEanimClipTemplate.kAbsolute")) absoluteTitleTxt;
+		text -fn "boldLabelFont" -label (uiRes("m_AEanimClipTemplate.kRelative")) relativeTitleTxt;
+	setParent ..;
+	formLayout channelOffsetForm;
+		columnLayout channelOffsetLayout;
+		setParent ..;
+	setUITemplate -ppt;
+	setParent ..;
+	clipChannelOffsetsReplace( $attrName );
+}
+
+global proc clipChannelOffsetsReplace( string $clipPlugName )
+//
+// This method is used to fill in the UI for the clip's per-channel
+// absolute/relative settings.
+//
+{
+	setParent channelOffsetLayout;
+
+	// Delete the controls that are there now
+	//
+	string $children[] = `columnLayout -query -childArray channelOffsetLayout`;
+	int $childCount = size($children);
+
+	string $buffer[];
+	tokenize($clipPlugName,".",$buffer);
+	string $clipName = $buffer[0];
+	string $chars[] = `clip -q -character $clipName`;
+	if((0 == `getAttr ($clipName+".clipInstance")`) ||
+	   (size($chars) == 0)) {
+		// There is no per-channel info for source clips or standalone clips
+		//
+		clipChannelDisableUI($children);
+		return;
+	}
+	
+	// Find the attributes from the character that are in the clip.
+	//
+	string $sched = `character -q -sc $chars[0]`;
+	if (size($sched) == 0) {
+		clipChannelDisableUI($children);
+		return;
+	}
+
+	clipChannelHookupClipButtons($clipName,$chars[0]);
+	
+	int $clipIndex = `clipSchedule -name $clipName -q -ci $sched`;
+	string $attrs[] = `clipSchedule -ci $clipIndex -q -listPairs $sched`;
+
+	setParent channelOffsetLayout;
+
+	int $radioButtonCount = 0;
+	int $attrCount = size($attrs);
+	clipChannelDeleteChildUI($children,$childCount-$attrCount);
+	setParent channelOffsetLayout;
+	for ($ii = $attrCount-1; $ii >= 0; $ii--) {
+		// The strings in $attrs are of the form "channelName animCurveName",
+		// so tokenize out the space to get the channelName.
+		//
+		tokenize($attrs[$ii]," ",$buffer);
+
+		// query the member index for this attr from the character to find out
+		// the associated absoluteChannel plug index
+		//
+		string $charPlug = `character -q -cp $buffer[0]`;
+		if (size($charPlug) > 0) {
+			int $memberIndex = `character -q -mi $charPlug`;
+			string $acAttr = ($clipName+".absoluteChannel["+$memberIndex+"]");
+			if ($radioButtonCount < $childCount) {
+				radioButtonGrp -e -label2 ("   " + $buffer[0]) $children[$radioButtonCount];
+				connectControl $children[$radioButtonCount] $acAttr;
+			} else {
+				string $radioButtonGrp = `radioButtonGrp -nrb 2 -label "" -label1 "" -label2 ("   " + $buffer[0])`;
+				radioButtonGrp -e -data1 1 -data2 0 $radioButtonGrp;
+				radioButtonGrp -e -cw 1 30 $radioButtonGrp;
+				radioButtonGrp -e -cw 2 30 $radioButtonGrp;
+				radioButtonGrp -e -cw 3 300 $radioButtonGrp;
+				connectControl $radioButtonGrp $acAttr;
+			}
+			$radioButtonCount++;
+		}
+	}
+}
+
+
+global proc AEanimClipTemplate( string $nodeName )
+{
+	// Put our attributes into a scrolled layout field
+
+	editorTemplate -beginScrollLayout;
+
+		editorTemplate -beginLayout (uiRes("m_AEanimClipTemplate.kAnimClipAttributes"))  -collapse 0;
+
+			editorTemplate -addControl "enable";
+
+			editorTemplate -addSeparator;
+
+			editorTemplate -addControl "weight";
+			editorTemplate -addControl "weightStyle";
+			editorTemplate -addSeparator;
+
+			editorTemplate -addControl "startFrame";
+			editorTemplate -addControl "preCycle";
+			editorTemplate -addControl "postCycle";
+			editorTemplate -addControl "scale";
+			editorTemplate -addControl "hold";
+			editorTemplate -addControl "sourceStart";
+			editorTemplate -addControl "sourceEnd";
+
+			editorTemplate -addSeparator;
+
+			editorTemplate -addControl "timeWarpEnable";
+			editorTemplate -addControl "timeWarp" "checkAnimClipTimeWarpAE";
+
+			// dim controls based on whether this is an instanced clip or a source clip
+			//
+			editorTemplate -addControl "instancedClipAttributes" "checkInstancedClip";
+
+		editorTemplate -endLayout;
+
+		editorTemplate -beginLayout (uiRes("m_AEanimClipTemplate.kChannelOffsets"))  -collapse 1;
+
+			editorTemplate -callCustom "clipChannelOffsetsNew" "clipChannelOffsetsReplace" "absoluteChannel";
+
+		editorTemplate -endLayout;
+
+		editorTemplate -beginLayout (uiRes("m_AEanimClipTemplate.kSourceClipAttributes"))  -collapse 1;
+
+			editorTemplate -addControl "pose";
+
+		editorTemplate -endLayout;
+
+		// include/call base class/node attributes
+		AEdependNodeTemplate $nodeName;
+
+		// Tell the attribute editor not to display the attributes
+		// that are not appropriate for user-interaction
+		//
+		editorTemplate -suppress "clipName";
+		editorTemplate -suppress "cycle";
+		editorTemplate -suppress "clipInstance";
+		editorTemplate -suppress "offset";
+		editorTemplate -suppress "absoluteRotations";
+		editorTemplate -suppress "offsetXform";
+		editorTemplate -suppress "clipData";
+
+		editorTemplate -addExtraControls;
+
+	editorTemplate -endScrollLayout;
+}

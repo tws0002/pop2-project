@@ -1,0 +1,252 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Mar, 2006
+//
+//	Procedure Name:
+//		doImportFluidCacheFile
+//
+//	Description:
+//		Import a cache file from disk and connect it to a fluid object
+//
+
+
+proc string removePreString(string $origString, string $token)
+{
+	string $buffer[];
+	int $count = tokenize($origString,$token,$buffer);
+	return $buffer[$count-1];
+}
+
+proc string matchChannelStart(string $channels[], string $name)
+{
+	int $result = -1;
+	int $channelCount = size($channels);	
+	for ($ii = 0; $ii < $channelCount; $ii++) {
+		if (startsWith($channels[$ii],$name)) {
+			$result = $ii;
+			break;
+		}
+	}
+	return $result;
+}
+
+proc int matchChannelWithoutPreString(string $channels[],
+									  string $origString, string $token)
+{
+	string $newChannels[];
+	int $channelCount = size($channels);	
+	for ($ii = 0; $ii < $channelCount; $ii++) {
+		$newChannels[$ii] = removePreString($channels[$ii],$token);
+	}
+	string $name = removePreString($origString,$token);
+	int $result = matchChannelStart($newChannels,$name);
+	return $result;
+}
+
+proc string findChannelForObject(int $index,
+								 string $channels[],
+								 string $obj)
+{
+	string $result = $channels[$index];
+	int $channelCount = size($channels);
+	if ($channelCount == 1) {
+		return $result;
+	}
+
+	int $foundMatch = matchChannelStart($channels,$obj);
+	if ($foundMatch == -1) {
+		$foundMatch = matchChannelWithoutPreString($channels,$obj,":");
+		if ($foundMatch == -1) {
+			$obj = removePreString($obj,":");
+			$foundMatch = matchChannelWithoutPreString($channels,$obj,"|");
+		}
+		if ($foundMatch == -1) {
+			$obj = removePreString($obj,"|");
+			$foundMatch = matchChannelWithoutPreString($channels,$obj,":");
+		}
+	}
+	
+	if ($foundMatch != -1) {
+		$result = $channels[$foundMatch];
+	}
+	
+	if ($foundMatch == -1) {
+		string $format = (uiRes("m_doImportFluidCacheFile.kFluidNoChannelNameMatch"));
+		string $warnMsg = `format -stringArg $result -stringArg $obj $format`;
+		warning($warnMsg);
+	}
+
+	return $result;
+}
+
+
+global proc int 
+doImportFluidCacheFile(string $fileName, string $fileType, 
+		string $fluidObjects[], string $channelNames[])
+//
+// Import the specified file.
+//
+{
+	if ($fileName == "") {
+		error((uiRes("m_doImportFluidCacheFile.kFluidNoFileSpecified")));
+		return 0;
+	}
+
+	string $channels[] = `cacheFile -fileName $fileName -q -channelName`;
+	
+	// first check for existing cacheFile on this node
+	//
+	string $sel[];
+	if(size($fluidObjects) <=0)
+		$sel = `getFluidObjectsToCache 0`;
+	else
+		$sel = $fluidObjects;
+		
+	string $currObj = $sel[0];
+	string $queryCmd = "cacheFile -q -cacheableAttrs -cacheableNode " + $currObj;
+	string $nodeChannels[] = `eval $queryCmd`;
+
+	int $count = size($nodeChannels);
+	if ($count != size($channels)) {
+		string $format = (uiRes("m_doImportFluidCacheFile.kFluidMismatchChannels"));
+		string $channelCount = size($channels);
+		string $selCount = $count;
+		string $errMsg = `format -stringArg $channelCount -stringArg $selCount $format`;
+		warning($errMsg);
+	}
+
+	// the channels in the channel array include the node prefix
+	// whereas the "channels" in the nodeChannels array are acually the interpretations
+	// we assume that the node prefix is the same for all the node's channels,
+	// and just strip off the first one to use when setting up the channel selector
+	// on the cache node
+	string $firstPrefix;
+	if(size($channels) > 0) {
+		string $buffer[];
+		int $count = tokenize($channels[0],"_",$buffer);
+		$buffer[$count-1] = "";
+		$firstPrefix = stringArrayToString( $buffer, "_");
+	}
+
+	string $attachAttrs[];
+	string $attachChannels[];
+	int $ct = 0;
+	for ($ch in $channels)
+	{
+		string $prefix;
+		string $buffer[];
+		int $count = tokenize($ch,"_",$buffer);
+		string $interp = $buffer[$count-1];
+		$buffer[$count-1] = "";
+		$prefix = stringArrayToString( $buffer, "_");
+		// if there were multiple fluids cached in the file
+		// we will just take the first one on attach anyway
+		if($prefix == $firstPrefix)
+		{
+			// always stuff the channel name - if it doesn't match, we ignore it anyway
+			$attachChannels[$ct] = $ch;
+			// see if this is a legitimate fluid channel - its always possible this is
+			// an external cache with additional data, so we don't fail outright, just ignore
+			// if it does not match - but if we found no matches, we'll fail later
+			if ($interp == "density")
+				$attachAttrs[$ct++] = ($currObj+".inDensity");
+			else if ($interp == "velocity")
+				$attachAttrs[$ct++] = ($currObj+".inVelocity");
+			else if ($interp == "resolution")
+				$attachAttrs[$ct++] = ($currObj+".inResolution");
+			else if ($interp == "offset")
+				$attachAttrs[$ct++] = ($currObj+".inOffset");
+			else if ($interp == "temperature")
+				$attachAttrs[$ct++] = ($currObj+".inTemperature");
+			else if ($interp == "fuel")
+				$attachAttrs[$ct++] = ($currObj+".inReaction");
+			else if ($interp == "color")
+				$attachAttrs[$ct++] = ($currObj+".inColor");
+			else if ($interp == "texture")
+				$attachAttrs[$ct++] = ($currObj+".inTextureCoordinates");
+			else if ($interp == "falloff")
+				$attachAttrs[$ct++] = ($currObj+".inFalloff");
+		} else {
+			break;
+		}
+	}
+	if ($ct == 0)
+	{
+		error((uiRes("m_doImportFluidCacheFile.kFluidNoChannels")));
+	}
+	
+	string $existingCaches[] = findExistingCaches($currObj);		
+		
+	if (size($existingCaches) == 0) {
+		string $inputRangeAttr = ($currObj + ".playFromCache");
+			
+		string $attachCmd = ( "cacheFile -attachFile -fileName \"" + $fileName + "\"" );
+
+		string $chn;
+		for ($chn in $attachChannels)
+		{
+			$attachCmd += (" -channelName "+$chn);
+		}
+		for ($chn in $attachAttrs)
+		{
+			$attachCmd += (" -ia "+$chn);
+		}
+		string $cacheFile = `eval $attachCmd`;
+		connectAttr ($cacheFile+".inRange") $inputRangeAttr;
+
+		// if the cache was autoResize, we need to set the autoresize attr as well
+		// we cheat, cause we know that IF the autoResize attr was in the header
+		// it will be at index 4, if we just tried to search for it and it wasn't there
+		// we might find some other attr name that contained it as a substring
+		
+		string $channelInfo[] = `cacheFile -cacheInfo -cacheFileNode $cacheFile -q `;
+		if( size($channelInfo) > 5) {
+			if( size( `match "autoResize" $channelInfo[4]`) > 0 ) {
+				string $stuff[];
+				tokenize $channelInfo[4] "=" $stuff;
+				if($stuff[1]) {
+					setAttr ($currObj+".autoResize") 1;
+				}
+			}
+		}
+	} else {
+		string $cacheBlend[] = `cacheFileCombine -q -ln $currObj`;
+		if (size($cacheBlend) == 0) {
+			cacheFileCombine $currObj;
+			$cacheBlend = `cacheFileCombine -q -ln $currObj`;
+		}
+		string $createCmd = ("cacheFile -createCacheNode -fileName \"" + $fileName + "\"" );
+		for ($chn in $attachChannels)
+			$createCmd += (" -channelName " + $chn);
+		string $cacheFile = `eval $createCmd`;
+		string $combineCmd = "cacheFileCombine -e -keepWeights -connectCache " + $cacheFile;
+		for ($chn in $attachChannels)
+			$combineCmd += (" -channelName " + $chn);
+		$combineCmd += (" "+$cacheBlend[0]);
+		eval $combineCmd;
+	}
+	
+	return 1;
+}
+

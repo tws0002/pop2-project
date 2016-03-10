@@ -1,0 +1,170 @@
+// Copyright (C) 1997-2013 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+/**
+ * @file xgmCurvesToGuidesTool.mel
+ * @brief The tool to convert Maya curves into XGen guides
+ *
+ * <b>CONFIDENTIAL INFORMATION: This software is the confidential and
+ * proprietary information of Walt Disney Animation Studios ("WDAS").
+ * This software may not be used, disclosed, reproduced or distributed
+ * for any purpose without prior written authorization and license
+ * from WDAS. Reproduction of any section of this software must include
+ * this legend and all copyright notices.
+ * Copyright Disney Enterprises, Inc. All rights reserved.</b>
+ *
+ * @author Patrick Witting
+ * @author Stephen D. Bowline
+ * @author Thomas V Thompson II
+ * @author Ying Liu
+ *
+ * @version Created 12/30/04
+ */
+
+
+global proc xgmCurvesToGuidesTool(string $parent)
+{
+    columnLayout -parent $parent;
+    {
+        textFieldGrp -label (uiRes("m_xgmCurvesToGuidesTool.kDescription")) -cw2 100 240 
+            -ann (uiRes("m_xgmCurvesToGuidesTool.kDescriptionAnn"))
+            -editable false xgmCTGTDesc;
+
+        floatSliderGrp -label (uiRes("m_xgmCurvesToGuidesTool.kTipsnapamount")) -cw3 100 80 230
+            -ann ((uiRes("m_xgmCurvesToGuidesTool.kTipSnapAmountAnn")) )
+            -field true -minValue 0.0 -maxValue 1.0
+            -fieldMinValue -5.0 -fieldMaxValue 5.0
+            -value 1 -pre 3 xgmCTGTTipSnap;
+
+        floatFieldGrp -label (uiRes("m_xgmCurvesToGuidesTool.kTipSnapPower")) -nf 1 -pre 2 
+            -ann (uiRes("m_xgmCurvesToGuidesTool.kTipSnapPowerAnn"))
+            -cw2 100 240 -v1 1.0 xgmCTGTPower;
+
+        radioButtonGrp -numberOfRadioButtons 2 -label (uiRes("m_xgmCurvesToGuidesTool.kSearchType"))
+            -labelArray2 (uiRes("m_xgmCurvesToGuidesTool.kBaseProximity")) 
+	    		 (uiRes("m_xgmCurvesToGuidesTool.kNameAssociation"))
+            -ann (uiRes("m_xgmCurvesToGuidesTool.kSearchTypeAnn"))
+            -cw3 100 120 120 -sl 1
+            -cc "xgmCurvesToGuidesToolCC" xgmCTGTType;
+
+        checkBoxGrp -label (uiRes("m_xgmCurvesToGuidesTool.kOptions")) -vr -ncb 2 -adj off -cw2 100 240
+            -label1 (uiRes("m_xgmCurvesToGuidesTool.kDeleteCurves")) -v1 1
+            -label2 (uiRes("m_xgmCurvesToGuidesTool.kPreserveDynamicLink")) -v2 0 -en2 false
+            -on1 "checkBoxGrp -e -en2 false xgmCTGTOptions"
+            -on2 "checkBoxGrp -e -en1 false xgmCTGTOptions"
+            -of1 "checkBoxGrp -e -en2 true xgmCTGTOptions"
+            -of2 "checkBoxGrp -e -en1 true xgmCTGTOptions"
+            xgmCTGTOptions;
+
+        progressBar -min 0 -width 340 -height 20 
+            -ann (uiRes("m_xgmCurvesToGuidesTool.kPrgoressBarAnn"))
+            -enable off xgmCTGTProg;
+
+        button -label (uiRes("m_xgmCurvesToGuidesTool.kAddGuides")) -width 340
+            -ann (uiRes("m_xgmCurvesToGuidesTool.kAddGuidesAnn"))
+            -command "xgmCurvesToGuidesToolAppendGuides";
+
+        setParent ..;
+    }
+
+    python("xg.registerCallback(\"CurrentDescriptionSet\",\"xgenm.xmaya.xgmCurvesToGuidesTool.xgmCurvesToGuidesToolCDC\")");
+
+    string $desc = python("xgui.currentDescription()");
+    xgmCurvesToGuidesToolCDC $desc;
+}
+
+
+global proc xgmCurvesToGuidesToolCC()
+{
+    // Get the search type
+    int $type = `radioButtonGrp -q -sl xgmCTGTType`;
+    int $enable = 2 - $type;
+
+    // Only enable the TipSnap and Options for Base Proximity
+    floatSliderGrp -e -en $enable xgmCTGTTipSnap;
+    checkBoxGrp -e -en $enable xgmCTGTOptions;
+}
+
+
+global proc xgmCurvesToGuidesToolAppendGuides()
+{
+    int $type = `radioButtonGrp -q -sl xgmCTGTType`;
+
+    if ( $type == 2 ) {
+        xgmSelectedCurvesToGuidesByName;
+        return;
+    }
+
+    string $desc = python("xgui.currentDescription()");
+    if ( $desc == "" ) {
+        warning (uiRes("m_xgmCurvesToGuidesTool.kUnableToAppendGuides"));
+        return;
+    }
+
+    // Get the nurbs curves from selection list recursively
+    string $curves[] = xgmSelectedCurves( 1 );
+    if ( `size $curves` == 0 ) {
+        warning (uiRes("m_xgmCurvesToGuidesTool.kNoNurbsCurvesAreSelectedToConvertToGuides"));
+        return;
+    }
+    select -r $curves;
+
+    float $power = `floatFieldGrp -q -v1 xgmCTGTPower`;
+    float $tipSnap = `floatSliderGrp -q -v xgmCTGTTipSnap`;
+    float $tip = 1.0 - $tipSnap;
+
+    string $command = "xgmCurveToGuide -d ";
+    $command += $desc;
+    $command += " -tsp ";
+    $command += $power;
+    $command += " -tsa ";
+    $command += $tip;
+    $command += " -pb xgmCTGTProg";
+    if ( `checkBoxGrp -q -v1 xgmCTGTOptions` ) {
+	$command += " -deleteCurve";
+    }
+
+    if ( `checkBoxGrp -q -v2 xgmCTGTOptions`) {
+        for ($curv in $curves) {
+            select -r $curv;
+            eval( $command );
+            string $sel[] = `ls -sl`;
+            string $guideShape[] = `listRelatives -s $sel[0]`;
+            string $make[] =`listConnections -s true ($guideShape[0]+".toMakeGuide")`;
+            connectAttr -force ($curv+".worldSpace") ($make[0]+".override");
+        }
+    } else {
+        progressBar -e -enable on xgmCTGTProg;
+        eval( $command );
+        progressBar -e -enable off xgmCTGTProg;
+    }
+}
+
+
+global proc xgmCurvesToGuidesToolCDC( string $desc )
+{
+    if ( `textFieldGrp -exists xgmCTGTDesc` ) {
+        if ( $desc == "" )  $desc = "<NONE>";
+        textFieldGrp -e -text $desc xgmCTGTDesc;
+    } else {
+        python("xg.deregisterCallback(\"CurrentDescriptionSet\",\"xgenm.xmaya.xgmCurvesToGuidesTool.xgmCurvesToGuidesToolCDC\")");
+    }
+}

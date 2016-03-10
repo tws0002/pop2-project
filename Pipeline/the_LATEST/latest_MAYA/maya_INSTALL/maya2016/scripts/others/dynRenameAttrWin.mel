@@ -1,0 +1,749 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  31 Oct 1996
+//
+//  Description:
+//  	Renaming dynamic attributes from a particle object.
+//
+//	Contents
+//		getAttrListDRA		Return a complete list of render attributes.
+//		doRenameDRA			Add a predefined attribute to an object.
+//		doItDRA				Do the actual renameAttr command.
+//		confirmCloseDRA		Okay button callback.
+//		renameDRA			Rename button callback.
+//		createWinDRA		Create the window and controls.
+//		registerDRA			Register all the callbacks.
+//		resetDRA			Reset the dialog when posting.
+//		dynRefreshUI		Refresh the UI Widgets.  Altering the selection List will do.
+//		dynRenameAttrWin	Main entry point. Create and post dialog.
+//
+
+
+// Static data used by this dialog.
+//
+global string	$gObjectsDRA[];				// List of selected objects.
+global int		$gRenameFieldChanged = 0;	// To track if there was an 
+											// uncommitted edit, while closing.
+//  ========== getAttrListDRA ==========
+//
+//  Description:
+//      Return a complete list of dynamic attributes for the selected
+//      object.
+//
+proc string[] getAttrListDRA()
+{
+	global string	$gObjectsDRA[];		// List of selected objects.
+	string $attrAry[] = `listAttr -ud $gObjectsDRA`;
+	$attrAry = sort($attrAry);
+	return $attrAry;
+}
+
+//  ========== dynRefreshUI ==========
+//
+//  Description:
+//      Refresh the UI Widgets.  Altering the selection List will do.
+//
+proc dynRefreshUI()
+{
+	string $old[]=`ls -sl`;
+	select -clear;
+	select $old;
+} 
+
+
+//  ========== doRenameDRA ==========
+//
+//  Description:
+//		Renames a dynamic attribute of an object. 
+//
+
+proc doRenameDRA( string $attr, string $object )
+{
+	global string $gRenameAttrWin;
+	setParent $gRenameAttrWin;
+
+	if (`nodeType $object` == "particle")
+	{
+		// warning("Particle shapes attributes cannot be renamed!");
+		// We would have already issued a warning.
+		// Just return without renaming this attr.
+		return;
+	}
+
+	string $newAttr = `textFieldGrp -q -text newAttrNameTextField`;
+	int $ind[] = `textScrollList -q -sii attrLst`;
+	if( attributeExists( $attr, $object ) ) {
+		renameAttr ($object+"."+$attr) $newAttr;
+		textFieldGrp -e -text $newAttr newAttrNameTextField;
+		textScrollList -e -ri $attr attrLst;
+		textScrollList -e -ap $ind[0] $newAttr attrLst;
+		textScrollList -e -sii $ind[0] attrLst;
+	}
+	dynRefreshUI();
+} 
+
+
+
+//  ========== doItDRA ==========
+//
+//  Description:
+//		Execute the actual renameAttr command. 
+//
+
+proc int doItDRA()
+{
+	global string	$gObjectsDRA[];		// List of selected objects.
+	global int		$gRenameFieldChanged;
+
+	string	$itemAry[] = `textScrollList -q -si attrLst`;
+
+	for ($n = 0; $n < size( $gObjectsDRA ); $n++)
+	{
+		for ($i = 0; $i < size( $itemAry ); $i++)
+		{
+			doRenameDRA( $itemAry[$i], $gObjectsDRA[$n] );
+		}
+	}
+	$gRenameFieldChanged = 0;
+
+	dynUpdateAttrWin;		// Inform the add window to update itself.
+	dynUpdateDeleteAttrWin;	// Inform the delete window to update itself.
+
+	return( 1 );
+}
+
+
+//  ========== confirmCloseDRA ==========
+//
+//  SYNOPSIS
+//		Okay button callback.
+//
+
+global proc confirmCloseDRA()
+{
+	global int    $gRenameFieldChanged;
+	global string $gRenameAttrWin;
+
+	// If the enter is not pressed on the textField
+	//	then, throw a confirm dialog.
+	//	
+	string $yes	= (uiRes("m_dynRenameAttrWin.kYes"));
+	string $no	= (uiRes("m_dynRenameAttrWin.kNo")); 
+	if ($gRenameFieldChanged) {
+		if (`confirmDialog -title (uiRes("m_dynRenameAttrWin.kEditAttribute"))  
+			-message (uiRes("m_dynRenameAttrWin.kRenameAttribute")) 
+            -button $yes  -button $no -defaultButton $yes 
+			-cancelButton $no  -dismissString $no ` == $no) {
+
+			// Do not rename and just close the window...
+			//
+			window -e -vis 0 $gRenameAttrWin;
+			return;
+		}
+		doItDRA;
+	}
+	window -e -vis 0 $gRenameAttrWin;
+} 
+
+
+
+//  ========== renameDRA ==========
+//
+//  Description:
+//		rename textField callback. Rename the selected attribute.
+//
+
+global proc renameDRA()
+{
+	if (`doItDRA`) resetDRA;
+} 
+
+global proc dynRenameUpdateMinMax( string $fromThisAttr )
+{
+	if( size( $fromThisAttr ) ) {
+		int $hasMin = `addAttr -q -hasMinValue $fromThisAttr`;
+		int $hasMax = `addAttr -q -hasMaxValue $fromThisAttr`;
+
+		floatFieldGrp -e -enable1 $hasMin -enable2 $hasMax attrMinMaxField;
+		
+		if( $hasMin ) {
+			floatFieldGrp -e 
+				-value1 `addAttr -q -minValue $fromThisAttr`
+				attrMinMaxField;
+
+		}
+		if( $hasMax ) {
+			floatFieldGrp -e 
+				-value2 `addAttr -q -maxValue $fromThisAttr`
+				attrMinMaxField;
+		}
+	}
+}
+
+global proc dynRenameMinCheckChanged( int $isOn, string $attr ) {
+	floatFieldGrp -e -enable1 $isOn attrMinMaxField; 
+	addAttr -e -hasMinValue $isOn $attr;
+	if( $isOn ) {
+		addAttr -e -minValue `floatFieldGrp -q -value1 attrMinMaxField` $attr;
+	}
+	dynRenameUpdateMinMax $attr;
+}
+
+global proc dynRenameMaxCheckChanged( int $isOn, string $attr ) {
+	floatFieldGrp -e -enable2 $isOn attrMinMaxField; 
+	addAttr -e -hasMaxValue $isOn $attr;
+	if( $isOn ) {
+		addAttr -e -maxValue `floatFieldGrp -q -value2 attrMinMaxField` $attr;
+	}
+	dynRenameUpdateMinMax $attr;
+}
+
+global proc renameNiceDRA() 
+//
+// Description:
+//		The new nice name field is greyed out unless there's only one
+//		object selected that has the selected attribute ...
+//
+{
+	string $attr[] = `textScrollList -q -si attrLst`;
+	string $oldNice;
+	string $interAttr = interToUI( $attr[0] );
+	string $newNice = `textFieldGrp -q -text niceNameRAGrp`;
+
+	// Find the node with the right attribute
+	//
+	global string $gObjectsDRA[];
+	string $node;
+	for( $node in $gObjectsDRA ) {
+		if( attributeExists( $attr[0], $node ) ) {
+			$oldNice = `attributeName -nice ($node + "." + $attr[0])`;
+			break;
+		}
+	}
+
+	// Only set nice name if it's different from what we had before.
+	//
+	if( $oldNice != $newNice ) {
+		// The addAttr -niceName flag actaully sets an
+		// override that prevents catalog lookups.  If the
+		// new nice name could actually be computed by
+		// interToUI, then we're requesting default
+		// behaviour and have no need for an override, so
+		// remove the override by setting -niceName to the
+		// empty string.
+		//
+		if( $newNice == $interAttr ) {
+			$newNice = "";
+		} 
+		addAttr -e -niceName $newNice ("."+$attr[0]);
+	}
+
+	resetDRA;
+	dynRefreshUI;
+}
+
+global proc listSelectionDRA()
+//
+// Description:
+//	Update the pieces of UI based on the selected attribute.
+//	
+{
+	global string $gRenameAttrWin;
+	global string $gObjectsDRA[];
+	setParent $gRenameAttrWin;
+	
+	// Update the renameAttr field with this name
+	//
+	string $attrArray[] = `textScrollList -q -si attrLst`;
+	string $niceName, $node;
+
+	// Check all selected nodes for a match to display in
+	// the Nice Name field, and stop at the first one we
+	// find.  If there are multiple objects with the same
+	// longName attr selected, the nice name field will be
+	// greyed out anyway, but if there's only one of the
+	// many objects that has this particular long attr, this
+	// for-loop will find its nice name.
+	//
+	for( $node in $gObjectsDRA ) {
+		if( attributeExists( $attrArray[0], $node ) ) {
+			$niceName = `attributeName -nice ($node + "." + $attrArray[0])`;
+			break;
+		}
+	}
+
+	textFieldGrp -e -enable true -text $attrArray[0] newAttrNameTextField;
+
+	string $attr = ( "\"." + $attrArray[0] + "\"" );
+
+	string $allAttrs[] = eval( "listAttr " + $attr );
+	textFieldGrp -e -enable (size($allAttrs)) -text $niceName niceNameRAGrp;
+
+	string $attrType = eval( "addAttr -q -attributeType " + $attr );
+
+	string $scalarAttrs[] = eval( "listAttr -s " + $attr );
+	int $isScalar = (size($scalarAttrs) == 1) && 
+					($scalarAttrs[0] == $attrArray[0]) &&
+					($attrType != "enum");
+	
+
+	int $isEnum = ($attrType == "enum");
+
+	int $hasMin = false;
+	int $hasMax = false;
+	float $minVal = 0.0;
+	float $maxVal = 0.0;
+	int $isKeyable = false;
+	int $isDisplayable = false;
+
+	if( $isScalar ) {
+		// Min valued attrs
+		//
+		$hasMin = eval( "addAttr -q -hasMinValue " + $attr );
+		$minVal = 0.0;
+		if( $hasMin ) {
+			$minVal = eval( "addAttr -q -minValue " + $attr );
+		}
+	
+		// Max valued attrs
+		//
+		$hasMax = eval( "addAttr -q -hasMaxValue " + $attr );
+		$maxVal = 0.0;
+		if( $hasMax ) {
+			$maxVal = eval( "addAttr -q -maxValue " + $attr );
+		}
+
+		$isKeyable = eval( "getAttr -k " + $attr );
+		$isDisplayable = eval( "getAttr -cb " + $attr );
+	} else if( $isEnum ) {
+		$isKeyable = eval( "getAttr -k " + $attr );
+		$isDisplayable = eval( "getAttr -cb " + $attr );
+	}
+	
+	// This ungreys the main labels for the controls that have them
+	//
+	radioButtonGrp -e -enable true	attrKeyableRadio;
+	checkBoxGrp -e -enable true	attrBoundaryBox;
+	floatFieldGrp -e -enable true attrMinMaxField;
+
+	int $which = 3;
+	if( $isKeyable ) {
+		$which = 1;
+	} else if( $isDisplayable ) {
+		$which = 2;
+	}
+	radioButtonGrp -e 
+		-enable ($isScalar || $isEnum) -sl $which
+		-cc1 ( "setAttr -k true -cb false" + $attr )
+		-cc2 ( "setAttr -k false -cb true" + $attr )
+		-cc3 ( "setAttr -k false -cb false" + $attr )
+		attrKeyableRadio;
+
+	checkBoxGrp -e 
+		-enable1 $isScalar -v1 $hasMin 
+		-enable2 $isScalar -v2 $hasMax
+		-cc1 ( "dynRenameMinCheckChanged #1 " + $attr ) 
+		-cc2 ( "dynRenameMaxCheckChanged #1 " + $attr )
+		attrBoundaryBox;
+
+	floatFieldGrp -e 
+		-enable1 $hasMin -value1 $minVal 
+		-enable2 $hasMax -value2 $maxVal 
+		-cc ( "if( `checkBoxGrp -q -v1 attrBoundaryBox` ) " +
+			  	"addAttr -e -minValue `min #1 #2`  " + " " + $attr + "; " +
+			  "if( `checkBoxGrp -q -v2 attrBoundaryBox` ) " + 
+			  	"addAttr -e -maxValue `max #1 #2` " + " " + $attr + "; " +
+			  "dynRenameUpdateMinMax " + $attr )
+		attrMinMaxField;
+
+	global string $gRenameAttrEnumScrollList;
+	global string $gRenameAttrEnumTextGrp;
+	global string $gRenameAttrEnumText;
+
+	if( $attrType == "enum" ) {
+		attrEnumScrollList_fill( $attr,
+								 $gRenameAttrEnumScrollList,
+								 $gRenameAttrEnumTextGrp,
+								 $gRenameAttrEnumText );
+	} else {
+		attrEnumScrollList_clear( $gRenameAttrEnumScrollList,
+								  $gRenameAttrEnumTextGrp,
+								  $gRenameAttrEnumText );
+	}
+
+	$gRenameFieldChanged = 0;
+}
+
+//  ========== createWinDRA ==========
+//
+//  SYNOPSIS
+//		Create the window and all the controls.
+//
+
+proc createWinDRA()
+{
+// The place where the layouts are edited are reorganized. 
+
+	global string $gRenameAttrWin;
+	global int    $gRenameFieldChanged;
+
+	global string $gRenameAttrEnumScrollList = "";
+	global string $gRenameAttrEnumTextGrp = "";
+	global string $gRenameAttrEnumText = "";
+
+	setUITemplate -pushTemplate DefaultTemplate;
+
+	string $editWndTitle	= (uiRes("m_dynRenameAttrWin.kEditWndTitle"));
+
+	window 
+		-title $editWndTitle  
+		-minimizeButton false 
+		-maximizeButton false 
+		-width 380
+		-height 500
+		-retain
+		-menuBar true
+		$gRenameAttrWin;
+
+	
+	menu -label (uiRes("m_dynRenameAttrWin.kHelp"))  -helpMenu true;
+		menuItem -label (uiRes("m_dynRenameAttrWin.kHelponEditingAttributes")) 
+			-enableCommandRepeat false
+			-command "showHelp EditAttributes";
+	
+	formLayout workLayout;
+
+		//		tabLayout	
+		//			-scrollable        true
+		//			-tabsVisible       false
+		//			-innerMarginWidth  5
+		//			-innerMarginHeight 5
+		//			renameTabLayout;
+
+		int $firstColWidth = 76;
+		frameLayout -label (uiRes("m_dynRenameAttrWin.kAttributes")) 
+			-cll false attrLyt;
+
+			string $selectAttributeAnnot = (uiRes("m_dynRenameAttrWin.kSelectAttributetoEditAnnot")); 
+			formLayout attrForm;
+				if(`about -mac`){
+					textScrollList -nr 10 -height 200
+						-sc listSelectionDRA
+						-annotation $selectAttributeAnnot 
+						-allowMultiSelection false attrLst;
+				}else{
+					textScrollList -nr 10
+						-sc listSelectionDRA
+						-annotation $selectAttributeAnnot 
+						-allowMultiSelection false attrLst;
+				}
+
+				textFieldGrp -label (uiRes("m_dynRenameAttrWin.kNewName"))  -cal 1 "left"
+					-cw 1 $firstColWidth -adj 2	-cc renameDRA 
+					-annotation (uiRes("m_dynRenameAttrWin.kEnterNewNameAnnot"))
+					newAttrNameTextField;
+
+				textFieldGrp -cal 1 "left" -label (uiRes("m_dynRenameAttrWin.kNiceName")) 
+					-cw 1 $firstColWidth -adj 2 
+					-cc "renameNiceDRA;"
+					niceNameRAGrp;
+
+				setParent ..;
+				formLayout -e 
+					-af attrLst "left" ($firstColWidth+6)
+					-af attrLst "right" 5
+					-af newAttrNameTextField "left" 5 
+					-af newAttrNameTextField "right" 5 
+					-ac newAttrNameTextField "top" 0 attrLst
+
+					-af niceNameRAGrp "left" 5 
+					-af niceNameRAGrp "right" 5 
+					-ac niceNameRAGrp "top" 0 newAttrNameTextField
+					-af niceNameRAGrp "bottom" 5 
+
+					attrForm;
+			setParent ..;	
+
+		frameLayout -label (uiRes("m_dynRenameAttrWin.kNumericAttributeProperties"))  
+			-cll false minMaxLyt;
+
+			formLayout minMaxForm;
+
+				radioButtonGrp -label "" -nrb 3 -cw4 $firstColWidth 105 105 105
+					-label1 (uiRes("m_dynRenameAttrWin.kKeyable")) 
+					-label2 (uiRes("m_dynRenameAttrWin.kDisplayable")) 
+					-label3 (uiRes("m_dynRenameAttrWin.kHidden"))  
+					attrKeyableRadio;					
+
+				string $hasMaximum = (uiRes("m_dynRenameAttrWin.kHasMaximum"));
+				checkBoxGrp -label ""  -ncb 2 -cw3 $firstColWidth 105 105 
+					-label1 (uiRes("m_dynRenameAttrWin.kHasMinimum"))  -label2 $hasMaximum 
+					-annotation (uiRes("m_dynRenameAttrWin.kEnableDisableAnnot"))
+					attrBoundaryBox;
+
+				floatFieldGrp -nf 2 -label (uiRes("m_dynRenameAttrWin.kMinMax"))  
+					-cal 1 "left" -cw3 $firstColWidth 100 100 
+					-annotation (uiRes("m_dynRenameAttrWin.kModifyAnnot"))
+					attrMinMaxField;
+
+				setParent ..;
+				formLayout -e 
+					-af attrKeyableRadio "top" 5
+					-af attrKeyableRadio "left" 5
+					-af attrKeyableRadio "right" 5
+					-ac attrBoundaryBox "top" 0 attrKeyableRadio
+					-af attrBoundaryBox "left" 5
+					-af attrBoundaryBox "right" 5
+					-ac attrMinMaxField "top" 0 attrBoundaryBox
+					-af attrMinMaxField "left" 5
+					-af attrMinMaxField "bottom" 5
+					minMaxForm;
+			setParent ..;
+
+		frameLayout -label (uiRes("m_dynRenameAttrWin.kEnumNames")) 
+			-cll false 
+			enumLyt;
+
+			formLayout enumFrom;
+				string $uiBits[] = `attrEnumScrollList( true )`;
+
+				setParent ..;	
+			setParent ..;	
+			separator -horizontal true sep1;
+			button -label (uiRes("m_dynRenameAttrWin.kClose"))  -h 26 closeBtn;
+
+			formLayout -e 
+				-af attrLyt "left" 5
+				-af attrLyt "right" 5
+				-af minMaxLyt "left" 5
+				-af minMaxLyt "right" 5
+				-af enumLyt "left" 5
+				-af enumLyt "right" 5
+
+				-af attrLyt "top" 5 
+				-ac minMaxLyt "top" 5 attrLyt
+				-ac enumLyt "top" 5 minMaxLyt
+				
+				-ac sep1 bottom 5 closeBtn
+				-af sep1 left 5
+				-af sep1 right 5
+				
+				-af closeBtn left 5
+				-af closeBtn bottom 5
+				-af closeBtn right 5
+				workLayout;
+		setParent ..;	
+
+	// setParent ..;	
+
+	
+
+
+	$gRenameAttrEnumScrollList = $uiBits[0];
+	$gRenameAttrEnumTextGrp = $uiBits[1];
+	$gRenameAttrEnumText = $uiBits[2];
+
+	// Add attributes to scrolled list.
+	//
+	updateRenameUI();
+
+	setUITemplate -popTemplate DefaultTemplate;
+}
+
+
+
+//  ========== registerDRA ==========
+//
+//  SYNOPSIS
+//		Register the callbacks.
+//
+
+proc registerDRA()
+{
+	global string $gRenameAttrWin;
+	setParent $gRenameAttrWin;
+
+	button -e -c ("confirmCloseDRA") closeBtn;
+}
+
+
+//  ========== resetDRA ==========
+//
+//  Description:
+//		Reset the active tab. Called when the dialog is posted,
+//		when the user selects a new tab, and after the user has
+//		added an attribute.
+//
+
+global proc resetDRA()
+{
+	global string $gObjectsDRA[];		// List of selected objects.
+	global string $gRenameAttrWin;
+	setParent $gRenameAttrWin;
+
+	textScrollList -e -deselectAll attrLst;
+	textFieldGrp -e -text "" newAttrNameTextField;
+	textFieldGrp -e -text "" niceNameRAGrp;
+}
+
+
+global proc updateRenameUI()
+//
+// Description:
+//	The initial, new state of the UI.  No attr selected.
+//	
+{
+	// Attr names in scroll list.
+	//
+	textScrollList -e -ra attrLst;
+	string	$attrAry[] = getAttrListDRA();
+	for ($i = 0; $i < size( $attrAry ); $i++)
+	{
+		textScrollList -e -a $attrAry[$i] attrLst;
+	}	
+	
+	// Clear out the selected name 
+	//
+	textFieldGrp -e -enable false  -text "" newAttrNameTextField;
+	textFieldGrp -e -enable false  -text "" niceNameRAGrp;
+
+	// Reset the min/max checkboxes and grey out the min/max values.
+	//
+	radioButtonGrp -e -enable false -sl 3 attrKeyableRadio;
+	checkBoxGrp -e -enable false -v1 false -v2 false attrBoundaryBox;
+	floatFieldGrp -e -enable false -v1 0.0 -v2 0.0 attrMinMaxField;
+
+	// Disable the Enum-appropriate UI.
+	//
+	global string $gRenameAttrEnumScrollList;
+	global string $gRenameAttrEnumTextGrp;
+	global string $gRenameAttrEnumText;
+
+	attrEnumScrollList_clear( $gRenameAttrEnumScrollList,
+							  $gRenameAttrEnumTextGrp,
+							  $gRenameAttrEnumText );
+}
+
+//  ========== dynRenameAttrWin ==========
+//
+//  SYNOPSIS
+//		Create and show the rename attribute dialog. All the dynamic 
+//		attributes are listed.  User can select and rename the attributes
+//
+
+global proc int  dynRenameAttrWin( string $objects[] ) 
+{
+	global string	$gRenameAttrWin = "RenameAttrWin";
+	global string	$gObjectsDRA[];
+	global int		$gDynRenameAttrUpdateJob = 0;
+
+	// If $objects[] is empty, then use the current selection list.
+	//
+	if (size( $objects ) == 0)
+	{
+		string	$pObjects[] = `selectedNodes`;
+
+		if (size( $pObjects ) == 0)
+		{
+			// If the window is not yet open, just issue an error.
+			//
+			if ( `window -exists $gRenameAttrWin` && `window -q -vis $gRenameAttrWin` ){
+				setParent $gRenameAttrWin;
+				window -e -title (uiRes("m_dynRenameAttrWin.kNothingSelected")) $gRenameAttrWin;
+				textScrollList -e -ra attrLst;
+				return( 1 );
+			} else {
+				error (uiRes("m_dynRenameAttrWin.kNoObjectsSelected"));
+				return( 0 );
+			}
+		}
+		else
+		{
+			$gObjectsDRA = $pObjects;
+		}
+	}
+	else
+	{
+		$gObjectsDRA = $objects;
+	}
+
+	int $i = 0, $limit = size($gObjectsDRA), $error = 0;
+	for ( ; $i < $limit; $i++) {
+		if (`nodeType $gObjectsDRA[$i]` == "particle")
+		{
+			$error++;
+		}
+	}
+	if ($error > 0) {
+		string $partcleShapeWarn		 = (uiRes("m_dynRenameAttrWin.kParticleShapeAttribWarn"));
+		warning (`format -s $gObjectsDRA[$i] $partcleShapeWarn`); 		
+	}
+	
+	
+	// The window is created only once.
+	//
+	if ( ! `window -exists $gRenameAttrWin`) {
+		createWinDRA;
+		registerDRA;
+	} else {
+		// Add attributes to scrolled list.
+		//
+		setParent $gRenameAttrWin;
+		updateRenameUI();
+	}
+
+	// Set the window title to indicate if one or more objects
+	// are selected.
+	//
+	setParent $gRenameAttrWin;
+	
+	if (size( $gObjectsDRA ) > 1)
+	{
+		string $editAttributeTitle	= (uiRes("m_dynRenameAttrWin.kEditAttributeTitle"));
+		window -e -title (`format -s $gObjectsDRA[0] $editAttributeTitle`) $gRenameAttrWin;
+	}
+	else
+	{
+		string $windowTitle			= (uiRes("m_dynRenameAttrWin.kWindowTitle"));	
+		window -e -title (`format -s $gObjectsDRA[0] $windowTitle`) $gRenameAttrWin;
+	}
+
+	// Create a script job that will update the window
+	// the next time the selection changes.
+	//
+	if ( $gDynRenameAttrUpdateJob == 0 ){
+		$gDynRenameAttrUpdateJob =
+			`scriptJob -protected
+				-parent $gRenameAttrWin
+				-event "SelectionChanged" "dynUpdateRenameAttrWin"`;
+	}
+
+	// Reset the dialog and post it.
+	//
+	resetDRA;
+	showWindow( $gRenameAttrWin );
+	return( 1 );
+	
+
+}  // dynRenameAttrWin //

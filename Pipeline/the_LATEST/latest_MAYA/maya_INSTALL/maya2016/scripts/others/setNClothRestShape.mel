@@ -1,0 +1,144 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//<doc>
+//<name setNClothRestShape>
+//<owner "Autodesk">
+//
+//<synopsis>
+//		setNClothRestShape( string $target )
+//
+//<returns>
+//		None.	
+//
+//<description>
+//	This sets the nCloth rest shape to the desired entity based on the current selection and the
+//  passed in argument.  It is equivalent to the rest shape calls on the nMesh menu.
+//
+//<flags>
+//	string $target    either "mesh", "start" or "input"
+//
+//<examples>
+//  setNClothRestShape "input";
+//</doc>
+
+global proc setNClothRestShape( string $target )
+{
+	if($target == "mesh"){
+		string $mesh = "";
+		string $nCloth = "";
+		string $nCloths[] = `ls -sl -dag -type nCloth`;
+		string $meshes[] = `ls -sl -dag -ni -type mesh`;
+		int $numCloth = size($nCloths);
+		int $numMesh = size($meshes);
+		string $selectWarn = (uiRes("m_setNClothRestShape.kMeshSelectWarn"));
+		string $topologyWarn = (uiRes("m_setNClothRestShape.kMeshTopologyWarn"));
+
+		if( ($numCloth + $numMesh) != 2 || $numCloth > 1){
+			// need exactly one cloth and one rest shape mesh
+			warning( $selectWarn );
+			return;
+		}
+		if( $numCloth == 1 ){
+			// We allow the rest shape mesh to be a cloth object
+			// if a cloth node is explicitly selected.
+			$nCloth = $nCloths[0];
+			$mesh = $meshes[0];
+			string $c = findTypeInHistory( $mesh, "nCloth", 0, 1 );
+			if( $c == $nCloth ){
+				// avoid using the output mesh as the rest shape 
+				warning( $selectWarn );
+				return;
+			}
+		} else {	
+			string $c1 = findTypeInHistory( $meshes[0], "nCloth", 1, 1 );
+			string $c2 = findTypeInHistory( $meshes[1], "nCloth", 1, 1 );
+			if(($c1 == "") == ($c2 == "")){
+				$c1 = findTypeInHistory( $meshes[0], "membrane", 0, 1 );
+				$c2 = findTypeInHistory( $meshes[1], "membrane", 0, 1 );
+			}
+			if(($c1 == "") == ($c2 == "")){
+				// both or neither are cloth objects
+				warning( $selectWarn );
+				return;
+			} 
+
+			if( $c1 != "" ){
+				$nCloth = $c1;
+				$mesh = $meshes[1];
+			} else {
+				$nCloth = $c2;
+				$mesh = $meshes[0];
+			}
+		}
+		if( nodeType( $nCloth ) != "membrane" ){
+			// check that the mesh resolutions match
+			string $cons[] = `listConnections -sh 1 -type mesh ($nCloth + ".inputMesh")`;
+			if( size($cons) < 1 ){
+				warning( $topologyWarn );
+				return;
+			}
+			string $inputMesh = $cons[0];
+			int $pEval[] = `polyEvaluate -v $inputMesh`;
+			int $numVerts = $pEval[0];
+			$pEval = `polyEvaluate -v $mesh`;
+			if ($numVerts != $pEval[0] ){
+				warning( $topologyWarn );
+				return;
+			}
+		}
+		connectAttr -f ($mesh + ".worldMesh") ($nCloth + ".restShapeMesh");
+	} else {
+		string $selectWarn = (uiRes("m_setNClothRestShape.kNoObjWarn"));
+		string $nCloths[] = `ls -sl -dag -type nCloth`;
+		string $meshes[] = `ls -sl -dag -ni -type mesh`;
+		string $mesh;
+		int $numCloths = size($nCloths);
+		for( $mesh in $meshes ){
+			string $c = findTypeInHistory( $mesh, "nCloth", 1, 1 );
+			if( $c == "" ){
+				$c = findTypeInHistory( $mesh, "membrane", 0, 1 );
+			}
+			if( $c != "" ){
+				$nCloths[$numCloths] = $c;
+				$numCloths++;
+			} 
+		}
+		if( $numCloths < 1 ){
+			warning( $selectWarn );
+			return;
+		}
+		string $nCloth;
+
+		for( $nCloth in $nCloths ){
+			string $restCon = ($nCloth + ".restShapeMesh");
+			if( $target == "start" ){
+				string $s = `connectionInfo -sfd $restCon`;	
+				if( $s != "" ){
+					disconnectAttr $s $restCon; 
+				}
+			} else if ($target == "input" && (nodeType($nCloth) != "membrane")){
+				string $s = `connectionInfo -sfd ($nCloth + ".inputMesh")`;	
+				connectAttr -f $s $restCon;
+			}
+		}
+	}	
+}

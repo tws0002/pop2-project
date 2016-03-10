@@ -1,0 +1,221 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  28 December 1999
+//
+//  Description:
+//      This implements the Polygon and Subdiv selection
+//		conversion operation.
+//
+
+global proc PolySelectConvert(int $toType)
+{
+	string	$converted[];
+	string	$convertedSubd[];
+	int		$numConvertedSubdFaces = 0;
+	string	$tokens[];
+	string	$evalStr;
+	string	$selList[];
+	string	$addToSelList[];
+	int		$i;
+
+	if( `isTrue "SubdivExists"` ) {
+		//
+		// First replace all subd shapes (or their transforms)
+		// in the selection list with
+		// all their faces at the current display level.
+		// This is necessary because subd component conversion only occurs
+		// among component selection types.
+		//
+		$selList = `ls -sl`;
+		int $numSelected = size($selList);
+		string $selType[];
+		string	$subdivShapesToConvert[];
+		string	$itemsToDeselect[];
+		string	$children[];
+		string	$childType[];
+		int			$numChildren;
+		int			$child;
+		int			$found;
+		int			$numToConvert = 0;
+		int			$numToDeselect = 0;
+		int			$isIntermediate = 0;
+
+		//
+		// Take a pass through the selection list, keepting track of
+		// subdiv shapes found (they need to be replaced with a list
+		// of all their faces at the current display level).
+		// For those that are represented by their transform parent,
+		// keep a list of those, as those transfors will need to
+		// be removed from the selection list.
+		for ($i = 0; $i < $numSelected; $i++) {
+			$selType = `ls -st $selList[$i]`;
+			if ($selType[1] == "transform") {
+				$children = `listRelatives -children $selList[$i]`;
+				$numChildren = size($children);
+				$found = 0;
+				for ($child = 0; $child < $numChildren && !$found; $child++) {
+					$childType = `ls -st $children[$child]`;
+					if ($childType[1] == "subdiv") {
+						string $getAttrCmd = "getAttr " + $children[$child]
+											+ ".intermediateObject";
+						$isIntermediate = eval($getAttrCmd);
+
+						//
+						// Ignore intermediateObjects (those that
+						// are the hidden inputs to a deformation).
+						if ($isIntermediate == 0) {
+							//
+							// Add this child to the list of subdiv shapes
+							// to convert to faces.
+							$subdivShapesToConvert[$numToConvert]
+								= $children[$child];
+							$numToConvert++;
+
+							$itemsToDeselect[$numToDeselect] = $selList[$i];
+							$numToDeselect++;
+							$found = 1;
+						}
+					}
+				}
+			} else if ($selType[1] == "subdiv") {
+				//
+				// Add this shape to the list of subdiv shapes
+				// to convert to faces.
+				$subdivShapesToConvert[$numToConvert] = $selList[$i];
+				$numToConvert++;
+				$itemsToDeselect[$numToDeselect] = $selList[$i];
+				$numToDeselect++;
+
+			}
+		}
+		for ($i = 0; $i < $numToDeselect; $i++) {
+			select -toggle $itemsToDeselect[$i];
+		}
+		$selList = `ls -sl`;
+		for ($i = 0; $i < $numToConvert; $i++) {
+			querySubdiv -a 4 $subdivShapesToConvert[$i];
+			$addToSelList = `ls -sl`;
+			select $selList $addToSelList;
+			$selList = `ls -sl`;
+		}
+	}
+
+	$switchToSelType = "";
+
+	// To Face
+	if ($toType == 1)
+	{
+		$converted = `polyListComponentConversion -fv -fe -fuv -fvf -tf`;
+		$convertedSubd = `subdListComponentConversion -fv -fe -fuv -ff -tf`;
+		$switchToSelType = "pf";
+	}
+
+	// To Contained Face
+	if ($toType == 10)
+	{
+		$converted = `polyListComponentConversion -fv -fe -fuv -fvf -tf -in`;
+		$convertedSubd = `subdListComponentConversion -fv -fe -fuv -ff -tf -in`;
+		$switchToSelType = "pf";
+	}
+
+	// To Edge
+	else if ($toType == 2)
+	{
+		$converted = `polyListComponentConversion -fv -ff -fuv -fvf -te -vfa`;
+		$convertedSubd = `subdListComponentConversion -fv -ff -fuv -te`;
+		$switchToSelType = "pe";
+	}
+
+	// To Contained Edge
+	else if ($toType == 20)
+	{
+		$converted = `polyListComponentConversion -fv -ff -fuv -fvf -te -in`;
+		$convertedSubd = `subdListComponentConversion -fv -ff -fuv -te -in`;
+		$switchToSelType = "pe";
+	}
+
+	// To Vertex
+	else if ($toType == 3)
+	{
+		$converted = `polyListComponentConversion -ff -fe -fuv -fvf -tv`;
+		$convertedSubd = `subdListComponentConversion -ff -fe -fuv -tv`;
+		$switchToSelType = "pv";
+	}
+
+	// To UV
+	else if ($toType == 4)
+	{
+		$converted = `polyListComponentConversion -fv -fe -ff -fvf -tuv`;
+		$convertedSubd = `subdListComponentConversion -fv -fe -ff -tuv`;
+		$switchToSelType = "puv";
+	}
+
+	
+	// To vertexFace 
+	else if ($toType == 5) 
+	{ 
+		$converted = `polyListComponentConversion -fv -fe -ff -fuv -tvf`; 
+		//no vertex faces for subds 
+		$switchToSelType = "pvf";
+	}
+
+	int	$n = size($converted);
+	int $ns = size($convertedSubd);
+	if ( ($n > 0) || ($ns > 0) )
+	{
+		$evalStr = "select -r";
+
+		if (`selectMode -q -object`) {
+			$evalStr = "hilite; " + $evalStr;
+		}
+
+		for ( $i=0; $i<$n; $i++)
+		{
+			$evalStr += " \"";
+			$evalStr += $converted[$i];
+			$evalStr += "\"";
+		}
+
+		$n = size($convertedSubd);
+		for ( $i=0; $i<$n; $i++)
+		{
+			$evalStr += " \"";
+			$evalStr += $convertedSubd[$i];
+			$evalStr += "\"";
+		}
+
+		// Switching to the selection type they're converting to
+		// beforehand ensures the selection preservation buffers remain
+		// consistent.
+		if(`selectPref -q -selectTypeChangeAffectsActive` && $switchToSelType != "") {
+			if (`selectMode -q -object`) {
+				$evalStr = "selectType -ocm -" + $switchToSelType + " true; " + $evalStr;
+			} else {
+				$evalStr = "selectType -" + $switchToSelType + " true; " + $evalStr;
+			}
+		}
+		
+		eval $evalStr;
+	}
+}

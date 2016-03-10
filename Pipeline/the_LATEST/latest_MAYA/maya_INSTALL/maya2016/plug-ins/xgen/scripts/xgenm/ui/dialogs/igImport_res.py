@@ -1,0 +1,23 @@
+import maya
+
+maya.stringTable['y_igImport.kBrowseForAFolder3'] = u'Browse for a folder'
+maya.stringTable['y_igImport.kBrowseForAFolder2'] = u'Browse for a folder'
+maya.stringTable['y_igImport.kCancel'] = u'Cancel'
+maya.stringTable['y_igImport.kFolderPathMapImportAnn'] = u'Specify the folder containing the\ngrooming maps that you want to import.'
+maya.stringTable['y_igImport.kIgImportUIMaskMapsFrom'] = u'Mask maps for description <%s> imported from: %s'
+maya.stringTable['y_igImport.kBrowseForAFolder'] = u'Browse for a folder'
+maya.stringTable['y_igImport.kRegionMap'] = u'Region Map'
+maya.stringTable['y_igImport.kFolderPathRegionImporterAnn'] = u'Specify the folder containing the\ngrooming maps that you want to import.'
+maya.stringTable['y_igImport.kThereIsNothingToImport'] = u'There is nothing to import.'
+maya.stringTable['y_igImport.kIgroomImport'] = u'Import Grooming'
+maya.stringTable['y_igImport.kFolderPathRegionImporter'] = u'Folder Path'
+maya.stringTable['y_igImport.kFolderPathMaskImporterAnn'] = u'Specify the folder containing the\ngrooming maps that you want to import.'
+maya.stringTable['y_igImport.kImport'] = u'Import'
+maya.stringTable['y_igImport.kIgImportUIRegionMapsFrom'] = u'Region maps for description <%s> imported from: %s'
+maya.stringTable['y_igImport.kFolderPathMapImport'] = u'Folder Path'
+maya.stringTable['y_igImport.kCancelAnn'] = u'Finish importing files.'
+maya.stringTable['y_igImport.kIgImportUIAttrMapsFrom'] = u'Attribute maps for description <%s> imported from: %s'
+maya.stringTable['y_igImport.kMask'] = u'Mask'
+maya.stringTable['y_igImport.kAttributeMaps'] = u'Attribute Maps'
+maya.stringTable['y_igImport.kFolderPathMaskImporter'] = u'Folder Path'
+

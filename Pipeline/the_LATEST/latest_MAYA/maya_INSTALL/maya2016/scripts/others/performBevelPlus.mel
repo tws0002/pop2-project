@@ -1,0 +1,1072 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//
+//
+//
+//
+//
+//  Description:
+//      This script is defines the option box for the bevel plus
+//		surface menu item.
+//
+//  Input Arguments:
+//      int action
+//		  0 - show the option box dialog
+//        1 - just execute the bevel plus operation
+//
+//  Return Value:
+//      None.
+//
+
+
+global proc bevelPlusVisibility()
+//  Description:
+//		Dim/show any bevel options as required by the output surface type
+//
+{
+	int $surfType;
+	if ( `radioButtonGrp -exists outputPolyRadioButtonGrp` ) {
+		$surfType = `radioButtonGrp -q -select outputPolyRadioButtonGrp`;
+	} else {
+		$surfType = `optionVar -q bevelPlusOutputPolygons`;
+	}
+
+	// only enable attach and tolerance if in nurbs/bezier mode
+	if(2 == $surfType) { // 2 == Poly
+		if(`checkBoxGrp -exists bevelPlusJoinSrfBox`) {
+			checkBoxGrp -e -en 0 bevelPlusJoinSrfBox;
+		}
+		if( `radioButtonGrp -exists useGlobalTol` ) {
+			radioButtonGrp -e -en 0 useGlobalTol;
+			tabLayout 	   -e -en 0 useGlobalTolTab;
+		}
+	} else {  // Nurbs, enable attach option and the tolerance
+		if(`checkBoxGrp -exists bevelPlusJoinSrfBox`) {
+			checkBoxGrp -e -en 1 bevelPlusJoinSrfBox;
+		}
+		if( `radioButtonGrp -exists useGlobalTol` ) {
+			radioButtonGrp -e -en 1 useGlobalTol;
+			tabLayout 	   -e -en 1 useGlobalTolTab;
+		}
+	}
+}
+
+proc setOptionVars (int $forceFactorySettings)
+{
+    bevelPlusSetOptionVars( $forceFactorySettings );
+}
+
+proc updateBevelSideEnableState()
+{
+	//setParent NewBevelOptionBox2;
+
+	int $bevelSideAtStart, $bevelSideAtEnd;
+	int $bevelCapAtStart, $bevelCapAtEnd;
+	int $sameAsOuterStyle, $enable, $enableInnerStyle;
+
+	//	Get the bevel side selection.
+	//
+	$bevelSideAtStart = `checkBoxGrp -q -v1 BevelSideCheckBoxGroup`;
+	$bevelSideAtEnd = `checkBoxGrp -q -v2 BevelSideCheckBoxGroup`;
+
+	//	Get the bevel cap selection.
+	//
+	$bevelCapAtStart = `checkBoxGrp -q -v1 BevelCapCheckBoxGroup`;
+	$bevelCapAtEnd = `checkBoxGrp -q -v2 BevelCapCheckBoxGroup`;
+	
+	$sameAsOuterStyle = `checkBoxGrp -query -value1 BevelInnerStyleCheckBoxGroup`;
+
+	$enable = true;
+	if ($sameAsOuterStyle) {
+		$enableInnerStyle = false;
+	} else {
+		$enableInnerStyle = true;
+	}
+
+	floatSliderGrp -edit -enable $enable BevelWidthSliderGroup;
+	floatSliderGrp -edit -enable $enable BevelDepthSliderGroup;
+
+	textScrollList -edit -enable $enable BevelOuterStyleTextScrollList;
+
+	checkBoxGrp -edit -enable $enable BevelInnerStyleCheckBoxGroup;
+
+	textScrollList -edit -enable $enableInnerStyle BevelInnerStyleTextScrollList;
+}
+
+global proc BevelSideCheckBoxChange()
+{
+	updateBevelSideEnableState();
+}
+
+proc updateInnerStyleEnableState()
+{
+	int $sameAsOuterStyle, $enable;
+
+	$sameAsOuterStyle = `checkBoxGrp -query -value1 BevelInnerStyleCheckBoxGroup`;
+
+	if ($sameAsOuterStyle) {
+		$enable = false;
+		int $styleCurve[] = `textScrollList -q -sii BevelInnerStyleTextScrollList`;
+		if($styleCurve[0] < 1) $styleCurve[0] = 1;
+		optionVar -intValue innerStyleBevelCurve ($styleCurve[0]-1);
+	} else {
+		$enable = true;
+	}
+
+	textScrollList -edit -enable $enable BevelInnerStyleTextScrollList;
+	
+	if($enable) {
+		if(size(`textScrollList -query -sii BevelInnerStyleTextScrollList`) == 0) {
+			int $styleCurve = `optionVar -q innerStyleBevelCurve` ;
+			if($styleCurve < 0) $styleCurve = 0;
+			textScrollList -edit -sii ($styleCurve+1) BevelInnerStyleTextScrollList;
+		}
+	}
+}
+
+global proc BevelInnerStyleCheckBoxChange()
+{
+	updateInnerStyleEnableState();
+}
+
+global proc createBevelBasicOptions()
+//
+//	Description :
+//		Bevel plus operation options
+//
+{
+	string $style[] = { "kStyleCurveStraightIncline",
+						"kStyleCurveStraightDecline",
+						"kStyleCurveConvexIncline",
+						"kStyleCurveConvexDecline",
+						"kStyleCurveConcaveIncline",
+						"kStyleCurveConcaveDecline",
+						"kStyleCurveStraightSideEdge",
+						"kStyleCurveStraightFrontEdge",
+						"kStyleCurveStraightCorner",
+						"kStyleCurveConvexSideEdge",
+						"kStyleCurveConvexFrontEdge",
+						"kStyleCurveConvexCorner",
+						"kStyleCurveConcaveSideEdge",
+						"kStyleCurveConcaveFrontEdge",
+						"kStyleCurveConvexInclineCrease"
+						};
+
+	string $BSstyleCurveStrings[];
+	string $loopStr; 
+	for( $loopStr in $style ) {
+		string $id = ( "n_styleCurve.a_s_enum_" + $loopStr ); 
+		$BSstyleCurveStrings[size($BSstyleCurveStrings)] = uiRes( $id );
+    }
+	
+	// Create Bevel
+	//
+	string $atStart = (uiRes("m_performBevelPlus.kAtStart"));
+	string $atEnd   = (uiRes("m_performBevelPlus.kAtEnd"));
+	checkBoxGrp -numberOfCheckBoxes 2
+			-label (uiRes("m_performBevelPlus.kCreateBevel")) 
+			-labelArray2 $atStart $atEnd
+			-cc1 ("BevelSideCheckBoxChange")
+			-cc2 ("BevelSideCheckBoxChange")
+			BevelSideCheckBoxGroup;
+
+	// Sliders
+	//
+	floatSliderGrp -label (uiRes("m_performBevelPlus.kBevelWidth")) 
+		-min -0.25 -max 0.25 -fmn -10000.0 -fmx 10000.0
+		BevelWidthSliderGroup;
+	floatSliderGrp -label (uiRes("m_performBevelPlus.kBevelDepth")) 
+		-min 0.00001 -max 0.25 -fmn -10000.0 -fmx 10000.0
+		BevelDepthSliderGroup;
+	floatSliderGrp -label (uiRes("m_performBevelPlus.kExtrudeDistance")) 
+		-min 0.00001 -max 1.0 -fmn -10000.0 -fmx 10000.0
+		extrudeDepthFloatField;
+
+	// Caps
+	//
+	checkBoxGrp -numberOfCheckBoxes 2
+			-label (uiRes("m_performBevelPlus.kCreateCap")) 
+			-labelArray2 $atStart $atEnd
+			-cc1 ("BevelSideCheckBoxChange")
+			-cc2 ("BevelSideCheckBoxChange")
+			BevelCapCheckBoxGroup;
+
+
+	// Bevel inside curves
+	//
+	checkBoxGrp -numberOfCheckBoxes 1
+		-label "" -label1 (uiRes("m_performBevelPlus.kBevelInsideCurve")) 
+		-value1 false
+		BevelInsideCurveCheckBoxGroup;
+
+	// Style curve scroll lists
+	//
+	separator;
+
+	rowLayout -numberOfColumns 2;
+	text -label (uiRes("m_performBevelPlus.kOuterBevelStyle")) ;
+	textScrollList -numberOfRows 8 BevelOuterStyleTextScrollList;
+	setParent ..;
+
+	rowLayout -numberOfColumns 2;
+	text -label (uiRes("m_performBevelPlus.kInnerBevelStyle")) ;
+	textScrollList -numberOfRows 8 BevelInnerStyleTextScrollList;
+	setParent ..;
+
+	string $str;
+	for ($str in $BSstyleCurveStrings) {
+		textScrollList -e -append $str BevelOuterStyleTextScrollList;
+		textScrollList -e -append $str BevelInnerStyleTextScrollList;
+	}
+
+	checkBoxGrp -numberOfCheckBoxes 1
+		-label "" -label1 (uiRes("m_performBevelPlus.kSameAsOuterStyle")) 
+		-value1 true
+		-changeCommand ("BevelInnerStyleCheckBoxChange")
+		BevelInnerStyleCheckBoxGroup;
+}
+
+proc string createBevelOptions(string $parent)
+//
+//	Description :
+//		Bevel plus operation options
+//
+{
+	setParent $parent ;
+	
+	string $column = `columnLayout/* -rowSpacing 2 -adjustableColumn true*/`;
+
+	checkBoxGrp -ncb 1 -label "" 
+	    -label1 (uiRes("m_performBevelPlus.kAttachSurfaces"))  -v1 on bevelPlusJoinSrfBox;
+
+	createBevelBasicOptions();
+
+	separator;
+
+	// Misc. options
+	//
+
+	radioButtonGrp -nrb 2 -label (uiRes("m_performBevelPlus.kUseTolerance")) 
+	   -label1 (uiRes("m_performBevelPlus.kGlobal")) 
+	   -label2 (uiRes("m_performBevelPlus.kLocal")) 
+	   -on1 "tabLayout -e -vis false useGlobalTolTab"
+	   -on2 "tabLayout -e -vis true useGlobalTolTab"
+	   useGlobalTol;
+
+	tabLayout -tabsVisible false useGlobalTolTab;
+	   columnLayout showSlider;
+			floatSliderGrp -label (uiRes("m_performBevelPlus.kTolerance")) 
+		 		-min 0.00001 -max 0.1 -fmn 0.00001 -fmx 1000.0
+				bevelPlusToleranceFloatField;
+	   setParent ..;
+	setParent ..;
+
+	bevelPlusVisibility();
+	updateBevelSideEnableState();
+	updateInnerStyleEnableState();
+
+	return $column;
+}
+
+global proc bevelPlusPolySetup( string $parent,
+									 string $goToTool)
+{
+	// polygon output.
+	//
+	int $polygons = `optionVar -q bevelPlusOutputPolygons`;
+	if( !`isTrue "SurfaceUIExists"` ) {
+		$polygons = 1;
+	} else if ( `radioButtonGrp -exists outputPolyRadioButtonGrp` ) {
+		switch( $polygons ) {
+		  case 0:
+			radioButtonGrp -edit -select 1 outputPolyRadioButtonGrp;
+			break;
+		  case 1:
+			radioButtonGrp -edit -select 2 outputPolyRadioButtonGrp;
+			break;
+		  case 2:
+			warning((uiRes("m_performBevelPlus.kInvalidChoice")));
+			break;
+		  case 3:
+			radioButtonGrp -edit -select 3 outputPolyRadioButtonGrp;
+			break;
+		  default:
+			break;
+		}
+	}
+
+	bevelPlusVisibility();
+
+	switch( $polygons ) {
+	  case 0:
+	  default:
+		tabLayout -e -vis false bevelPlusPolyOptions;
+		break;
+	  case 1:
+		tabLayout -e -vis true bevelPlusPolyOptions;
+		break;
+	}
+
+	if( "" != $goToTool ) { 
+		checkBoxGrp -e -v1 `scriptCtx -q -euc $goToTool`
+		  scriptToolExtraWidget;
+		checkBoxGrp -e -v2 `scriptCtx -q -lac $goToTool`
+		  scriptToolExtraWidget;
+	}
+
+	// Now the polygon options:
+	int $formatValue;
+	int $localIntValue;
+	float $localFloatValue;
+
+	$formatValue = `optionVar -q bevelPlusPolyFormat`;
+	switch( $formatValue ) {
+	  case 0:
+		radioButtonGrp -e -sl 1 format;
+		break;
+	  case 2:
+		radioButtonGrp -e -sl 2 format;
+		break;
+	  default:
+		break;
+	}
+
+	$localIntValue = `optionVar -q bevelPlusPolyCount`;
+	intSliderGrp -e -v $localIntValue count;
+
+	$localIntValue = `optionVar -q bevelPlusPolyTypeU`;
+	optionMenuGrp -e -sl ($localIntValue-1) uType;
+
+	$localIntValue = `optionVar -q bevelPlusPolyNumberU`;
+	intSliderGrp -e -v $localIntValue uNumber;
+
+	$localIntValue = `optionVar -q bevelPlusPolyTypeV`;
+	optionMenuGrp -e -sl ($localIntValue-1) vType;
+
+	$localIntValue = `optionVar -q bevelPlusPolyNumberV`;
+	intSliderGrp -e -v $localIntValue vNumber;
+
+	bevelPlusPolyVisibility $parent $formatValue;
+}
+
+global proc bevelPlusPolyVisibility( string $parent, int $format )
+{
+	setParent $parent;
+	switch( $format ) {
+	  case 0:
+	  default:
+		tabLayout -e -selectTab tabCount formatTabs;
+		break;
+	  case 2:
+		tabLayout -e -selectTab tabGeneral formatTabs;
+		break;
+	}
+}
+
+proc bevelPlusPolyAddOptions( string $parent )
+{
+	setParent $parent;
+
+	string $radioBtnGrp1 =`radioButtonGrp
+		-nrb 2
+		-label (uiRes("m_performBevelPlus.kTessellationMethod")) 
+		-label1 (uiRes("m_performBevelPlus.kCount")) 
+		-label2 (uiRes("m_performBevelPlus.kSampling")) 
+		-cc1 ("bevelPlusPolyVisibility " + $parent + " 0")
+		-cc2 ("bevelPlusPolyVisibility " + $parent + " 2")
+		format`;
+
+	separator; 
+
+	tabLayout -tabsVisible false formatTabs;
+
+		columnLayout tabGeneral;
+			text -label (uiRes("m_performBevelPlus.kSamplingControls")) ;
+
+            optionMenuGrp -label (uiRes("m_performBevelPlus.kAlongExtrusion"))  uType;
+                menuItem -label (uiRes("m_performBevelPlus.kComplete")) ;
+                menuItem -label (uiRes("m_performBevelPlus.kSection")) ;
+
+			intSliderGrp -label (uiRes("m_performBevelPlus.kExtrusionSamples"))
+				-min 1 -max 32 -fmx 10000
+				uNumber;
+
+            optionMenuGrp -label (uiRes("m_performBevelPlus.kAlongCurve"))  vType;
+                menuItem -label (uiRes("m_performBevelPlus.kCurveComplete")) ;
+                menuItem -label (uiRes("m_performBevelPlus.kSpan")) ;
+
+			intSliderGrp -label (uiRes("m_performBevelPlus.kCurveSamples"))
+				-min 1 -max 32 -fmx 10000
+				vNumber;
+
+		setParent ..;
+
+		columnLayout tabCount;
+			intSliderGrp -label (uiRes("m_performBevelPlus.kFaceCount"))
+				-min 1 -max 1000 -fmx 1000000
+				count;
+		setParent ..;
+	setParent ..;
+}
+
+global proc string createBevelOutputOptions(string $parent,
+	int $inTheTool, string $goToTool)
+{
+	string $form, $column, $outputTabs;
+
+	setParent $parent;
+	
+	$form = `formLayout`;
+
+	$column = `columnLayout/* -rowSpacing 2*/`;
+
+	if( `isTrue "SurfaceUIExists"` ) {
+		radioButtonGrp -nrb 2 -label (uiRes("m_performBevelPlus.kOutputGeometry")) 
+		  -label1 (uiRes("m_performBevelPlus.kNurbs"))  -da1 0
+		  -label2 (uiRes("m_performBevelPlus.kPolygons"))  -da2 1 -select 1
+		  -cc1 "bevelPlusVisibility(); tabLayout -e -vis false bevelPlusPolyOptions"
+		  -cc2 "bevelPlusVisibility(); tabLayout -e -vis true bevelPlusPolyOptions"
+		  outputPolyRadioButtonGrp;
+	}
+
+	separator;
+
+	tabLayout -tabsVisible false bevelPlusPolyOptions;
+	  string $par = `columnLayout bevelPlusPolyOptionsOK`;
+		bevelPlusPolyAddOptions($par);
+	  setParent ..;
+	setParent ..;
+
+	if( $inTheTool ) {
+		separator;
+		checkBoxGrp -ncb 2 -label (uiRes("m_performBevelPlus.kToolBehavior")) 
+		  -label1 (uiRes("m_performBevelPlus.kExitOnCompletion")) 
+		  -v1 off
+		  -on1 ("scriptCtx -e -euc true " + $goToTool)
+		  -of1 ("scriptCtx -e -euc false " + $goToTool)
+
+		  -label2 (uiRes("m_performBevelPlus.kAutoCompletion")) 
+		  -v2 on
+		  -on2 ("scriptCtx -e -lac true " + $goToTool)
+		  -of2 ("scriptCtx -e -lac false " + $goToTool)
+		  scriptToolExtraWidget;
+	}
+
+	return $form;
+}
+
+proc string assembleCmd()
+//
+//	Description :
+//		To assemble style bevel proc.
+//
+{
+	setOptionVars(false);
+	string $cmd = "bevelPlusPreset"  ;
+	$cmd = $cmd + "(" ;  
+
+	int $history = `constructionHistory -q -tgl`;
+	$cmd = $cmd + $history ;  
+	$cmd = $cmd + "," ;  
+
+	int $polygons = `optionVar -q bevelPlusOutputPolygons` ;
+	if( $polygons > 2 ) {
+		$polygons = 1;
+	}
+	if( !`isTrue "SurfaceUIExists"` ) $polygons = 1;
+	$cmd = $cmd + $polygons ;  
+	$cmd = $cmd + "," ;  
+
+	int $bevelJoin = `optionVar -q bevelPlusAttachSurfaces` ;
+	$cmd = $cmd + $bevelJoin ;  
+	$cmd = $cmd + "," ;  
+
+	float $tol = `optionVar -q bevelPlusTolerance` ;
+	if( `optionVar -q bevelPlusUseGlobalTol` ) {
+		$tol = `optionVar -q positionalTolerance`;
+	}
+	$cmd = $cmd + $tol ;  
+	$cmd = $cmd + "," ;
+  
+	int $bevelPlusSides = `optionVar -q bevelPlusNSides` ;
+	$cmd = $cmd + $bevelPlusSides ;  
+	$cmd = $cmd + "," ;  
+
+	float $bevelPlusWidth = `optionVar -q bevelPlusWidth` ;
+	$cmd = $cmd + $bevelPlusWidth ;  
+	$cmd = $cmd + "," ;  
+
+	float $bevelPlusDepth = `optionVar -q bevelPlusDepth` ;
+	$cmd = $cmd + $bevelPlusDepth ;
+	$cmd = $cmd + "," ;  
+
+	float $bevelPlusExtrudeHt = `optionVar -q bevelPlusExtrudeHeight` ;
+	$cmd = $cmd + $bevelPlusExtrudeHt ;  
+	$cmd = $cmd + "," ;  
+
+	int $bevelPlusCaps = `optionVar -q bevelPlusCaps` ;
+	$cmd = $cmd + $bevelPlusCaps ;
+	$cmd = $cmd + "," ;  
+
+	int $bevelPlusInsideCurves = `optionVar -q bevelPlusInsideCurves`;
+	$cmd = $cmd + $bevelPlusInsideCurves ;
+	$cmd = $cmd + "," ;  
+
+	int $outerBevelCurve = `optionVar -q outerStyleBevelCurve`;
+	$cmd = $cmd + $outerBevelCurve;  
+	$cmd = $cmd + "," ;  
+
+	int $sameAsOuter = `optionVar -q innerStyleSameAsOuter`;
+	if( $sameAsOuter ) {
+		$cmd = $cmd + $outerBevelCurve ;  
+	}
+	else {
+		int $innerBevelCurve = `optionVar -q innerStyleBevelCurve`;
+		$cmd = $cmd + $innerBevelCurve ;  
+	}
+	$cmd = $cmd + ",";
+
+	int $pFormat = `optionVar -q bevelPlusPolyFormat`;
+	$cmd = $cmd + $pFormat;
+	$cmd = $cmd + ",";
+
+	int $pCount = `optionVar -q bevelPlusPolyCount`;
+	$cmd = $cmd + $pCount;
+	$cmd = $cmd + ",";
+
+	int $pTypeU = `optionVar -q bevelPlusPolyTypeU`;
+	$cmd = $cmd + $pTypeU;
+	$cmd = $cmd + ",";
+
+	int $pNumberU = `optionVar -q bevelPlusPolyNumberU`;
+	$cmd = $cmd + $pNumberU;
+	$cmd = $cmd + ",";
+
+	int $pTypeV = `optionVar -q bevelPlusPolyTypeV`;
+	$cmd = $cmd + $pTypeV;
+	$cmd = $cmd + ",";
+
+	int $pNumberV = `optionVar -q bevelPlusPolyNumberV`;
+	$cmd = $cmd + $pNumberV;
+
+	$cmd = $cmd + ")" ;  
+
+	// centre the pivot point
+	$cmd = $cmd + "; CenterPivot";
+
+	//do a planar projection on the cap if outputting polys
+	if (`optionVar -q bevelPlusOutputPolygons` == 1){
+		
+		$cmd = $cmd + ";";
+		//must check to see if bevel has succeeded
+		//$bevelSuccess will be >0 if successful and command
+		//may continue
+
+		string $errorCheck = " int $intArr[] = `polyEvaluate -v`; ";
+		$errorCheck += "int $numVerts = 0; ";
+		$errorCheck += "if (size($intArr) > 0) $numVerts = $intArr[0]; ";
+		$errorCheck += "if ($numVerts > 0) { ";
+		$cmd = $cmd + $errorCheck;
+		
+		//select all faces with 0 map area and more than 4 sides - these
+		//will be the caps
+		//see polyCleanupArgList.mel for a complete list of the arguments
+		$cmd = $cmd + "polyCleanupArgList 3 { \"0\",\"2\",\"1\",\"0\",";
+		$cmd = $cmd + "\"1\",\"0\",\"0\",\"0\",\"0\",\"1e-005\",\"0\",\"";
+		$cmd = $cmd + "1e-005\",\"1\",\"0\",\"0\",\"-1\",\"0\" };";
+		$cmd = $cmd + "polyProjection -ch 1 -type Planar -ibd off -icx 0.5 ";
+		$cmd = $cmd + "-icy 0.5 -ra 0 -isu 1 -isv 1 -md z ;";
+		$cmd = $cmd + "select -r `listConnections -t \"shape\"`;";
+
+		string $cmdErrorMsg = (uiRes("m_performBevelPlus.kCmdErrorMsg"));
+		$cmd = $cmd + "} else {";
+		$cmd = $cmd + "  error \"" + $cmdErrorMsg + "\";";
+		$cmd = $cmd + "}";
+
+		//and switch back to object mode
+		$cmd = $cmd + "changeSelectMode -object;";
+	}
+
+	return $cmd ;
+}
+
+proc bevelPlusOptions( int $inTheTool, string $goToTool )
+{
+	//	Name of the command for this option box.
+	//
+	string $commandName = "bevelPlus";
+
+	//	Build the option box actions.
+	//
+	string $callback = ($commandName + "Callback");
+	string $setup = ($commandName + "Setup");
+
+	global string $gOptionBoxActionToolItem;
+	$gOptionBoxActionToolItem = "modelWithToolBevelPlus";
+	global string $gOptionBoxActionToolItemCB;
+	$gOptionBoxActionToolItemCB = "bevelPlusToolScript 3";
+
+	//	Turn on the wait cursor.
+	//
+	waitCursor -state 1;
+
+	//	Step 1:  Get the option box.
+	//	============================
+	string $layout = getOptionBox();
+	setParent $layout;
+	
+	//	Step 2:  Pass the command name to the option box.
+	//	=================================================
+	setOptionBoxCommandName($commandName);
+	
+
+	//	Step 3:  Activate the default UI template.
+	//	==========================================
+
+	setUITemplate -pushTemplate DefaultTemplate;
+
+	//	Step 4: Create option box contents.
+	//	===================================
+
+	string $bevelOptionsLayout;
+	string $outputOptionsLayout;
+
+	string $parent = `tabLayout -scrollable true`;
+
+	$bevelOptionsLayout = createBevelOptions($parent);
+	$outputOptionsLayout =  createBevelOutputOptions($parent, $inTheTool, $goToTool );
+
+	tabLayout -edit
+		-tabLabel $bevelOptionsLayout (uiRes("m_performBevelPlus.kBevelTab"))
+		-tabLabel $outputOptionsLayout (uiRes("m_performBevelPlus.kOutputOptions"))
+		$parent;
+
+	//	Turn off the wait cursor.
+	//
+	waitCursor -state 0;
+	
+	//	Step 5: Deactivate the default UI template.
+	//  ===========================================
+	//
+	setUITemplate -popTemplate;
+
+	//	Step 6: Customize the buttons.  
+	//	==============================
+
+	//	'Apply' button.
+	//
+	string $applyBtn = getOptionBoxApplyBtn();
+	if( $inTheTool ) {
+		button -edit -label (uiRes("m_performBevelPlus.kBevelTool")) 
+		  -command ($callback + " " + $parent + " 3 \"" + $goToTool + "\"")
+		  $applyBtn;
+	}
+	else {
+		button -edit -label (uiRes("m_performBevelPlus.kBevel")) 
+		  -command ($callback + " " + $parent + " 1 \"" + $goToTool + "\"")
+		  $applyBtn;
+	}
+
+	//	'Save' button.
+	//
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + $parent + " 0 \"" +
+				  $goToTool + "\"; hideOptionBox")
+		$saveBtn;
+
+	//	'Reset' button.
+	//
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + " " + $parent + " 1 \"" + $goToTool + "\"")
+		$resetBtn;
+
+	//	Step 7: Set the option box title.
+	//	=================================
+	//
+	if( $inTheTool ) {
+		setOptionBoxTitle (uiRes("m_performBevelPlus.kBevelPlusToolOptions"));
+	}
+	else {
+		setOptionBoxTitle (uiRes("m_performBevelPlus.kBevelPlusOptions"));
+	}
+
+	//	Step 8: Customize the 'Help' menu item text.
+	//	============================================
+	//
+	setOptionBoxHelpTag( "BevelPlus" );
+
+	//	Step 9: Set the current values of the option box.
+	//	=================================================
+	//
+	eval ($setup + " " + $parent + " 0 \"" + $goToTool + "\"");	
+	
+	//	Step 10: Show the option box.
+	//	=============================
+	//
+	showOptionBox();
+}
+
+proc string bevelPlusHelp()
+{
+	string $cmdHelp = "Command: Bevel Plus - creates a styled beveled surface. \n " ;
+	string $selectHelp = "Selection: Select a curve or surface isoparm or curve on surface to bevel " ;
+    return $cmdHelp+$selectHelp ;
+}
+
+global proc bevelPlusBasicSetup( string $parent,
+								 int $forceFactorySettings,
+								 string $goToTool)
+{
+	// retrieve option settings.
+	//
+	setOptionVars($forceFactorySettings);	
+	bevelPlusToolSetup( $forceFactorySettings, $goToTool );
+
+	setParent $parent;	
+
+	// query and set controls for all the option vars.
+	//
+	float $bwidth = `optionVar -q bevelPlusWidth` ;
+	floatSliderGrp -e -v $bwidth BevelWidthSliderGroup ;
+	if( $forceFactorySettings ) {
+		floatSliderGrp -e
+			-min 0.00001 -max 0.25 -fmn -10000.0 -fmx 10000.0
+			BevelWidthSliderGroup ;
+	}
+
+	// bevel depth.
+	//
+	float $bdepth = `optionVar -q bevelPlusDepth` ;
+	floatSliderGrp -e -v $bdepth BevelDepthSliderGroup ;
+	if( $forceFactorySettings ) {
+		floatSliderGrp -e
+			-min 0.00001 -max 0.25 -fmn -10000.0 -fmx 10000.0
+			BevelDepthSliderGroup;
+	}
+
+	// extrude height.
+	//
+	float $edepth = `optionVar -q bevelPlusExtrudeHeight` ;
+	floatSliderGrp -e -v $edepth extrudeDepthFloatField ;
+	if( $forceFactorySettings ) {
+		floatSliderGrp -e
+			-min 0.00001 -max 1.0 -fmn -10000.0 -fmx 10000.0
+			extrudeDepthFloatField;
+	}
+
+	// global vs. local tolerance.
+	if ( `radioButtonGrp -exists useGlobalTol` ) {
+		int $useGlobalTol = `optionVar -q bevelPlusUseGlobalTol`;
+		radioButtonGrp -e -select (2 - $useGlobalTol) useGlobalTol;
+
+		// bevel tolerance.
+		//
+		float $tol = `optionVar -q bevelPlusTolerance` ;
+		floatSliderGrp -e -v $tol bevelPlusToleranceFloatField ;
+		if( $forceFactorySettings ) {
+			floatSliderGrp -e
+				-min 0.00001 -max 0.1 -fmn 0.00001 -fmx 1000.0
+				bevelPlusToleranceFloatField;
+		}
+
+		if( $useGlobalTol == 1 ) {
+			tabLayout -e -vis false useGlobalTolTab;
+		}
+		else {
+			tabLayout -e -vis true useGlobalTolTab;
+		}
+	}
+
+	if(`checkBoxGrp -exists bevelPlusJoinSrfBox`) {
+		// attach the surfaces.
+		//
+		int $attach = `optionVar -q bevelPlusAttachSurfaces` ;
+		
+		if( $attach == 1 ) {
+			checkBoxGrp -edit -v1 true bevelPlusJoinSrfBox  ;
+		} else {
+			checkBoxGrp -edit -v1 false bevelPlusJoinSrfBox  ;
+		}
+	}
+
+	// Bevel Inside Curve
+	//
+	int $bevelPlusInside = `optionVar -q bevelPlusInsideCurves` ;
+	checkBoxGrp -edit -v1 $bevelPlusInside BevelInsideCurveCheckBoxGroup;
+
+	// Outer Bevel Curve Name
+	//
+	int $styleCurve = `optionVar -q outerStyleBevelCurve` ;
+	textScrollList -edit -sii ($styleCurve+1) BevelOuterStyleTextScrollList;
+
+	// Inner bevel same as outer bevel
+	//
+	int $sameAsOuterStyle = `optionVar -q innerStyleSameAsOuter` ;
+	checkBoxGrp -edit -v1 $sameAsOuterStyle BevelInnerStyleCheckBoxGroup;
+
+	// Inner Bevel Curve Name
+	//
+	if($sameAsOuterStyle == false) {
+		$styleCurve = `optionVar -q innerStyleBevelCurve` ;
+	}
+	if($styleCurve < 0) $styleCurve = 0;
+	textScrollList -edit -sii ($styleCurve+1) BevelInnerStyleTextScrollList;
+	int $nedges = `optionVar -q bevelPlusNSides` ;
+	
+	if( $nedges == 1 ) {
+		//None
+		checkBoxGrp -e -v1 0 BevelSideCheckBoxGroup;
+		checkBoxGrp -e -v2 0 BevelSideCheckBoxGroup;
+	} else if( $nedges == 4 ) {
+		//At Start and End
+		checkBoxGrp -e -v1 1 BevelSideCheckBoxGroup;
+		checkBoxGrp -e -v2 1 BevelSideCheckBoxGroup;
+	} else if( $nedges == 3 ) {
+		//At End
+		checkBoxGrp -e -v1 0 BevelSideCheckBoxGroup;
+		checkBoxGrp -e -v2 1 BevelSideCheckBoxGroup;
+	} else if( $nedges == 2 ) {
+		//At Start
+		checkBoxGrp -e -v1 1 BevelSideCheckBoxGroup;
+		checkBoxGrp -e -v2 0 BevelSideCheckBoxGroup;
+	}
+
+	int $ncaps = `optionVar -q bevelPlusCaps` ;
+	
+	if( $ncaps == 1 ) {
+		//None
+		checkBoxGrp -e -v1 0 BevelCapCheckBoxGroup;
+		checkBoxGrp -e -v2 0 BevelCapCheckBoxGroup;
+	} else if( $ncaps == 4 ) {
+		//At Start and End
+		checkBoxGrp -e -v1 1 BevelCapCheckBoxGroup;
+		checkBoxGrp -e -v2 1 BevelCapCheckBoxGroup;
+	} else if( $ncaps == 3 ) {
+		//At End
+		checkBoxGrp -e -v1 0 BevelCapCheckBoxGroup;
+		checkBoxGrp -e -v2 1 BevelCapCheckBoxGroup;
+	} else if( $ncaps == 2 ) {
+		//At Start
+		checkBoxGrp -e -v1 1 BevelCapCheckBoxGroup;
+		checkBoxGrp -e -v2 0 BevelCapCheckBoxGroup;
+	}
+
+	// dim/show any options as required
+	//
+	BevelSideCheckBoxChange();
+}
+
+global proc bevelPlusSetup( string $parent,
+						int $forceFactorySettings,
+						string $goToTool)
+{
+	bevelPlusBasicSetup($parent, $forceFactorySettings, $goToTool);
+	bevelPlusPolySetup($parent, $goToTool);
+}
+
+global proc bevelPlusCallback( string $parent, int $doIt, string $goToTool )
+{
+	if( "" != $goToTool ) {
+		optionVar -iv bevelPlusEuc `scriptCtx -q -euc $goToTool`;
+		optionVar -iv bevelPlusLac `scriptCtx -q -lac $goToTool`;
+	}
+
+	setParent $parent ;
+
+	// get Values from controls.
+	//
+	if( `isTrue "SurfaceUIExists"` && `radioButtonGrp -exists outputPolyRadioButtonGrp` ) {
+		int $polys = `radioButtonGrp -q -select outputPolyRadioButtonGrp`;
+		if( 3 == $polys ) {
+			$polys = 4;
+		}
+		optionVar -intValue bevelPlusOutputPolygons ($polys-1) ;
+	}
+
+	// global vs. local
+	if ( `radioButtonGrp -exists useGlobalTol` ) {
+		if( `optionVar -q bevelPlusUseGlobalTol` ) {
+			int $useGlobalTol = 2 - `radioButtonGrp -q -select useGlobalTol`;
+			optionVar -intValue bevelPlusUseGlobalTol $useGlobalTol;
+		}
+		
+		float $fValue = `floatSliderGrp -q -v bevelPlusToleranceFloatField` ;
+		optionVar -floatValue bevelPlusTolerance $fValue ;
+	}
+
+	$fValue = `floatSliderGrp -q -v BevelWidthSliderGroup` ;
+	optionVar -floatValue bevelPlusWidth $fValue ;
+
+	$fValue = `floatSliderGrp -q -v BevelDepthSliderGroup` ;
+	optionVar -floatValue bevelPlusDepth $fValue ;
+
+	$fValue = `floatSliderGrp -q -v extrudeDepthFloatField` ;
+	optionVar -floatValue bevelPlusExtrudeHeight $fValue;
+
+	// attach surfaces or not.
+	//
+	if(`checkBoxGrp -exists bevelPlusJoinSrfBox`) {
+		int $val = `checkBoxGrp -q -v1 bevelPlusJoinSrfBox` ;
+		optionVar -intValue bevelPlusAttachSurfaces $val ;
+	}
+
+	// bevel number of edges.
+	//
+	int $ne;
+	int $atStart = `checkBoxGrp -q -v1 BevelSideCheckBoxGroup`;
+	int $atEnd = `checkBoxGrp -q -v2 BevelSideCheckBoxGroup`;
+	if( !$atStart && !$atEnd ) {
+		//None
+		$ne = 1;
+	}
+	else if( $atStart && !$atEnd ) {
+		//At Start
+		$ne = 2;
+	}
+	else if( !$atStart && $atEnd ) {
+		//At End
+		$ne = 3;
+	}
+	else if( $atStart && $atEnd ) {
+		//At Start and End
+		$ne = 4;
+	}
+	optionVar -intValue bevelPlusNSides $ne ;
+
+	// bevel number of caps.
+	//
+	int $nCaps;
+	$atStart = `checkBoxGrp -q -v1 BevelCapCheckBoxGroup`;
+	$atEnd = `checkBoxGrp -q -v2 BevelCapCheckBoxGroup`;
+	if( !$atStart && !$atEnd ) {
+		//None
+		$nCaps = 1;
+	}
+	else if( $atStart && !$atEnd ) {
+		//At Start
+		$nCaps = 2;
+	}
+	else if( !$atStart && $atEnd ) {
+		//At End
+		$nCaps = 3;
+	}
+	else if( $atStart && $atEnd ) {
+		//At Start and End
+		$nCaps = 4;
+	}
+	optionVar -intValue bevelPlusCaps $nCaps;
+
+	// Inside curves
+	//
+	if(`checkBoxGrp -exists BevelInsideCurveCheckBoxGroup`) {
+		int $val = `checkBoxGrp -q -v1 BevelInsideCurveCheckBoxGroup` ;
+		optionVar -intValue bevelPlusInsideCurves $val ;
+	}
+
+	// Outer bevel Curve
+	//
+	int $styleCurve[] = `textScrollList -q -sii BevelOuterStyleTextScrollList`;
+	optionVar -intValue outerStyleBevelCurve ($styleCurve[0]-1);
+
+	// Inner Bevel Same as Outer
+	//
+	int $sameAsOuterStyle = `checkBoxGrp -q -v1 BevelInnerStyleCheckBoxGroup`;
+	optionVar -intValue innerStyleSameAsOuter $sameAsOuterStyle;
+
+	// Inner bevel Curve
+	//
+	if($sameAsOuterStyle == false) {
+		$styleCurve = `textScrollList -q -sii BevelInnerStyleTextScrollList`;
+	}
+	if($styleCurve[0] < 1) $styleCurve[0] = 1;
+	optionVar -intValue innerStyleBevelCurve ($styleCurve[0]-1);
+
+	// Output options
+	//
+	int $formatValue = `radioButtonGrp -q -sl format`;
+	switch( $formatValue ) {
+	  case 1:
+		$formatValue = 0;
+		break;
+	  case 2:
+		$formatValue = 2;
+		break;
+	  default:
+		break;
+	}
+
+	optionVar -iv bevelPlusPolyFormat $formatValue;
+	optionVar -iv bevelPlusPolyCount (`intSliderGrp -q -v count`);
+
+	optionVar -iv bevelPlusPolyTypeU (`optionMenuGrp -q -sl uType` + 1);
+	optionVar -iv bevelPlusPolyNumberU (`intSliderGrp -q -v uNumber`);
+	optionVar -iv bevelPlusPolyTypeV (`optionMenuGrp -q -sl vType` + 1);
+	optionVar -iv bevelPlusPolyNumberV (`intSliderGrp -q -v vNumber`);
+
+	if( 1 == $doIt ) {
+		performBevelPlus(0, $goToTool); 
+		string $tmpCmd = "performBevelPlus(0, \"" + $goToTool + "\")";
+		addToRecentCommandQueue $tmpCmd "BevelPlus";
+	}
+	else if( $doIt ) {
+		setToolTo $goToTool;
+	}
+}
+
+global proc string performBevelPlus( int $action, string $goToTool )
+//
+//	Description :
+//		$action = 0 ==> do the command.
+//		$action = 1 ==>show option box.
+//		$action = 2 ==>drag to shelf.
+//		$action = 3 ==>Show the tool option box
+{
+	int $inTheTool = false;
+	if( 3 == $action ) {
+		$action = 1;
+		$inTheTool = true;
+	}
+
+	string $cmd = "" ;
+	switch( $action ) {
+	  case 0:
+		$cmd = `assembleCmd` ;
+		//Turn on the wait cursor
+		//
+		if( catch(eval($cmd)) ){
+		}
+		break ;
+	  case 1:
+		bevelPlusOptions( $inTheTool, $goToTool );
+		break ;
+	  case 2:
+	  default:
+		$cmd = `assembleCmd` ;
+		break ;
+	}
+	return $cmd ;
+}
+

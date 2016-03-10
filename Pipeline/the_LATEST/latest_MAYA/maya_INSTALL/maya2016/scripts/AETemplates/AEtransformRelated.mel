@@ -1,0 +1,169 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+// FILE: AEtransformRelated.mel
+// INPUT: string (node name)
+// RETURN:	string[] (list of related nodes, with the node whose
+//			tab you want to be opened duplicated at the
+//			end of the array)
+//
+
+
+global proc int AEisLastNodeDuplicated(string $inputArray[])
+{
+	int		 $inputArraySizeMinusOne = size($inputArray)-1;
+	if ($inputArraySizeMinusOne < 1) return false;
+	string $searchString = $inputArray[$inputArraySizeMinusOne];
+	string $tmp[] = `ls -l $searchString`;
+	$searchString = $tmp[0];
+	for ($i = 0; $i < $inputArraySizeMinusOne; $i++) {
+		if ($inputArray[$i] == "") continue; // do not call "ls -l" without a node name.
+		clear $tmp;
+		$tmp = `ls -l $inputArray[$i]`;
+		if ( $searchString == $tmp[0]) return true;
+	}
+	return false;
+}
+
+
+global proc string[] AEtransformRelated (string $nodeName)
+{
+	string $retval[];
+	string $preferredNode = "";
+	int $isNucleus = false;
+
+	// get all shapes immediately below the transform first
+	//
+	string $leaves[] = `listRelatives -fullPath -shapes $nodeName`;
+	for ($leaf in $leaves) {
+		$retval[size($retval)] = $leaf;
+	}
+
+	// now get the connections for the transform
+	// to deal with things like expressions, motionPaths, etc.
+	//
+	string $tmp[];
+	$tmp = `defaultNavigation -ren -d $nodeName`;
+	for ($node in $tmp) {
+		if( `objectType -isa "reference" $node` ){
+			// If we've added the reference node associated with this
+			// transform, and if this reference has precisely one container
+			// node, we'll add that container node's tab to the AE, and make it
+			// the preferred node.
+			//
+			string $refNodes[] = `referenceQuery -dagPath -nodes $node`;
+			string $containers[] = `ls -type container $refNodes`;
+			if( size($containers) == 1 ){
+				$retval[size($retval)] = $containers[0];
+				$preferredNode = $containers[0];
+			}
+		}
+		$retval[size($retval)] = $node;
+	}
+
+	// loop through each of the leaves looking for
+	// appropriate AE<leafType>Related.mel scripts
+	//
+	for ($leaf in $leaves) {
+
+		clear $tmp;
+		// get the leaf's nodeType
+		string $leafType = `nodeType $leaf`;
+		if( $leafType == "nCloth" || $leafType == "nRigid" ){
+			$isNucleus = true;
+		}
+
+		// build the related script's name
+		string $relatedScript = "AE"+$leafType+"Related";
+
+		if (`exists $relatedScript`) {
+
+			// if an AE*Related script exists for the shape leaf
+			// node, run it 
+			//
+			$tmp = eval($relatedScript+" \""+$leaf+"\"");
+
+			// Check if the last item is duplicated.
+			// AEisLastNodeDuplicated is a Mel script which will
+			// search the input string array for a duplicate
+			// occurrence of the last element in that array.
+			// AEisLastNodeDuplicated returns 1 if true, 0 if false.
+			// (this script is shown below)
+			//
+			// Note that any node that has been designated "internal"
+			// is not a candidate for preferred status.
+			//
+			if (AEisLastNodeDuplicated($tmp) == true) {
+				string $pNode = $tmp[size($tmp)-1];
+				string $pType = `nodeType $pNode`;
+				if ( !`attributeQuery -ex -node $pNode intermediateObject` ||
+					 !`getAttr ($pNode+".intermediateObject")` ||
+					 $pType == "nCloth" || $pType == "nRigid" ){
+					$preferredNode = $pNode;
+				}
+			}
+
+		} else {
+
+			$tmp = `defaultNavigation -ren -d $leaf`;
+			string $tmpPreferredNode = `defaultNavigation -dwn -d $leaf`;
+			string $tmpPreferredFullPathName[] = `ls -l $tmpPreferredNode`;
+			if ( $tmpPreferredFullPathName[0] != $leaf 
+				|| $preferredNode == "" )
+			{
+				$preferredNode = $tmpPreferredNode;
+				$tmp[size($tmp)] = $preferredNode;
+			}
+
+		}
+
+		// catenate the result to the return string array ($retval)
+		for ($i = 0; $i < size($tmp); $i++) {
+			$retval[size($retval)] = $tmp[$i];
+		}
+
+	}
+
+	// Note that if you have multiple leaves and each specifies
+	// a preferredNode, only the last one is remembered.
+	// If no preferredNode was specified, the transform itself
+	// is used.
+	//
+	if ($preferredNode == "") {
+		$preferredNode = $nodeName;
+	}
+	$retval[size($retval)] = $preferredNode;
+	// For nucleus type nodes, always use the preferred node, so make sure
+	// $gAETabMarker won't override it by clearing the "transform" entry.
+	// See bug #254719.
+	//
+	string $prefNodeType = `nodeType $preferredNode`;
+	if( $prefNodeType == "nCloth" || $prefNodeType == "nRigid" ||
+		$prefNodeType == "dynamicConstraint" ){
+		if( !`exists setTabMarker` ){
+			eval("source \"showEditor.mel\"");
+		}
+		setTabMarker( "transform", "" );
+	}
+	
+	return $retval;
+}
+

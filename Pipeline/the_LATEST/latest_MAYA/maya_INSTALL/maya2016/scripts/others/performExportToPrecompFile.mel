@@ -1,0 +1,971 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+// Offline export mode
+// Export all cameras, render layers, passes for Pre-Compositing
+
+global string $gPrecompExportManager = "defaultPrecompExport";
+
+proc int round(float $val) {
+    float $floor = floor($val);
+    if($val -$floor < 0.5)
+        return $floor;
+    else
+        return $floor + 1;
+}
+
+global proc string getOverrideAttrValuePlug(string $layerName, string $plug)
+{
+    if(`editRenderLayerGlobals -q -currentRenderLayer` == $layerName)
+        return $plug;
+
+    string $defaultValuePlug = "";
+    string $valuePlug = "";
+
+    string $overridePlugs[] = `listConnections -t "renderLayer" -p 1 $plug`;
+
+    if(size($overridePlugs) == 0)
+        return $plug;
+
+    for($overridePlug in $overridePlugs) {
+        if(`plugNode $overridePlug` == $layerName) {
+            $valuePlug = `substitute ".plug$" $overridePlug ".value"`;
+            break;
+        }
+        else if(`plugNode $overridePlug` == "defaultRenderLayer")
+            $defaultValuePlug = `substitute ".plug$" $overridePlug ".value"`;
+    }
+    if($valuePlug == "")
+        $valuePlug = $defaultValuePlug;
+    return $valuePlug;
+}
+
+global proc checkToxikImageNameCompatibility()
+{
+    string $layers[] = `listConnections renderLayerManager.renderLayerId`;
+    int $supportedImageFormats[] = {1, 3, 5, 7, 8, 11, 19, 20, 32};
+    string $supportedExts[] = {"pic", "tif", "sgi", "iff", "jpg", "cin", "tga", "bmp", "png"};
+    string $supportedCustomImageFormats[] = {"hdr", "exr"};
+
+    string $extAbsenceWarningMsg = (uiRes("m_performExportToPrecompFile.kToxikExtAbsenceWarning"));
+    string $unsupportedFormatWarningMsg = (uiRes("m_performExportToPrecompFile.kToxikUnsupportedFormatWarning"));
+    string $unsupportedExtWarningMsg = (uiRes("m_performExportToPrecompFile.kToxikUnsupportedExtWarning"));
+
+    for($layer in $layers) {
+        if(!`getAttr ($layer + ".renderable")`)
+            continue;
+        string $outFormatControlPlug = getOverrideAttrValuePlug($layer, "defaultRenderGlobals.outFormatControl");
+        string $animationPlug = getOverrideAttrValuePlug($layer, "defaultRenderGlobals.animation");
+        string $putFrameBeforeExtPlug = getOverrideAttrValuePlug($layer, "defaultRenderGlobals.putFrameBeforeExt");
+        string $imageFormatPlug = getOverrideAttrValuePlug($layer, "defaultRenderGlobals.imageFormat");
+        string $imfPluginKeyPlug = getOverrideAttrValuePlug($layer, "defaultRenderGlobals.imfPluginKey");
+        string $outFormatExtPlug = getOverrideAttrValuePlug($layer, "defaultRenderGlobals.outFormatExt");
+
+        int $isFormatSupported = 0;
+        int $isExtSupported = 0;
+        int $outFormatControl = `getAttr $outFormatControlPlug`;
+        int $imageFormat = `getAttr $imageFormatPlug`;
+        string $outFormatExt = `getAttr $outFormatExtPlug`;
+
+        for($i = 0; $i < size($supportedImageFormats); $i++) {
+            if($imageFormat == $supportedImageFormats[$i]) {
+                    $isFormatSupported = 1;
+                    if($outFormatControl == 0 || 
+                       ($outFormatControl == 2 && $outFormatExt == $supportedExts[$i])) {
+                        $isExtSupported = 1;
+                        break;
+                    }
+            }
+        }
+        // when the image format is a custom image format
+        if($imageFormat == 51) {
+            for($i = 0; $i < size($supportedCustomImageFormats); $i++) {
+                if(`getAttr $imfPluginKeyPlug` == $supportedCustomImageFormats[$i]) {
+                    $isFormatSupported = 1;
+                    if($outFormatControl == 0 || 
+                       ($outFormatControl == 2 && $outFormatExt == $supportedCustomImageFormats[$i])) {
+                        $isExtSupported = 1;
+                        break;
+                    }
+                }
+            }
+        }
+     
+        if($outFormatControl == 1 || 
+            (`getAttr $animationPlug` == 1 && `getAttr $putFrameBeforeExtPlug` == 0)) {
+            warning `format -s $layer $extAbsenceWarningMsg`;
+        }
+        if($isFormatSupported == 0){
+            warning `format -s $layer $unsupportedFormatWarningMsg`;
+        }
+        else if($isExtSupported == 0) {
+            warning `format -s $layer $unsupportedExtWarningMsg`;
+        }
+    }
+}
+
+//get cameras under the layer
+//
+global proc getCameraUnderLayer(string $layer, string $cameraArrayForLayer[])
+{
+	// It appears that the current behavior in Maya is to 
+	// ignore whether a camera is connected to a layer through .renderInfo
+	// Instead only the renderable flag is considered, which can be
+	// overridden on a per-layer basis.
+	$cameraArrayForLayer = `ls -cameras`;
+}
+global string $visitedSets[];
+proc string[] getRenderPassesUnderParent(string $layer, string $parent)
+{
+    global string $visitedSets[];
+	string $passes[] = `listConnections -type "renderPass" ($parent + ".renderPass")`;
+	string $passSets[] = `listConnections -type "renderPassSet" ($parent + ".renderPass")`;
+	for ($passSet in $passSets)
+	{
+        string $passSetRenderablePlug = getOverrideAttrValuePlug($layer, ($passSet + ".renderable"));
+        if(stringArrayContains($passSet, $visitedSets) || !`getAttr $passSetRenderablePlug`)
+            continue;
+        $visitedSets[size($visitedSets)] = $passSet;
+		$passes = stringArrayCatenate($passes, getRenderPassesUnderParent($layer, $passSet));
+	}
+	return $passes;
+}
+//get cameras under the layer
+//In the future, we can select what render passes to render for a camera.
+//Now, each camera in the layer will render all the passes in the layer. The parameter "$camera"
+//now is "".
+//
+global proc getRenderPassUnderLayerCamera(string $layer, string $camera, string $renderPassArrayForLayerCamera[])
+{
+    if($camera == "")
+    {
+        global string $visitedSets[];
+        clear($visitedSets);
+        string $usedPasses[] = getRenderPassesUnderParent($layer, $layer);
+        $renderPassArrayForLayerCamera = stringArrayRemoveDuplicates($usedPasses);
+        $renderPassArrayForLayerCamera[size($renderPassArrayForLayerCamera)] = "MasterBeauty";
+        $renderPassArrayForLayerCamera = `sort $renderPassArrayForLayerCamera`;
+    }
+}
+
+proc setDataForPrecompExport(
+                           string $a[], string $valueA, 
+                           string $b[], string $valueB, 
+                           string $c[], string $valueC)
+{
+    $a[size($a)] = $valueA;
+    $b[size($b)] = $valueB;
+    $c[size($c)] = $valueC;
+}
+
+//get triple data for render layer, camera, renderPass
+//
+global proc setupPrecompExportTreeViewDataLayerCameraPass(string $renderLayers[], string $cameras[], string $renderPasses[])
+{
+    clear $renderLayers;
+    clear $cameras;
+    clear $renderPasses;
+    string $allLayers[] = `listConnections renderLayerManager.renderLayerId`;
+    $allLayers = `sort $allLayers`;
+    for($renderLayer in $allLayers)
+    {
+        if(!`getAttr ($renderLayer + ".renderable")`)
+            continue;
+        string $camerasForLayer[];
+        getCameraUnderLayer($renderLayer, $camerasForLayer);
+        for($camera in $camerasForLayer)
+        {
+            string $cameraRenderablePlug = getOverrideAttrValuePlug($renderLayer, ($camera + ".renderable"));
+            if(!`getAttr $cameraRenderablePlug`)
+                continue;
+            string $renderPassesForLayerCamera[];
+            getRenderPassUnderLayerCamera($renderLayer, "", $renderPassesForLayerCamera);
+            if(size($renderPassesForLayerCamera) == 0)
+            {
+                setDataForPrecompExport($renderLayers, $renderLayer, $cameras, $camera, $renderPasses, "");
+                continue;
+            }
+            for($renderPass in $renderPassesForLayerCamera)
+            {
+                if($renderPass != "MasterBeauty") {
+                    string $passRenderablePlug = getOverrideAttrValuePlug($renderLayer, ($renderPass + ".renderable"));
+					string $passTypePlug = getOverrideAttrValuePlug($renderLayer, ($renderPass + ".passID"));
+                    if(!`getAttr $passRenderablePlug` || `getAttr $passTypePlug` == "")
+					    continue;
+                }
+                setDataForPrecompExport($renderLayers, $renderLayer, $cameras, $camera, $renderPasses, $renderPass);
+            }
+        }
+    }
+}
+
+global proc string getSceneBaseName()
+{
+    string $sceneName = `file -q -sceneName`;
+    string $sceneBaseName = `basenameEx $sceneName`;
+    if($sceneBaseName == "") {
+        $sceneBaseName = untitledFileName();
+    }
+    return $sceneBaseName;
+}
+
+global proc performExportToPrecompFile(string $fileName, int $isExportAll)
+{
+    global string $gPrecompExportManager;
+
+    string $mayaInstallDir = `getenv "MAYA_LOCATION"`;
+    $templateFileId = `fopen ($mayaInstallDir + "/bin/precompTemplate.py") "r"`;
+    if(!$templateFileId) {
+        error (uiRes("m_performExportToPrecompFile.kTemplateNotFoundError"));
+        return;
+    }
+
+    string $nextLine = `fgetline $templateFileId`;
+    string $template;
+    while( size($nextLine) > 0){
+        $template += $nextLine;
+        $nextLine = `fgetline $templateFileId`;
+    }
+    fclose $templateFileId;
+
+    // only create the default mental ray nodes if mental ray is present
+    if (`pluginInfo -q -loaded Mayatomr.so`){
+        miCreateDefaultNodes();
+    }
+
+    // fill the precomp file with python functions from precompTemplate.py
+    
+    $fileId = `fopen $fileName "w"`;
+    if(!$fileId) {
+        error (uiRes("m_performExportToPrecompFile.kCanNotOpenFileError"));
+        return;
+    }
+    fprint $fileId $template;
+
+    string $globalData;
+    string $sceneData;
+    string $cameraData;
+    string $layerData;
+    string $passData;
+
+    python("import maya.cmds as cmds");
+    python("version = cmds.about(api=True)");
+    string $majorVersion = python("version / 100");
+    string $minorVersion = python("version - version / 100 * 100");	
+
+    $globalData =   "\n\n#-------------------------------------------------------------------------------\n" + 
+                    "# DATA SECTION\n" + 
+                    "#-------------------------------------------------------------------------------\n" + 
+                    "\n\n#-------------------------------------------------------------------------------\n" + 
+                    "# Global Data\n\n" + 
+                    "appName = u\"" + `applicationName` + "\"\n" + 
+                    "appVersionStr = u\"" + `about -version` + "\"\n" +
+                    "appMajorVersion = int(" + $majorVersion + ")\n" +
+                    "appMinorVersion = int(" + $minorVersion + ")\n" +
+                    "precompModuleMajorVersion = int(1)\n" + 
+                    "precompModuleMinorVersion = int(0)\n" +
+                    "destinationFolder = u\"\"\n";
+    fprint $fileId $globalData;
+
+    string $sceneBaseName = getSceneBaseName();
+
+    string $precompAnchor = "";
+    string $precompNotes = "";
+    if(`objExists $gPrecompExportManager`) {
+        $precompAnchor = `getAttr ($gPrecompExportManager + ".preCompositingAnchor")`;
+        $precompNotes = `getAttr ($gPrecompExportManager + ".preCompositingNotes")`;
+    }
+    if("" == $precompAnchor){
+        $precompAnchor = $sceneBaseName;
+    }
+
+    string $defaultWidthPlug = getOverrideAttrValuePlug("defaultRenderLayer", "defaultResolution.width");
+    string $defaultHeightPlug = getOverrideAttrValuePlug("defaultRenderLayer", "defaultResolution.height");
+    string $defaultPixelRatioPlug = getOverrideAttrValuePlug("defaultRenderLayer", "defaultResolution.pixelAspect");
+
+    string $timeUnits = `currentUnit -q -time`;
+    float $rate;
+    switch($timeUnits) {
+        case "hour":
+            $rate = 0.00028;
+            break;
+        case "min":
+            $rate = 0.017;
+            break;
+        case "sec":
+            $rate = 1.0;
+            break;
+        case "millisec":
+            $rate = 1000.0;
+            break;
+        case "game":
+            $rate = 15.0;
+            break;
+        case "film":
+            $rate = 24.0;
+            break;
+        case "pal":
+            $rate = 25.0;
+            break;
+        case "ntsc":
+            $rate = 30.0;
+            break;
+        case "show":
+            $rate = 48.0;
+            break;
+        case "palf":
+            $rate = 50.0;
+            break;
+        case "ntscf":
+            $rate = 60.0;
+            break;
+        default:
+            if(`gmatch $timeUnits "[0-9]*fps"`)
+                $rate = `match "[0-9]+" $timeUnits`;
+            else
+                $rate = 24.0;
+    }
+    string $imgDir = `workspace -q -fre "images"`;
+    string $imgDirFullPath = `workspace -expandName $imgDir`;
+    if($imgDir != "")
+        $imgDirFullPath = $imgDirFullPath + "/";
+
+    $sceneData =    "\n\n#-------------------------------------------------------------------------------\n" + 
+                    "# Scene\n\n" + 
+                    "scene = Scene()\n" + 
+                    "scene.name = u\"" + $sceneBaseName + "\"\n" +
+                    "scene.version = int(1)\n" +
+                    "scene.description = u\"\"\n" + 
+                    "scene.anchor = u\"" + $precompAnchor + "\"\n" + 
+                    "scene.note = u'''" + $precompNotes + "'''\n" + 
+                    "scene.renderWidth = int(" + `getAttr $defaultWidthPlug` + ")\n" +
+                    "scene.renderHeight = int(" + `getAttr $defaultHeightPlug` + ")\n" +
+                    "scene.renderPixelRatio = float(" + `getAttr $defaultPixelRatioPlug` + ")\n" +
+                    "scene.rate = float(" + $rate + ")\n" + 
+                    "scene.renderDirectory = u\"" + $imgDirFullPath + "\"\n" +
+                    "scene.renderCameras = [";
+
+    checkToxikImageNameCompatibility();
+
+    $cameraData =   "\n\n#-------------------------------------------------------------------------------\n" + 
+                    "# Cameras\n\n";
+    $layerData  =   "\n\n#-------------------------------------------------------------------------------\n" + 
+                    "# Render Layers\n\n";
+    $passData   =   "\n\n#-------------------------------------------------------------------------------\n" + 
+                    "# Render Passes\n\n";
+    fprint $fileId $passData;
+    
+    string $renderLayers[] = {};
+    string $cameras[] = {};
+    string $renderPasses[] = {};
+    setupPrecompExportTreeViewDataLayerCameraPass($renderLayers, $cameras, $renderPasses);
+    if((size($renderLayers) != size($cameras)) || 
+        (size($cameras) != size($renderPasses)))
+        return;
+
+    int $num = size($renderLayers);
+    int $i;
+
+    string $allItems[] = {};
+    for($i = 0; $i < $num; $i++) {
+        $allItems[$i] = $cameras[$i] + "%" + $renderLayers[$i] + "%" + $renderPasses[$i];
+    }
+
+    $allItems = `sort $allItems`;
+
+    string $layersInCamera[] = {};
+    string $passesInLayer[] = {};
+    string $currentCamera = "";
+    string $currentLayer = "";
+    string $currentCameraName = "";
+    string $currentLayerName = "";
+
+    int $cameraSelectedForImport = 0;
+    int $layerSelectedForImport = 0;
+    
+    //camera rigs which has renderable camera pair.
+    string $rigsHasRenderableCamPairList[]={};
+    // queried renderable camera pair in the scene
+    string $renderableCameraPairList[]={};
+
+    // the following variables are used for saving values in the previous cycle.  
+    // Because getOverrideAttrValuePlug is expensive, we try to reduce the number it is invoked.
+    // This will increase by 100% performance when there is a lot of render pass. See bug 303925
+    string $preLayer = "";
+    int   $defaultRGIsAnimated;
+    float $defaultRGStartFrame;
+    float $defaultRGEndFrame ;
+    float $defaultRGByFrameStep ;
+    float $defaultRGModifyExtension;
+    float $defaultRGStartExtension;
+    float $defaultRGByExtension;
+
+    int $defaultRGIsAnimated;
+    int $defaultRGFrameIndexPadding;
+    int $defaultRGImageFormat;
+    string $defaultRGImfPluginKey;
+    int $defaultRGWidth;
+    int $defaultRGHeight;
+    float $defaultRGPixelRatio;
+    int $defaultRGPremultiply;
+
+    for($item in $allItems) {
+
+        string $itemArray[] = {};
+        tokenize($item, "%", $itemArray);
+
+        string $camera = $itemArray[0];
+        string $renderLayer = $itemArray[1];
+        string $renderPass = $itemArray[2];
+        string $cameraTrans[] = `listRelatives -path -parent $camera`;
+        string $validCameraName = substituteAllString($cameraTrans[0], ":", "_");
+        $validCameraName = substituteAllString($validCameraName, "|", "_");
+
+        int $isMasterBeauty = ($renderPass == "MasterBeauty" ? 1 : 0);
+
+        int $selectedForImport = 1;
+        if(!$isExportAll) {
+            string $precompExcludeCameraPlugs[] = `listConnections -p 1 -t "precompExport" ($camera + ".message")`;
+            if($isMasterBeauty) {
+                for($cameraPlug in $precompExcludeCameraPlugs) {
+                    if(`plugNode $cameraPlug` != $gPrecompExportManager)
+                        continue;
+                    string $layerPlug = `substitute "camera" $cameraPlug "layer"`;
+					string $passPlug = `substitute "camera" $cameraPlug "pass"`;
+					string $connectedPasses[] = `listConnections -t "renderPass" $passPlug`;
+                    if(`isConnected ($renderLayer + ".message") $layerPlug` &&
+						size($connectedPasses) == 0) {
+                       $selectedForImport = 0;
+                       break;
+                    }
+                }
+            }
+            else {
+                for($cameraPlug in $precompExcludeCameraPlugs) {
+                    if(`plugNode $cameraPlug` != $gPrecompExportManager)
+                        continue;
+                    string $layerPlug = `substitute "camera" $cameraPlug "layer"`;
+                    string $passPlug = `substitute "camera" $cameraPlug "pass"`;
+                    if(`isConnected ($renderLayer + ".message") $layerPlug` &&
+                        `isConnected ($renderPass + ".message") $passPlug`) {
+                       $selectedForImport = 0;
+                       break;
+                    }
+                }
+            }
+        }
+
+        //get overrided attribute's values
+        int $isAnimated;
+        int $frameIndexPadding;
+        int $imageFormat;
+        string $imfPluginKey;
+        int $width;
+        int $height;
+        float $pixelRatio;
+        int $numChannels;
+        int $frameBufferType;
+        int $premultiply;
+        if($preLayer != $renderLayer){
+            string $isAnimatedPlug = getOverrideAttrValuePlug($renderLayer, "defaultRenderGlobals.animation");
+            $isAnimated = `getAttr $isAnimatedPlug`;
+            
+            string $frameIndexPaddingPlug = getOverrideAttrValuePlug($renderLayer, "defaultRenderGlobals.extensionPadding");
+            $frameIndexPadding = `getAttr $frameIndexPaddingPlug`;
+
+            string $imageFormatPlug = getOverrideAttrValuePlug($renderLayer, "defaultRenderGlobals.imageFormat");
+            $imageFormat = `getAttr $imageFormatPlug`;
+
+            string $imfPluginKeyPlug = getOverrideAttrValuePlug($renderLayer, "defaultRenderGlobals.imfPluginKey");
+            $imfPluginKey = `getAttr $imfPluginKeyPlug`;
+
+            string $widthPlug = getOverrideAttrValuePlug($renderLayer, "defaultResolution.width");
+            $width = `getAttr $widthPlug`;
+
+            string $heightPlug = getOverrideAttrValuePlug($renderLayer, "defaultResolution.height");
+            $height = `getAttr $heightPlug`;
+
+            string $pixelRatioPlug = getOverrideAttrValuePlug($renderLayer, "defaultResolution.pixelAspect");
+            $pixelRatio = `getAttr $pixelRatioPlug`;
+
+            // if mental ray is present, get the premultiply value from it, otherwise use the default
+            if (`pluginInfo -q -loaded Mayatomr.so`){
+                string $premultiplyPlug = getOverrideAttrValuePlug($renderLayer, "miDefaultFramebuffer.premultiply");
+                $premultiply = `getAttr $premultiplyPlug`;
+            }
+            else{
+                $premultiply = $defaultRGPremultiply;
+            }
+
+            $defaultRGIsAnimated = $isAnimated;
+            $defaultRGFrameIndexPadding = $frameIndexPadding;
+            $defaultRGImageFormat = $imageFormat;
+            $defaultRGImfPluginKey = $imfPluginKey;
+            $defaultRGWidth = $width;
+            $defaultRGHeight = $height;
+            $defaultRGPixelRatio = $pixelRatio;
+            $defaultRGPremultiply = $premultiply;
+        }
+        else{
+            $isAnimated = $defaultRGIsAnimated;
+            $frameIndexPadding = $defaultRGFrameIndexPadding;
+            $imageFormat = $defaultRGImageFormat;
+            $imfPluginKey = $defaultRGImfPluginKey;
+            $width = $defaultRGWidth;
+            $height = $defaultRGHeight;
+            $pixelRatio = $defaultRGPixelRatio;
+            $premultiply = $defaultRGPremultiply;
+        }
+
+        //camera
+
+        if($currentCamera != $camera) {
+            if($currentCamera != "") {
+                $cameraData =   $cameraData +
+                                $currentCameraName + ".selectedForImport = bool(" + $cameraSelectedForImport + ")\n" + 
+                                $currentCameraName + ".renderLayers = [";
+                $cameraSelectedForImport = 0;
+                if(size($layersInCamera) != 0) {
+                    for($layerInCamera in $layersInCamera)
+                        $cameraData = $cameraData + $layerInCamera + ", ";
+                    int $size = size($cameraData);
+                    $cameraData = `substring $cameraData 1 ($size - 2)` + "]\n\n";
+                    clear $layersInCamera;
+                }
+                else {
+                    $cameraData = $cameraData + "]\n\n";
+                }
+            }
+
+            string $cameraName = $validCameraName + "Camera";
+            string $cameraNotes = "";
+            if(`attributeExists "notes" $camera`){
+                $cameraNotes = `getAttr ($camera + ".notes")`;
+            }
+            $cameraData =   $cameraData +
+                            $cameraName + " = RenderCamera()\n" +
+                            $cameraName + ".name = u\"" + $cameraTrans[0] + "\"\n" + 
+                            $cameraName + ".anchor = u\"" + $cameraTrans[0] + "\"\n" +
+                            $cameraName + ".version = int(1)\n" + 
+                            $cameraName + ".description = u\"\"\n" + 
+                            $cameraName + ".note = u'''" + $cameraNotes + "'''\n" +
+                            $cameraName + ".templateFilePath = u\"" + `getAttr ($camera + ".cameraPrecompTemplate")` +"\"\n";
+
+
+            //Cameras appending to scene data starts from here
+            python("from maya.app.stereo import stereoCameraRig");
+            //Try to get the camera rig
+            string $stereoRigName = python( "stereoCameraRig.rigRoot('" + $camera + "')" );
+            if( $stereoRigName == "" )
+            {
+                //If it is a Mono Camera, append it to the sceneData directly.
+                $sceneData =    $sceneData + $cameraName + ", ";
+            }
+            else
+            {
+                //camera rig 
+
+                //Get left camera
+                string $leftCamera = python( "stereoCameraRig.leftCam('" + $stereoRigName + "')" );
+                //Get right camera
+                string $rightCamera = python( "stereoCameraRig.rightCam('" + $stereoRigName + "')" );
+                if ( ($leftCamera == "") || ($rightCamera == "") )
+                {
+                    //no camera pair ,treat it as a mono camera
+                    $sceneData =    $sceneData + $cameraName + ", ";
+                }
+                else
+                {
+                    //Get left camera shapes
+                    string $leftCameraShapes[] = `listRelatives -children -shapes -path -type "camera" $leftCamera`;
+                    //Get right camera shapes
+                    string $rightCameraShapes[] = `listRelatives -children -shapes -path -type "camera" $rightCamera`;
+
+                    if ( ( `size( $leftCameraShapes )` == 0 ) || ( `size( $rightCameraShapes )` == 0 ) )
+                    {
+                        //no camera pair ,treat it as a mono camera
+                        $sceneData =    $sceneData + $cameraName + ", ";
+                    }
+                    else
+                    {
+                        //rig with both left and right camera shape
+                        string $leftCamShape = $leftCameraShapes[0];
+                        string $rightCamShape = $rightCameraShapes[0];
+                        if ( ( $camera != $leftCamShape ) && ( $camera != $rightCamShape ))
+                        {
+                            //it is not a current left/right camera, treat it as a mono camera
+                            $sceneData =    $sceneData + $cameraName + ", ";
+                        }
+                        else
+                        {
+                            //it is a current left/right camera
+                            if( (`getAttr ($leftCamShape + ".renderable")`) && (`getAttr ($rightCamShape + ".renderable")`))
+                            {
+                                //Renderable camera pair deteced
+                                if( !stringArrayContains( $stereoRigName, $rigsHasRenderableCamPairList) )
+                                {
+                                    $rigsHasRenderableCamPairList[ `size( $rigsHasRenderableCamPairList )` ] = $stereoRigName;
+                                    $renderableCameraPairList[ `size( $renderableCameraPairList )` ] = $leftCamShape + "%" + $rightCamShape ;
+                                }
+                            }
+                            else
+                            {
+                                //Only one of the current left/right is renderable,
+                                //Treat it as a mono camera.
+                                $sceneData =    $sceneData + $cameraName + ", ";
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        //render layer
+
+        if($currentLayer != $renderLayer || $currentCamera != $camera) {
+            if($currentLayer != "") {
+                $layerData =    $layerData +
+                                $currentLayerName + ".selectedForImport = bool(" + $layerSelectedForImport + ")\n" +
+                                $currentLayerName + ".renderPasses = [";
+                $layerSelectedForImport = 0;
+                if(size($passesInLayer) != 0){
+                    for($passInLayer in $passesInLayer)
+                        $layerData = $layerData + $passInLayer + ", ";
+                    int $size = size($layerData);
+                    $layerData = `substring $layerData 1 ($size - 2)` + "]\n\n";
+                    clear $passesInLayer;
+                }
+                else {
+                    $layerData = $layerData + "]\n\n";
+                }
+            }
+
+            string $layerName = `substitute ":" $renderLayer "_"` + capitalizeString($validCameraName);
+            string $layerNotes = "";
+            if(`attributeExists "notes" $renderLayer`){
+                $layerNotes = `getAttr ($renderLayer + ".notes")`;
+            }
+            int $psdBlendMode = `getAttr ($renderLayer + ".psdBlendMode")`;
+            string $blendMode;
+            switch($psdBlendMode) {
+                case 0:
+                case 1:
+                    $blendMode = "Normal";
+                    break;
+                case 3:
+                    $blendMode = "Darken";
+                    break;
+                case 4:
+                    $blendMode = "Multiply";
+                    break;
+                case 7:
+                    $blendMode = "Lighten";
+                    break;
+                case 8:
+                    $blendMode = "Screen";
+                    break;
+                case 11:
+                    $blendMode = "Overlay";
+                    break;
+                default:
+                    $blendMode = "Normal";
+            }
+            int $widthForLayer;
+            int $heightForLayer;
+            float $pixelRatioForLayer;
+            if($renderLayer == "defaultRenderLayer") {
+                $widthForLayer = `getAttr $defaultWidthPlug`;
+                $heightForLayer = `getAttr $defaultHeightPlug`;
+                $pixelRatioForLayer = `getAttr $defaultPixelRatioPlug`;
+            }
+            else {
+                $widthForLayer = $width;
+                $heightForLayer = $height;
+                $pixelRatioForLayer = $pixelRatio;
+            }
+            $layerData =    $layerData +
+                            $layerName + " = RenderLayer()\n" +
+                            $layerName + ".name = u\"" + $renderLayer + "\"\n" + 
+                            $layerName + ".anchor = u\"" + $renderLayer + "\"\n" +
+                            $layerName + ".version = int(1)\n" +
+                            $layerName + ".description = u\"\"\n" +
+                            $layerName + ".note = u'''" + $layerNotes + "'''\n" +
+                            $layerName + ".compositingOrder = int(" + 
+                                            `getAttr ($renderLayer + ".displayOrder")` + ")\n" +
+                            $layerName + ".blendMode = RenderLayer.BlendMode." + $blendMode + "\n" + 
+                            $layerName + ".renderWidth = int(" + $widthForLayer + ")\n" + 
+                            $layerName + ".renderHeight = int(" + $heightForLayer + ")\n" + 
+                            $layerName + ".renderPixelRatio = float(" + 
+                                            $pixelRatioForLayer + ")\n" +  
+                            $layerName + ".templateFilePath = u\"" + 
+                                            `getAttr ($renderLayer + ".precompTemplate")` + "\"\n";
+            $layersInCamera[size($layersInCamera)] = $layerName;
+
+        }
+
+        //render pass
+        string $passName = `substitute ":" $renderPass "_"` + capitalizeString(`substitute ":" $renderLayer "_"`) + 
+                                capitalizeString($validCameraName);
+        string $passID = "";
+		string $passGroupName = "";
+        string $passNotes = "";
+        string $channelViewName = "";
+        int $numChannels;
+        int $renderDepth;
+        if($isMasterBeauty) {
+			$passID = "BEAUTY";
+			$passGroupName = "Beauties";
+            $numChannels = 4;
+            $renderDepth = 16;
+        }
+        else {
+            string $passIDPlug = getOverrideAttrValuePlug($renderLayer, ($renderPass + ".passID"));
+            $passID = `getAttr $passIDPlug`;
+			string $passGroupNamePlug = getOverrideAttrValuePlug($renderLayer, ($renderPass + ".passGroupName"));
+			$passGroupName = `getAttr $passGroupNamePlug`;
+            if(`attributeExists "notes" $renderPass`){
+                string $passNotesPlug = getOverrideAttrValuePlug($renderLayer, ($renderPass + ".notes"));
+                $passNotes = `getAttr $passNotesPlug`;
+            }
+            string $numChannelsPlug = getOverrideAttrValuePlug($renderLayer, ($renderPass + ".numChannels"));
+            $numChannels = `getAttr $numChannelsPlug`;
+            string $frameBufferTypePlug = getOverrideAttrValuePlug($renderLayer, ($renderPass + ".frameBufferType"));
+            int $frameBufferType = `getAttr $frameBufferTypePlug`;
+            switch($frameBufferType) {
+                case 0x1:
+                case 0x10:
+                case 0x800:
+                    $renderDepth = 8;
+                    break;
+                case 0x2:
+                case 0x20:
+                case 0x100:
+                    $renderDepth = 16;
+                    break;
+                case 0x4:
+                case 0x8:
+                case 0x40:
+                case 0x80:
+                case 0x200:
+                case 0x400:
+                    $renderDepth = 32;
+                    break;
+                default:
+                    $renderDepth = 16;
+            }
+            $channelViewName = `frameBufferName -renderPass $renderPass -camera $cameraTrans[0] -renderLayer $renderLayer -autoTruncate`;
+        }
+        string $renderPassCustomToken = "RenderPass=" + `substitute ":" $renderPass "_"` + 
+                                        " RenderPassType=" + $passID + 
+                                        " RenderPassFileGroup=" + $passGroupName;
+        string $relativeImageName[] = `renderSettings -gin "<#>" -layer $renderLayer 
+                                    -camera $cameraTrans[0] -lut -cts $renderPassCustomToken`;
+        string $fileSequencePath = $imgDirFullPath + $relativeImageName[0];
+
+        int $startFrame;
+        int $endFrame;
+        if($isAnimated) {
+                float $frameStart;
+                float $frameEnd;
+                float $frameBy;
+                int $renumberFrames;
+                float $renumberStart;
+                float $renumberBy;
+
+                if($preLayer != $renderLayer){
+                    string $frameStartPlug = getOverrideAttrValuePlug($renderLayer, "defaultRenderGlobals.startFrame");
+                    string $frameEndPlug = getOverrideAttrValuePlug($renderLayer, "defaultRenderGlobals.endFrame");
+                    string $frameByPlug = getOverrideAttrValuePlug($renderLayer, "defaultRenderGlobals.byFrameStep");
+                    string $renumberFramesPlug = getOverrideAttrValuePlug($renderLayer, "defaultRenderGlobals.modifyExtension");
+                    string $renumberStartPlug = getOverrideAttrValuePlug($renderLayer, "defaultRenderGlobals.startExtension");
+                    string $renumberByPlug = getOverrideAttrValuePlug($renderLayer, "defaultRenderGlobals.byExtension");
+
+                    $frameStart = `getAttr $frameStartPlug`;
+                    $frameEnd = `getAttr $frameEndPlug`;
+                    $frameBy = `getAttr $frameByPlug`;
+                    $renumberFrames = `getAttr $renumberFramesPlug`;
+                    $renumberStart = `getAttr $renumberStartPlug`;
+                    $renumberBy = `getAttr $renumberByPlug`;
+
+                    $defaultRGStartFrame = $frameStart;
+                    $defaultRGEndFrame = $frameEnd;
+                    $defaultRGByFrameStep = $frameBy;
+                    $defaultRGModifyExtension = $renumberFrames;
+                    $defaultRGStartExtension = $renumberStart;
+                    $defaultRGByExtension = $renumberBy;
+                }
+                else{
+                    $frameStart = $defaultRGStartFrame;
+                    $frameEnd = $defaultRGEndFrame;
+                    $frameBy = $defaultRGByFrameStep;
+                    $renumberFrames = $defaultRGModifyExtension;
+                    $renumberStart = $defaultRGStartExtension;
+                    $renumberBy = $defaultRGByExtension;
+                }
+            if($renumberFrames) {
+                $startFrame = round($renumberStart);
+                $endFrame = round(($frameEnd - $frameStart) * $renumberBy / $frameBy + $renumberStart);
+            }
+            else {
+                $startFrame = round($frameStart);
+                $endFrame = round($frameEnd);
+            }
+        }
+        else {
+            $startFrame = 1;
+            $endFrame = 1;
+        }
+
+        int $multiChannel;
+        if(51 == $imageFormat && $imfPluginKey == "exr")
+            $multiChannel = 1;
+        else
+            $multiChannel = 0;
+
+        int $passSemantics[] = `renderPassRegistry -passID $passID -supportedPassSemantics`;
+        int $isColor = 0;
+        for($passSemantic in $passSemantics) {
+            if ($passSemantic == 1) {
+                $isColor = 1;
+                break;
+            }
+        }
+
+        int $isPremultiplied = $premultiply && $isColor;
+
+        string $backgroundColorPlug = getOverrideAttrValuePlug($renderLayer, ($camera + ".backgroundColor"));
+        string $imagePlanes[] = `listConnections -t "imagePlane" ($camera + ".imagePlane")`;
+        float $premultiplyBgColor[] = {};
+        if(size($imagePlanes) == 0)
+            $premultiplyBgColor = `getAttr $backgroundColorPlug`;
+        else
+            $premultiplyBgColor = {0.0, 0.0, 0.0};
+
+        string $anchorName = $passID + ":" + $renderPass;
+
+        $passData =     $passName + " = RenderPass()\n" + 
+                        $passName + ".name = u\"" + $renderPass + "\"\n" +
+                        $passName + ".anchor = u\"" + $anchorName + "\"\n" +
+                        $passName + ".channelViewName = u\"" + $channelViewName + "\"\n" +
+                        $passName + ".version = int(1)\n" + 
+                        $passName + ".description = u\"\"\n" +
+                        $passName + ".note = u'''" + $passNotes + "'''\n" +
+                        $passName + ".fileSequencePath = u\"" + $fileSequencePath + "\"\n" +
+                        $passName + ".singleFrame = bool(" + ($isAnimated == 0) + ")\n" + 
+                        $passName + ".frameRange = (int(" + $startFrame + "),int(" + $endFrame + "))\n" + 
+                        $passName + ".frameIndexPadding = int(" + $frameIndexPadding  + ")\n" + 
+                        $passName + ".multiChannel = bool(" + $multiChannel + ")\n" +
+                        $passName + ".renderWidth = int(" + $width + ")\n" +
+                        $passName + ".renderHeight = int(" + $height + ")\n" + 
+                        $passName + ".renderPixelRatio = float(" + $pixelRatio + ")\n" +
+                        $passName + ".renderNbChannels = int(" + $numChannels + ")\n" +
+                        $passName + ".renderDepth = int(" + $renderDepth + ")\n" +
+                        $passName + ".premultiplied = bool(" + $isPremultiplied + ")\n" +
+                        $passName + ".premultiplyBgColor = (float(" + $premultiplyBgColor[0] + "), float(" + 
+                                    $premultiplyBgColor[1] + "), float(" + $premultiplyBgColor[2] + "))\n" +
+                        $passName + ".selectedForImport = bool(" + $selectedForImport + ")\n\n";
+        fprint $fileId $passData;
+        $passesInLayer[size($passesInLayer)] = $passName;
+        if($selectedForImport) {
+            $cameraSelectedForImport = 1;
+            $layerSelectedForImport = 1;
+        }
+
+        $currentCamera = $camera;
+        $currentCameraName = $validCameraName + "Camera";
+        $currentLayer = $renderLayer;
+        $currentLayerName = `substitute ":" $currentLayer "_"` + capitalizeString($validCameraName);
+
+        $preLayer = $renderLayer;
+    }
+
+    //append renderable camera pair to scene data
+    int $cameraPairNum = `size( $renderableCameraPairList )` ;
+    for($i = 0; $i< $cameraPairNum ; $i++)
+    {   
+        string $unpackedPair[] = {};
+        tokenize( $renderableCameraPairList[$i] , "%", $unpackedPair);
+        if( `size( $unpackedPair )` != 2 )
+            continue;
+
+        string $leftCamTrans[] = `listRelatives -path -parent $unpackedPair[0]`;
+        string $validLeftCamName = substituteAllString($leftCamTrans[0], ":", "_");
+        $validLeftCamName = substituteAllString($validLeftCamName, "|", "_") + "Camera";
+
+        string $rightCamTrans[] = `listRelatives -path -parent $unpackedPair[1]`;
+        string $validRightCamName = substituteAllString($rightCamTrans[0], ":", "_");
+        $validRightCamName = substituteAllString($validRightCamName, "|", "_") + "Camera";
+
+        $sceneData = $sceneData + "(" + $validLeftCamName + ", " + $validRightCamName + "), ";
+    }
+
+    int $size = size( $sceneData );
+    if( `substring $sceneData $size $size` == "[" )
+    {
+        //No renderbale camera at all
+        $sceneData = $sceneData + "]";
+    }
+    else
+    {
+        $sceneData = `substring $sceneData 1 ($size - 2)` + "]\n\n";
+    }
+
+
+
+
+    if($currentCamera != "") {
+        $cameraData =   $cameraData +
+                        $currentCameraName + ".selectedForImport = bool(" + $cameraSelectedForImport + ")\n" + 
+                        $currentCameraName + ".renderLayers = [";
+        if(size($layersInCamera) != 0) {
+            for($layerInCamera in $layersInCamera)
+                $cameraData = $cameraData + $layerInCamera + ", ";
+            $size = size($cameraData);
+            $cameraData = `substring $cameraData 1 ($size - 2)` + "]\n\n";
+            clear $layersInCamera;
+        }
+        else
+            $cameraData = $cameraData + "]\n\n";
+    }
+
+
+    if($currentLayer != "") {
+        $layerData =    $layerData +
+                        $currentLayerName + ".selectedForImport = bool(" + $layerSelectedForImport + ")\n" +
+                        $currentLayerName + ".renderPasses = [";
+        if(size($passesInLayer) != 0) {
+            for($passInLayer in $passesInLayer)
+                $layerData = $layerData + $passInLayer + ", ";
+            $size = size($layerData);
+            $layerData = `substring $layerData 1 ($size - 2)` + "]\n\n";
+            clear $passesInLayer;
+        }
+        else
+            $layerData = $layerData + "]\n\n";
+    }
+
+    fprint $fileId $layerData;
+    fprint $fileId $cameraData;
+    fprint $fileId $sceneData;
+
+    fclose $fileId;
+    return;
+}

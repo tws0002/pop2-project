@@ -1,0 +1,242 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  06.Dec.2001
+//
+//<doc>
+//<name renameSelectionList>
+//
+//<synopsis>
+//		renameSelectionList(string $newName)
+//
+//<returns>
+//		int : The number of renamed objects. May be 0 if all the
+//			objects on the selection list are read-only. A negative
+//			number is returned for errors. -1 is returned when the
+//			selection list is empty. -2 is returned if the argument
+//			is an empty string or invalid name.
+//
+//<description>
+//		Renames all the writable objects on the selection list using
+//		the string argument as the base name. For multiple selected 
+//		objects an incremented value will be appended to the argument
+//		name.
+//		<p>
+//		Note this procedure does not work if any of the items in
+//		the selection list have the same child name. For example,
+//		group1|child and group2|child both have the same child name.
+//		Attempting to use this procedure with those items in the 
+//		selection list will generate an error stating more than 
+//		one object matches the child name.
+//
+//<flags>
+//		string $newName Name for the objects in the selection list.
+//			Must not be an empty string. Valid names begin with a 
+//			letter or underscore, followed by letters, digits or 
+//			underscores.
+//
+//<examples>
+//	//	Create a few objects. Select one and rename it.
+//	//
+//	$cone1 = `cone`;
+//	$cone2 = `cone`;
+//	$cone3 = `cone`;
+//	select $cone1;
+//	renameSelectionList("Cone");
+//
+//	//	Add the other objects to the selection list and rename
+//	//	them all.
+//	//
+//	select -add $cone2;
+//	select -add $cone3;
+//	renameSelectionList("Object");
+//
+//</doc>
+
+global proc int renameSelectionList(string $newName)
+{
+	string $renameCommand, $selectionArray[];
+	string $name, $tokenBuffer[], $regExpr;
+	string $matchResult, $newNameForHierarchy;
+	int    $tokenCount, $numberOfSelectedObjects;
+	int    $result = 0, $end;
+
+	//	Validate the new name.
+	//
+	//	Don't print an error or warning here, allow the calling proc
+	//	to print the appropriate message. Hopefully, it will be 
+	//	specific enough to inform the user not only what went wrong 
+	//	but also how to correct the problem.
+	//
+	if ("" == $newName) {
+		return -2;
+	} else {
+		$newName = strip($newName);
+		$regExpr = "([a-zA-Z_]+)([[a-zA-Z0-9_])*";
+		string $temp = match($regExpr, $newName);
+		if ($temp != $newName) {
+			return -2;
+		}
+	}
+
+	//	Get the current selection and determine the number of 
+	//	selected objects.
+	//
+	//	Note the returned array will contain the full path name of 
+	//	the objects. They will look something like:
+	//
+	//	|object1
+	//	|object2
+	//	|parentObject|childObject
+	//
+	//	If there are no selected objects. Don't print an error or 
+	//	warning here, allow the calling proc to print the appropriate 
+	//	message. Hopefully, it will be specific enough to inform the
+	//	user not only what went wrong but also how to correct 
+	//	the problem.
+	//
+	$selectionArray = `ls -long -selection`;
+	$numberOfSelectedObjects = size($selectionArray);
+	if (0 == $numberOfSelectedObjects) {
+		return -1;
+	}
+
+	//	Note: The user is not allowed to rename read-only or
+	//	referenced objects. However, there is no need to check for
+	//	that because the rename command will generate the 
+	//	appropriate error.
+
+	//	We don't want the renaming of mulitple objects to fail 
+	//	upon encountering one that may be a read-only object.
+	//	The error should be generated (and is by the rename
+	//	command) but we should also	continue with renaming the 
+	//	other writable objects in the selection list.
+	//
+	//	To do this we need to invoke some scripting magic
+	//	via the eval and catch commands.
+
+	//	Also note that objects in a hierarchy need to be handled
+	//	differently. For example, If you create a 3 joint chain you
+	//	get the following:
+	//
+	//	|joint1
+	//	|joint1|joint2
+	//	|joint1|joint2|joint3
+	//
+	//	If you were to rename them with "bone" you'd get:
+	//
+	//	|bone
+	//	|bone|bone
+	//	|bone|bone|bone
+	//
+	//	Not what the user expects. To get the objects in a hierarchy
+	//	to increment append the # character to them. It is not 
+	//	necessary to add the # for objects not in a hierarchy because
+	//	the rename command will automatically apply the next available
+	//	numerical suffix.
+
+	//	Also need to check for the case where the user ended the
+	//	new name with digits. For non-hierarchical objects rename
+	//	will work as expected. However, for hierarchical objects
+	//	rename will append a digit to the name and then simply
+	//	use that name for all the objects (similar to the problem
+	//	described above). For example if you used the name "bone10"
+	//	instead of just "bone" in the example above then the rename
+	//	command would append a "1" and name all the objects "bone101",
+	//	as in:
+	//
+	//	|bone101
+	//	|bone101|bone101
+	//	|bone101|bone101|bone101
+	//
+	//	For hierarchical objects append an underscore. The result 
+	//	would then be:
+	//
+	//	|bone10_1
+	//	|bone10_1|bone10_2
+	//	|bone10_1|bone10_2|bone10_3
+
+	//	Test if the name ends in digits. The result of the match
+	//	command will be a string of the trailing digits. If the
+	//	name was "Blah123" the result would be "123".
+	//
+	$newNameForHierarchy = $newName;
+
+	$regExpr = "[0-9]*$";
+
+	$matchResult = `match $regExpr $newNameForHierarchy`;
+	if ("" != $matchResult) {
+		//
+		//	Append an underscore...
+		//
+		$newNameForHierarchy = $newName + "_";
+	}
+
+	//	And finally, get to the naming of all the selected objects...
+	//
+	for ($index = 0; $index < $numberOfSelectedObjects; $index++) {
+
+		//	Tokenize the object name by the | character to determine
+		//	which objects are part of a hierarcy.
+		//
+		$tokenCount = `tokenize $selectionArray[$index] "|" $tokenBuffer`;
+
+		//	The short name of the object is the last item in the array
+		//	returned by the tokenize command.
+		//
+		$name = $tokenBuffer[$tokenCount - 1];
+
+		if (1 < $tokenCount) {
+			//
+			//	Hierarchy object. Include the # character to increment
+			//	the name.
+			//
+			$renameCommand = ("rename " + $selectionArray[$index] + " \"" + $newNameForHierarchy + "#\"");
+
+		} else {
+			$renameCommand = ("rename " + $name + " \"" + $newName + "\"");
+		}
+
+		//	Finally, invoke the rename command and capture the 
+		//	result (commented out because it's currently not required).
+		//
+		//	Note the name actually applied to the object may be modified
+		//	by the rename command. For example, in cases where an
+		//	object with the desired name already exists the 
+		//	rename command will append a numerical suffix.
+		//
+		//	The catch command will ensure that errors produced by 
+		//	the rename command will not stop execution of this procedure.
+		//	The catch (error) command returns true if an error ocurred.
+		//
+		if (0 == catch(/*$name = */eval($renameCommand))) {
+			$result++;
+			// rebuild the selection list - if the name of a node in the
+			// upper realms of the hierarchy changes, it can prevent nodes
+			// lower in the hierarchy from being renamed
+			$selectionArray = `ls -long -selection`;
+		}
+	}
+
+	return $result;
+}

@@ -1,0 +1,159 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+global proc float ikFkBlendValue(string $selectionList[])
+//
+//	Description:
+//		Returns the float value of the solver blend value of the
+//		selected joint chains or ikHandles. If all the selected objects
+//      do not have the same blend value, returns -1.	
+//
+{
+	float $blendValue = -1.0;
+
+	int $nOtherHandles = 0;
+	string $otherHandles[];
+	int $nOtherJoints = 0;
+	string $otherJoints[];
+
+	string $xforms[] = `ls -type transform $selectionList`;
+	int $nXforms = size($xforms);
+	if (0 == $nXforms) {
+		return $blendValue;
+	}
+
+	string $ikRelated[] = `ls -type joint -type ikHandle $selectionList`;
+	int $nIKRelated = size($ikRelated);
+
+	if ($nIKRelated != $nXforms) {
+    	string $xform;
+
+		for ($xform in $xforms) {
+			string $attrName;
+			if (size(`ls ($xform+".solverEnable")`)) {
+				$attrName = ($xform+".solverEnable");
+			} else if (size(`ls ($xform+".ikBlend")`)) {
+				$attrName = ($xform+".ikBlend");
+			}
+			if (size($attrName)) {
+				string $cnx[] = `listConnections -d 0 $attrName`;
+
+				if (size($cnx) > 0 &&
+					!size(`ls -type joint $cnx[0]`)) {
+					if (size(`ls -type ikHandle $cnx[0]`) > 0) {
+						$otherHandles[$nOtherHandles++] = $cnx[0];
+					} else if (size(`ls -type joint $cnx[0]`) > 0) {
+						$otherJoints[$nOtherHandles++] = $cnx[0];
+					}
+				}
+			}
+		}
+	}
+
+	if ($nIKRelated == 0 && $nOtherHandles == 0 && $nOtherJoints == 0) {
+		return $blendValue;
+	}
+
+	int $hasResult = false;
+	int $mixed = false;
+
+    string $selectedHandles[] = `ls -type "ikHandle" $ikRelated`;
+	int $nHandles = size($selectedHandles);
+
+	//	Add the other handles that may be involved.
+	//
+	string $handle;
+
+	for ($handle in $otherHandles) {
+		$selectedHandles[$nHandles++] = $handle;
+	}
+
+    for ($handle in $selectedHandles) {
+        float $currBlend = `getAttr ($handle+".ikBlend")`;
+		
+		if (!$hasResult) {
+			$blendValue = $currBlend;
+			$hasResult = true;
+		} else {
+			if (abs($blendValue - $currBlend) > 0.001) {
+				$mixed = true;
+				break;
+			} 
+		}
+    }
+
+    if (!$mixed) {
+        //  Only look at the joints if it is necessary.
+        //
+        string $handles[] = `ls -type ikHandle`;
+    	string $jointList[] = `ls -type "joint" $ikRelated`;
+		int $jointIndex = size($jointList);
+		string $joint;
+		for ($joint in $otherJoints) {
+			$jointList[$jointIndex++] = $joint;
+		}
+
+        string $selected;
+        for ($selected in $jointList) {
+            string $h;
+            for ($h in $handles) {
+                string $joints[] = `ikHandle -q -jl $h`;
+
+                int $nJoints = size($joints);
+                $joints[$nJoints] = `ikHandle -q -sj $h`;
+
+                string $j;
+                for ($j in $joints) {
+                    if (size(`match $selected $j`) > 0 &&
+                        size(`match ($selected+"|") $j`) == 0) {
+						string $attrName = ($h+".ikBlend");
+						if (size(`ls ($h+".solverEnable")`)) {
+							$attrName = ($h+".solverEnable");
+						}
+                        float $currBlend = `getAttr $attrName`;
+						if (!$hasResult) {
+							$blendValue = $currBlend;
+							$hasResult = true;
+						} else {
+							if (abs($blendValue - $currBlend) > 0.001) {
+								$mixed = true;
+								break;
+							}
+						}
+                    }
+                }
+
+                if ($mixed) {
+                    break;
+                }
+            }
+            if ($mixed) {
+                break;
+            }
+        }
+    }
+
+	if ($mixed) {
+		$blendValue = -1.0;
+	}
+
+	return $blendValue;
+}

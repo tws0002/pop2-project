@@ -1,0 +1,214 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  November 12 2000
+//
+//  Procedure Name:
+//		incrementalSaveScene
+//
+//  Description:
+//      Called when the scene is saved and the File->"Incremental Save"
+//      menu item is checked "on".
+//    
+//      Performs a non-destructive save of the current scene by taking the
+//    	version of the scene that was last saved to disk and moving it to
+//    	a subdirectory for scene "increments". The subdirectory where 
+//    	increments are moved to will be created if it doesn't exist. 
+//    	Each scene has its own directory for increments.
+//    
+//    	If a past increment is opened and then saved with Incremental Save on,
+//    	then it will become the newest version of the scene, and the scene that
+//    	was previously newest (the one outside of the increments directory) 
+//    	will now become a past increment.
+//    
+//    	For example, if scenes\myScene.mb already exists, and is modified,
+//    	then saving incrementally will cause the existing file to be moved into
+//    	scenes\myScene.mb.backup\myScene.0001.mb, and then scenes\myScene.mb would be
+//    	saved with the newest changes. If myScene.mb was subsequently saved again,
+//      then the previous version would be moved to scenes\myScene.mb.backup\myScene.0002.mb
+//    
+//    	If myScene.0001.mb was then opened, modified, and saved, then
+//    	scenes\myScene.mb would be moved to scenes\myScene.mb.backup\myScene.0003.mb
+//    	and the current changes would be saved over scenes\myScene.mb.
+//    	This is a means of reverting back to a previous version of a scene, while keeping
+//    	the changes that were made in the mean time.
+//    
+//    	With this scheme, the latest increment of a scene will always be in the 
+//    	original scene file location (scenes\myScene.mb, for example).
+//
+//		NOTE: This procedure does not check for scene changes first; that is left
+//	          to the caller.
+//
+//  Input Arguments:
+//		None
+//
+//  Return Value:
+//		None.
+//
+global proc incrementalSaveScene() 
+{
+	string $pathInfo[] = incrementalSaveProcessPath();
+	string $scenePath = $pathInfo[0];
+	string $sceneName = $pathInfo[1];
+	string $sceneExtension = $pathInfo[2];
+	string $sceneNamePrefix = $pathInfo[3];
+	string $currVersionString = $pathInfo[4];
+	string $incrementDirName = $pathInfo[5];
+
+
+	string $sceneToMove = $sceneNamePrefix + $sceneExtension;
+	string $incrementDirPath = $scenePath + $incrementDirName;
+
+	// Make sure we have a directory to back-up our previous version into.
+	//
+	if(!`file -q -exists $incrementDirPath`)
+		sysFile -makeDir $incrementDirPath;
+
+	$incrementDirPath = $incrementDirPath + "/";
+
+	// Get the largest increment version for this scene from the increments directory.
+	// Iterate through all the file names that match our scene name, keeping track of 
+	// the highest increment value found.
+	//
+	string $existingIncrements[];
+	catch ( $existingIncrements = `getFileList 
+				-folder $incrementDirPath 
+				-filespec ($sceneNamePrefix + ".*" + $sceneExtension)` );
+
+	$fileVersion = 0;
+	int $thisVersion;
+	int $i;
+
+	for($i = 0; $i < size($existingIncrements); $i++) {
+
+		string $noExtension = `substring $existingIncrements[$i] 
+			1 (size($existingIncrements[$i]) - size($sceneExtension))`;
+
+		$thisVersion = `match "[0-9]+$" $noExtension`;
+
+		if($thisVersion > $fileVersion)
+			$fileVersion = $thisVersion;
+
+	}
+
+	string $newVersionString = $fileVersion + 1;
+
+	// Make the increment-number in the filename to be at least 4 digits in length.
+	// Doing so makes sure that alphabetical ordering sorts the first 9999 increments.
+	//
+	for($i = size($newVersionString); $i < 4; $i++)
+		$newVersionString = "0" + $newVersionString;
+
+	// Build the name of the new scene
+	//
+	string $newSceneName = $sceneNamePrefix + "." + $newVersionString + $sceneExtension;
+	string $newScenePath = $incrementDirPath + $newSceneName;
+
+	// Check to make sure our script isn't going to overwrite an existing file
+	// since this script should provide a non-destructive save. If this occurs,
+	// it is an error in this script's logic (ack!).
+	//
+	if(`file -q -exists $newScenePath`)
+	{
+		string $errorMsg = (uiRes("m_incrementalSaveScene.kInternalError"));
+		error (`format -s $newSceneName $errorMsg`);
+	}
+
+
+	// Check if this file exists and is read only and warn the user if necessary
+	//
+	string $pathToMove = ( $scenePath + $sceneToMove );
+	int $movedSceneFile = 0;
+	if ( `filetest -e $pathToMove` ) {
+		if ( !`filetest -w $pathToMove` ) {
+			// The original file is write protected
+			//
+			string $message = (uiRes("m_incrementalSaveScene.kSaveChangeMessage"));
+			$message = `format -s $sceneToMove $message`;
+			confirmDialog -button (uiRes("m_incrementalSaveScene.kOk")) -message $message;
+			error $message;
+		}
+		// Copy the previous version into the incremental save directory
+		//
+		sysFile -move $newScenePath $pathToMove;
+		$movedSceneFile = 1;
+	}
+
+	// We might have created the incremental directory above, but if we only
+	// saved the scene and didn't perform an incremental save then the directory
+	// isn't needed and we should remove it.
+	sysFile -removeEmptyDir $incrementDirPath;
+	sysFile -removeEmptyDir `dirname($incrementDirPath)`;
+
+	// Save the new scene. We may be saving from a past increment, so make it
+	// save over the original scene name (now that the previous one has been 
+	// backed up to the increments directory).
+	//
+	if(`file -q -sceneName` != ($scenePath + $sceneToMove)) {
+		int $wasDefaultExtensions = `file -q -defaultExtensions`;
+		file -defaultExtensions false;
+		file -rename ($scenePath + $sceneToMove);
+		file -defaultExtensions $wasDefaultExtensions;
+	}
+
+	if ($movedSceneFile) {
+		// Print some useful information to the script editor so that users can
+		// find out exactly what has been done
+		//
+		print ( (uiRes("m_incrementalSaveScene.kPerformingIncrementalSave")) );
+		string $masterfile = (uiRes("m_incrementalSaveScene.kMasterFile"));
+		print ( `format -s $scenePath -s $sceneToMove $masterfile` );
+		string $incrementfile = (uiRes("m_incrementalSaveScene.kIncrementFile"));
+		print ( `format -s $newScenePath $incrementfile` ); 
+	}
+
+	string $cmd = "file -force -save -options \"v=0\"";
+
+	evalEcho ($cmd);
+
+	// Now that we have made it this far, delete any old backups past the 
+	// number that the user has asked us to save
+	//
+
+	// Look up whether we are limiting the number of backups saved, and if so,
+	// what the limit is
+	//
+	int $maxNumberBackups = -1;
+	if ( ( `optionVar -exists incrementalSaveLimitBackups` ) &&
+		 ( `optionVar -exists incrementalSaveMaxBackups` ) )
+	{
+		if ( `optionVar -q incrementalSaveLimitBackups` ) {
+			$maxNumberBackups = `optionVar -q incrementalSaveMaxBackups`;
+		} 
+	}
+	if ( $maxNumberBackups >= 0 ) {
+		$existingIncrements = sort( $existingIncrements );
+		// Figure out how many backups to delete.  Adjust for the new backup that
+		// we just created.
+		//
+		int $last = ( size( $existingIncrements ) + 1 ) - $maxNumberBackups;
+		for ( $i = 0; $i < $last; $i++ ) {
+			sysFile -delete ( $incrementDirPath + $existingIncrements[$i] );
+		}
+	}
+}

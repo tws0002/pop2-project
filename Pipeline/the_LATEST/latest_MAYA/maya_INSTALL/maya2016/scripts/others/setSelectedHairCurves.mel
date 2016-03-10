@@ -1,0 +1,196 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  2003
+//
+
+
+global proc setSelectedHairCurves( string $from, string $to )
+{
+	string $fromAt, $toAt;
+	string $fmt = (uiRes("m_setSelectedHairCurves.kBadFromAttr"));
+	if( $from == "start"){
+		$fromAt = ".startPosition";
+	} else if ( $from == "rest" ){
+		$fromAt = ".restPosition";
+	} else if ( $from == "current" ){
+		$fromAt = ".outCurve";
+	} else {
+		warning( `format -s $from $fmt` );
+		return;
+	}	
+	if( $to == "start"){
+		$toAt = ".startPosition";
+	} else if ( $to == "rest" ){
+		$toAt = ".restPosition";
+	} else { 
+		warning( `format -s $from $fmt` );
+		return;
+	}	
+	int $i, $j;
+	string $hairCurves[] = getSelectedHairCurves();
+	int $numHairCurves = size( $hairCurves );
+	if( $numHairCurves < 1 ){
+		string $hsys[];
+		int $numHairSystems = 0;
+		string $pfxHair[] = `ls -sl -dag -type pfxHair`;
+		for( $i = 0; $i < size( $pfxHair ); $i++ ){
+			string $inputHairSystem = sourceNodeNameFromConnection( 
+							$pfxHair[$i] + ".renderHairs" );
+			if( $inputHairSystem != "" ){
+				$hsys[$numHairSystems] = $inputHairSystem;
+				$numHairSystems++;
+			}
+		}
+		for( $i = 0; $i < $numHairSystems; $i++ ){
+			string $inputHairCurves[] = hairCurvesFromSystem( $hsys[$i] );
+			for( $j = 0; $j < size( $inputHairCurves ); $j++ ){
+				// get shape from parent
+				string $sh[] = `ls -dag -s $inputHairCurves[$j]`;
+				if( size( $sh ) > 0 ){
+					$hairCurves[$numHairCurves] = $sh[0];
+					$numHairCurves++;
+				}
+			}
+		}
+	}
+	int $numHairCurves = size( $hairCurves );
+	if( $numHairCurves < 1 ){
+		warning((uiRes("m_setSelectedHairCurves.kNoHairCurves")));
+		return;
+	}
+	select -cl;
+	string $newOutCurve = "";
+	string $newOutCurveTform[];
+	if( $from == "current" ){
+		$newOutCurve = `createNode nurbsCurve`;
+		$newOutCurveTform = `listTransforms $newOutCurve`; 
+	}
+	for( $i = 0; $i < $numHairCurves; $i++ ){
+		string $hc = $hairCurves[$i];
+		string $fromAttr = ( $hc + $fromAt );
+		int $hairIndex = -1;
+		string $hsys = "";
+		int $toIntermediate = 0;
+		int $outDegree = 1;
+		if( $from == "current" ){
+			$outDegree = getAttr( $hc + ".degree" );
+			if( $outDegree != 1 ){
+				setAttr ( $hc + ".degree" ) 1;
+			}
+		}
+		string $con[];
+		if( $from == "current" ){
+			if( !`connectionInfo -is $fromAttr` ){
+				string $outHair = ($hc + ".outHair");	
+				string $currentPosition = ($hc + ".currentPosition");	
+				if(!`connectionInfo -id $currentPosition` ){
+					if(!`connectionInfo -is $outHair` ){
+						continue; // can't set current position if not connected to hair system
+					} 
+					string $con[] = `connectionInfo -dfs $outHair`;
+					if( size( $con ) == 0 ){
+						continue;
+					}
+					string $buffer[];
+					int $numTokens = `tokenize $con[0] ".[]" $buffer`;
+					if( $numTokens != 3 ){
+						continue;
+					}
+					$hairIndex = $buffer[2];
+					$hsys = $buffer[0];
+					connectAttr ($hsys  + ".outputHair[" + $hairIndex + "]") $currentPosition;
+				}
+			}
+		
+			connectAttr $fromAttr ($newOutCurve + ".create");
+			// Do a getattr to force evaluation of the curve
+			getAttr -s ($newOutCurve + ".cp");
+			$con = $newOutCurveTform;
+		} else {
+			$con = `listConnections ( $fromAttr )`;
+		}
+
+		string $curveShape = "";
+		if( size ( $con ) > 0 ){
+			string $fromCurve = $con[0];
+			string $newCurve[] = `duplicate -rr $fromCurve`;
+			$curveShape = $newCurve[0];
+			string $sh[] = `ls -dag -s $newCurve[0]`;
+			string $cShape = $sh[0];
+			if( $from == "current" ){
+				string $hairDag[] = `listTransforms $hc`; 
+				parent $newCurve[0] $hairDag[0];
+			}
+			$con = `listConnections  ( $hc + $toAt )`;
+			string $oldTo = "";
+			if( size( $con ) > 0 ){
+				$oldTo = $con[0];
+			} 
+
+			if( $to == "rest" ){
+				setAttr ($hc + ".restPose") 3;
+			}
+			if( $to == "start" ){
+				int $overrideOn = getAttr( $cShape + ".overrideEnabled" );
+				if( $overrideOn ){
+					string $layer = objectLayer( $cShape );
+					// if we are not in the default layer then we
+					// can't set the draw overrides
+					if( $layer == "defaultLayer" ){
+						setAttr ( $cShape + ".overrideEnabled") false;	
+					} 
+				}
+				//connectAttr -f ($cShape + ".worldSpace[0]") ($hc + ".startPosition" ); 
+				connectAttr -f ($cShape + ".local") ($hc + ".startPosition" );
+				connectAttr -f ($cShape + ".worldMatrix[0]") ($hc + ".startPositionMatrix" );
+			} else {
+				initHairCurveDisplay( $cShape, "rest" );
+				connectAttr -f ($cShape + ".worldSpace[0]") ($hc + ".restPosition" ); 
+			}
+			if( $oldTo != "" ){
+				delete $oldTo;
+			}
+		}
+		if( $from == "current" ){
+			if( $hairIndex > -1 && $hsys != ""){
+				string $currentPosition = ($hc + ".currentPosition");	
+				disconnectAttr ($hsys  + ".outputHair[" + $hairIndex + "]") $currentPosition;
+			} 
+			disconnectAttr $fromAttr ($newOutCurve + ".create");
+		}
+		if( $outDegree != 1 ){
+			setAttr ( $hc + ".degree" ) $outDegree;
+		}
+
+	}
+	if( $newOutCurve != "" ){
+		if( size( $newOutCurveTform ) > 0 ){
+			delete( $newOutCurveTform[0]);
+		} else {
+			delete $newOutCurve;
+		}
+	}
+	displayHairCurves( "current", true ); // for now.. eventually should match current display 
+	
+}

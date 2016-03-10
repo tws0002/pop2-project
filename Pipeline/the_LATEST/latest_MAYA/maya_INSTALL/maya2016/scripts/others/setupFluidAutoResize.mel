@@ -1,0 +1,126 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+global proc setupAutoResizeForFluid( string $fluid )
+{
+	string $lf = ($fluid + ".lastResizeFrame");
+	if( objExists( $lf )){
+		string $con[] = `listConnections -type expression $lf`;
+		if( size( $con ) > 0 ){
+			return; // this fluid already has a resize expression
+		}
+	} else {
+		// last frame is used in the expression to know if the frame has changed since the last expression eval
+		addAttr -s 1 -ln lastResizeFrame -at long -dv -1000  $fluid;
+	}
+	string $tforms[] = listTransforms( $fluid );
+	string $tform = $tforms[0];
+	// First we need to unparent all emitters for this fluid
+	string $emitters[] = `ls -dag -type fluidEmitter $tform`;
+	string $emitter;
+	for( $emitter in $emitters ){
+		parent -world $emitter;
+	}
+
+	if( !objExists( $fluid + ".startTranslate" )){
+		addAttr -s 1 -ln "startTranslate"  -at double3  $fluid;
+		addAttr -s 1 -ln "startTranslateX"  -at double -p startTranslate  $fluid;
+		addAttr -s 1 -ln "startTranslateY"  -at double -p startTranslate  $fluid;
+		addAttr -s 1 -ln "startTranslateZ"  -at double -p startTranslate  $fluid;
+	}
+	if( !objExists( $fluid + ".startResolution" )){
+		addAttr -s 1 -ln "startResolution"  -at long3  $fluid;
+		addAttr -s 1 -ln "startResolutionX"  -at long -p startResolution  $fluid;
+		addAttr -s 1 -ln "startResolutionY"  -at long -p startResolution  $fluid;
+		addAttr -s 1 -ln "startResolutionZ"  -at long -p startResolution  $fluid;
+	}
+	if( !objExists( $fluid + ".startDimensions" )){
+		addAttr -s 1 -ln "startDimensions"  -at double3  $fluid;
+		addAttr -s 1 -ln "startDimensionsX"  -at double -p startDimensions  $fluid;
+		addAttr -s 1 -ln "startDimensionsY"  -at double -p startDimensions  $fluid;
+		addAttr -s 1 -ln "startDimensionsZ"  -at double -p startDimensions  $fluid;
+	}
+	if( !objExists( $fluid + ".resizeDensityThreshold" )){
+		addAttr -s 1 -ln "resizeDensityThreshold"  -at double  -min 0 -max 10 -smx 0.1 -dv 0.0001 $fluid;
+	}
+	setAttr ($fluid + ".resizeDensityThreshold") 0.0001;
+
+	float $fVal[] = getAttr( $fluid + ".resolution" );
+	setAttr ($fluid + ".startResolution") $fVal[0] $fVal[1] $fVal[2];
+	float $fVal[] = getAttr( $fluid + ".dimensions" );
+	setAttr ($fluid + ".startDimensions") $fVal[0] $fVal[1] $fVal[2];
+	float $fVal[] = getAttr( $tform + ".translate" );
+	setAttr ($fluid + ".startTranslate") $fVal[0] $fVal[1] $fVal[2];
+
+
+	string $exp = ("float $fr = frame;\n"
+		+"float $startFrame = `getAttr "+$fluid+".startFrame`;\n"
+		+"if( $fr <= $startFrame  ){\n"
+		+"	int $cc = `cycleCheck -q -e`;\n"
+		+"	cycleCheck -e off;\n"
+		+"	float $lastFrame = `getAttr "+$fluid+".lastResizeFrame`;\n"
+		+"	if( $lastFrame == $fr ){\n"
+		+"		float $x = "+$tform+".translateX;\n"
+		+"		float $y = "+$tform+".translateY;\n"
+		+"		float $z = "+$tform+".translateZ;\n"
+		+"		setAttr "+$fluid+".startTranslate $x $y $z;\n"
+		+"\n"
+		+"		int $ix = "+$fluid+".resolutionW;\n"
+		+"		int $iy = "+$fluid+".resolutionH;\n"
+		+"		int $iz = "+$fluid+".resolutionD;\n"
+		+"		setAttr "+$fluid+".startResolution $ix $iy $iz;\n"
+		+"\n"
+		+"		float $dx = "+$fluid+".dimensionsW;\n"
+		+"		float $dy = "+$fluid+".dimensionsH;\n"
+		+"		float $dz = "+$fluid+".dimensionsD;\n"
+		+"		setAttr "+$fluid+".startDimensions $dx $dy $dz;\n"
+		+"	} else {\n"
+		+"		float $t[3] = `getAttr "+$fluid+".startTranslate`;\n"
+		+"		setAttr "+$tform+".translate $t[0] $t[1] $t[2];\n"
+		+"		int $r[3] = `getAttr "+$fluid+".startResolution`;\n"
+		+"		setAttr "+$fluid+".resolution $r[0] $r[1] $r[2];\n"
+		+"		float $d[3] = `getAttr "+$fluid+".startDimensions`;\n"
+		+"		setAttr "+$fluid+".dimensions $d[0] $d[1] $d[2];\n"
+		+"	}\n"
+		+"	cycleCheck -e $cc;\n"
+		+"} else {\n"
+		+"	float $densityThreshold = `getAttr "+$fluid+".resizeDensityThreshold`;\n"
+		+"	fitFluidToDensity "+$fluid+" $densityThreshold;\n"
+		+"}\n"
+		+""+$fluid+".lastResizeFrame = $fr;\n");
+
+		
+	expression -s $exp;
+}
+
+global proc setupFluidAutoResize()
+{
+	string $fluids[] = `ls -sl -dag -type fluidShape`;
+	int $numFluids = size($fluids);
+	if( $numFluids < 1 ){
+		warning( (uiRes("m_setupFluidAutoResize.kNoSelectedFluids")));
+		return;
+	}
+	string $fluid;
+	for( $fluid in $fluids ){
+		setupAutoResizeForFluid( $fluid );
+	}
+}

@@ -1,0 +1,492 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date: June 5, 1997
+//
+//  Description:
+//      This is a helper script to perfrom the delete -channels command
+//	using the various options that have been set
+//
+
+//
+//  Procedure Name:
+//      setOptionVars
+//
+//  Description:
+//		Initialize the option values.
+//
+//  Input Arguments:
+//		Whether to set the options to default values.
+//
+//  Return Value:
+//      None.
+//
+proc setOptionVars(int $forceFactorySettings)
+{
+	// -hierarchy
+	//
+	if ($forceFactorySettings || !`optionVar -exists deleteChannelsHierarchy`) {
+		optionVar -stringValue deleteChannelsHierarchy "none";
+	}
+	// -controlPoints
+	//
+	if ($forceFactorySettings || !`optionVar -exists deleteChannelsControlPoints`) {
+		optionVar -intValue deleteChannelsControlPoints 0;
+	}
+	// -shape
+	//
+	if ($forceFactorySettings || !`optionVar -exists deleteChannelsShapes`) {
+		optionVar -intValue deleteChannelsShapes 1;
+	}
+	// use channel box attrs
+	//
+	if ($forceFactorySettings || !`optionVar -exists deleteChannelsUseChannelBox`) {
+		optionVar -intValue deleteChannelsUseChannelBox 0;
+	}
+	// driven keys
+	//
+	if ($forceFactorySettings || !`optionVar -exists deleteChannelsDriven`) {
+		optionVar -intValue deleteChannelsDriven 0;
+	}
+}
+
+//
+//  Procedure Name:
+//      deleteChannelsSetup
+//
+//  Description:
+//		Update the state of the option box UI to reflect the option values.
+//
+//  Input Arguments:
+//      parent               - Top level parent layout of the option box UI.
+//                             Required so that UI object names can be 
+//                             successfully resolved.
+//
+//	forceFactorySettings - Whether the option values should be set to
+//                             default values.
+//
+//  Return Value:
+//      None.
+//
+global proc deleteChannelsSetup(string $parent, int $forceFactorySettings)
+{
+	// Retrieve the option settings
+	//
+	setOptionVars ($forceFactorySettings);
+
+	setParent $parent;
+
+	// -hierarchy
+	//
+	string $hierarchy = `optionVar -query deleteChannelsHierarchy`;
+	if ($hierarchy == "below") {
+		radioButtonGrp
+			-edit
+			-select 2
+			hierarchy;
+	}
+	else {
+		radioButtonGrp
+			-edit
+			-select 1
+			hierarchy;
+	}
+	
+
+	// use set driven attrs
+	//
+	int $drivenAttrs = `optionVar -q deleteChannelsDriven`;
+	checkBoxGrp -e -value1 $drivenAttrs driven;
+
+	// -controlPoints
+	//
+	int $controlPoints = `optionVar -q deleteChannelsControlPoints`;
+	checkBoxGrp -e -value1 $controlPoints controlPoints;
+
+	// -shape
+	//
+	int $shapes = `optionVar -q deleteChannelsShapes`;
+	checkBoxGrp -e -value1 $shapes shapes;
+
+	// use channel box attrs
+	//
+	int $boxAttrs = `optionVar -q deleteChannelsUseChannelBox`;
+	radioButtonGrp -e -select ( $boxAttrs + 1 ) channels;
+
+	// Now get all the dependent widgets in the right 
+	// enabled/disabled/collapsed/expanded state
+	//
+	deleteChannelsWidgetsEnable;
+}
+
+//
+//  Procedure Name:
+//      deleteChannelsCallback
+//
+//  Description:
+//		Update the option values with the current state of the option box UI.
+//
+//  Input Arguments:
+//      parent - Top level parent layout of the option box UI.  Required so
+//               that UI object names can be successfully resolved.
+//
+//	doIt   - Whether the command should execute.
+//
+//  Return Value:
+//      None.
+//
+global proc deleteChannelsCallback(string $parent, int $doIt)
+{
+    setParent $parent;
+
+	// -hierarchy
+	//
+	string $hierarchy;
+	int $selected = `radioButtonGrp -query -select hierarchy`;
+	if ($selected == 2) {
+		$hierarchy = "below";
+	}
+	else {
+		$hierarchy = "none";
+	}
+	optionVar -stringValue deleteChannelsHierarchy $hierarchy;
+
+	// -controlPoints
+	//
+	int $controlPoints = `checkBoxGrp -query -value1 controlPoints`;
+	optionVar -intValue deleteChannelsControlPoints $controlPoints;
+
+	// -shapes
+	//
+	int $shapes = `checkBoxGrp -query -value1 shapes`;
+	optionVar -intValue deleteChannelsShapes $shapes;
+
+	// use driven attrs
+	//
+	int $drivenAttrs = `checkBoxGrp -query -value1 driven`;
+	optionVar -intValue deleteChannelsDriven $drivenAttrs;
+
+	// use channel box attrs
+	//
+	int $boxAttrs = `radioButtonGrp -query -select channels`;
+	optionVar -intValue deleteChannelsUseChannelBox ($boxAttrs - 1);
+
+	if( $doIt ) {
+		performDeleteChannels 0; 
+		addToRecentCommandQueue "performDeleteChannels 0" "DeleteChannels";
+	}
+}
+
+global proc deleteChannelsWidgetsEnable()
+//
+// Description:
+//	These are the widgets that get enabled and
+//	disabled based on the certain states.  Put them
+//	here so they're all in one place.
+//	
+{
+	// Control points and shapes
+	//
+	$enableIt = (( `radioButtonGrp -q -select channels` == 1 ) &&
+				 ( `radioButtonGrp -q -enable channels` ) &&
+				 ! `frameLayout -q -collapse hierChanAttrFrame` );
+	frameLayout -e -enable $enableIt attributesFrame;
+}
+
+//
+//  Procedure Name:
+//      deleteChannelsOptions
+//
+//  Description:
+//		Construct the option box UI.  Involves accessing the standard option
+//		box and customizing the UI accordingly.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+proc deleteChannelsOptions()
+{
+	//	Name of the command for this option box.
+	//
+	string $commandName = "deleteChannels";
+
+	//	Build the option box actions.
+	//
+	string $callback = ($commandName + "Callback");
+	string $setup = ($commandName + "Setup");
+
+	//	STEP 1:  Get the option box.
+	//	============================
+	//
+	//	The value returned is the name of the layout to be used as
+	//	the parent for the option box UI.
+	//
+	string $layout = getOptionBox();
+	setParent $layout;
+	
+	//	STEP 2:  Pass the command name to the option box - see STEP 8
+	//	=============================================================
+	
+	//	STEP 3:  Activate the default UI template.
+	//	==========================================
+	//
+	//	Activate the default UI template so that the layout of this 
+	//	option box is consistent with the layout of the rest of the 
+	//	application.
+	//
+	setUITemplate -pushTemplate DefaultTemplate;
+
+	//	STEP 4: Create option box contents.
+	//	===================================
+	//	
+	//	This, of course, will vary from option box to option box.	
+	
+	//	Turn on the wait cursor.
+	//
+	waitCursor -state 1;
+
+	tabLayout -tabsVisible 0 -scrollable 1;
+	
+	string $parent = `columnLayout -adjustableColumn 1`;
+	
+
+	frameLayout -bv no -lv no -collapsable no hierChanAttrFrame;
+
+		string $below = (uiRes("m_performDeleteChannels.kBelow"));
+		columnLayout -adjustableColumn true;
+			radioButtonGrp
+				-numberOfRadioButtons 2 -label (uiRes("m_performDeleteChannels.kHierarchy"))  
+				-label1 (uiRes("m_performDeleteChannels.kSelected"))  -label2 $below  
+				hierarchy;
+
+			radioButtonGrp
+				-numberOfRadioButtons 2 -label (uiRes("m_performDeleteChannels.kChannels"))  
+				-label1 (uiRes("m_performDeleteChannels.kAllKeyable"))  
+				-cc1 "deleteChannelsWidgetsEnable"
+				-label2 (uiRes("m_performDeleteChannels.kFromChannelBox"))  
+				-cc2 "deleteChannelsWidgetsEnable"
+				channels;
+
+			frameLayout -bv no -lv no -collapsable no attributesFrame;
+				columnLayout -adjustableColumn true;
+					checkBoxGrp -value1 0  -ncb 1 -label (uiRes("m_performDeleteChannels.kDrivenChannels")) 
+						-label1 "" 	driven;
+					checkBoxGrp -label (uiRes("m_performDeleteChannels.kControlPoints"))  -ncb 1 
+						-value1 off -label1 "" controlPoints;
+					checkBoxGrp -label (uiRes("m_performDeleteChannels.kShapes"))  -ncb 1 
+						-value1 on -label1 "" shapes;
+					setParent ..;
+				setParent ..;
+
+			setParent ..;
+		setParent ..;	
+
+	//	Turn off the wait cursor.
+	//
+	waitCursor -state 0;
+	
+	//	Step 5: Deactivate the default UI template.
+	//	===========================================
+	//
+	setUITemplate -popTemplate;
+
+	//	Step 6: Customize the buttons.  
+	//	==============================
+	//
+	//	Provide more descriptive labels for the buttons.  This is not 
+	//	necessary, but in some cases, for example, a button labelled 
+	//	'Create' may be more meaningful to the user than one labelled
+	//	'Apply'.
+	//
+	//	Disable those buttons that are not applicable to the option box.
+	//
+	//	Attach actions to those buttons that are applicable to the option
+	//	box.  Note that the 'Close' button has a default action attached 
+	//	to it that will hide the window.  If a a custom action is
+	//	attached to the 'Close' button then be sure to call the 'hide the
+	//	option box' procedure within the custom action so that the option
+	//	box is hidden properly.
+
+	//	'Apply' button.
+	//
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit
+		-label (uiRes("m_performDeleteChannels.kDelete"))  
+		-command ($callback + " " + $parent + " " + 1)
+		$applyBtn;
+
+	//	'Save' button.
+	//
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + $parent + " " + 0 + "; hideOptionBox")
+		$saveBtn;
+
+	//	'Reset' button.
+	//
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + " " + $parent + " " + 1)
+		$resetBtn;
+
+	//	Step 7: Set the option box title.
+	//	=================================
+	//
+	setOptionBoxTitle (uiRes("m_performDeleteChannels.kDeleteChannelsOptions"));
+
+	//	Step 8: Customize the 'Help' menu item text.
+	//	============================================
+	//
+	setOptionBoxHelpTag( "DeletebyTypeChannels" );
+
+	//	Step 9: Set the current values of the option box.
+	//	=================================================
+	//
+	eval (($setup + " " + $parent + " " + 0));	
+	
+	//	Step 10: Show the option box.
+	//	=============================
+	//
+	showOptionBox();
+}
+
+//
+//  Procedure Name:
+//      deleteChannelsHelp
+//
+//  Description:
+//		Return a short description about this command.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      string.
+//
+proc string deleteChannelsHelp()
+{
+	return 
+	"  Command: deleteChannels";
+}
+
+//
+//  Procedure Name:
+//      assembleCmd
+//
+//  Description:
+//		Construct the command that will apply the option box values.
+//
+//  Input Arguments:
+//      None.
+//
+proc string assembleCmd()
+{
+	string $cmd = "delete -channels ";
+
+	int $useChannelBox = `optionVar -query deleteChannelsUseChannelBox`;
+	
+	if( !`optionVar -query deleteChannelsDriven` ) {
+		$cmd += "-unitlessAnimationCurves false ";
+	}
+
+	string $hierarchy = `optionVar -query deleteChannelsHierarchy`;
+
+	if( $useChannelBox == 1 ) {
+		string $syntax[] = keySetOptionBoxCommon( { "deleteChannels", 
+													"unknown", 
+													"channelBoxSyntax" } );
+		if( size( $syntax[0] ) == 0 ) {
+			$cmd = "";
+			warning (uiRes("m_performDeleteChannels.kNoChannelsWarn"));
+		} else {
+			$cmd = ( $cmd + "-hierarchy " + $hierarchy + " " );
+			$cmd = $cmd + $syntax[0];
+		}
+	}
+	else {
+		$cmd = ( $cmd + 
+				 " -hierarchy " + $hierarchy + 
+				 " -controlPoints " + 
+				 `optionVar -query deleteChannelsControlPoints`  +
+				 " -shape " + 
+				 `optionVar -query deleteChannelsShapes` );
+	}
+	
+	return $cmd;
+}
+
+//
+//  Procedure Name:
+//      performDeleteChannels
+//
+//  Description:
+//		Perform the deleteChannels command using the corresponding 
+//		option values.  This procedure will also show the option box
+//		window if necessary as well as construct the command string
+//		that will invoke the deleteChannels command with the current
+//		option box values.
+//
+//  Input Arguments:
+//      0 - Execute the command.
+//      1 - Show the option box dialog.
+//      2 - Return the command.
+//
+global proc string performDeleteChannels(int $action)
+{
+	string $cmd = "";
+
+	switch ($action) {
+
+		//	Execute the command.
+		//
+		case 0:
+			//	Get the command.
+			//
+			$cmd = `assembleCmd`;
+
+			//	Execute the command with the option settings.
+			//
+			evalEcho($cmd);
+
+			break;
+
+		//	Show the option box.
+		//
+		case 1:
+			deleteChannelsOptions;
+			break;
+
+		//	Return the command string.
+		//
+		case 2:
+			//	Get the command.
+			//
+			$cmd = `assembleCmd`;
+			break;
+	}
+	return $cmd;
+}
+

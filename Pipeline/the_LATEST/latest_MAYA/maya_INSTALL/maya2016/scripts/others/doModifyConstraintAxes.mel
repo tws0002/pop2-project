@@ -1,0 +1,158 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Sept, 2002
+//
+//	Procedure Name:
+//		doModifyConstraintAxes
+//
+//	Description:
+//      The user selects the constrained object.
+//		This script restricts the axes affected by the constraint.
+//
+//	Input Arguments:
+//	$version: The version of this option box.  Used to know how to 
+//	interpret the $args array.
+//		"1" : first version of modify constraint axis
+//  
+//	$args
+//	Version 1
+//	[0]		$constrainX :  whether or not to constrain x
+//	[1]		$constrainY :  whether or not to constrain y
+//	[2]		$constrainY :  whether or not to constrain z
+//  [3]     $maintainOffset: whether to maintain the existing offset to the remaining targets
+//
+//	Return Value:
+//		none
+//
+
+
+global proc
+doModifyConstraintAxes( string $version, string $args[] )
+{
+	string $sels[] = `ls -sl`;
+	if (size($sels) == 0) {
+		error( (uiRes("m_doModifyConstraintAxes.kYouMustSelect")));
+		return;
+	}
+
+	string $cmd;
+	int $constrainX = $args[0];
+	int $constrainY = $args[1];
+	int $constrainZ = $args[2];
+	int $maintainOffset = $args[3];
+
+	string $flags = " -e";
+	string $parentFlags = " -e";	
+	if (! $constrainX) {
+		$flags += " -skip x";
+		$parentFlags += " -skipRotate x -skipTranslate x";
+	}
+	if (! $constrainY) {
+		$flags += " -skip y";
+		$parentFlags += " -skipRotate y -skipTranslate y";		
+	}
+	if (! $constrainZ) {
+		$flags += " -skip z";
+		$parentFlags += " -skipRotate z -skipTranslate z";
+	}
+	if ($flags == " -e") {
+		$flags += " -skip none";
+		$parentFlags += " -skipRotate none -skipTranslate none";
+	}
+
+	if (0 == ($constrainX + $constrainY + $constrainZ)) {
+		error((uiRes("m_doModifyConstraintAxes.kNoAxes")));
+		return;
+	}
+	
+	if ($maintainOffset) {
+		$flags += " -maintainOffset; ";
+		$parentFlags += " -maintainOffset; ";		
+	} else {
+		// Reset the offset of the constraint back to 0 0 0 if maintainOffset
+		// is turned off.
+		//
+		$flags += " -offset 0 0 0; ";
+		$parentFlags += "; ";
+	}
+
+	for ($constrainedObj in $sels) {
+		string $p1 = `pointConstraint -q $constrainedObj`;
+		if (size($p1)) {
+			$cmd += "pointConstraint"+$flags;
+		}
+		string $a1 = `aimConstraint -q $constrainedObj`;
+		if (size($a1)) {
+			$cmd += "aimConstraint"+$flags;
+		}
+		string $o1 = `orientConstraint -q $constrainedObj`;
+		if (size($o1)) {
+			$cmd += "orientConstraint"+$flags;
+		}
+		string $s1 = `scaleConstraint -q $constrainedObj`;
+		if (size($s1)) {
+			$cmd += "scaleConstraint"+$flags;
+		}
+		string $p2 = `parentConstraint -q $constrainedObj`;
+		if (size($p2)) {
+			$cmd += "parentConstraint"+$parentFlags;
+			// Get the parent constraint from the constrained object
+			//
+			string $constrainedRelatives[] = 
+				`listRelatives -type "parentConstraint" $constrainedObj`;
+			if ( !$maintainOffset && `size $constrainedRelatives` == 1 )
+			{
+				// If maintainOffset is not specified reset the offsets on the
+				// constraint node.  If there is not exactly 1 parent 
+				// constraint then don't attempt to set the offsets to 0 0 0.
+				//
+
+				$parentConstraint = $constrainedRelatives[ 0 ];
+
+				// Get the name of each targetOffsetRotate and 
+				// targetOffsetTranslate attribute on the constraint node.
+				// 
+				$cmd += "string $parentConstraintOffsetAttrs[] = ";
+				$cmd += "	`listAttr -st \"targetOffsetTranslate\" ";
+				$cmd += "			  -st \"toffsetRotate\" ";
+				$cmd += ( "			  -m \""+$parentConstraint+".target\"`;");
+
+				$cmd += "string $offsetAttr; ";
+
+				// Set each targetOffset attribute on the node to 0 0 0.
+				// This ensures that if the user 
+				//
+				$cmd += "for ( $offsetAttr in $parentConstraintOffsetAttrs ) ";
+				$cmd += "{";
+				$cmd += ("setAttr (\""+ $parentConstraint +".\"+$offsetAttr)");
+				$cmd += "		   0 0 0;";
+				$cmd += "}";
+			}
+		}
+	}
+	if (size($cmd) == 0) {
+		error( (uiRes("m_doModifyConstraintAxes.kInvalidSelection")));
+	}
+	evalEcho $cmd;
+}

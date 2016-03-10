@@ -1,0 +1,211 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Oct, 1999
+//
+//	Procedure Name:
+//		doCreateClipArgList
+//
+//	Description:
+//		Create a new clip
+//
+//	Input Arguments:
+//	$version: The version of this option box.  Used to know how to 
+//	interpret the $args array.
+//		"1" : first verison of nla
+//  
+//	$args
+//	Version 1
+//	[0]		$name :  name to give the new clip
+//	[1]		$schedule :  how to create the clip
+// 			1 == Remove character's animation, add clip to track editor
+// 			2 == Remove character's animation and add clip to library
+// 			3 == Keep existing animation and add clip to library
+//	[2]		$rangeMethod : how to choose the start and end of the clip
+//  [3][4]  $start, $end : if $rangeMethod == specify
+//	Version 2
+//	[5]		$useSubCharacter :  include subcharacters in the clip
+//	Version 3
+//	[6]		$warpMethod : should a time warp curve be created and enabled.
+//				"noWarp" == Do not create a time warp currve
+//				"enabledWarp" == Create a time warp curve and enable it
+//				"disabledWarp" == Create a time warp curve but do not enable it.
+//	Version 4
+//	[7]		$hierarchy : Examine entire hierarchy rather than just the
+//						 selected item if looking for objects to add to
+//						 the character.
+//  Version 5
+//  [8]     $clipType :  animation, constraint, expression or all
+//  Version 6
+//  [9]     $absoluteType :  absolute, relative or mixed
+//
+//	Return Value:
+//		none
+//
+
+
+global proc
+doCreateClipArgList( string $version, string $args[] )
+{
+    global string $gPlayBackSlider;
+	// error message for use if there is an error
+	//
+	string $errorMessage = (uiRes("m_doCreateClipArgList.kTooManyCharsErr"));
+
+	// Is a character selected?
+	//
+    string $sel[]    = `ls -sl -type character`;
+
+	// If no character selected, see if there is a current character
+	//
+	if (0 == size($sel)) {
+		$sel = `currentCharacters`;
+		$errorMessage = (uiRes("m_doCreateClipArgList.kMoreThanOneCharErr"));
+	}
+
+	int    $versionNo   = $version;
+	int    $hierarchy = 0;
+	if ($versionNo >= 4) {
+		$hierarchy = $args[7];
+	}
+	string $clipType = "animation";
+	if ($versionNo >= 5) {
+		$clipType = $args[8];
+	}
+
+	string $clipAbsType = "allAbsolute";
+	if ($versionNo >= 6) {
+		$clipAbsType = $args[9];
+	}
+	
+	if (size($sel) == 0) {
+		string $charCmd = "autoCreateCharacter 4 { " +
+			"\"" + $hierarchy + "\", " +
+			"\"" + $clipType + "\", " +			
+			"\"" + $clipAbsType + "\"" +
+			" };";
+		string $ch = `eval $charCmd`;
+		if ($ch == "") {
+			return;
+		} else {
+			$sel[0] = $ch;
+		}
+	}
+
+	if (size($sel) != 1) {
+	    error($errorMessage);
+		return;
+	}
+
+	string $name        = $args[0];
+	string $method      = $args[1];
+	string $rangeMethod = $args[2];
+	float  $start       = $args[3];
+	float  $end         = $args[4];
+
+	// use subcharacter flag introduced for v2 of this script (maya3.0 CG)
+	//
+	int    $useSubCharacter = 1;
+	if ($versionNo > 0) {
+		$useSubCharacter = $args[5];
+	}
+
+    // use warp flag introduced for v3 of this script (maya4.0)
+	string $warpMethod  = "noWarp";
+	if ($versionNo > 2) {
+		$warpMethod  = $args[6];
+    }
+
+
+	int    $scheduleIt  = 0;
+	int    $leaveOriginal  = 0;	
+	if ($method == 1) {
+		$scheduleIt = 1;
+	} else if ($method == 3) {
+		$leaveOriginal = 1;
+	}
+
+	string $cmdStart = "clip -name \"" + $name + "\" -sc " + $scheduleIt + " ";
+
+	$cmdStart += ("-"+$clipAbsType+" ");
+
+	if ($leaveOriginal) {
+		$cmdStart += "-leaveOriginal ";
+	}
+
+	if ($clipType == "constraint") {
+		$cmdStart += "-constraint ";
+	}
+	if ($clipType == "expression") {
+		$cmdStart += "-expression ";
+	}
+
+	if ($useSubCharacter == 0) {
+		$cmdStart += "-ignoreSubcharacters ";
+	}
+	
+	string $clips[];
+	string $cmd;
+	if ($rangeMethod == "selectedMethod") {
+	    float $range[] = `timeControl -q -ra $gPlayBackSlider`;
+		$cmd = $cmdStart + "-startTime " + $range[0] + " -endTime " + $range[1] + " " + $sel[0];
+	}
+	else if ($rangeMethod == "timeSliderMethod") {
+	    float $rangeStart = `playbackOptions -q -min`;
+	    float $rangeEnd   = `playbackOptions -q -max`;
+        $cmd = $cmdStart + "-startTime " + $rangeStart + " -endTime " + $rangeEnd + " " + $sel[0];
+	}
+	else if ($rangeMethod == "animCurveMethod") {
+	    $cmd = $cmdStart + "-animCurveRange "+$sel[0];
+	}
+	else if ($rangeMethod == "startEndMethod") {
+        $cmd = $cmdStart + "-startTime " + $start + " -endTime " + $end + " " + $sel[0];
+	}
+	else {
+	    string $errMsg = (uiRes("m_doCreateClipArgList.kInvalidRangeMethodErr"));
+	    $errMsg = `format -s $rangeMethod $errMsg`;
+	    error($errMsg);
+		$cmd = "";
+	}
+
+	if (size($cmd) > 0) {
+		//	The return type if the clips is not scheduled is a string.
+		//	
+		if ($scheduleIt) {
+			$clips = evalEcho($cmd);
+			if ( size( $clips ) > 0 ) {
+				string $sch = `character -q -sc $sel[0]`;
+				ghostAppendedClip $sch { $clips[0], $clips[0] } 0;
+			}
+		} else {
+			$clips[0] = evalEcho($cmd);
+		}
+	}
+
+	//	Set the time warp (if any)
+	//
+	if (size($warpMethod) > 0 && $warpMethod != "noWarp") {
+		int $enabled = ($warpMethod == "enabledWarp");
+		doCreateClipTimeWarp($clips, $enabled);
+	}
+}

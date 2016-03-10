@@ -1,0 +1,367 @@
+// Copyright (C) 1997-2013 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+/**
+ * @file igBindGeoemtry.mel
+ * @brief Methods for binding geometry to an igDescription.
+ *
+ * <b>CONFIDENTIAL INFORMATION: This software is the confidential and
+ * proprietary information of Walt Disney Animation Studios ("WDAS").
+ * This software may not be used, disclosed, reproduced or distributed
+ * for any purpose without prior written authorization and license
+ * from WDAS. Reproduction of any section of this software must include
+ * this legend and all copyright notices.
+ * Copyright Disney Enterprises, Inc. All rights reserved.</b>
+ *
+ * @author Thomas V Thompson II
+ *
+ * @version tthompso  10/30/07  Initial Version
+ */
+
+
+/**
+ * Bind geoemtry to the iGroom description based on what is currently bound
+ * to an XGen description. This replaces any current iGroom binding.
+ */
+proc igBindFromXGen2( string $xdesc, int $refresh )
+{
+    global string $igNullDescriptionTag;
+    global string $igCurrentDescription;
+    string $desc = $igCurrentDescription;
+    
+    if ( $xdesc == "" ) return;
+    if ( $desc == "" ) return;
+    if ( $desc == $igNullDescriptionTag ) return;    
+    if ( !`objExists $desc` ) return;
+
+    // Save the original selection list so that we can restore later
+    string $selOrig[] = `ls -sl`;
+
+    // Get the geometry bound to the xgen description
+    string $xpal = python("xg.palette(\""+$xdesc+"\")");
+    string $geomList[] = python("xg.boundGeometry(\""+$xpal+
+                                "\",\""+$xdesc+"\")");
+
+    // Grab the bound geometry
+    string $geometry = "";
+    int $i=0;
+    for ( $geom in $geomList ) {
+        // Build geometry string
+        if ( $i > 0 ) $geometry += " ";
+        $geometry += $geom;
+        // Store away the faceIds for this piece of geometry
+        int $faceIds[] = python("xg.boundFaces(\""+$xpal+
+                                "\",\""+$xdesc+
+                                "\",\""+$geom+"\")");
+        setAttr ($desc + ".faceIds" + "[" + $i++ + "]" ) `size($faceIds)`;
+        for ( $id in $faceIds ) {
+            setAttr ($desc + ".faceIds" + "[" + $i++ + "]" ) $id;
+        }
+    }
+
+    setAttr -type "string" ($desc + ".geom") $geometry;
+
+    // Unbind from the current geometry so it will auto-bind to
+    // the newly established bindings.
+    if ( $refresh==0 )
+    {
+        iGroom -d $desc -ub -noRefresh;
+    }
+    else
+    {
+        iGroom -d $desc -ub;
+    }
+    
+    // Restore the original selection
+    select -r $selOrig;
+}
+
+
+/**
+ * Bind geoemtry to the iGroom description based on the current face
+ * selection. This binding can replace or add to the current binding.
+ */
+global proc igBindFromSelection( int $replace )
+{
+    global string $igNullDescriptionTag;
+    global string $igCurrentDescription;
+    string $desc = $igCurrentDescription;
+
+    if ( $desc == "" ) return;
+    if ( $desc == $igNullDescriptionTag ) return;    
+    if ( !`objExists $desc` ) return;    
+
+	int $activateTool=0;
+    // Save the original selection list so that we can restore later
+    string $selOrig[] = `ls -sl`;
+
+    // Prepare to replace or append
+    string $newFaces[];
+    int $i=0;
+    if ( $replace ) {
+        $newFaces = $selOrig;
+    } else {
+        string $geometry = `getAttr ($desc + ".geom")`;
+        string $geoms[] = stringToStringArray($geometry," ");
+        for ( $geom in $geoms ) {
+
+            int $num = `getAttr ($desc+".faceIds["+ $i++ +"]")`;
+            for ( $j=0; $j<$num; $j++ ) {
+                int $id = `getAttr ($desc+".faceIds["+ $i++ +"]")`;
+                select -add ($geom+".f["+$id+"]");
+            }
+        }
+
+        // now get all logical face ids (i.e. current descr face ids + newly converted selected faces)
+        $newFaces = `ls -sl`;
+        $i=0;
+    }
+
+    $newFaces = `sort $newFaces`;
+   
+    // Clear out the original faceId bindings
+    string $fids[] = `listAttr -m ($desc+".faceIds")`;
+    for ( $fid in $fids ) {
+        removeMultiInstance ($desc+"."+$fid);
+    }
+
+    // Get the geometry from selection
+    string $geomList[] = `ls -sl -o`;
+    $geomList = `stringArrayRemoveDuplicates $geomList`;
+    	
+	// Grab the bound geometry
+    string $geometry = "";
+    for ( $geomShape in $geomList ) {
+        // Get transform
+        string $buffer[] = `listRelatives -p -pa $geomShape`;
+        $geom = $buffer[0];
+        // Build geometry string
+        if ( $i > 0 ) $geometry += " ";
+        $geometry += $geom;
+        // Get the faces selected
+        float $faceIds[]={};
+        int $k=0;
+        for ( $item in $newFaces ) {
+            if ( `match $geom $item` == "" ) continue;
+            int $glen = size($geom);
+            int $ilen = size($item);
+            string $val = substring($item,$glen+4,$ilen-1);
+            string $buffer[];
+            int $numTokens = `tokenize $val ":" $buffer`;
+            if ( $numTokens > 1) {
+                int $start = $buffer[0];
+                int $end = $buffer[1];
+                for ( $j=$start; $j<=$end; $j++ ) {
+                    $faceIds[$k++] = $j;
+                }
+            } else {
+                $faceIds[$k++] = $val;
+            }
+        }
+        
+        if( size($faceIds) > 0 )
+			$activateTool = 1;
+		else {
+			string $fmt = (uiRes("m_igBindGeometry.kNoFacesSelected"));
+			warning `format -s $geom $fmt`;
+		}
+		
+        setAttr ($desc + ".faceIds" + "[" + $i++ + "]" ) `size($faceIds)`;
+        for ( $id in $faceIds ) {        
+            setAttr ($desc + ".faceIds" + "[" + $i++ + "]" ) $id;
+        }
+    }
+
+    setAttr -type "string" ($desc + ".geom") $geometry;
+	
+    // Unbind from the current geometry so it will auto-bind to
+    // the newly established bindings.
+    iGroom -d $desc -ub;
+   
+    // Restore the original selection
+    select -r $selOrig;
+	
+	if( $activateTool !=0 )
+		igBrushContextSelect;
+	else
+		warning (uiRes("m_igBindGeometry.kNothingToBind"));
+
+}
+
+global proc igBindFromSelection2( string $igDesc, string $xgDesc, int $replace, int $style )
+{
+    string $desc = $igDesc;
+
+    if ( $desc == "" ) return;
+    if ( !`objExists $desc` ) return;    
+
+    // Save the original selection list so that we can restore later
+    string $selOrig[] = `ls -sl`;
+
+    // Prepare to replace or append
+    string $newFaces[];
+    int $i=0;
+    if ( $replace ) {
+        $newFaces = $selOrig;
+    } else {
+        string $geometry = `getAttr ($desc + ".geom")`;
+        string $geoms[] = stringToStringArray($geometry," ");
+        for ( $geom in $geoms ) {
+            int $num = `getAttr ($desc+".faceIds["+ $i++ +"]")`;
+            for ( $j=0; $j<$num; $j++ ) {
+                int $id = `getAttr ($desc+".faceIds["+ $i++ +"]")`;
+                select -add ($geom+".f["+$id+"]");
+            }
+        }
+
+        // note: this code blindly gets the face ids from the selection. Face ids need to be 
+        // logical if the geom has non-quads. So the convertion will be done further down.
+        $newFaces = `ls -sl`;
+        $i=0;
+    }
+
+    $newFaces = `sort $newFaces`;
+   
+    // Clear out the original faceId bindings
+    string $fids[] = `listAttr -m ($desc+".faceIds")`;
+    for ( $fid in $fids ) {
+        removeMultiInstance ($desc+"."+$fid);
+    }
+
+    // Get the geometry from selection
+    string $geomList[] = `ls -sl -o`;
+    $geomList = `stringArrayRemoveDuplicates $geomList`;
+    	
+	// Grab the bound geometry
+    string $geometry = "";
+    for ( $geomShape in $geomList ) {
+        // Get transform
+        string $buffer[] = `listRelatives -p -pa $geomShape`;
+        $geom = $buffer[0];
+        // Build geometry string
+        if ( $i > 0 ) $geometry += " ";
+        $geometry += $geom;
+        // Get the faces selected
+        int $faceIds[]={};
+        int $k=0;
+        for ( $item in $newFaces ) {
+            if ( `match $geom $item` == "" ) continue;
+            int $glen = size($geom);
+            int $ilen = size($item);
+            string $val = substring($item,$glen+4,$ilen-1);
+            string $buffer[];
+            int $numTokens = `tokenize $val ":" $buffer`;
+            if ( $numTokens > 1) {
+                int $start = $buffer[0];
+                int $end = $buffer[1];
+                for ( $j=$start; $j<=$end; $j++ ) {
+                    $faceIds[$k++] = $j;
+                }
+            } else {
+                $faceIds[$k++] = $val;
+            }
+        }
+	        
+        // convert original face ids to logical 
+        $faceIds = `igConvertToLogical -f $faceIds -xg $xgDesc -g $geom `;
+        $faceIds = `sort $faceIds`;
+		
+        setAttr ($desc + ".faceIds" + "[" + $i++ + "]" ) `size($faceIds)`;
+        for ( $id in $faceIds ) {
+            setAttr ($desc + ".faceIds" + "[" + $i++ + "]" ) $id;
+        }
+    }
+
+    setAttr -type "string" ($desc + ".geom") $geometry;
+	
+    // Unbind from the current geometry so it will auto-bind to
+    // the newly established bindings.
+
+    // set style as requested
+    int $oldStyle;
+    if ( $style != -1 )
+    {
+        $oldStyle = `getAttr ($desc+".interpStyle")`;
+        setAttr ($desc+".interpStyle") $style;
+    }
+
+    iGroom -d $desc -ub;
+
+    if ( $style != -1 )
+    {
+        setAttr ($desc+".interpStyle") $oldStyle;
+    }
+    
+    // Restore the original selection
+    select -r $selOrig;	
+}
+
+global proc igBindFromXGen( string $xgDesc )
+{
+    igBindFromXGen2( $xgDesc, 1 );
+}
+
+global proc igPullCache( string $igDesc )
+{
+    if ( !`objExists $igDesc` ) {
+		string $fmt = (uiRes("m_igBindGeometry.kObjectDoesNotExist"));
+		error `format -s $igDesc $fmt`;
+        return;
+    }
+
+    // force computing with the current cache
+    string $forceLoadCacheAttr = $igDesc + ".forceLoadCache";
+    string $loadCacheAttr = $igDesc + ".loadCache";
+    
+    setAttr $forceLoadCacheAttr 1 ;     
+    getAttr $loadCacheAttr ;
+}
+
+global proc igCompute( string $igDesc, string $xgDesc )
+{
+    if ( !`objExists $igDesc` ) {
+        return;
+    }
+
+    // bind geometry with a refresh
+    igBindFromXGen2( $xgDesc, 1 );
+
+    // force re-compute
+    float $val = `getAttr($igDesc+".density")`;
+    float $tempVal = $val - 0.001;
+    setAttr ($igDesc+".density") $tempVal;
+    setAttr ($igDesc+".tickle") on;
+    setAttr ($igDesc+".density") $val;
+}
+
+global proc igComputeFromCache( string $igDesc, string $xgDesc )
+{
+    if ( !`objExists $igDesc` ) {
+        return;
+    }
+
+    // bind geometry with no refresh
+    igBindFromXGen2( $xgDesc, 0 );
+
+    // pull cache
+    igPullCache( $igDesc );
+}
+

@@ -1,0 +1,352 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  September, 2011
+//
+//  Description:
+//      This script is the match clip option box
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+
+proc setOptionVars( int $forceFactorySettings )
+{
+    // Clip match types
+    //
+    // 0: None
+    // 1: Full
+    // 2: Projected
+    //
+    if ( $forceFactorySettings || !`optionVar -exists matchClipTranslation` )
+    {
+        optionVar -intValue matchClipTranslation 1;
+    }
+    
+    if ( $forceFactorySettings || !`optionVar -exists matchClipRotation` )
+    {
+        optionVar -intValue matchClipRotation 2;
+    }
+}
+
+proc string getActiveCharacter( )
+{
+    string $characters[] = getCharactersForAction();
+
+    if ( size( $characters ) > 1 )
+        error( (uiRes("m_performMatchClip.kTooManyActiveCharacters")) );
+
+    if ( size( $characters ) == 0 )
+        error( (uiRes("m_performMatchClip.kNoActiveCharacters")) );
+
+    return $characters[ 0 ];
+}
+
+//
+//  Procedure Name:
+//      matchClipSetup
+//
+//  Description:
+//      Update the state of the option box UI to reflect the option values.
+//
+//  Input Arguments:
+//      parent               - Top level parent layout of the option box UI.
+//                             Required so that UI object names can be 
+//                             successfully resolved.
+//
+//  forceFactorySettings     - Whether the option values should be set to
+//                             default values.
+//
+//  Return Value:
+//      None.
+//
+global proc matchClipSetup( string $parent, int $forceFactorySettings )
+{
+    // Retrieve the option settings.
+    setOptionVars( $forceFactorySettings );
+
+    setParent $parent;
+
+    // Set the correct menus
+    int $matchT = `optionVar -query matchClipTranslation`;
+    optionMenuGrp -e -sl ( $matchT + 1 ) matchClipTranslationMenuGrp;
+    
+    int $matchR = `optionVar -query matchClipRotation`;
+    optionMenuGrp -e -sl ( $matchR + 1 ) matchClipRotationMenuGrp;
+
+    if ( $forceFactorySettings )
+    {
+        textField -edit -text "" matchClipMatchNodeField;
+    }
+}
+
+//
+//  Procedure Name:
+//      matchClipCallback
+//
+//  Description:
+//      Update the option values with the current state of the option box UI.
+//
+//  Input Arguments:
+//      parent - Top level parent layout of the option box UI.  Required so
+//               that UI object names can be successfully resolved.
+//
+//      doIt   - Whether the command should execute.
+//
+//  Return Value:
+//      None.
+//
+global proc matchClipCallback( string $parent, int $doIt )
+{
+    setParent $parent;
+
+    int $matchT = `optionMenuGrp -q -sl matchClipTranslationMenuGrp` - 1;
+    optionVar -intValue matchClipTranslation $matchT;
+    
+    int $matchR = `optionMenuGrp -q -sl matchClipRotationMenuGrp` - 1;
+    optionVar -intValue matchClipRotation $matchR;
+
+    if ( $doIt )
+    {
+        string $character = getActiveCharacter();
+        string $nodes[]   = `listConnections -s 1 -d 0 -p 0 ( $character + ".matchNode" )`;
+        string $matchNode = `textField -query -text matchClipMatchNodeField`;
+
+        // Verify that the character has the same attached match node
+        // as the one specfied in the text field input because the user
+        // could have entered a node name manually.
+        //
+        string $attachedMatchNode = "";
+        if ( size( $nodes ) )
+            $attachedMatchNode = $nodes[ 0 ];
+
+        if ( $matchNode != $attachedMatchNode )
+            connectAttr -f ( $matchNode + ".message" ) ( $character + ".matchNode" );
+
+        doMatchClip( $matchT, $matchR, $matchNode );
+    }
+}
+
+global proc matchClipAssignCallback( string $parent )
+{
+    string $selection[] = `ls -sl`;
+    if ( size( $selection ) == 0 )
+        return;
+
+    string $character = getActiveCharacter();
+    connectAttr -f ( $selection[ 0 ] + ".message" ) ( $character + ".matchNode" );
+
+    textField -edit 
+        -text $selection[ 0 ]
+        ( $parent + "|matchClipMatchNodeField" );
+}
+
+proc string matchClipWidgets( string $parent )
+{
+    setParent $parent;
+
+    string $tabForm = `columnLayout -adj true`;
+
+    string $labelNone      = (uiRes("m_performMatchClip.kNone"));
+    string $labelFull      = (uiRes("m_performMatchClip.kFull"));
+    string $labelProjected = (uiRes("m_performMatchClip.kProjected"));
+
+    optionMenuGrp -label (uiRes("m_performMatchClip.kMatchTranslation")) matchClipTranslationMenuGrp;
+        menuItem -label $labelNone;
+        menuItem -label $labelFull;
+        menuItem -label $labelProjected;
+        
+    optionMenuGrp -label (uiRes("m_performMatchClip.kMatchRotation")) matchClipRotationMenuGrp;
+        menuItem -label $labelNone;
+        menuItem -label $labelFull;
+        menuItem -label $labelProjected;
+
+    setParent ..;
+
+    string $layout =
+        `rowLayout -nc 3 -cal 1 right -cal 2 both -cal 3 left -adj 2 -cw 3 30 matchClipMatchNodeLayout`;
+
+        text -label (uiRes("m_performMatchClip.kMatchNode"));
+        textField -text "" matchClipMatchNodeField;
+
+        string $characters[] = getCharactersForAction();
+        if ( size( $characters ) )
+        {
+            string $matchNode[] = `listConnections -s 1 -d 0 -p 0 ( $characters[ 0 ] + ".matchNode" )`;
+            if ( size( $matchNode ) )
+                textField -e -text $matchNode[ 0 ] matchClipMatchNodeField;
+        }
+
+        iconTextButton 
+            -label "" 
+            -image "SP_FileDialogBack.png"
+            -width 20
+            -annotation (uiRes("m_performMatchClip.kAssignSelection"))
+            -command ( "matchClipAssignCallback " + $layout );
+    setParent ..;
+    
+    return $tabForm;
+}
+
+global proc matchClipOptions( )
+{
+    string $commandName = "matchClip";
+
+    string $applyTitle = "Match";
+
+    // Build the option box "methods"
+    //
+    string $callback = ( $commandName + "Callback" );
+    string $setup    = ( $commandName + "Setup"    );
+
+    //  Get the option box.
+    //
+    //  The value returned is the name of the layout to be used as
+    //  the parent for the option box UI.
+    //
+    string $layout = getOptionBox();
+    setParent $layout;
+
+    setOptionBoxCommandName( $commandName );
+
+    setUITemplate -pushTemplate DefaultTemplate;
+    waitCursor -state 1;
+    tabLayout -scr true -tv false; // To get the scroll bars
+
+    string $parent = `columnLayout -adjustableColumn 1`;
+
+    matchClipWidgets $parent;
+
+    waitCursor -state 0;
+    setUITemplate -popTemplate;
+
+    //  'Apply' button.
+    //
+    string $applyBtn = getOptionBoxApplyBtn();
+    button -edit
+        -label (uiRes("m_performMatchClip.kMatchClips"))
+        -command ( $callback + " " + $parent + " " + 1 )
+        $applyBtn;
+
+    //  'Save' button.
+    //
+    string $saveBtn = getOptionBoxSaveBtn();
+    button -edit 
+        -command ( $callback + " " + $parent + " " + 0 + "; hideOptionBox" )
+        $saveBtn;
+
+    //  'Reset' button.
+    //
+    string $resetBtn = getOptionBoxResetBtn();
+    button -edit 
+        -command ( $setup + " " + $parent + " " + 1 )
+        $resetBtn;
+
+    //  Set the option box title.
+    //
+    setOptionBoxTitle (uiRes("m_performMatchClip.kMatchClipOptions"));
+
+    //  Customize the 'Help' menu item text.
+    //
+    setOptionBoxHelpTag( "MatchClip" );
+
+    // Set the current values of the option box.
+    //
+    eval( ( $setup + " " + $parent + " " + 0 ) );
+    
+    //  Show the option box.
+    //
+    showOptionBox();
+}
+
+//
+//  Procedure Name:
+//      assembleCmd
+//
+//  Description:
+//      Construct the command that will apply the option box values stored
+//      values.
+//
+//  Input Arguments:
+//      None
+//
+//  Return Value:
+//      The command string.
+//
+proc string assembleCmd( )
+{
+    string $cmd;
+
+    setOptionVars( false );
+
+    int $matchT = `optionVar -query matchClipTranslation`;
+    int $matchR = `optionVar -query matchClipRotation`;
+    string $empty = "";
+
+    string $cmd = 
+        ( "doMatchClip( " + $matchT + ", " + $matchR + ", \""+$empty+"\" );" );
+
+    return $cmd;
+}
+
+//
+//  Procedure Name:
+//      performMatchClip
+//
+//  Description:
+//      Automatically computes an offset on a source clip in order
+//      to align it with a destination clip.
+//
+//  Input Arguments:
+//      0 - Execute command with default parameters.
+//      1 - Show the option box dialog.
+//
+//  Return Value:
+//      None.
+//
+global proc performMatchClip( int $action )
+{
+    switch ( $action )
+    {
+        case 0:
+            //  Execute the command.
+            //
+            string $cmd = `assembleCmd`;
+
+            //  Execute the command with the option settings.
+            //
+            if ( $cmd != "" )
+                evalEcho( $cmd );
+            break;
+
+        case 1:
+            //  Show the option box.
+            //
+            matchClipOptions;
+            break;
+    }
+}
+

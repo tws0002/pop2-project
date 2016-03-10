@@ -1,0 +1,144 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Dec, 2000
+//
+//  Procedure Name:
+//      doMotionTrail
+//
+//  Description:
+//      Create a new motion trail based on the provided arguments.
+//      The arguments are structured as a string array in order to
+//      allow us to handle a variable number of arguments. The
+//      number of arguments can then depend on the Maya version
+//      number so that the script can be backward compatible with 
+//      old versions. 
+//
+//  Input Arguments:
+//  $version: The version of this script.  Used to know how to 
+//  interpret the $args array.
+//      1 : maya version 4 (first version with motion trails)
+//      2 : maya version 2012 (added editable motion trails)
+//  
+//  $args
+//  Version 1
+//  [0]     $snapshotCmd:   the snapshot cmd used to create the motion trail
+//  [1]     $drawStyle:     "point", "line", "locator" (obsolete, ignored)
+//  [2]     $displayFrames: boolean indicating whether to draw the frame no's
+//  [3]     $update:        "onDemand","force","animCurve" (obsolete, ignored)
+//          Note: in the UI the $update variables correspond to:
+//                "onDemand" = on demand
+//                "force" = always (slow)
+//                "animCurve" = when animation changes (fast)
+//  Version 2
+//  [0]     $snapshotCmd: the snapshot cmd used to create the motion trail
+//  [1]     $displayFrames: boolean indicating whether to draw the frame no's
+//  [2]     $preFrames: frames drawn before
+//  [3]     $postFrames: frames drawn after
+//  [4]     $trailThickness
+//  [5]     $keyframeSize
+//  [6]     $pinning
+//  [7]     $anchorTransform
+//
+//  Return Value:
+//      none
+//
+
+
+global proc
+doMotionTrail( int $version, string $args[] )
+{
+	int $displayFrames;
+	float $pre = 0;
+	float $post = 0;
+	float $keySize = 0.15;
+	float $trailThickness = 3.0;
+	int $pin = 0;
+	int $anchorTransform = 0;
+	string $snapshotCmd = $args[0];
+	if ($version == 1) {
+		$displayFrames = $args[2];
+	} else {
+		$displayFrames = $args[1];
+		$pre = $args[2];
+		$post = $args[3];
+		$trailThickness = $args[4];
+		$keySize = $args[5];
+		$pin = $args[6];
+		$anchorTransform = $args[7];
+	}
+
+	// Get a list of seleted objects
+	string $sel[] = `ls -sl`;
+
+	// Walk the list to ensure that objects have at least 1 keyframe
+	string $newsel[];
+	for ($selObj in $sel) {
+		if (`keyframe -q -keyframeCount $selObj` > 0)
+			$newsel[size($newsel)] = $selObj;
+	}
+
+	if (size($newsel) == 0)
+		error((uiRes("m_doMotionTrail.kNoKeyFrames")));
+
+	select -r $newsel;
+
+	string $result[] = `evalEcho $snapshotCmd`;
+	string $resNode;
+	int $updated = 0;
+	for ($resNode in $result) {
+
+		// If the node is not a transform, move onto the next item
+		if (nodeType($resNode) != "transform")
+			continue;
+
+		string $shape[] = `listRelatives -pa -type motionTrailShape $resNode`;
+		if (size($shape) == 0)
+			continue;
+
+		if ($displayFrames)
+			setAttr ($shape[0]+".showFrames") 1;
+
+		if ($pre > 0)
+			setAttr ($shape[0]+".preFrame") $pre;
+
+		if ($post > 0)
+			setAttr ($shape[0]+".postFrame") $pre;
+
+		if ($trailThickness > 1)
+			setAttr ($shape[0]+".trailThickness") $trailThickness;
+
+		setAttr ($shape[0]+".keyframeSize") $keySize;
+		setAttr ($shape[0]+".pinned") $pin;
+
+		if ($anchorTransform && (size($sel) >= 2)) {
+			// set the colour to denote trail is anchor-relative
+			setAttr ($shape[0]+".trailColor") -type double3 0.451 0.324269 0.324269;
+			
+			// Lock the controPoints array to prevent editing
+			catchQuiet (`setAttr -lock on ($shape[0] + ".controlPoints")`);
+		}
+	}
+
+	select -r $sel;
+}

@@ -1,0 +1,383 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Jan 2, 2000
+//
+//  Description:
+//      This script is the split clip option box dialogs.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+
+global string $clipSplitClipEditor = "";
+
+proc setOptionVars (int $forceFactorySettings)
+{
+	if( $forceFactorySettings || !`optionVar -exists splitClipTime` ) {
+		optionVar -floatValue splitClipTime 0;
+	} 
+	
+	//	splitClipTimeMethod:
+	//	1: set the clip for the current time 
+	//	2: set the clip for the specified time
+	//
+	if ( $forceFactorySettings || !`optionVar -exists splitClipTimeMethod`) {
+		optionVar -intValue splitClipTimeMethod 1;
+	}
+
+	//	splitClipSourceMethod:
+	//	1: delete the original source
+	//	2: use the original source
+	//
+	if ( $forceFactorySettings || !`optionVar -exists splitClipSourceMethod`) {
+		optionVar -intValue splitClipSourceMethod 2;
+	}
+}
+
+//
+//  Procedure Name:
+//      splitClipSetup
+//
+//  Description:
+//		Update the state of the option box UI to reflect the option values.
+//
+//  Input Arguments:
+//      parent               - Top level parent layout of the option box UI.
+//                             Required so that UI object names can be 
+//                             successfully resolved.
+//
+//	forceFactorySettings     - Whether the option values should be set to
+//                             default values.
+//
+//  Return Value:
+//      None.
+//
+global proc splitClipSetup (string $parent, int $forceFactorySettings)
+{
+	// Retrieve the option settings.
+	setOptionVars( $forceFactorySettings );
+
+	setParent $parent;
+	
+	//	Set the start and end times.
+	float $start = `optionVar -query splitClipTime`;
+	floatFieldGrp -edit -value1 $start -enable false splitTimeValue;
+
+    // Set the correct radio button.
+	int $whichMethod = `optionVar -query splitClipTimeMethod`;
+	switch($whichMethod) {
+		case 1:
+			radioButtonGrp -e -sl 1 currTimeMethod;
+			break;
+		case 2:
+			radioButtonGrp -e -sl 1 specifyMethod;
+	        floatFieldGrp -edit -enable true splitTimeValue;
+			break;
+		default:
+			radioButtonGrp -e -sl 1 currTimeMethod;
+			break;
+	}
+
+    // Set the correct radio button.
+	int $whichMethod = `optionVar -query splitClipSourceMethod`;
+	switch($whichMethod) {
+		case 1:
+			radioButtonGrp -e -sl 1 deleteSourceMethod;
+			break;
+		case 2:
+			radioButtonGrp -e -sl 1 keepSourceMethod;
+			break;
+		default:
+			radioButtonGrp -e -sl 1 deleteSourceMethod;
+			break;
+	}
+
+}
+
+//
+//  Procedure Name:
+//      splitClipCallback
+//
+//  Description:
+//		Update the option values with the current state of the option box UI.
+//
+//  Input Arguments:
+//      parent - Top level parent layout of the option box UI.  Required so
+//               that UI object names can be successfully resolved.
+//
+//	doIt       - Whether the command should execute.
+//
+//  Return Value:
+//      None.
+//
+global proc splitClipCallback (string $parent, int $doIt)
+{
+    setParent $parent;
+
+    optionVar -floatValue  splitClipTime `floatFieldGrp -query -value1 splitTimeValue`;
+
+	if (`radioButtonGrp -q -sl currTimeMethod` == 1) {
+		optionVar -intValue splitClipTimeMethod 1;
+	} else if (`radioButtonGrp -q -sl specifyMethod` == 1) {
+		optionVar -intValue splitClipTimeMethod 2;
+	}
+
+	if (`radioButtonGrp -q -sl deleteSourceMethod` == 1) {
+		optionVar -intValue splitClipSourceMethod 1;
+	} else if (`radioButtonGrp -q -sl keepSourceMethod` == 1) {
+		optionVar -intValue splitClipSourceMethod 2;
+	}
+
+
+	global string $clipSplitClipEditor;
+	if ($doIt)
+		performSplitClip false $clipSplitClipEditor;
+}
+
+
+proc string splitClipWidgets( string $parent )
+{
+	setParent $parent;
+	
+	string $tabForm = `columnLayout -adj true`;
+
+	// whether or not to delete the original source clip after the split
+	radioButtonGrp -numberOfRadioButtons 1
+		-label (uiRes("m_performSplitClip.kSourceClip")) 
+		-label1 (uiRes("m_performSplitClip.kDeleteOriginalSource")) 
+		-select 1
+		deleteSourceMethod;
+
+	radioButtonGrp -numberOfRadioButtons 1
+		-label ""
+		-label1 (uiRes("m_performSplitClip.kKeepOriginalSource")) 
+		-shareCollection deleteSourceMethod
+		keepSourceMethod;
+
+	// clip start & duration
+	string $splitTime = (uiRes("m_performSplitClip.kSplitTime"));
+	radioButtonGrp -numberOfRadioButtons 1
+		-label $splitTime
+		-label1 (uiRes("m_performSplitClip.kCurrentTime")) 
+		currTimeMethod;
+
+	radioButtonGrp -numberOfRadioButtons 1
+		-label1 (uiRes("m_performSplitClip.kSpecifyTime")) 
+		-select 1
+		-shareCollection currTimeMethod
+		-onCommand "floatFieldGrp -e -enable true splitTimeValue"
+		-offCommand "floatFieldGrp -e -enable false splitTimeValue"
+		specifyMethod;
+
+	floatFieldGrp -label (uiRes("m_performSplitClip.kSplitTimeValue"))  -numberOfFields 1 -parent $tabForm
+	        -columnAttach 1 "right" 5 -columnAttach 2 "left" 0 splitTimeValue;
+
+	return $tabForm;
+}
+
+global proc splitClipOptions ()
+{
+	string $commandName = "splitClip";
+
+	string $applyTitle = "Split";
+	
+	// Build the option box "methods"
+	//
+	string $callback = ($commandName + "Callback");
+	string $setup = ($commandName + "Setup");
+
+	//	Get the option box.
+	//
+	//  The value returned is the name of the layout to be used as
+	//	the parent for the option box UI.
+	//
+	string $layout = getOptionBox();
+	setParent $layout;
+
+	setOptionBoxCommandName("clip");
+
+	setUITemplate -pushTemplate DefaultTemplate;
+	waitCursor -state 1;
+	tabLayout -scr true -tv false;	// To get the scroll bars
+
+	string $parent = `columnLayout -adjustableColumn 1`;
+
+	splitClipWidgets $parent;
+
+	waitCursor -state 0;
+	setUITemplate -popTemplate;
+
+	//	'Apply' button.
+	//
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit
+		-label (uiRes("m_performSplitClip.kSplitClip")) 
+		-command ($callback + " " + $parent + " " + 1)
+		$applyBtn;
+
+	//	'Save' button.
+	//
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + $parent + " " + 0 + "; hideOptionBox")
+		$saveBtn;
+
+	//	'Reset' button.
+	//
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + " " + $parent + " " + 1)
+		$resetBtn;
+
+	//	Set the option box title.
+	//
+	setOptionBoxTitle (uiRes("m_performSplitClip.kSplitClipOptions"));
+
+	setOptionBoxHelpTag( "SplitClip" );
+
+	//	Set the current values of the option box.
+	//
+	eval (($setup + " " + $parent + " " + 0));	
+	
+	//	Show the option box.
+	//
+	showOptionBox();
+}
+
+
+//
+//  Procedure Name:
+//      assembleCmd
+//
+//  Description:
+//		Construct the command that will apply the option box values.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+proc string assembleCmd()
+{
+	string $cmd;
+
+	setOptionVars(false);
+
+	string $sourceMethod = "deleteSourceMethod";
+	int $whichMethod = `optionVar -q splitClipSourceMethod`;
+	switch ($whichMethod) {
+		case 1:
+			$sourceMethod = "deleteSourceMethod";
+			break;
+		case 2:
+			$sourceMethod = "keepSourceMethod";
+			break;
+	}
+
+	string $splitMethod = "currTimeMethod";
+	int $whichMethod = `optionVar -q splitClipTimeMethod`;
+	switch ($whichMethod) {
+		case 1:
+			$splitMethod = "currTimeMethod";
+			break;
+		case 2:
+			$splitMethod = "specifyMethod";
+			break;
+	}
+
+	// doSplitClipArgList takes a string array 
+	//
+	global string $clipSplitClipEditor;	
+	$cmd =	"doSplitClipArgList 2 { " +
+				"\"" + $splitMethod + "\"" +
+				",\"" + `optionVar -query splitClipTime` + "\"" +
+				",\"" + $clipSplitClipEditor + "\"" +
+				",\"" + $sourceMethod + "\"" +		
+			" };";
+
+	return $cmd;
+}
+
+//
+//  Procedure Name:
+//      performSplitClip
+//
+//  Description:
+//		Split a clip and add the animatable attributes from the 
+//      selected nodes.  This procedure will also show the option box
+//		window if necessary as well as construct the command string
+//		that will split a clip with the current option box values.
+//
+//  Input Arguments:
+//   $action:   0 - Execute the command.
+//      		1 - Show the option box dialog.
+//      		2 - Return the command.
+//
+//	 $editor: 	Name of the editor that contains the clip to be split
+//
+//  Return Value:
+//      None.
+//
+global proc string performSplitClip (int $action, string $editor)
+{
+	string $cmd = "";
+	global string $clipSplitClipEditor;
+	$clipSplitClipEditor = $editor;
+	
+	switch ($action) {
+
+		//	Execute the command.
+		//
+		case 0:
+			//	Retrieve the option settings
+			//
+			setOptionVars(false);
+
+			//	Get the command.
+			//
+			$cmd = `assembleCmd`;
+
+			//	Execute the command with the option settings.
+			//
+			if ($cmd != "")
+			    evalEcho($cmd);
+			break;
+
+		//	Show the option box.
+		//
+		case 1:
+			splitClipOptions;
+			break;
+		case 2:
+			//	Get the command.
+			//
+			$cmd = `assembleCmd`;
+	}
+	return $cmd;
+}
+

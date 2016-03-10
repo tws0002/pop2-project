@@ -1,0 +1,264 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  27 Feb 2001
+//
+//  Description:
+//  	Helper script for a scrollList that displays and edits
+//		an enum attribute's types and values. 
+//
+
+global proc string attrEnumScrollList_enumString( string $scroll,
+												  string $textGrp )
+//
+// Description:
+//	
+//	
+{
+	string $enumValues[] = `textScrollList -q -allItems $scroll`;
+
+	string $enumString = "";
+	for( $enum in $enumValues ) {
+		string $select[] =`textScrollList -q -selectItem $scroll`;
+
+		// Replace the selected item with the edited value we
+		// find in the text field group.  (It's the changed cmd
+		// on the text field group that calls this proc.)
+		//
+		string $newName = $enum;
+		if( $enum == $select[0] ) {
+			$newName =`textFieldGrp -q -text $textGrp`;
+		} 
+
+		// Remove a leading space, if there is one, since we 
+		// had to add a one-space entry in the lister
+		// to get the empty newline to show up so people could select
+		// it to add a new enum.
+		//
+		if( $newName != " " ) {
+			$enumString += ( strip( $newName ) + ":");
+		}
+	}
+	
+	return $enumString;
+}
+
+global proc attrEnumScrollList_fill( string $attr, 
+									 string $scrollList,
+									 string $textGrp,
+									 string $text ) 
+//
+// Description:
+//	
+//	
+{
+	// For subsequent refresh, we'll need to know which attr
+	// we're displaying -- but only for the "rename attr" window.
+	// If the attribute for which we're filling up the enum values
+	// exists already it's name should be passed in in $attr.  Otherwise,
+	// it should be "".
+	//
+	int $doesAttrExist = size( $attr );
+	global string $gAttrEnumAttribute;
+
+	if( $doesAttrExist ) {
+		$gAttrEnumAttribute = $attr;
+	}
+
+	attrEnumScrollList_refresh( $doesAttrExist, $scrollList, $textGrp, $text );
+}	
+
+global proc attrEnumScrollList_refresh( int $doesAttrExist, 
+										string $scroll,
+										string $textGrp,
+										string $text )
+//
+// Description:
+//	
+//	
+{
+	global string $gAttrEnumAttribute;
+	global string $gAttrEnumNewValues;
+
+	string $enumNames;
+	if( $doesAttrExist ) {
+		if( size( $gAttrEnumAttribute ) ) {
+			$enumNames = eval( "addAttr -q -enumName " + $gAttrEnumAttribute );
+		}
+	} else {
+		$enumNames = $gAttrEnumNewValues;
+	}
+
+	string $enumArray[];
+	tokenize( $enumNames, ":", $enumArray );
+	attrEnumScrollList_clear( $scroll, $textGrp, $text );
+
+	if( `textScrollList -exists $scroll` ) {
+		for( $enum in $enumArray ) {
+			textScrollList -e -append $enum $scroll;
+		}
+		
+		// Add an empty one so users can click on it to add a new
+		// entry.
+		//
+		textScrollList -e -append " " $scroll;
+		
+		textScrollList -e -enable true $scroll;
+	}
+
+	if( `text -exists $text` ) {
+		text -e -enable true $text;
+	}
+}
+
+
+proc string attrEnumScrollList_addModeDefault()
+//
+// Description:
+//	The default enum names value for attributes we're adding.
+//	
+{
+	string $green = (uiRes("m_attrEnumScrollList.kGreen"));
+	string $blue  = (uiRes("m_attrEnumScrollList.kBlue"));
+	return( $green + ":" + $blue );
+}
+
+
+global proc attrEnumScrollList_clear( string $scroll, 
+									  string $textGrp, 
+									  string $text )
+//
+// Description:
+//	
+//	
+{
+	global string $gAttrEnumNewValues;
+
+	$gAttrEnumNewValues = attrEnumScrollList_addModeDefault();
+
+	if( `textScrollList -exists $scroll` ) {
+		textScrollList -e -enable false -removeAll $scroll;
+	} 
+	if( `textFieldGrp -exists $textGrp` ) {
+		textFieldGrp -e -enable false -text "" $textGrp;
+	}
+	if( `text -exists $text` ) {
+		text -e -enable false $text;
+	}
+}	
+
+global proc attrEnumScrollList_updateAttrAndRefresh( int $doesAttrExist,
+													 string $scrollList,
+													 string $textGrp,
+													 string $text ) 
+//
+// Description:
+//	
+//	
+{
+	global string $gAttrEnumAttribute;
+	global string $gAttrEnumNewValues;
+
+	// We're from the "edit attribute" window...
+	//
+	string $enumValues = `attrEnumScrollList_enumString $scrollList $textGrp`;
+	if( $doesAttrExist ) {
+		if( size( $gAttrEnumAttribute ) ) {
+			evalEcho( "addAttr -e -enumName \"" + $enumValues + "\" " +
+					  $gAttrEnumAttribute );
+			// Kick the AttrEd or it won't update with new pulldown values
+			//
+			select -r `ls -sl`;	
+		} 
+	}
+	// From the addAttr window -- just replace the value in the lister
+	//
+	else {
+		$gAttrEnumNewValues = $enumValues;
+	}
+
+	attrEnumScrollList_refresh( $doesAttrExist, $scrollList, $textGrp, $text );
+}
+
+global proc string[] attrEnumScrollList( int $doesAttrExist )
+//
+// Description:
+//	
+//	
+{
+	global string $gAttrEnumAttribute;
+	global string $gAttrEnumNewValues = "";
+
+	string $scrollList = "";
+	string $textGrp = "";
+	string $text = "";
+
+	$gAttrEnumNewValues = attrEnumScrollList_addModeDefault();
+
+	string $parentForm = `setParent -q`;
+
+	// The lister for displaying the enum values.
+	//
+	$text = `text -label "" enumText`;
+	string $selectEnumNameAnnot = (uiRes("m_attrEnumScrollList.kSelectEnumNameAnnot"));
+	if(`about -mac`){
+		$scrollList = `textScrollList -nr 5 -height 100
+			-annotation $selectEnumNameAnnot
+			-allowMultiSelection false scrollList`;
+	}else{
+		$scrollList = `textScrollList -nr 5
+			-annotation $selectEnumNameAnnot
+			-allowMultiSelection false scrollList`;
+	}
+	
+		// The text field for editing the enum values
+		//
+	$textGrp = `textFieldGrp -cal 1 "left"
+		-cw 1 76 -adj 2
+		-enable false -label (uiRes("m_attrEnumScrollList.kNewName"))  
+		-text "" textGrp`;
+	
+
+	formLayout -e 
+		-af $textGrp "left" 5
+		-af $textGrp "right" 5
+		-af $textGrp "bottom" 5
+		-ac $textGrp "top" 0 $scrollList
+		-af $scrollList "left" 82
+		-af $scrollList "right" 5
+		$parentForm;
+
+	// The widgets' changed commands
+	//
+	textScrollList -e
+		-selectCommand ( "textFieldGrp -enable true -e -text " + 
+						 "`textScrollList -q -si " + $scrollList +
+						 "` " + $textGrp ) $scrollList;
+
+	textFieldGrp -e  
+		-cc ( "attrEnumScrollList_updateAttrAndRefresh " + $doesAttrExist +
+			  " " + $scrollList + " " + $textGrp + " " + $text ) $textGrp;
+
+	string $result[] = { $scrollList, $textGrp, $text };
+	return $result;
+}

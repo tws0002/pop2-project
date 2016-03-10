@@ -1,0 +1,218 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//
+//
+//  Proc:   polyDeleteVertex
+//
+//  Description:        
+//
+//		If single vertex is selected
+//			get all the connected edges
+//			filter the border edges (that cannot be deleted anyway)
+//			delete the remaining edges
+//			If there were any border edges, then 
+//				select the vertex again, and delete it.
+//				(Same vertId can be used, since vertCount would not have changed)
+//
+// 		else	
+//			If all are valence2 verts, simply delete them and return
+//			Get the connected edges
+//  		Filter the border edges
+//  		Delete the edges
+//  		If there were any border edges,
+//				warn the user that the border vertices 
+//				should be deleted by selecting them again.
+//				[This script cannot handle this case, as the vertIds 
+//				 would have changed, after the first delete]
+//
+
+proc	deleteTri()
+{
+	// If this a vertex of a TRI on the border,
+    // then delete the face.
+    select -r `polyListComponentConversion -tf`;
+    eval("delete");
+}
+
+proc int	cornerOfTri()
+{
+	// If this border vertex is a corner of a TRI...
+	string $result[];
+	$result=`polyListComponentConversion -tf`;
+	if (size($result) > 1) return 0; // Not _a_ Tri
+	select -r $result;
+	select -r `polyListComponentConversion -tv`;
+	string $vertC[]=`filterExpand -ex true -sm 31`;
+	if (size($vertC) == 3) return 1;
+	return 0;
+}
+
+proc	deleteSingleVertex()
+{
+	string $inList[]=`filterExpand -ex true -sm 31`;
+	string $resul[];
+
+	string $unErr = (uiRes("m_polyDeleteVertex.kUnError"));
+
+	$tokens = tokenize($inList[0], ".", $resul);
+	if (size($resul) == 0) {
+		error $unErr;
+		return;
+	}
+
+	string $obj=$resul[0];
+	int	$vCount[] = `polyEvaluate -v`;	// Remember pre-delete-vertexCount
+	if (size($vCount) == 0) {
+	    error $unErr;
+        return;
+    }
+
+	string $allEdges[] = getEdges();
+	$allEdges = `filterExpand -ex true -sm 32`;
+	// Filter out the border edges...
+	eval("polySelectConstraint -w 2 -t 0x8000 -m 2");	//Edge magic number...
+	string $innerEdges[] = `filterExpand -ex true -sm 32`;
+	eval("polySelectConstraint -w 0 -m 0");	//Reset selectConstraint
+
+
+	if (size($innerEdges) != size($allEdges)) {
+		if (size($innerEdges) == 0) {
+			// If this a vertex of a TRI on the border,
+			// then delete the face.
+			select -r $inList;
+			if (cornerOfTri()) {
+				select -r $inList;
+				deleteTri;
+				return;
+			}
+			select -cl;
+		}
+		// Delete the inner edges first.
+		eval("delete");
+		select -r $inList;
+
+		int $vCountNow[] = `polyEvaluate -v`;
+		if (size($vCountNow) == 0) {
+	   		error $unErr;
+       		return;
+    	}
+		if ($vCountNow[0] == $vCount[0]) {
+			// if vertexCount has not decreased, this vertex can
+			// safely be deleted now
+			select -r $inList;
+		} else {
+			undo;
+			warning ( (uiRes("m_polyDeleteVertex.kCantDeleteVertWarning")));
+			return;
+		}
+	} else {
+		select -r $allEdges;
+	}
+	eval("delete");
+	return;
+}
+
+global proc polyDeleteVertex()
+{
+	// get all vertices, but do not expand list
+ 	string $inList[]=`filterExpand -ex false -sm 31`;
+	string $noVertsError = ( (uiRes("m_polyDeleteVertex.kNoVertsError")));
+	// check there is at least one item on the selection list
+ 	if (size($inList) == 0) {
+         error $noVertsError;
+         return;
+	}
+
+	// check the selection item name has a "." in it
+	string $resul[];
+	tokenize($inList[0], ".", $resul);
+	if (size($resul) == 1) {
+        error $noVertsError;
+		return;
+	}
+
+	// check there is a single component only, ie no range using ":"
+	if (size($inList) == 1) {
+		string $res2[];
+		tokenize($inList[0], ":", $res2);
+		if(size($res2) == 1) {
+			deleteSingleVertex();
+			return;
+		}
+	}
+
+	// get valence 2 verts
+	polySelectConstraint -t 0x0001 -orb 0 2 -or true -m 2;
+	string $v2Verts[]=`filterExpand -ex false -sm 31`;
+
+	// reset selectConstraint
+	polySelectConstraint -or false -m 0;	
+
+ 	// compare the two lists to see if all verts are valence 2
+	int $equal = true;
+	if(size($inList) == size($v2Verts)) {
+		int $n = size($inList);
+		for($i=0; $i<$n; $i++) {
+			if (!strcmp($inList[$i], $v2Verts[$i])) {
+				$equal = false;
+				break;
+			}
+		}
+	} else {
+		$equal = false;
+	}
+
+	// if all verts are valence 2, call simple delete
+	if($equal) {
+		eval("delete");
+		return;
+	}
+
+	select -r $inList;
+	select -r `polyListComponentConversion -te`;
+	string $allEdges[] = `filterExpand -ex false -sm 32`;
+
+	// Filter out the border edges...
+	eval("polySelectConstraint -w 2 -t 0x8000 -m 2");	//Edge magic number...
+	string $innerEdges[] = `filterExpand -ex false -sm 32`;
+
+	// reset selectConstraint and do the deletion
+	eval("polySelectConstraint -w 0 -m 0");	
+	eval("delete");
+
+	// Valence-2 Verts on the border will not get deleted.
+	// So report warning.... (If border verts were selected)
+	if (size($allEdges) != size($innerEdges)) {
+		int $n = size($allEdges);
+		for($i=0; $i<$n; $i++) {
+			if (!strcmp($allEdges[$i], $innerEdges[$i])) {
+				// If all are valence 2 verts, no fuss.
+				warning( (uiRes("m_polyDeleteVertex.kBorderVertsWarning")) );
+				break;
+			}
+		}
+	}
+	return;
+}
+

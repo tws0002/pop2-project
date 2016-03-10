@@ -1,0 +1,2744 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//	Creation Date:	April 1999
+//
+//
+//  ==================== fireworks.mel ==========
+//
+//  SYNOPSIS
+//      Create a fireworks clip effect.
+//
+//  CONTENTS
+//		
+//  UTILITY PROCEDURES
+//
+//		getUniqueName
+//		createColoredStreaks
+//
+//	PROCEDURES RELATED TO THE FIREWORKS GROUP
+//
+//		createFireworksAttributes
+//		createShaderIncandescenceExpressions
+//		connectFireworksAttributes
+//		
+//	PROCEDURES RELATED TO THE FIREWORKS ROCKETS
+//
+//		createRocketsExpression
+//		addAndConnectRocketAttributes 
+//		createRocketParticles
+//		hideAndLockRocketAttributes
+//		createRocketPositionParticles
+//		createRocketTrailsEmitter
+//		setBurstColorIndices 
+//		makeGravityLocatorsForRockets
+//  	createRockets
+//
+//	PROCEDURES TO CREATE THE TRAIL SPARKS OF THE ROCKETS
+//
+//		createRocketTrailsExpression
+//		createRocketTrailsConeInstances
+//		createRocketTrails
+//
+//	PROCEDURES TO CREATE THE FIREWORK BURSTS
+//
+//		createBurstSparksExpression
+//		defaultFireworksColors  (In a separate mel script)
+//		createBurstSparksConeInstances
+//		createBurstSparks
+//		createRocketPositionLocators
+//
+//	PROCEDURES TO SET FIREWORKS ATTRIBUTES 
+//		(Called from performDynamicsClipEffects)
+//
+//		fwSetRocketAttributes
+//		fwSetTrailAttributes
+//		fwSetSparksAttributes
+//
+//  MAIN PROCEDURES:
+//
+//		createFireworks()
+//		fireworks()
+//
+//	PROCEDURES TO CREATE THE LIGHTS FROM THE BURSTS
+//
+//		createRocketTrailsGlow (Not yet implemented)
+//		createBurstSparksGlow (Not yet implemented)
+//
+//
+
+// ************************************************************************ //
+//                                                                          //
+//                           UTILITY PROCEDURES                             //
+//                                                                          //
+// ************************************************************************ //
+
+// Save the names of the shaders, so their glow intensity can be connected to
+// the glow intensity of the fireworks Group.
+//
+string $gFwTrailShaders[];
+string $gFwSparksShaders[];
+
+//
+//  ================ getUniqueName ================
+//
+//  SYNOPSIS
+//      Return a name unique to the scene based on the argument by finding
+//		the smallest index N such that <name>N is a unqie name in the scene.
+//
+//	ARGUMENTS
+//		string $name -- the base name from which to determine a unique alternative
+//
+//	RETURN
+//		The unique name.
+//
+proc string getUniqueName(string $name)
+{
+	int $i = 1;
+
+	int $nameExists = 1;
+	string $names[];
+	string $trialName;
+	while ($nameExists)
+	{
+		$trialName = ($name + $i);
+		$names = `ls $trialName`;
+		if (size($names) == 0)
+			$nameExists = 0;
+		else
+			$i ++;
+	}
+	return $trialName;
+}
+
+
+//
+//  ================ createColoredStreaks ================
+//
+//  SYNOPSIS
+//      Create a cone and its shader for one of the colored streaks of the
+//		firework sparks or trails.  Set the color and the glow intensity of
+//		the shader.  Connect the cone to the shader, lock the shader's
+//		color attribute and connect its ambient color from its color to make
+//		them the same.
+//
+//	ARGUMENTS
+//		string $sparksOrTrail	-- which object the streaks are created for
+//		string $coneName		-- the name of the cone
+//		string $shaderName		-- the name of the shader
+//		vector $coneScale		-- the scale of the cone
+//		vector $coneAxis		-- the axis along which to create the cone
+//		vector $rgb				-- the color (rgb) of the shader
+//
+//	RETURN
+//		The name of the cone and shader created.
+//
+proc string[]  createColoredStreaks(string $sparksOrTrail,
+									string $coneName, 
+									string $shaderName, 
+									vector $coneScale,
+									vector $coneAxis,
+									vector $rgb)
+{
+	global string $gFwTrailShaders[];
+	global string $gFwSparksShaders[];
+
+	// Create the cone that will be instanced to the burst sparks particles to
+	// create one of the colored streaks of the fireworks.
+	//
+	string $result[];
+	$result = `cone -ax ($coneAxis.x) ($coneAxis.y) ($coneAxis.z) -n $coneName`;
+	string $cone = $result[0];
+	scale ($coneScale.x) ($coneScale.y) ($coneScale.z);
+	
+	// Create the shader for the cone we just made.
+	//
+	string $shader = `shadingNode -asShader lambert -n $shaderName`;
+	string $shaderSG = $shader + "SG";
+
+	sets -renderable true -noSurfaceShader true -empty -name $shaderSG;
+	connectAttr -f ($shader + ".outColor")  
+					($shaderSG + ".surfaceShader");
+
+	// Set the color of the cone to be the color sent in.
+	//
+	setAttr ($shader + ".color") 
+	 		-type double3   ($rgb.x) ($rgb.y) ($rgb.z);
+
+	// Connect the ambient color to the shader color, so shaders will not
+	// be cast on the sparks.  We want the ambient color to be the same as
+	// the main color, so just connect it.
+	//
+	connectAttr ($shader + ".color") ($shader + ".ambientColor");
+
+	// Lock the shader color so it can only be edited from the Attribute
+	// Editor's rocket shape.  We have to lock it rather than making a
+	// connection because there's a rendering bug: a direct connection
+	// to the shader's color is not reflected in hardware shading.
+	//
+	setAttr -lock true ($shader + ".color");
+
+	// Set a glow intensity.
+	//
+	setAttr ($shader + ".glowIntensity")  0.3;
+
+	// Add the shader name to the shader array.
+	//
+	if ($sparksOrTrail == "trail")
+	{
+		$gFwTrailShaders[size($gFwTrailShaders)] = $shader;
+	}
+	else
+	{
+		$gFwSparksShaders[size($gFwSparksShaders)] = $shader;
+	}
+
+	// Connect the shader to the cone.
+	//
+	sets -e -forceElement $shaderSG $cone;
+
+	// Return the name of the cone.
+	//
+	string $returns[2];
+	$returns[0] = $cone;
+	$returns[1] = $shader;
+	return $returns;
+}
+
+// ************************************************************************ //
+//                                                                          //
+//                           FIREWORKS PROCEDURES                           //
+//                                                                          //
+// ************************************************************************ //
+
+//  ================ createFireworksAttributes ================
+//
+//  SYNOPSIS
+//      Create the attributes on the fireworks group that the user will
+//		most likely want to modify to tune the fireworks effect.
+//		These are attributes on the various objects that are collected together
+//		under the fireworks group for ease of editing.  
+//
+//	ARGUMENTS
+//		string $fireworksGroup -- the top level group of the fireworks
+//
+//	RETURN
+//		None
+//
+proc createFireworksAttributes(string $fireworksGroup)
+{
+	if( `licenseCheck -type complete` == 0 )
+	{
+		warning( (uiRes("m_fireworks.kYouAreNotLicensed")));
+		return;
+	}
+
+	// ROCKETS ATTRIBUTES
+	//
+	addAttr -is true -ln "maxBurstSpeed" 
+			-at "float" -min 0 -dv 20 
+			$fireworksGroup;
+	addAttr -is true -ln "minSparksCount" 
+			-at "float" -min 0 -dv 100 	
+			$fireworksGroup;
+	addAttr -is true -ln "maxSparksCount" 
+			-at "float" -min 0 -dv 200 
+			$fireworksGroup;
+	addAttr -is true -ln "sparksColorSpread" 
+			-at "float" -min 0 -dv 3 
+			$fireworksGroup;
+	addAttr -is true -ln "rocketGravity" 
+			-at "float" -min 0 -dv 9.8 
+			$fireworksGroup;
+	addAttr -ln showAllBurstPositions 
+			-at bool  
+			$fireworksGroup;
+	addAttr -ln showAllLaunchPositions 
+			-at bool  
+			$fireworksGroup;
+
+	setAttr -keyable on ($fireworksGroup + ".maxBurstSpeed");
+	setAttr -keyable on ($fireworksGroup + ".minSparksCount");
+	setAttr -keyable on ($fireworksGroup + ".maxSparksCount");
+	setAttr -keyable on ($fireworksGroup + ".sparksColorSpread");
+	setAttr -keyable on ($fireworksGroup + ".rocketGravity");
+	setAttr -keyable on ($fireworksGroup + ".showAllBurstPositions");
+	setAttr -keyable on ($fireworksGroup + ".showAllLaunchPositions");
+
+	// ROCKET TRAIL EMITTER ATTRIBUTES
+	//
+	addAttr -is true -ln "trailEmitRate" 
+			-at "float" -min 0  -dv 150 
+			$fireworksGroup;
+	addAttr -is true -ln "trailEmitSpeed" 
+			-at "float" -min 0  -dv .5 
+			$fireworksGroup;
+	addAttr -is true -ln "trailEmitSpread" 
+			-at "float" -min 0  -dv .5 
+			$fireworksGroup;
+
+	setAttr -keyable on ($fireworksGroup + ".trailEmitRate");
+	setAttr -keyable on ($fireworksGroup + ".trailEmitSpeed");
+	setAttr -keyable on ($fireworksGroup + ".trailEmitSpread");
+
+	// ROCKET TRAIL ATTRIBUTES
+	//
+	addAttr -is true -ln "trailMinTailSize" 
+			-at "float" -min 0  -dv .5 
+			$fireworksGroup;
+	addAttr -is true -ln "trailMaxTailSize" 
+			-at "float" -min 0  -dv 2 
+			$fireworksGroup;
+	addAttr -is true -ln "trailGlow" 
+			-at "float" -min 0  -dv .3 
+			$fireworksGroup;
+	addAttr -is true -ln "trailIncandescence" 
+			-at "float" -min 0  -dv .25 
+			$fireworksGroup;
+
+	setAttr -keyable on ($fireworksGroup + ".trailMinTailSize");
+	setAttr -keyable on ($fireworksGroup + ".trailMaxTailSize");
+	setAttr -keyable on ($fireworksGroup + ".trailGlow");
+	setAttr -keyable on ($fireworksGroup + ".trailIncandescence");
+
+	// BURST SPARKS ATTRIBUTES
+	//
+	addAttr -is true -ln "sparksMinTailSize" 
+			-at "float" -min 0 -dv .5 
+			$fireworksGroup;
+	addAttr -is true -ln "sparksMaxTailSize" 
+			-at "float" -min 0 -dv 2 
+			$fireworksGroup;
+	addAttr -is true -ln "sparksGlow" 
+			-at "float" -min 0  -dv .3 
+			$fireworksGroup;
+	addAttr -is true -ln "sparksIncandescence" 
+			-at "float" -min 0  -dv .25 
+			$fireworksGroup;
+
+	// Add an attribute to control display of sparks as particles or
+	// cones.
+	//
+	addAttr -is true -ln "displayGeometry" -at bool -dv true $fireworksGroup;
+
+	setAttr -keyable on ($fireworksGroup + ".sparksMinTailSize");
+	setAttr -keyable on ($fireworksGroup + ".sparksMaxTailSize");
+	setAttr -keyable on ($fireworksGroup + ".sparksGlow");
+	setAttr -keyable on ($fireworksGroup + ".sparksIncandescence");
+	setAttr -keyable on ($fireworksGroup + ".displayGeometry");
+
+}
+
+//  ================ createShaderIncandescenceExpressions ================
+//
+//  SYNOPSIS
+//      Create the expressions to set the incandescence of the trail and
+//		burst sparks shaders.  One expression for all the trail shaders and
+//		one expression for all the burst sparks shaders.
+//
+//	ARGUMENTS
+//		string $fireworksName    -- base fireworks name
+//		string $fireworksGroup   -- the top level fireworks group, which has the
+//									incandescence attribute the shaders'incancescence
+//									is being connect to
+//
+//	RETURN
+//		None
+//
+proc createShaderIncandescenceExpressions( string $fireworksName,
+											string $fireworksGroup)
+{
+	if( `licenseCheck -type complete` == 0 )
+	{
+		warning( (uiRes("m_fireworks.kYouAreNotLicensedIncand")));
+		return;
+	}
+
+	// One for trails, one for sparks
+
+	global string $gFwTrailShaders[];
+	global string $gFwSparksShaders[];
+
+	// Set the name of the appropriate incandescence attribute depending on
+	// whether we are creating shaders for trails or burst sparks.
+	//
+	string $incan;
+	string $theExpression = "";
+
+	// First do it for trails
+	//
+	// Make an expression for the incandescence of the trail shaders, if
+	// there are any.
+	//
+	if (size($gFwTrailShaders) > 0)
+	{
+		$incan = $fireworksGroup + ".trailIncandescence";
+
+		$theExpression += "// Set the incandescence of the trail shaders.\n";
+		$theExpression += "// It is based on the shader color, with an\n";
+		$theExpression += "// incandescence intensity value added in.\n";
+		$theExpression += "//\n";
+
+		for ($i = 0; $i < size($gFwTrailShaders); $i++)
+		{
+			string $shader = $gFwTrailShaders[$i];
+
+			$theExpression += "float $r = " + $shader + ".colorR;\n";
+			$theExpression += "float $g = " + $shader + ".colorG;\n";
+			$theExpression += "float $b = " + $shader + ".colorB;\n";
+	
+			$theExpression += "vector $rgb = <<$r, $g, $b>>;\n";
+			$theExpression += "vector $hsv = rgb_to_hsv($rgb);\n";
+			$theExpression += "$hsv = <<$hsv.x, $hsv.y, " + $incan + ">>;\n";
+			$theExpression += "$rgb = hsv_to_rgb($hsv);\n";
+	
+			$theExpression += $shader + ".incandescenceR = $rgb.x;\n";
+			$theExpression += $shader + ".incandescenceG = $rgb.y;\n";
+			$theExpression += $shader + ".incandescenceB = $rgb.z;\n\n";
+		}
+
+		expression -n ($fireworksName + "TrailShadersExpr") -s $theExpression;
+	}
+
+	// Then do it for sparks.
+	//
+	//
+	if (size($gFwSparksShaders) > 0)
+	{
+		$incan = $fireworksGroup + ".sparksIncandescence";
+		$theExpression = "";
+
+		$theExpression += "// Set the incandescence of the sparks shaders.\n";
+		$theExpression += "// It is based on the shader color, with an\n";
+		$theExpression += "// incandescence intensity value added in.\n";
+		$theExpression += "//\n";
+
+		for ($i = 0; $i < size($gFwSparksShaders); $i++)
+		{
+			string $shader = $gFwSparksShaders[$i];
+
+			$theExpression += "float $r = " + $shader + ".colorR;\n";
+			$theExpression += "float $g = " + $shader + ".colorG;\n";
+			$theExpression += "float $b = " + $shader + ".colorB;\n";
+
+			$theExpression += "vector $rgb = <<$r, $g, $b>>;\n";
+			$theExpression += "vector $hsv = rgb_to_hsv($rgb);\n";
+			$theExpression += "$hsv = <<$hsv.x, $hsv.y, " + $incan + ">>;\n";
+			$theExpression += "$rgb = hsv_to_rgb($hsv);\n";
+
+			$theExpression += $shader + ".incandescenceR = $rgb.x;\n";
+			$theExpression += $shader + ".incandescenceG = $rgb.y;\n";
+			$theExpression += $shader + ".incandescenceB = $rgb.z;\n\n";
+		}
+
+		expression -n ($fireworksName + "SparksShadersExpr") -s $theExpression;
+	}
+}
+
+
+//  ================ connectFireworksAttributes ================
+//
+//  SYNOPSIS
+//      Connect the attributes on the fireworks group to the appropriate
+//		attributes in the various objects that make up the fireworks.
+//
+//	ARGUMENTS
+//		string $fireworksName    -- base fireworks name
+//		string $fireworksGroup   -- the top level fireworks group, which has the
+//									attributes the other objects' attributes are
+//									being connect to
+//		string $rocketsShape     -- the rockets particle
+//		string rocketTrailShape  -- the rocket trails particle
+//		string $burstSparksShape -- the burst sparks particle
+//		string $rocketTrailEmitter -- emitter of the rocket trails
+//
+//	RETURN
+//		None
+//
+proc connectFireworksAttributes(string $fireworksName,
+									string $fireworksGroup,
+									string $rocketsShape, 
+									string $rocketTrailShape, 
+									string $burstSparksShape,
+									string $rocketTrailEmitter)
+{
+	if( `licenseCheck -type complete` == 0 )
+	{
+		warning( (uiRes("m_fireworks.kYouAreNotLicensedFireworks")));
+		return;
+	}
+
+	global string $gFwSparksShaders[];
+	global string $gFwTrailShaders[];
+
+	// ROCKETS ATTRIBUTES
+	//
+	connectAttr 
+		($fireworksGroup + ".maxBurstSpeed")  
+		($rocketsShape + ".maxBurstSpeed");
+
+	connectAttr 
+		($fireworksGroup + ".minSparksCount")  
+		($rocketsShape + ".minSparksCount");
+
+	connectAttr 
+		($fireworksGroup + ".maxSparksCount")  
+		($rocketsShape + ".maxSparksCount");
+
+	connectAttr 
+		($fireworksGroup + ".sparksColorSpread")  
+		($rocketsShape + ".sparksColorSpread");
+
+	connectAttr 
+		($fireworksGroup + ".rocketGravity") 
+		($rocketsShape + ".rocketGravity");
+
+	connectAttr 
+		($fireworksGroup + ".showAllBurstPositions") 
+		($rocketsShape + ".showAllBurstPositions");
+
+	connectAttr 
+		($fireworksGroup + ".showAllLaunchPositions") 
+		($rocketsShape + ".showAllLaunchPositions");
+
+	connectAttr 
+		($fireworksGroup + ".displayGeometry")  
+		($rocketsShape + ".displayGeometry");
+
+	// ROCKET TRAIL EMITTER ATTRIBUTES
+	//
+	connectAttr 
+		($fireworksGroup + ".trailEmitRate")  
+		($rocketTrailEmitter + ".rate");
+	connectAttr 
+		($fireworksGroup + ".trailEmitSpeed")  
+		($rocketTrailEmitter + ".speed");
+	connectAttr 
+		($fireworksGroup + ".trailEmitSpread")  
+		($rocketTrailEmitter + ".spread");
+
+	// ROCKET TRAIL ATTRIBUTES
+	//
+	for ($i = 0; $i < size($gFwTrailShaders); $i++)
+	{
+		connectAttr 
+			($fireworksGroup + ".trailGlow")  
+			($gFwTrailShaders[$i] + ".glowIntensity");
+	}
+	connectAttr 
+		($fireworksGroup + ".trailMinTailSize")  
+		($rocketTrailShape + ".minTailSize");
+
+	connectAttr 
+		($fireworksGroup + ".trailMaxTailSize")  
+		($rocketTrailShape + ".maxTailSize");
+
+
+	// BURST SPARKS ATTRIBUTES
+	//
+	connectAttr 
+		($fireworksGroup + ".sparksMinTailSize")  
+		($burstSparksShape + ".minTailSize");
+
+	connectAttr 
+		($fireworksGroup + ".sparksMaxTailSize")  
+		($burstSparksShape + ".maxTailSize");
+
+	for ($i = 0; $i < size($gFwSparksShaders); $i++)
+	{
+		connectAttr 
+			($fireworksGroup + ".sparksGlow")  
+			($gFwSparksShaders[$i] + ".glowIntensity");
+	}
+
+
+
+	// Create the expression for the incandescence of the trail and sparks
+	// shaders.
+	//
+	createShaderIncandescenceExpressions($fireworksName, $fireworksGroup);
+}
+
+
+// ************************************************************************ //
+//                                                                          //
+//                           ROCKETS PROCEDURES                             //
+//                                                                          //
+// ************************************************************************ //
+
+
+//  ================ createRocketsExpression ================
+//
+//  SYNOPSIS
+//		Create the creation expression that sets rocket flight behavior.
+//
+//      Create the runtime expression that has two fuctions:
+//
+//		1. Writes the expression for the given rocket particle shape to control
+//		its flight.  The expression takes into account the launch and burst times
+//		and positions, and the direction and magnitude of the specified gravity
+//		field.  
+//
+//      2. Creates the fireworks bursts (sparks) through calling the emit action.  
+//		This expression is on the rocket particle from which the burst will
+//		be launched.
+//		For each burst, the expression creates a random number of particles
+//		between minSparksCount and maxSparksCount.  It creates a random set
+//		of positions, velocities and colors for the particles in the burst.
+//
+//	ARGUMENTS
+//		string $rocketShape          -- the rocket particles shape
+//		string $burstSparksShape     -- the burst sparks shape
+//		string $burstSparksInstancer -- the instancer (w/cones) for the burst sparks
+//		string $rocketTrailEmitter   -- emitter of the rocket trails
+//		string $grav				 -- gravity field influencing rockets
+//
+//	RETURN
+//		None
+//
+proc createRocketsExpression(string $rocketsShape,
+								string $burstSparksShape, 
+								string $burstSparksInstancer,
+								string $rocketTrailEmitter,
+								string $grav )
+{
+	string $ratePPName = $rocketTrailEmitter + "RatePP";
+
+	// CREATION:
+	//
+	string $cExpString = 
+		"// All launch particles live starting at time zero. \n"
+		+ "// But make particle invisible until it's launched.\n"
+		+ "//\n"
+		+ "opacityPP = 0.0;\n"
+		+ "\n"
+		+ "// Compute and store necessary in-flight velocity.\n"
+		+ "//\n"
+		+ "float $totalFlightTimeFrames = burstFramePP - launchFramePP - 1;\n"
+		+ "float $totalFlightTimeSeconds = $totalFlightTimeFrames;\n"
+		+ "\n"
+		+ "string $timeUnit = `currentUnit -q -time`;\n"
+		+ "if ($timeUnit == \"film\")\n"
+		+ "    $totalFlightTimeSeconds = $totalFlightTimeFrames/24;\n"
+		+ "else if ($timeUnit == \"ntsc\")\n"
+		+ "    $totalFlightTimeSeconds = $totalFlightTimeFrames/30;\n"
+		+ "else if ($timeUnit == \"pal\")\n"
+		+ "    $totalFlightTimeSeconds = $totalFlightTimeFrames/25;\n"
+		+ "else if ($timeUnit == \"game\")\n"
+		+ "    $totalFlightTimeSeconds = $totalFlightTimeFrames/15;\n"
+		+ "else if ($timeUnit == \"show\")\n"
+		+ "    $totalFlightTimeSeconds = $totalFlightTimeFrames/48;\n"
+		+ "else if ($timeUnit == \"palf\")\n"
+		+ "    $totalFlightTimeSeconds = $totalFlightTimeFrames/50;\n"
+		+ "else if ($timeUnit == \"ntscf\")\n"
+		+ "    $totalFlightTimeSeconds = $totalFlightTimeSeconds/60;\n"
+		+ "vector $gravDir = << localGravX, localGravY, localGravZ >>;\n"
+		+ "if (!equivalent($totalFlightTimeSeconds,0.0)) {\n"
+		+ "    initialVelocity = (burstPositionPP - launchPositionPP) /  $totalFlightTimeSeconds "
+		+ "    - $gravDir * 0.5 * rocketGravity * $totalFlightTimeSeconds;\n"
+		+ "    // Initialize velocity to zero prior to launch. Set launched flag false.\n"
+		+ "    velocity = <<0,0,0>>;\n"
+		+ "    launched = 0;\n"
+		+ "    hasBurst = 0;\n"
+		+ $ratePPName + " = 0;\n"
+		+ "}\n"
+		+ "\n"
+		+ "\tposition = launchPositionPP;\n"
+      ;
+
+	dynExpression -c -s $cExpString $rocketsShape;
+
+
+	// RUNTIME:
+	//
+	string $rExpString = 
+		  "// FLIGHT CONTROLS:\n"
+		+ "//\n"
+		+ "// Make rocket particles invisible until they are launched\n"
+		+ "// and after they have burst.\n"
+		+ "//\n"
+		+ "if (frame >= launchFramePP &&  hasBurst == 0)\n"
+		+ "\topacityPP = 1.0;\n"
+        + "\n"
+        + "//If not yet launched, keep at launch position\n"
+        + "//Give initial velocity at launch time or soonest chance after.\n"
+        + "//\n"
+        + "if (frame <= launchFramePP-1)\n"
+        + "{\n"
+        + "\tvelocity = initialVelocity;\n"
+        + "\tposition = launchPositionPP;\n"
+        + "}\n"
+        + "else\n"
+        + "if (0 == launched)\n"
+        + "{\n"
+        + "\tvelocity = initialVelocity;\n"
+        + "\tlaunched = 1;\n"
+        + "}\n"
+		+ "// Before and after the burst frame, the rocket should not emit.\n"
+		+ "//\n"
+        + "if (frame < launchFramePP || hasBurst == 1)\n"
+        + "\t" + $ratePPName + " = 0;\n"
+        + "else\n"
+        + "\t" + $ratePPName + " = " + $rocketTrailEmitter + ".rate;\n\n"
+        + "//\n"
+		+ "// BURST CONTROLS:\n"
+		+ "//\n"
+        + "vector $rocketPosition = worldPosition;\n"
+        + "vector $rocketVelocity = velocity;\n"
+        + "\n"
+		+ "// If the rocket particle is above the minimum explode height or the\n"
+		+ "// rocket particle is falling, then make the fireworks burst,\n"
+		+ "// if it hasn't already.\n"
+		+ "//\n"
+        + "if( frame >= burstFramePP-1 && hasBurst == 0)\n"
+        + "{\n"
+        + "    float $fmin = minSparksCount;\n"
+        + "    float $fmax = maxSparksCount;\n"
+        + "    if( $fmax < $fmin )\n"
+        + "        $fmax = $fmin;\n"
+        + "\n"    
+		+ "    // Determine a random number of sparks/particles in this burst.\n"
+		+ "    //\n"
+        + "    int $emitCount = rand($fmin,$fmax);\n"
+        + "\n"
+		+ "	   vector $pattern[];\n"
+		+ "	   clear($pattern);\n"
+		+ "\n"
+        + "    // Fill the pattern array with random vectors, producing\n"
+        + "    // a random, spherical explosion.\n"
+        + "    //\n"
+        + "    for( $i = 0; $i < $emitCount; $i ++ )\n"
+        + "    {\n"
+        + "        $pattern[$i] = sphrand(1);\n"
+        + "    }\n"
+        + "\n"
+		+ "    // Set up the emit action for creating the burst sparks\n"
+		+ "    //\n"
+		+ "    // Emit into the Sparks particle object\n"
+		+ "    //\n"
+        + "    string $cmd = \"emit -object " +  $burstSparksShape + "\";\n"
+		+ "\n"
+		+ "    // Set the position from which the emission occurs to be the \n"
+		+ "    // position of the rocket.\n"
+		+ "    //\n"
+        + "    for( $i = 0; $i < $emitCount; $i ++ )\n"
+        + "    {\n"
+        + "        $cmd += (\" -pos \"+$rocketPosition);\n"
+        + "    }\n"
+		+ "\n"
+		+ "    // Set the velocities of the spark particles.\n"
+		+ "    //\n"
+        + "    $cmd += \" -at velocity\";\n"
+        + "    for( $i = 0; $i < $emitCount; $i ++ )\n"
+        + "    {\n"
+        + "        //\n"
+        + "        vector $nv = $pattern[$i];\n"
+        + "        $nv = $nv * maxBurstSpeed + $rocketVelocity;\n"
+		+ "\n"
+        + "        $cmd += (\" -vv \"+$nv);\n"
+        + "    }\n"
+        + "\n"
+        + "    // Set the color index for the sparks.\n"
+        + "    //\n"
+        + "\n"
+		+ "    // For each spark particle, choose randomly either the main color\n"
+		+ "    // of the burst or one of its adjacent colors -- to get\n"
+		+ "    // color modulation in the burst.\n"
+		+ "    //\n"
+		+ "    // Number of colors to choose from.\n"
+		+ "    //\n"
+		+ "    float $indexCount = " + $burstSparksInstancer + ".hierarchyCount;\n"
+		+ "\n"
+		+ "    int $startIndex = ($indexCount + burstColorIndex - sparksColorSpread) % $indexCount;\n"
+		+ "    int $endIndex = ($startIndex + sparksColorSpread * 2) % $indexCount;\n"
+		+ "\n"
+		+ "    float $red[]; float $green[]; float $blue[];\n"
+		+ "    clear($red); clear($green); clear($blue);\n"
+		+ "\n"
+		+ "    int $c;\n"
+		+ "    for( $c = 0; $c < sparksColorSpread * 2 + 1; $c ++ )\n"
+		+ "    {\n"
+		+ "	       float $getColor[] = `getAttr " + $rocketsShape + ".fireworksColors[($startIndex+$c)%$indexCount]`;\n"
+		+ "	       $red[$c] = $getColor[0];\n"
+		+ "	       $green[$c] = $getColor[1];\n"
+		+ "	       $blue[$c] = $getColor[2];\n"
+		+ "    }\n"
+		+ "\n"
+        + "    for ($i = 0; $i < $emitCount; $i++)\n"
+        + "    {\n"
+		+ "        int $index = rand(sparksColorSpread * 2 + 1);\n"
+        + "        $cmd += \" -at sparkColorIndex \";\n"
+		+ "        $cmd += \"  -fv \" + (($startIndex + $index)%$indexCount);\n"
+        + "        $cmd += \" -at rgbPP \";\n"
+        + "        $cmd += \"  -vv \"+$red[$index]+\" \"+$green[$index]+\" \"+$blue[$index];\n"
+        + "    }\n"
+        + "\n"
+        + "    // Now issue the emit command\n"
+        + "    //\n"
+        + "    eval($cmd);\n"
+		+ "\n "
+		+ "    hasBurst = 1;\n"
+        + "}\n"
+	;
+
+    dynExpression -rbd -s $rExpString $rocketsShape;
+
+
+	// Set expressions to execute after dynamics.  The runtime expression
+	// requires this to keep particles in place prior to launch time.
+	// Then lock the attribute because if it is changed, it will affect
+	// the rocket flight.
+	//
+	setAttr ($rocketsShape + ".expressionsAfterDynamics") 1;
+	setAttr -lock true ($rocketsShape+".expressionsAfterDynamics");
+}
+
+//  ================ addAndConnectRocketAttributes ================
+//
+//  SYNOPSIS
+//
+//		Adds attributes to control the rockets flight to the rockets particle
+//		shape, whose name is passed in.  Assumes that proper error checking
+//		has been done and that this is a valid particle shape.
+//		Also assumes it is a newly created particle shape so it won't yet have
+//		any of these attributes.
+//		$gravity is the name of the gravity field on the rockets.
+//		This routine connects it to control parameters in the particle shape.
+//		This routine assumes the names are valid.
+//
+//	ARGUMENTS
+//		string $fireworksGroup -- the top level group for the fireworks
+//		string $rocketShape    -- the rocket particles shape
+//		string $gravity        -- the rockets' gravity field
+//
+//	RETURN
+//		None
+//
+proc addAndConnectRocketAttributes( string $fireworksGroup,
+									string $rocketsShape, 
+									string $gravity )
+{
+	// Launch and burst locations and frames
+	//
+	addAttr -ln launchPositionPP0 -dt vectorArray  $rocketsShape;
+	addAttr -ln launchPositionPP -dt vectorArray  $rocketsShape;
+
+	addAttr -ln burstPositionPP0 -dt vectorArray  $rocketsShape;
+	addAttr -ln burstPositionPP -dt vectorArray  $rocketsShape;
+
+	addAttr -ln launchFramePP0 -dt doubleArray  $rocketsShape;
+	addAttr -ln launchFramePP -dt  doubleArray  $rocketsShape;
+
+	addAttr -ln burstFramePP0 -dt  doubleArray  $rocketsShape;
+	addAttr -ln burstFramePP -dt   doubleArray  $rocketsShape;
+
+	addAttr -ln opacityPP0 -dt  doubleArray  $rocketsShape;
+	addAttr -ln opacityPP -dt   doubleArray  $rocketsShape;
+
+	addAttr -ln initialVelocity -dt vectorArray  $rocketsShape;
+	addAttr -ln launched -dt doubleArray  $rocketsShape;
+	addAttr -ln hasBurst -dt doubleArray  $rocketsShape;
+
+	// Add an attribute to control display of sparks as particles or
+	// cones.  
+	//
+	addAttr -is true -ln "displayGeometry" -at bool -dv true $rocketsShape;
+	setAttr -e -keyable true ($rocketsShape+".displayGeometry");
+
+	// spin control
+	//
+	addAttr -ln spinSpeed -at double  -dv 0.0 $rocketsShape;
+	addAttr -ln spinSpread -at double  -dv 0.0 $rocketsShape;
+	setAttr -e -keyable true ($rocketsShape+".spinSpeed");
+	setAttr -e -keyable true ($rocketsShape+".spinSpread");
+
+	// Attribute to hold the color palette for the rocket burst instances
+	// so we can have ready access to it in the Attribute Editor.  And 
+	// another to hold a message connection between the palette color and the
+	// shader color for editing purposes.
+	//
+	addAttr -ln "fireworksColors" -dt double3 -multi $rocketsShape;
+	addAttr -ln "fireworksShaders" -at message -multi $rocketsShape;
+
+	addAttr -ln "rocketTrailColors" -dt double3 -multi $rocketsShape;
+	addAttr -ln "rocketTrailShaders" -at message -multi $rocketsShape;
+
+	// Used to index into the particle instancer to choose one of the color
+	// cones as the "main color" for the burst that comes from each rocket.
+	//
+	addAttr -ln "burstColorIndex" -dt doubleArray $rocketsShape;
+	addAttr -ln "burstColorIndex0" -dt doubleArray $rocketsShape;
+
+	// Used to save the name of the procedure that created the color palette
+	// for the rocket sparks, so the user can reset to that original
+	// palette.
+	//
+	addAttr -ln "colorPaletteProc" -dt "string" $rocketsShape;
+	setAttr -e -keyable false ($rocketsShape + ".colorPaletteProc");
+
+	// Attribute just to flag that this particle shape is a rocket shape for
+	// fireworks.  So we can put controls in the attribute for its fireworks
+	// attributes.  But it should not be visible or editable, so make it
+	// locked and unkeyable.
+	//
+	addAttr -ln "_fireworksRocket" -at message $rocketsShape;
+	setAttr -keyable false -lock on ($rocketsShape + "._fireworksRocket");
+
+	// Message attributes:  
+	
+	// These will be connected to the launch and burst position locators,
+	// so we can find the locators in the Attribute Editor.
+	//
+	addAttr -ln "launchPositionManipMessage" -at message $rocketsShape;
+	setAttr -keyable false ($rocketsShape + ".launchPositionManipMessage");
+	addAttr -ln "burstPositionManipMessage" -at message $rocketsShape;
+	setAttr -keyable false ($rocketsShape + ".burstPositionManipMessage");
+
+	// Also connect a message to the fireworksGroup so we can find it in
+	// the attribute editor for editing sparksColorSpread and visibility.
+	//
+	addAttr -ln "rocketsMessage" -at message $rocketsShape;
+	setAttr -keyable false ($rocketsShape + ".rocketsMessage");
+	connectAttr ($fireworksGroup + ".message")
+				($rocketsShape + ".rocketsMessage");
+
+	// Add attributes that will be used in creating and controlling the
+	// sparks in the rocket's fireworks burst.
+	//
+	addAttr -is true -ln "minSparksCount" 
+			-at "float" -min 0 -dv 100 	
+			$rocketsShape;
+	addAttr -is true -ln "maxSparksCount" 
+			-at "float" -min 0 -dv 200 
+			$rocketsShape;
+	addAttr -is true -ln "sparksColorSpread" 
+			-at "float" -min 0 -dv 3 
+			$rocketsShape;
+	addAttr -is true -ln "maxBurstSpeed" 
+			-at "float" -min 0 -dv 20 
+			$rocketsShape;
+
+	setAttr -keyable on ($rocketsShape + ".maxBurstSpeed");
+	setAttr -keyable on ($rocketsShape + ".minSparksCount");
+	setAttr -keyable on ($rocketsShape + ".maxSparksCount");
+	setAttr -keyable on ($rocketsShape + ".sparksColorSpread");
+
+	// gravity control, connected to gravity shape
+	//
+	addAttr -ln rocketGravity -at double -dv 9.8 $rocketsShape;
+	setAttr -e -keyable true ($rocketsShape+".rocketGravity");
+	connectAttr ($rocketsShape + ".rocketGravity") ($gravity + ".magnitude");
+
+	// toggle for viewing mode
+	//
+	addAttr -ln showAllBurstPositions -at bool  $rocketsShape;
+	setAttr -e -keyable false ($rocketsShape+".showAllBurstPositions");
+
+	addAttr -ln showAllLaunchPositions -at bool  $rocketsShape;
+	setAttr -e -keyable false ($rocketsShape+".showAllLaunchPositions");
+
+}
+
+
+//  ================ createRocketParticles ================
+//
+//  SYNOPSIS
+//		Given the name of an existing particle shape $rocketsShape, adds to it
+//		$numRockets particles.
+//		Each particle is given a random burst position inside a box centered
+//		at $burstAreaCenter, each of whose edges is $burstAreaExtents.  Each
+//		particle's launch position is $launchPosition (all the same).
+//		Launch times for each particle are generated as a function of
+//		$firstLaunchFrame and $launchRate (number per frame).
+//		The burst time for each particle is equal to its launch time plus the
+//		fixed value $flightTimeInFrames.
+//
+//		Assumes the $rocketsShape is valid and is a particle shape. Assumes
+//		addAndConnectRocketAttributes has already been called to add the
+//		necessary attributes.  
+//
+//		This routine is called when first making the effect or when
+//		adding more particles to an existing effect.
+//
+//
+//	ARGUMENTS
+//		string $rocketShape      -- the rocket particles shape
+//		int    $numRockets       -- number of particles/rockets to create 
+//	    vector $launchPos        -- launch position
+//		vector $burstAreaCenter  -- center of burst area
+//		vector $burstAreaExtents -- extents of burst area
+//		float  $firstLaunchFrame -- frame for first launch
+//		float  $launchRate       -- launch rate (in frames)
+//		float  $minFlightTimeInFrames
+//		float  $maxFlightTimeInFrames
+//
+//	RETURN
+//		None
+//
+proc createRocketParticles( string $rocketsShape, 
+								int $numRockets, 
+								vector $launchPos, 
+								vector $burstAreaCenter, 
+					  			vector $burstAreaExtents,
+					  			float $firstLaunchFrame, 
+								float $launchRate, 
+								float $minFlightTimeInFrames,
+					  			float $maxFlightTimeInFrames )
+{
+	if (($launchRate == 0) || ($numRockets == 0)) return;  
+
+	int $i;
+	
+	// Data to generate random burst positions
+	//
+	vector $llc;
+	$llc = $burstAreaCenter -  $burstAreaExtents * 0.5;
+
+	// Data to generate launch frames
+	//
+	float $interval = 1 / $launchRate;	
+
+	// If start time of animation is negative, make the particle shape start there.
+	//
+	//
+	float $animStart = `playbackOptions -q -min`;
+	if ($animStart < `getAttr ($rocketsShape + ".startFrame")`)
+	{
+		setAttr ($rocketsShape + ".startFrame") $animStart;
+	}
+
+	// Set a random seed so multiple fireworks objects will not all have
+	// the same rocket burst positions.
+	//
+	seed(int(timerX()));
+
+	// Emit commands to add the particles
+	//
+	for ($i = 0; $i < $numRockets; $i++)
+	{
+		string $cmd;
+
+		// Generate random burst position
+		//
+		vector $pos;
+		float $x = rand( $burstAreaExtents.x );
+	 	float $y = rand( $burstAreaExtents.y );
+	 	float $z = rand( $burstAreaExtents.z );
+		$pos = $llc + << $x, $y, $z >>;
+
+		float $flightTimeInFrames = rand( $minFlightTimeInFrames, $maxFlightTimeInFrames );
+
+		// Lay out launch times at prescribed interval.
+		//
+		int $launchFrame = $firstLaunchFrame + $i * $interval;
+		int $burstFrame  = $launchFrame + $flightTimeInFrames;
+
+		$cmd = "emit  -object " + $rocketsShape;
+      	$cmd += 
+			" -position " + $launchPos.x + " " + $launchPos.y + " "+ $launchPos.z;
+      	$cmd += " -at opacityPP0 -fv 0.0 ";
+      	$cmd += " -at opacityPP -fv 0.0 ";
+		$cmd += " -at launchPositionPP -vv " + $launchPos.x + " " + $launchPos.y + " "+ $launchPos.z;
+      	$cmd += " -at launchPositionPP0 -vv " + $launchPos.x + " " + $launchPos.y + " "+ $launchPos.z;
+      	$cmd += " -at burstPositionPP -vv " + $pos.x + " " + $pos.y + " "+ $pos.z;
+      	$cmd += " -at burstPositionPP0 -vv " + $pos.x + " " + $pos.y + " "+ $pos.z;
+		$cmd += " -at launchFramePP -fv " + $launchFrame;
+		$cmd += " -at launchFramePP0 -fv " + $launchFrame;
+		$cmd += " -at burstFramePP -fv " + $burstFrame; 
+		$cmd += " -at burstFramePP0 -fv " + $burstFrame;
+		
+		// Execute the command
+		//
+		eval( $cmd );
+	}
+
+	// save current positions to initial state
+	//
+	saveInitialState $rocketsShape;
+}
+
+
+//  ================ hideAndLockRocketAttributes ================
+//
+//  SYNOPSIS
+//		Hides and locks standard attributes which we do not wish to display
+//		in the firework effect.  This includes the emission-related and render
+//		type attributes.
+//
+//
+//	ARGUMENTS
+//		string $rocketShape -- the rocket particles shape
+//
+//	RETURN
+//		None
+//
+proc hideAndLockRocketAttributes( string $rocketShape )
+{
+	setAttr -keyable false ($rocketShape+".inheritFactor");
+	setAttr -keyable false ($rocketShape+".emissionInWorld");
+	setAttr -keyable false ($rocketShape+".maxCount");
+	setAttr -keyable false ($rocketShape+".inputGeometrySpace");
+	setAttr -keyable false ($rocketShape+".enforceCountFromHistory");
+	setAttr -keyable false ($rocketShape+".targetGeometrySpace");
+	setAttr -keyable false ($rocketShape+".goalSmoothness");
+	setAttr -keyable false ($rocketShape+".levelOfDetail");
+	setAttr -keyable false ($rocketShape+".expressionsAfterDynamics");
+	setAttr -keyable false ($rocketShape+".dynamicsWeight");
+	setAttr -keyable false ($rocketShape+".forcesInWorld");
+	setAttr -keyable false ($rocketShape+".traceDepth");
+
+	setAttr -lock true ($rocketShape+".forcesInWorld");
+	setAttr -lock true ($rocketShape+".dynamicsWeight");
+	setAttr -lock true ($rocketShape+".maxCount");
+	
+}
+
+
+//  ================ createRocketPositionParticles ================
+//
+//  SYNOPSIS
+//		Create two "shadow" particle objects, each with "numRockets" number
+//		of particles.  One will be turned on/off to show/hide the launch
+//		positions of the "real" rockets, and the other will be turned on/off
+//		to show/hide the burst positions of the "real" rockets.
+//
+//	ARGUMENTS
+//		string $fireworksName -- base name of the fireworks
+//		int    $numRockets    -- number of particles to create
+//		string $rocketShape   -- the rocket particles shape
+//
+//	RETURN
+//		None
+//
+proc string createRocketPositionParticles(string $fireworksName,
+											int $numRockets, 
+											string $rocketsShape)
+{
+	// Build the command line, creating as many particles in each object
+	// as there are rockets.
+	//
+
+	string $rocketsParents[] = `listRelatives -parent $rocketsShape`;
+	string $rockets = $rocketsParents[0];
+
+	float $launchPositions[];
+	float $burstPositions[];
+
+	float $launchPos[];
+	float $burstPos[];
+
+	string $launchCmd = "particle -n " + $fireworksName + "LaunchPositions ";
+	string $burstCmd = "particle -n " + $fireworksName + "BurstPositions ";
+	
+	// Get the launch and burst positions of the rocket and create the
+	// position particles at the same place.
+	//
+	for ($i = 0; $i < $numRockets; $i++)
+	{
+		$launchPos = 
+			`particle -attribute launchPositionPP -id $i -q $rocketsShape`;
+
+		$burstPos = 
+			`particle -attribute burstPositionPP -id $i -q $rocketsShape`;
+
+		$launchCmd += "-p " + $launchPos[0] + " " 
+							+ $launchPos[1] + " " 
+							+ $launchPos[2] + " ";
+
+		$burstCmd += "-p "  + $burstPos[0] + " " 
+							+ $burstPos[1] + " " 
+							+ $burstPos[2] + " ";
+
+	}
+
+	string $launchPosName[] = eval($launchCmd);
+	string $burstPosName[]  = eval ($burstCmd);
+	string $launchPosParticle = $launchPosName[0];
+	string $launchShape = $launchPosName[1];
+	string $burstPosParticle = $burstPosName[0];
+	string $burstShape = $burstPosName[1];
+
+	setAttr ($launchShape + ".particleRenderType") 2;
+	setAttr ($burstShape + ".particleRenderType") 2;
+
+	// Template the particles so they can't be selected/edited.
+	//
+	setAttr ($launchShape + ".template") 1;
+	setAttr ($burstShape + ".template") 1;
+
+	// Connect their display to the rocketsShape.showAllBurstPositions and
+	// showAllLaunchPositions.
+	//
+	connectAttr
+		($rocketsShape + ".showAllBurstPositions")
+		($burstShape + ".visibility");
+
+	connectAttr
+		($rocketsShape + ".showAllLaunchPositions")
+		($launchShape + ".visibility");
+
+	parent $launchPosParticle $rockets;
+	parent $burstPosParticle $rockets;
+
+	// Create an expression that sets the position of each particle to be
+	// that of the corresponding rocket id's position (burst and launch);
+	// We need the expression because the launch and burst positions of each
+	// particle can be edited after creation.
+	//
+	string $launchExpr = "position = " + $rocketsShape + ".launchPositionPP0;";
+	string $burstExpr = "position = " + $rocketsShape + ".burstPositionPP0";
+
+	dynExpression -c -s $launchExpr $launchShape;
+	dynExpression -rbd -s $launchExpr $launchShape;
+
+	dynExpression -c -s $burstExpr $burstShape;
+	dynExpression -rbd -s $burstExpr $burstShape;
+
+	setAttr -lock true ($launchPosParticle+".tx");
+	setAttr -lock true ($launchPosParticle+".ty");
+	setAttr -lock true ($launchPosParticle+".tz");
+	setAttr -lock true ($launchPosParticle+".rx");
+	setAttr -lock true ($launchPosParticle+".ry");
+	setAttr -lock true ($launchPosParticle+".rz");
+	setAttr -lock true ($launchPosParticle+".sx");
+	setAttr -lock true ($launchPosParticle+".sy");
+	setAttr -lock true ($launchPosParticle+".sz");
+
+	setAttr -lock true ($burstPosParticle+".tx");
+	setAttr -lock true ($burstPosParticle+".ty");
+	setAttr -lock true ($burstPosParticle+".tz");
+	setAttr -lock true ($burstPosParticle+".rx");
+	setAttr -lock true ($burstPosParticle+".ry");
+	setAttr -lock true ($burstPosParticle+".rz");
+	setAttr -lock true ($burstPosParticle+".sx");
+	setAttr -lock true ($burstPosParticle+".sy");
+	setAttr -lock true ($burstPosParticle+".sz");
+
+	return $launchShape;
+
+}
+
+	
+//  ================ createRocketTrailsEmitter ================
+//
+//  SYNOPSIS
+//		Create the emitter that will emit the rocket sparks trails and
+//		add it to the rocket object.
+//
+//
+//	ARGUMENTS
+//		string $fireworksName -- base fireworks name
+//		string $rocketsShape  -- the rockets particle shape
+//
+//	RETURN
+//		Name of rocket trails emitter
+//
+proc string createRocketTrailsEmitter(string $fireworksName, 
+										string $rocketsShape)
+{
+
+	// Create the rocket's emitter, which emits into the trail sparks particle.
+	//
+	string $result[] = `emitter -pos 0 0 0
+						-n ($fireworksName + "RocketsEmitter")
+						-type direction -dx 0.0 -dy 1.0 -dz 0.0
+						-rate 150 -spread 0.5 -speed 0.5`;
+
+	string $rocketTrailEmitter = $result[0];
+
+	// Create an expression to somewhat randomize the emission, so the
+	// sparks will not just come out in a straight line.
+	// CAROL:  ROB will change this to do a spin rather than a spread.
+	//
+	// expression 
+	// 	-n ($rocketTrailEmitter + "Expr")
+	// 	-s ("directionX = rand(.1, .3);\n"
+	// 	+   "directionZ = rand(.1, .3);\n"
+	// 	+   "directionY = rand(.8, 1);")
+ 	// 	-o $rocketTrailEmitter;
+
+	// Add the emitter to the Fireworks particle.
+	//
+	addDynamic $rocketTrailEmitter $rocketsShape;
+
+	// Add rate PP.
+	//
+	addPP -atr "rate" $rocketTrailEmitter;
+
+	// Hide the emitter.
+	//
+	hide $rocketTrailEmitter;
+
+	return $rocketTrailEmitter;
+}
+
+
+//
+//  ================ setBurstColorIndices ================
+//
+//  SYNOPSIS
+//		Set the color for each of the burst sparks in the burst sparks particle
+//		sparkColorIndex per particle attribute.  The color is determined randomly.
+//
+//	ARGUMENTS
+//		string $rocketsShape         -- name of the rockets shape
+//		int $numConeColors           -- number of cone/color instances
+//
+//	RETURN
+//		None
+//
+proc setBurstColorIndices(string $rocketsShape, int $numConeColors)
+{
+	// Get the number of rockets, as that gives us the number of bursts, i.e.
+	// color sets to create.
+	//
+	int $numRockets = `particle -q -count $rocketsShape`;
+
+    // For each rocket, randomly pick one of the numbers in the color set 
+	// and assign it to the next particle in the rocket.
+	//
+	for ($i = 0; $i < $numRockets; $i++)
+	{
+		int $index = rand($numConeColors);
+
+		// Set this color index into the burstShape's burstColorIndex
+		//
+		particle -e
+			-attribute burstColorIndex -order $i -fv $index $rocketsShape;
+	}
+}
+
+
+//  ================ makeGravityLocatorsForRockets ================
+//
+//  SYNOPSIS
+//
+//          Creates four locators used to compute gravity direction in local space
+//          of the particlce shape.  Two of the locators represent the head and tail
+//          of the gravity direction (normalized) and two of them represent the
+//          corresponding points in the particle object's local space.
+//
+//		$gravity is the name of the gravity field on the rockets.
+//		This routine assumes the names are valid.
+//
+//	ARGUMENTS
+//		string $rockets     -- the rocket particles transform
+//		string $rocketShape -- the rocket particles shape
+//		string $gravity     -- the rockets' gravity field
+//
+//	RETURN
+//		None
+//
+proc string [] makeGravityLocatorsForRockets( string $rockets,
+												string $rocketsShape, 
+												string $gravity )
+{
+	string $rocketsParents[] = `listRelatives -parent $rocketsShape`;
+	string $rockets = $rocketsParents[0];
+
+	// Make and hide locators for the head and tail of the gravity, in world space.
+	//
+	createPrimitive nullObject;
+	string $gravHeadLoc = `rename ($gravity+"HeadLocator")`;
+	createPrimitive nullObject;
+	string $gravTailLoc = `rename ($gravity+"TailLocator")`;
+	hide  $gravHeadLoc;
+	hide  $gravTailLoc;
+
+	// Lock their transforms and turn off inherit transform. 
+	// Transforms do not affect gravity direction.
+	//
+	setAttr -lock true ($gravHeadLoc+".rx");
+	setAttr -lock true ($gravHeadLoc+".ry");
+	setAttr -lock true ($gravHeadLoc+".rz");
+	setAttr -lock true ($gravHeadLoc+".sx");
+	setAttr -lock true ($gravHeadLoc+".sy");
+	setAttr -lock true ($gravHeadLoc+".sz");
+	setAttr ($gravHeadLoc+".inheritsTransform") 0;
+
+	setAttr -lock true ($gravTailLoc+".rx");
+	setAttr -lock true ($gravTailLoc+".ry");
+	setAttr -lock true ($gravTailLoc+".rz");
+	setAttr -lock true ($gravTailLoc+".sx");
+	setAttr -lock true ($gravTailLoc+".sy");
+	setAttr -lock true ($gravTailLoc+".sz");
+	setAttr ($gravTailLoc+".inheritsTransform") 0;
+
+	// Expression sets the position of the "head" locator to be the
+	// (unit) direction of the gravity.  Important that this is a unit
+	// vector, i.e., normalized.
+	//
+	string $expString = "\r\n// Set the locator's translate to be the normalized direction of the gravity\r\n//\r\n\r\n" +
+				"float $x = " + $gravity + ".directionX;\r\n" +
+				"float $y = " + $gravity + ".directionY;\r\n" +
+				"float $z = " + $gravity + ".directionZ;\r\n\r\n" +
+				"vector $uDir = unit( << $x,  $y, $z >> );\r\n" +
+				$gravHeadLoc + ".translateX = $uDir.x;\r\n" +
+				$gravHeadLoc + ".translateY = $uDir.y;\r\n" +
+				$gravHeadLoc + ".translateZ = $uDir.z;\r"  ;
+
+	expression -n ($gravHeadLoc + "Expr") -s $expString -o $gravHeadLoc; 
+
+	// Make and hide two corresponding locators and parent them to the particle object.
+	// (Leave inherit transform ON, but lock transform attributes.)
+	// Note that we use the particle shape name in the parent command because that's what
+	// we have available.  The parent command interprets it correctly.
+	//
+	createPrimitive nullObject;
+	string $partHeadLoc = `rename ($rockets+"HeadLocator")`;
+	parent $partHeadLoc $rockets;
+	createPrimitive nullObject;
+	string $partTailLoc = `rename ($rockets+"TailLocator")`;
+	parent $partTailLoc $rockets;
+
+	hide  $partHeadLoc;
+	hide  $partTailLoc;
+	setAttr -lock true ($partHeadLoc+".rx");
+	setAttr -lock true ($partHeadLoc+".ry");
+	setAttr -lock true ($partHeadLoc+".rz");
+	setAttr -lock true ($partHeadLoc+".sx");
+	setAttr -lock true ($partHeadLoc+".sy");
+	setAttr -lock true ($partHeadLoc+".sz");
+	setAttr -lock true ($partTailLoc+".rx");
+	setAttr -lock true ($partTailLoc+".ry");
+	setAttr -lock true ($partTailLoc+".rz");
+	setAttr -lock true ($partTailLoc+".sx");
+	setAttr -lock true ($partTailLoc+".sy");
+	setAttr -lock true ($partTailLoc+".sz");
+
+	// Point-constrain each particle locator to the corresponding gravity locator.
+	//
+	select -r $gravHeadLoc;
+	select -add $partHeadLoc;
+	pointConstraint -weight 1;
+
+	select -r $gravTailLoc;
+	select -add $partTailLoc;
+	pointConstraint -weight 1;
+
+	// Add attributes for the "local gravity" to the particle shape.
+	//
+	addAttr -ln localGravX -at double  $rocketsShape;
+	setAttr -e -keyable false ($rocketsShape+".localGravX");
+	addAttr -ln localGravY -at double  $rocketsShape;
+	setAttr -e -keyable false ($rocketsShape+".localGravY");
+	addAttr -ln localGravZ -at double  $rocketsShape;
+	setAttr -e -keyable false ($rocketsShape+".localGravZ");
+
+	// Use plusMinusAverage node to compute "localGravity" as difference of the two 
+	// particle space locators.  
+	//
+	string $pma = `createNode plusMinusAverage`;
+	setAttr ($pma+".operation") 2;
+	connectAttr -f ($partHeadLoc+".translate") ($pma+".input3D[0]");
+	connectAttr -f ($partTailLoc+".translate") ($pma+".input3D[1]");
+	connectAttr -f ($pma+".output3Dx") ($rocketsShape+".localGravX");
+	connectAttr -f ($pma+".output3Dy") ($rocketsShape+".localGravY");
+	connectAttr -f ($pma+".output3Dz") ($rocketsShape+".localGravZ");
+
+	string $returns[2];
+	$returns[0] = $gravHeadLoc;
+	$returns[1] = $gravTailLoc;
+
+	return $returns;
+}
+
+
+//  ================ createRockets ================
+//
+//  SYNOPSIS
+//      Create the fireworks rocket particles, and their gravity field,
+//		associated locators, and the position particles that will show
+//		the burst and launch positions.
+//		We can't create the expression here, because we have to wait
+//		until the burst sparks are created, since they are referenced in
+//		the expression.
+//
+//	ARGUMENTS
+//		string $fireworksName    -- base fireworks name
+//		string fireworksGroup    -- name of the top level group
+//		int    $numRockets       -- number of particles/rockets to create 
+//	    vector $launchPosition   -- launch position
+//		vector $burstAreaCenter  -- center of burst area
+//		vector $burstAreaExtents -- extents of burst area
+//		float  $firstLaunchFrame -- frame for first launch
+//		float  $launchRate       -- launch rate (in frames)
+//		float  $minFlightTimeInFrames
+//		float  $maxFlightTimeInFrames
+//
+//	RETURN
+//		The rockets particle shape, group, and gravity names
+//
+proc string[] createRockets(string $fireworksName,
+							string $fireworksGroup,
+							int $numRockets,
+							vector $launchPosition,
+							vector $burstAreaCenter,
+							vector $burstAreaExtents,
+							float $firstLaunchFrame,
+							float $launchRate,
+							float $minFlightTimeInFrames,
+							float $maxFlightTimeInFrames)
+{
+	string $result[];
+	select -cl;
+
+	// Create the rockets particle object.
+	//
+	$result = `particle -n ($fireworksName + "Rockets")`;
+	string $rockets = $result[0];
+	string $rocketsShape = $result[1];
+
+	// Set the particle render type to be numerical, showing ids.
+	//
+	setAttr ($rocketsShape + ".particleRenderType") 3;
+
+	// Enable the rocket shape's display handle and position it at 1 above the
+	// centroid of the rocket particle.
+	//
+	setAttr ($rockets + ".displayHandle") 1;
+
+	expression -n ($fireworksName + "RocketSelectHandleExpr") -ae 0
+		-s 
+		( "selectHandleX = " + $rocketsShape + ".centroidX;\n"
+		+ "selectHandleY = " + $rocketsShape + ".centroidY + 1.5;\n"
+		+ "selectHandleZ = " + $rocketsShape + ".centroidZ ;")
+		-o $rockets;
+
+	// Create and connect the gravity field for the rockets.
+	//
+	select -cl;
+	clear($result);
+	string $rocketsGravity;
+	$result = `gravity -n ($rockets + "Gravity")`;
+	$rocketsGravity = $result[0];
+	connectDynamic -f $rocketsGravity $rocketsShape;
+
+	addAndConnectRocketAttributes($fireworksGroup,
+									$rocketsShape, 
+									$rocketsGravity );
+
+	string $gravityLocators[];
+	$gravityLocators =
+		makeGravityLocatorsForRockets( $rockets, $rocketsShape, $rocketsGravity );
+
+	string $gravityHeadLoc = $gravityLocators[0];
+	string $gravityTailLoc = $gravityLocators[1];
+
+	createRocketParticles( $rocketsShape, 
+							$numRockets, 
+							$launchPosition, 
+							$burstAreaCenter,
+							$burstAreaExtents, 
+							$firstLaunchFrame, 
+							$launchRate, 
+							$minFlightTimeInFrames,
+							$maxFlightTimeInFrames );
+
+
+	// hide the attributes the user won't use, to make the UI simpler
+	//
+	hideAndLockRocketAttributes( $rocketsShape );
+
+	// Create two "shadow" particle objects, each with "numRockets" number
+	// of particles.  One will be turned on/off to show/hide the launch
+	// positions of the "real" rockets, and the other will be turned on/off
+	// to show/hide the burst positions of the "real" rockets.
+	//
+	string $launchParticleShape =
+		createRocketPositionParticles($fireworksName, $numRockets, $rocketsShape);
+	
+	// Note that there is still the rockets expression to write.  It controls
+	// the flight of the rockets and issues the emit action for the burst.
+	// It can be created only after the burst sparks particle has been
+	// created.
+
+	// Put all the rocket objects in one group and return the rocket shape
+	// and the rocket group names.
+	//
+	string $rocketsGroup = 
+			`group -n ($rockets + "Group") 
+					$rockets 
+					$rocketsGravity
+					$gravityHeadLoc
+					$gravityTailLoc`;
+
+	hide $rocketsGravity;
+
+	string $returns[4];
+	$returns[0] = $rocketsShape;
+	$returns[1] = $rocketsGroup;
+	$returns[2] = $rocketsGravity;
+	$returns[3] = $launchParticleShape;
+
+	return $returns;
+}
+
+
+// ************************************************************************ //
+//                                                                          //
+//                     ROCKETS TRAIL SPARKS PROCEDURES                      //
+//                                                                          //
+// ************************************************************************ //
+
+//
+//
+//  ================ createRocketTrailsExpression ================
+//
+//  SYNOPSIS
+//      Create the creation expression to set the lifespan of the rocket trail sparks.
+//		Create the runtime expression to randomly pick the color of each spark,
+//		within the color spectrum set up for them.
+//
+//	ARGUMENTS
+//		string $fireworksGroup --
+//		string $rocketsShape   --
+//		string $rocketTrailShape -- the rocket sparks particle shape
+//		string $trailInstancer -- the rocket trail particle instancer (w/cones)
+//
+//	RETURN
+//		None
+//
+proc createRocketTrailsExpression(string $fireworksGroup,
+									string $rocketsShape,
+									string $rocketTrailShape, 
+									string $trailInstancer)
+{
+	// Set the lifespan to between 1/2 and 1 1/2 seconds.
+	// And set the color for each particle emitted.
+	//
+	dynExpression -c 
+		-s 
+		( "lifespanPP = rand(.5,1.5);\n\n"
+		+ "// Get the number of cones of diffent colors to be instanced to\n"
+		+ "// the particles in the trail, and choose one randomly.\n"
+		+ "//\n"
+        + "float $indexCount = " + $trailInstancer + ".hierarchyCount;\n"
+        + "int $whichIndex = rand($indexCount);\n"
+        + "\n"
+        + "sparkColorIndex = $whichIndex;\n"
+		+ "float $sparksColor[] = `getAttr " + $rocketsShape + ".rocketTrailColors[$whichIndex]`;\n"
+		+ "rgbPP = <<$sparksColor[0], $sparksColor[1], $sparksColor[2]>>;\n")
+		$rocketTrailShape;
+
+	dynExpression -rbd
+		-s ("float $s =  max(minTailSize, min(maxTailSize, mag(velocity) * 5));\n"
+        + "float $ratio = age/lifespanPP;\n"
+        + "$s = (1.0-smoothstep(.5,1,$ratio)) * $s;\n"
+        + "trailSparkScale = <<$s,1,1>>;")
+		$rocketTrailShape;
+
+
+}
+
+
+//
+//  ================ createRocketTrailsConeInstances ================
+//
+//  SYNOPSIS
+//      Create a particleInstancer, and a set of instances (cones) for it and
+//		instance it to the particle rocket sparks to get the software rendered colors
+//		and glow intensity needed. 
+//
+//	ARGUMENTS
+//		string $fireworksGroup     -- name of the top level fireworks group
+//		string $trailParticle      -- name of particle to instance cones to
+//		string $trailparticleShape -- name of particle shape to instance cones to
+//		string $rocketsShape       -- name of rockets particle shape
+//		string $colorCreationProc  -- name of procedure to call to create colors
+//		int    $numInstances       -- number of instances/colors to create
+//
+//	RETURN
+//		The name of the particleInstancer and the group consisting of the cones.
+//
+proc string[] createRocketTrailsConeInstances(string $fireworksGroup,
+													string $trailParticle,
+													string $trailParticleShape,
+													string $rocketsShape,
+													string $colorCreationProc,
+													int $numInstances)
+{
+	vector $colors[];
+	string $theCones[];
+
+	clear($colors);
+	clear($theCones);
+
+	// Set the colors for the cone instances.  The colors are in "rgb".
+	//
+	if (size($colorCreationProc) == 0)
+	{
+		$colors = defaultRocketTrailColors($numInstances);
+	}
+	else
+	{
+		string $colorCmd = $colorCreationProc + " " + $numInstances;
+		$colors = eval($colorCmd);
+	}
+
+	// Set the cone axis and scale.
+	//
+	vector $coneAxis = <<-1,0,0>>;
+	vector $coneScale = <<.3,.05,.05>>;
+
+	// Create the cones and shaders, using the colors just created.
+	//
+	// createColoredStreaks returns the name of the cone and the name of
+	// it shader.  Here we want to use only the cone name.
+	//
+	string $returns[];
+	for ($i = 0; $i < $numInstances; $i++)
+	{
+		// First arg of is the name of the cone object to be created, second arg
+		// is the name of the shader to be created.
+		//
+		$returns = createColoredStreaks( "trail",
+											($trailParticle +"ColorCone" + $i), 
+											($trailParticle +"Color" + $i), 
+											$coneScale,
+											$coneAxis,
+											$colors[$i]);
+		$theCones[$i] = $returns[0];
+		$theShader = $returns[1];
+
+		// Set the colors in the color palette, for easy access.
+		//
+		vector $rgb = $colors[$i];
+		float $r = $rgb.x;
+		float $g = $rgb.y;
+		float $b = $rgb.z;
+
+		setAttr ($rocketsShape + ".rocketTrailColors[" + $i + "]") 
+			-type double3 $r $g $b;
+
+		// Connect the shader color for this fireworks color to the 
+		// fireworksShaders multi, so we can get to it for editing.
+		//
+		connectAttr
+			($theShader + ".message")
+			($rocketsShape + ".rocketTrailShaders[" + $i + "]");
+	}
+
+	// Create the particle instancer and add the color cones to it.
+	//
+	//    "-objectIndex sparkColorIndex" -- set the index of the object to be instanced
+	//    to be the same as the particle's "sparkColorIndex", which will be set randomly
+	//    in the rocket particle's expression.
+	// 
+	//    "-aimDirection velocity"  Make the cones aim in the direction of the
+	//    particle's velocity.
+	//
+	//    "-addObject" sets of the string of objects to be added to the instancer,
+	//    which is all the cones.
+	//
+	//    "-object ..."  the objects to be added.
+	//
+	string $instancerName = $trailParticle + "Instancer";
+	string $cmd = "particleInstancer -name " + $instancerName + " ";
+	$cmd += "-position position -objectIndex sparkColorIndex ";
+	$cmd += "-aimDirection velocity -scale trailSparkScale -addObject ";
+
+	for ($i = 0; $i < size($theCones); $i++)
+	{
+		$cmd += " -object " + $theCones[$i] + " " ;
+	}
+
+	$cmd += $trailParticleShape;
+
+	// Issue the particleInstancer command.
+	//
+	string $result = eval($cmd);
+
+	// Now group all the cones, so they won't overwhelm the outliner and can be
+	// easily identified and hidden.
+	//
+	select -cl;
+	for ($i = 0; $i < size($theCones); $i++)
+	{
+		select -add $theCones[$i];
+	}
+	string $group = `group -n ($trailParticle + "ColorCones")`;
+	hide $group;
+
+	// Return the name of the particleInstancer and cones group
+	//
+	string $returns[2];
+	$returns[0] = $result;
+	$returns[1] = $group;
+	return $returns;
+}
+
+
+//
+//  ================ createRocketTrails ================
+//
+//  SYNOPSIS
+//      Create the particle object holding the rocket trail sparks
+//
+//	ARGUMENTS
+//		string $fireworksGroup    -- name of the top level fireworks group
+//		string $fireworksName     -- base name of the fireworks
+//		string $rocketsShape      -- rockets particle shape
+//		string $colorCreationProc -- proc to call to create colors
+//		int    $numColors         -- number of cones/shaders to create
+//
+//	RETURN
+//		The name of the trail sparks particle shape and the name of the
+//		trail group (the group consists of the rocket trails particle,
+//		the particle instancer, the cones and the gravity field).
+//
+proc string[] createRocketTrails(string $fireworksGroup,
+										string $fireworksName, 
+										string $rocketsShape,
+										string $colorCreationProc,
+										int $numColors)
+{
+	// Create the particle that will hold the sparks of the rocket trails.
+	//
+	string $result[];
+	$result = `particle -n ($fireworksName + "RocketTrails")`;
+	string $rocketSparks = $result[0];
+	string $rocketTrailShape = $result[1];
+
+	// Set lifespan mode to use lifespanPP.
+	//
+	setAttr ($rocketTrailShape+".lifespanMode") 3;
+
+	// Add the attributes sparkColorIndex, which will hold the index
+	// of the object in the instancer to instance to each particle
+	//
+	addAttr -ln "sparkColorIndex" -dt doubleArray $rocketTrailShape;
+	addAttr -ln "sparkColorIndex0" -dt doubleArray $rocketTrailShape;
+
+	addAttr -ln "rgbPP" -dt vectorArray $rocketTrailShape;
+	addAttr -ln "rgbPP0" -dt vectorArray $rocketTrailShape;
+
+	addAttr -ln "trailSparkScale" -dt vectorArray $rocketTrailShape;
+	addAttr -ln "trailSparkScale0" -dt vectorArray $rocketTrailShape;
+
+	// Set the render type to be points.
+	//
+	setAttr ($rocketTrailShape + ".particleRenderType") 6;
+
+	addAttr -is true -ln "lineWidth" -at long -min 1 -max 20 -dv 2
+		$rocketTrailShape;
+	addAttr -is true -ln "tailSize" -at "float" -min 0 -max 100 -dv 10 
+		$rocketTrailShape;
+
+	addAttr -is true -ln "minTailSize" 
+			-at "float" -min 0 -dv .5 
+			$rocketTrailShape;
+	addAttr -is true -ln "maxTailSize" 
+			-at "float" -min 0 -dv 2 
+			$rocketTrailShape;
+
+	// Create the instancer, its cones, and their shaders.
+	// The proc returns the name of the particle instancer and the cones group.
+	//
+	string $returns[] =
+			createRocketTrailsConeInstances($fireworksGroup,
+												$rocketSparks, 
+												$rocketTrailShape,
+												$rocketsShape,
+												$colorCreationProc,
+												$numColors);
+	string $trailsInstancer = $returns[0];
+	string $trailsConesGroup = $returns[1];
+
+	// Create the expressions that will set the lifespan and the sparkColorIndex
+	// to set which cone will be instanced to each trail particle.
+	//
+	createRocketTrailsExpression($fireworksGroup,
+									$rocketsShape,
+									$rocketTrailShape, 
+									$trailsInstancer);
+
+	// If start time of animation is negative, make the particle shape start there.
+	// 
+	float $animStart = `playbackOptions -q -min`;
+	if ($animStart < `getAttr ($rocketTrailShape + ".startFrame")`)
+	{
+		setAttr ($rocketTrailShape + ".startFrame") $animStart;
+	}
+
+	// Create the gravity and drag fields for the rocket sparks.
+	//
+	select -cl;
+	clear($result);
+	$result = `gravity -m 2.5 -n ($fireworksName + "RocketTrailsGravity")`;
+	string $rocketTrailsGravity = $result[0];
+
+	select -cl;
+	clear($result);
+	$result = `drag -m 2 -n ($fireworksName + "RocketTrailsDrag")`;
+	$rocketTrailsDrag = $result[0];
+
+	connectDynamic -f $rocketTrailsGravity -f $rocketTrailsDrag $rocketTrailShape;
+
+	select -r $rocketTrailShape $trailsInstancer $trailsConesGroup $rocketTrailsGravity $rocketTrailsDrag;
+
+	// Group all the objects created for trails.
+	//
+	string $trailsGroup = `group -n ($fireworksName + "TrailSparksGroup")`;
+
+	hide $rocketTrailsDrag $rocketTrailsGravity;
+
+	string $returns[3];
+	$returns[0] = $rocketTrailShape;
+	$returns[1] = $trailsGroup;
+	$returns[2] = $trailsInstancer;
+	return $returns;
+}
+
+
+// ************************************************************************ //
+//                                                                          //
+//                        BURST SPARKS PROCEDURES                           //
+//                                                                          //
+// ************************************************************************ //
+
+
+//
+//  ================ createBurstSparksExpression ================
+//
+//  SYNOPSIS
+//      Create the creation expression to set the lifespan and sparkScale of the
+//		burst sparks.
+//		Create the runtime expression to control the scale of the particles.
+//
+//		The sparkScale (how long the cones are) is dependent on the velocity of
+//		the sparks.
+//
+//	ARGUMENTS
+//		string $sparksShape
+//		string $particleInstancer
+//
+//	RETURN
+//		None
+//
+proc createBurstSparksExpression(string $fireworksGroup,
+									string $sparksShape, 
+									string $particleInstancer)
+{
+	// Set both the creation and runtime expressions to set the scale factor for
+	// the length of each particle in a particle burst. It is based on the
+	// velocity of the particle (faster is // longer) and age (older is shorter),
+	// but within the range of minTailSize and maxTailSize.
+	//
+	dynExpression -c 
+		-s ("lifespanPP = rand(3,4);\n"
+		 + "float $s = 0.0;"
+		 + "sparkScale = <<$s,1,1>>;\n")
+		$sparksShape;
+
+	dynExpression -rbd
+		-s ("float $s =  max(minTailSize, min(maxTailSize, mag(velocity) * .05));\n"
+        + "float $ratio = age/lifespanPP;\n"
+        + "$s = (1.0-smoothstep(.9,1,$ratio)) * $s;\n"
+        + "sparkScale = <<$s,1,1>>;")
+		$sparksShape;
+}
+
+
+//
+//  ================ createBurstSparksConeInstances ================
+//
+//  SYNOPSIS
+//      Create a particleInstancer, and a set of instances (cones) for it and
+//		instance it to the particle sparks to get the software rendered colors
+//		and glow intensity needed. 
+//
+//	ARGUMENTS
+//		string $fireworksGroup           -- name of the top level fireworks group
+//		string $burstSparksParticle      -- name of particle to instance cones to
+//		string $burstSparksParticleShape -- particle shape to instance cones to
+//		string $rocketsShape             -- rockets particle shape
+//		string $colorCreationProc        -- proc to create colors for sparks
+//		int $numInstances		         -- number of colors/cones to create.
+//
+//	RETURN
+//		The name of the particleInstancer and the burst sparks cones group.
+//
+proc string[] createBurstSparksConeInstances(string $fireworksGroup,
+												string $burstSparksParticle,
+												string $burstSparksParticleShape,
+												string $rocketsShape,
+												string $colorCreationProc,
+												int $numInstances)
+{
+	vector $colors[];
+	string $theCones[];
+
+	// Set the colors for the cone instances.  This proc will set $numInstances
+	// of colors, ranging equally along the color spectrum in color spectrum
+	// order.  The colors are "rgb".
+	//
+	if (size($colorCreationProc) == 0)
+	{
+		$colors = defaultFireworksColors($numInstances);
+		setAttr -type "string"
+			($rocketsShape + ".colorPaletteProc") "defaultFireworksColors";
+	}
+	else
+	{
+		string $colorCmd = $colorCreationProc + " " + $numInstances;
+		$colors = eval($colorCmd);
+		setAttr -type "string"
+				($rocketsShape + ".colorPaletteProc") $colorCreationProc;
+	}
+
+	// Set the cone axis and scale.
+	//
+	vector $coneAxis = <<-1, 0, 0>>;
+	vector $coneScale = <<1,.1,.1>>;
+
+	// Create the cones and shaders, using the colors just created.
+	//
+	string $returns[];
+	string $theShader;
+	for ($i = 0; $i < $numInstances; $i++)
+	{
+		// First arg of is the name of the cone object to be created, second arg
+		// is the name of the shader to be created.
+		//
+		$returns = 
+				createColoredStreaks("sparks", 
+										($burstSparksParticle + "ColorCone" + $i), 
+										($burstSparksParticle + "Color" + $i), 
+										$coneScale,
+										$coneAxis,
+										$colors[$i]);
+		$theCones[$i] = $returns[0];
+		$theShader = $returns[1];
+
+		// Set the colors in the color palette, for easy access.
+		//
+		vector $rgb = $colors[$i];
+		float $r = $rgb.x;
+		float $g = $rgb.y;
+		float $b = $rgb.z;
+
+		setAttr ($rocketsShape + ".fireworksColors[" + $i + "]") 
+			-type double3 $r $g $b;
+
+		// Connect the shader color for this fireworks color to the 
+		// fireworksShaders multi, so we can get to it for editing.
+		//
+		connectAttr
+			($theShader + ".message")
+			($rocketsShape + ".fireworksShaders[" + $i + "]");
+	}
+
+	// Create the particle instancer and add the color cones to it.
+	//
+	//    "-objectIndex sparkColorIndex" -- set the index of the object to be
+	//    instanced to be the same as the particle's "sparkColorIndex", which
+	//    will be set randomly in the particle burst's expression.
+	// 
+	//    "-aimDirection velocity"  Make the cones aim in the direction of
+	//    the particle's velocity.
+	//
+	//    "-scale sparkScale"  Set the scaling of the cone to the the
+	//    particle's sparkScale, which will be based on the velocity of the
+	//    particle in the particle's expression.
+	//
+	//    "-addObject" sets of the string of objects to be added to the
+	//    instancer, which is all the cones.
+	//
+	//    "-object ..."  the objects to be added.
+	//
+	string $instancerName = $burstSparksParticle + "Instancer";
+	string $cmd = "particleInstancer -name " + $instancerName  + " ";
+	$cmd += "-position position -objectIndex sparkColorIndex ";
+	$cmd += "-aimDirection velocity -scale sparkScale -addObject ";
+
+	for ($i = 0; $i < size($theCones); $i++)
+	{
+		$cmd += " -object " + $theCones[$i] + " " ;
+	}
+
+	$cmd += $burstSparksParticleShape;
+
+	// Issue the particleInstancer command.
+	//
+	string $result = eval($cmd);
+
+	// Now group all the cones, so they won't overwhelm the outliner and can be
+	// easily hidden.
+	//
+	select -cl;
+	for ($i = 0; $i < size($theCones); $i++)
+	{
+		select -add $theCones[$i];
+	}
+	string $group = `group -n ($burstSparksParticle + "ColorCones")`;
+	hide $group;
+
+	// Return the name of the particleInstancer and cone group.
+	//
+	string $returns[2];
+	$returns[0] = $result;
+	$returns[1] = $group;
+	return $returns;
+}
+
+
+//
+//  ================ createBurstSparks ================
+//
+//  SYNOPSIS
+//      Create the particle object holding the fireworks burst sparks.
+//
+//	ARGUMENTS
+//		string $fireworksGroup    -- the top level fireworks group name
+//		string $fireworksName     -- the fireworks base name
+//		string $rocketsShape      -- rockets particle shape
+//		string $colorCreationProc -- proc to create sparks colors
+//		int    $numSparksColors   -- number of colors/cone instances to create
+//
+//	RETURN
+//		The names of the sparks particle shape, the particle instancer, and the
+//		sparks group, which consists of the sparks particle, the gravity and
+//		drag fields, the particle instancer, and the cones group.
+//
+proc string[] createBurstSparks(string $fireworksGroup,
+								string $fireworksName, 
+								string $rocketsShape,
+								string $colorCreationProc,
+								int $numSparksColors)
+{
+	// The sparks are created by an "emit" action in the runtime expression for
+	// rockets particle.  This procedure creates the particle object into which
+	// the emit action emits the sparks, sets its attributes, and creates its
+	// controlling expressions and the instancer with the color cones that give
+	// the sparks their color and glow.
+	//
+
+	// Create the sparks particle
+	//
+	string $result[];
+	$result = `particle -n ($fireworksName + "BurstSparks")`;
+	string $sparks = $result[0];
+	string $sparksShape = $result[1];
+
+	// Set the render type.
+	//
+	setAttr ($sparksShape + ".particleRenderType") 6;
+	addAttr -is true -ln "lineWidth" -at long -min 1 -max 20 -dv 2
+		$sparksShape;
+	addAttr -is true -ln "tailSize" -at "float" -min 0 -max 100 -dv 5 
+		$sparksShape;
+
+	// Add attributes for the min and max tail size (length of the cones).
+	// These are used in the scaling of the cones based on their veloctiy.
+	//
+	addAttr -is true -ln "minTailSize" -at "float" -min 0 -dv 1 $sparksShape;
+	addAttr -is true -ln "maxTailSize" -at "float" -min 0 -dv 1 $sparksShape;
+
+	setAttr -keyable on ($sparksShape + ".minTailSize");
+	setAttr -keyable on ($sparksShape + ".maxTailSize");
+
+	setAttr ($sparksShape + ".minTailSize") .5;
+	setAttr ($sparksShape + ".maxTailSize") 2;
+
+	// set lifespan mode to use lifespanPP
+	//
+	setAttr ($sparksShape+".lifespanMode") 3;
+
+	// Add per particle attributes
+	// Used to scale the length of the color cones based on their velocity
+	// and age.
+	//
+	addAttr -ln "sparkScale" -dt vectorArray $sparksShape;
+	addAttr -ln "sparkScale0" -dt vectorArray $sparksShape;
+
+	// Used to index into the particle instancer to choose one of the color
+	// cones.
+	//
+	addAttr -ln "sparkColorIndex" -dt doubleArray $sparksShape;
+	addAttr -ln "sparkColorIndex0" -dt doubleArray $sparksShape;
+
+	// Used to set the particle colors to be the same as the instancer
+	// colors for each spark.
+	//
+	addAttr -ln "rgbPP" -dt vectorArray $sparksShape;    
+	addAttr -ln "rgbPP0" -dt vectorArray $sparksShape;    
+
+	// If start time of animation is negative, make the particle shape start there.
+	// 
+	float $animStart = `playbackOptions -q -min`;
+	if ($animStart < `getAttr ($sparksShape + ".startFrame")`)
+	{
+		setAttr ($sparksShape + ".startFrame") $animStart;
+	}
+
+	// Create and connect a gravity field for the sparks.
+	//
+	clear($result);
+	select -cl;
+	string $rocketsGravity;
+	$result = `gravity -n ($fireworksName + "SparksGravity")`;
+	$sparksGravity = $result[0];
+
+	// Create a drag field for the burst sparks.
+	//
+	select -cl;
+	clear($result);
+	$result = `drag -m 2 -n ($fireworksName + "SparksDrag")`; 
+	string $sparksDrag = $result[0];
+
+	// Connect the sparks to the drag and gravity fields.
+	//
+	connectDynamic -f $sparksDrag -f $sparksGravity $sparksShape;
+
+	// Create the render cones, shaders and instancer for the sparks;
+	// The sparks will be instanced to cones, for each of which a shader
+	// will be produced.  The shaders will have a range of colors, and
+	// an expression in the "rocket" particle object will cycle through
+	// the cones/shaders for each particle in sparksShape.
+	//
+	string $returns[] =
+			createBurstSparksConeInstances ($fireworksGroup,
+											$sparks, 
+											$sparksShape, 
+											$rocketsShape,
+											$colorCreationProc,
+											$numSparksColors); 
+
+	string $sparksInstancer =  $returns[0];
+	string $conesGroup = $returns[1];
+
+	// Create the expression for the Sparks.
+	//
+	createBurstSparksExpression($fireworksGroup, 
+								$sparksShape, 
+								$sparksInstancer);
+
+	// Group all the objects relating to the sparks.
+	//
+	select -r $sparks $sparksGravity $sparksDrag $sparksInstancer $conesGroup;
+
+	$sparksGroup = `group -n ($fireworksName + "BurstSparksGroup")`;
+
+	hide $sparksDrag $sparksGravity;
+
+	clear($result);
+	$result[0] = $sparksShape;
+	$result[1] = $sparksInstancer;
+	$result[2] = $sparksGroup;
+	return $result;
+}
+
+//  ================ createRocketPositionLocators ================
+//
+//  SYNOPSIS
+//      Create the two locators for editing start and burst positions of
+//		the rocket particles.
+//
+//	ARGUMENTS
+//		string $fireworksName   -- the fireworks base name
+//		string $rocketsShape    -- the rocket particle shape
+//
+//	RETURN
+//		Names of the two locators
+//
+proc string [] createRocketPositionLocators(string $fireworksName,
+											string $rocketsShape)
+{
+	createPrimitive nullObject;
+	string $launchPosManip = `rename ($fireworksName + "LaunchPositionManip")`;
+
+	createPrimitive nullObject;
+	string $burstPosManip = `rename ($fireworksName + "BurstPositionManip")`;
+
+	// Make a message connection between the rockets shape and the
+	// locators, so we can find the locators again in the Attribute
+	// Editor.
+	//
+	connectAttr ($launchPosManip + ".message") 
+				($rocketsShape + ".launchPositionManipMessage");
+
+	connectAttr ($burstPosManip + ".message") 
+				($rocketsShape + ".burstPositionManipMessage");
+
+	float $launchPos1[] = 
+		`particle -attribute launchPositionPP -id 0 -q $rocketsShape`;
+
+	float $burstPos1[] = 
+		`particle -attribute burstPositionPP -id 0 -q $rocketsShape`;
+
+	setAttr ($launchPosManip + ".translate") 
+			-type double3 ($launchPos1[0]) ($launchPos1[1]) ($launchPos1[2]);
+	setAttr ($burstPosManip + ".translate") 
+			-type double3 ($burstPos1[0]) ($burstPos1[1]) ($burstPos1[2]);
+
+	string $returns[2];
+	$returns[0] = $launchPosManip;
+	$returns[1] = $burstPosManip;
+
+	return $returns;
+}
+
+
+// ************************************************************************ //
+//                                                                          //
+//                       PROCEDURES TO SET ATTRIBUTES                       //
+//                                                                          //
+// ************************************************************************ //
+//
+//
+//  ================ fwSetRocketAttributes ================
+//
+//  SYNOPSIS
+//      Set the rocket attributes.  (Called from performDynamicsClipEffects)
+//
+//	ARGUMENTS
+//		string $fireworks         -- the fireworks top level group name
+//		int    $maxBurstSpeed     -- max burst speed of the fireworks sparks
+//		int    $sparksColorSpread -- num colors per spark burst
+//
+//	RETURN
+//		None
+//
+global proc fwSetRocketAttributes(string $fireworks,
+									float $maxBurstSpeed,
+									int $sparksColorSpread)
+{
+	setAttr ($fireworks + ".maxBurstSpeed") $maxBurstSpeed;
+	setAttr ($fireworks + ".sparksColorSpread") $sparksColorSpread;
+}
+
+
+//
+//  ================ fwSetTrailAttributes ================
+//
+//  SYNOPSIS
+//      Set the rocket trail attributes.  (Called from performDynamicsClipEffects)
+//
+//	ARGUMENTS
+//		string $fireworks     -- the fireworks top level group name
+//		float  $emitRate      -- rate of the trail emitter
+//		float  $emitSpeed     -- speed of the trail emitter
+//      float  $emitSpread    -- spread of the trail emitter
+//      float  $minTailSize   -- min size (length) of the trail particles/cones
+//      float  $maxTailSize   -- max size (length) of the trail particles/cones
+//      float  $glow          -- glowIntensity of the trail shaders
+//      float  $incandescence -- incandescence intensity of the trail shaders
+//
+//	RETURN
+//		None
+//
+global proc fwSetTrailAttributes(string $fireworks,
+									float $emitRate,
+									float $emitSpeed,
+									float $emitSpread,
+									float $minTailSize,
+									float $maxTailSize,
+									float $glow,
+									float $incandescence)
+{
+
+	setAttr ($fireworks + ".trailEmitRate") $emitRate;
+	setAttr ($fireworks + ".trailEmitSpeed") $emitSpeed;
+	setAttr ($fireworks + ".trailEmitSpread") $emitSpread;
+	setAttr ($fireworks + ".trailMinTailSize") $minTailSize;
+	setAttr ($fireworks + ".trailMaxTailSize") $maxTailSize;
+	setAttr ($fireworks + ".trailGlow") $glow;
+	setAttr ($fireworks + ".trailIncandescence") $incandescence;
+
+}
+
+
+//
+//  ================ fwSetSparksAttributes ================
+//
+//  SYNOPSIS
+//      Set the burst sparks attributes.  (Called from performDynamicsClipEffects)
+//
+//	ARGUMENTS
+//		string $fireworks      -- the fireworks top level group name
+//		float  $minSparksCount -- min number of sparks per burst
+//		float  $maxSparksCount -- max number of sparks per burst
+//      float  $minTailSize    -- min size (length) of the sparks particles/cones
+//      float  $maxTailSize    -- max size (length) of the sparks particles/cones
+//      float  $glow           -- glowIntensity of the sparks shaders
+//      float  $incandescence  -- incandescence intensity of the sparks shaders
+//
+//	RETURN
+//		None
+//
+global proc fwSetSparksAttributes(string $fireworks,
+									int $minSparksCount,
+									int $maxSparksCount,
+									float $minTailSize,
+									float $maxTailSize,
+									float $glow,
+									float $incandescence)
+{
+
+	setAttr ($fireworks + ".minSparksCount") $minSparksCount;
+	setAttr ($fireworks + ".maxSparksCount") $maxSparksCount;
+	setAttr ($fireworks + ".sparksMinTailSize") $minTailSize;
+	setAttr ($fireworks + ".sparksMaxTailSize") $maxTailSize;
+	setAttr ($fireworks + ".sparksGlow") $glow;
+	setAttr ($fireworks + ".sparksIncandescence") $incandescence;
+
+}
+
+
+// ************************************************************************ //
+//                                                                          //
+//                           MAIN PROCEDURE                                 //
+//                                                                          //
+// ************************************************************************ //
+
+//
+//  ================ createFireworks ================
+//
+//  SYNOPSIS
+//      Create the F/X fireworks clip effect.
+//
+//	ARGUMENTS
+//		string $fireworksName           -- the fireworks base name
+//		int    $numRocketTrailsColors   -- number of trail colors/cones 
+//		int    $numSparksColors         -- number of burst sparks colors/cones
+//		string $trailColorCreationProc  
+//		string $sparksColorCreationProc
+//		int    $numRockets            
+//		vector $launchPosition       
+//		vector $burstAreaCenter 
+//		vector $burstAreaExtents
+//		float  $firstLaunchFrame
+//		float  $launchRate
+//		float  $minFlightTimeInFrames
+//		float  $maxFlightTimeInFrames
+//
+//	RETURN
+//		$fireworksGroup               -- name of the top level fireworks group
+//
+proc string createFireworks(string $fireworksName, 
+							int $numRocketTrailsColors,
+							int $numSparksColors,
+							string $trailColorCreationProc,
+							string $sparksColorCreationProc,
+							int $numRockets,
+							vector $launchPosition,
+							vector $burstAreaCenter,
+							vector $burstAreaExtents,
+							float $firstLaunchFrame,
+							float $launchRate,
+							float $minFlightTimeInFrames,
+							float $maxFlightTimeInFrames)
+
+{
+	global string $gFwSparksShaders[];
+	global string $gFwTrailShaders[];
+
+	clear($gFwSparksShaders);
+	clear($gFwTrailShaders);
+
+	string $returns[];
+
+	// Determine a base name for the fireworks.
+	//
+	if (size($fireworksName) == 0)
+	{
+		$fireworksName = "Fireworks";
+	}
+
+	string $names[] = `ls $fireworksName`;
+	if (size($names) > 0)
+	{
+		string $name = getUniqueName($fireworksName);
+		$fireworksName = $name;
+	}
+
+	// Start the top level fireworks group and create its main attributes.
+	//
+	$fireworksGroup = `group -n $fireworksName -empty`;
+	createFireworksAttributes($fireworksGroup);
+
+	// Create the rockets particles and their gravity field.
+	//
+	$returns = createRockets($fireworksName,
+							$fireworksGroup,
+							$numRockets,
+							$launchPosition,
+							$burstAreaCenter,
+							$burstAreaExtents,
+							$firstLaunchFrame,
+							$launchRate,
+							$minFlightTimeInFrames,
+							$maxFlightTimeInFrames);
+
+	string $rocketsShape = $returns[0];
+	string $rocketsGroup = $returns[1];
+	string $rocketsGrav  = $returns[2];
+	string $rocketsLaunchPosShape = $returns[3];
+
+	// Enable the display/selection handle on the fireworks main group, and set
+	// it to be the centroid of the launch position particle.
+	//
+	setAttr  ($fireworksGroup + ".displayHandle") true;
+	connectAttr
+		($rocketsLaunchPosShape + ".centroid")
+		($fireworksGroup + ".selectHandle");
+
+	string $rocketTrailEmitter =
+			createRocketTrailsEmitter($fireworksName, $rocketsShape);
+
+	// Set the "main" colors for each of the rocket bursts. (At runtime, each
+	// burst will get three colors: the "main" one and the ones adjacent to it.
+	// The three colors will be randomly assigned to each spark in the burst.
+	//
+	setBurstColorIndices($rocketsShape, $numSparksColors);
+
+	// Create the rocket trail sparks and connect them to the rocket sparks
+	// emitter.
+	//
+	clear($returns);
+	$returns = createRocketTrails($fireworksGroup,
+									$fireworksName, 
+									$rocketsShape,
+									$trailColorCreationProc,
+									$numRocketTrailsColors);
+
+	string $rocketTrailShape = $returns[0];
+	string $rocketSparksGroup = $returns[1];
+	string $rocketTrailInstancer = $returns[2];
+
+	connectDynamic -em $rocketTrailEmitter $rocketTrailShape;
+
+	select -cl;
+
+	// Create the particle shape that will hold the fireworks sparks when the
+	// firework explodes.
+	//
+	clear($returns);
+	$returns = createBurstSparks($fireworksGroup,
+									$fireworksName, 
+									$rocketsShape,
+									$sparksColorCreationProc,
+									$numSparksColors);
+
+	string $burstSparksShape = $returns[0];
+	string $burstSparksInstancer = $returns[1];
+	string $sparksGroup = $returns[2];
+
+
+	// Create the runtime expression for the rockets. (It has to be
+	// created after the sparks are created, as it contains references
+	// to the sparks instancer.
+	//
+	createRocketsExpression($rocketsShape, 
+							$burstSparksShape, 
+							$burstSparksInstancer,
+							$rocketTrailEmitter,
+							$rocketsGrav );
+
+	// Group rocket, rocket sparks group and burst sparks group under the
+	// fireworks group.
+	//
+	parent $rocketsGroup $sparksGroup $rocketSparksGroup $fireworksGroup;
+
+	// Create expression for setting geometry vs particle display for
+	// the rocket trails and burst sparks.  And set the seed for
+	// starting the random number generator
+	//
+	string $exprString;
+	$exprString =
+		( $rocketTrailShape + ".visibility = 1 - displayGeometry;\n"
+		+ $rocketTrailInstancer + ".visibility = displayGeometry;\n"
+		+ $burstSparksShape + ".visibility = 1 - displayGeometry;\n"
+		+ $burstSparksInstancer + ".visibility = displayGeometry;\n"
+		+ "float $animStart = `playbackOptions -q -min`;\n" 
+		+ "if (frame < $animStart+1) seed(1);");
+		
+	expression -n ($fireworksName + "Expr")
+		-s $exprString
+		-o $fireworksGroup;
+
+	// Connect the Fireworks attributes to the attributes of the various
+	// objects.  
+	//
+	connectFireworksAttributes($fireworksName,
+								$fireworksGroup,
+								$rocketsShape, 
+								$rocketTrailShape, 
+								$burstSparksShape,
+								$rocketTrailEmitter);
+
+	clear($gFwSparksShaders);
+	clear($gFwTrailShaders);
+
+	// Create the position locators that will be used to edit the start
+	// and burst positions of the rockets.
+	//
+	string $manipNames[] = createRocketPositionLocators($fireworksName,
+														$rocketsShape);
+
+	parent $manipNames[0] $manipNames[1] $fireworksGroup;
+
+	hide $manipNames[0];
+	hide $manipNames[1];
+
+	// Create lights to illumine the RocketSparks and to illumine the
+	// landscape from the Sparks.
+	//
+	// createRocketTrailsGlow();
+	// createBurstSparksGlow();
+
+	// 
+	// Select the top level fireworks group
+	//
+	select -r $fireworksGroup;
+
+	return $fireworksGroup;
+}
+
+
+//
+//  ================ fireworks ================
+//
+//  SYNOPSIS
+//      Wrapper to createFireworks() to create the F/X fireworks clip effect.
+//		The wrapper is created in order to surround the main procedure in a
+//		catch procedure so that if any fatal errors occur, full cleanup will
+//		be done.
+//
+//	ARGUMENTS
+//		string $fireworksName         -- the fireworks base name
+//		int    $numRocketTrailsColors -- number of trail colors/cones
+//		int    $numSparksColors       -- number of burst sparks colors/cones
+//		string $trailColorCreationProc,
+//		string $sparksColorCreationProc,
+//		int $numRockets,
+//		float $launchPositionX
+//		float $launchPositionY
+//		float $launchPositionZ
+//		float $burstAreaCenterX
+//		float $burstAreaCenterY
+//		float $burstAreaCenterZ
+//		float $burstAreaExtentX
+//		float $burstAreaExtentY
+//		float $burstAreaExtentZ
+//		float $firstLaunchFrame
+//		float $launchRate
+//		float $minFlightTimeInFrames
+//		float $maxFlightTimeInFrames
+//
+//	RETURN
+//		$fireworksGroup   -- name of the top level fireworks group
+//
+global proc string fireworks(string $fireworksName, 
+						int $numRocketTrailsColors,
+						int $numSparksColors,
+						string $trailColorCreationProc,
+						string $sparksColorCreationProc,
+						int $numRockets,
+						float $launchPositionX,
+						float $launchPositionY,
+						float $launchPositionZ,
+						float $burstAreaCenterX,
+						float $burstAreaCenterY,
+						float $burstAreaCenterZ,
+						float $burstAreaExtentX,
+						float $burstAreaExtentY,
+						float $burstAreaExtentZ,
+						float $firstLaunchFrame,
+						float $launchRate,
+						float $minFlightTimeInFrames,
+						float $maxFlightTimeInFrames)
+{
+	if( `licenseCheck -type complete` == 0 )
+	{
+		warning( (uiRes("m_fireworks.kYouAreNotLicensedMain")));
+		return "";
+	}
+
+	vector $launchPosition = 
+				<<$launchPositionX, $launchPositionY, $launchPositionZ>>;
+	vector $burstAreaCenter = 
+				<<$burstAreaCenterX, $burstAreaCenterY, $burstAreaCenterZ>>;
+	vector $burstAreaExtents = 
+				<<$burstAreaExtentX, $burstAreaExtentY, $burstAreaExtentZ>>;
+
+	// Save the names of all objects existing before the fireworks are created, so
+	// we know what not to delete if the fireworks creation fails.
+	//
+	string $origSceneObjects[] = `ls`;
+
+	string $fireworksGroup;
+
+	// catch returns true if execution of the command produces an error.
+	//
+	if (catch($fireworksGroup = createFireworks($fireworksName, 
+							$numRocketTrailsColors,
+							$numSparksColors,
+							$trailColorCreationProc,
+							$sparksColorCreationProc,
+							$numRockets,
+							$launchPosition,
+							$burstAreaCenter,
+							$burstAreaExtents,
+							$firstLaunchFrame,
+							$launchRate,
+							$minFlightTimeInFrames,
+							$maxFlightTimeInFrames)))
+	{
+		warning( (uiRes("m_fireworks.kCreationOfFireworksFailed")));
+
+		// Get all objects now currently in the scene and delete any that were not
+		// here before we started creating the fireworks.
+		//
+		string $currSceneObjects[] = `ls`;
+
+		for ($i = 0; $i <  size($currSceneObjects); $i++)
+		{
+			int $found = 0;
+			for ($j = 0; $j < size($origSceneObjects); $j++)
+			{
+				if ($currSceneObjects[$i] == $origSceneObjects[$j])
+				{
+					$found = 1;
+					break;
+				}
+			}
+			// Check for whether the object exists because it may have been deleted
+			// if its parent has already been deleted.
+			//
+			if ($found == 0 && objExists($currSceneObjects[$i]))
+			{
+				delete $currSceneObjects[$i];
+			}
+		}
+
+		return "";
+	}
+
+	return $fireworksGroup;
+}
+
+
+
+

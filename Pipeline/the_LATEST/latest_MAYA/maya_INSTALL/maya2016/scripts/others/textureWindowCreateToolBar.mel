@@ -1,0 +1,2266 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// Script:    textureWindowCreateToolBar.mel
+//
+//*AUTOMATIC: yes
+//
+//
+// SYNOPSIS
+//		Creates a toolbar for the panel that contains the texture window
+//
+
+source rearrangeSelection;
+
+global string $uvEntryFieldU = "uvEntryFieldU";
+global string $uvEntryFieldV = "uvEntryFieldV";
+
+// Tells us whether or not the UV entry fields are in transformation tool entry
+// mode or absolute UV position entry mode.
+//
+global int $gUVEntryTransformMode = 0;
+
+proc attachGroup(string $form, string $groups[])
+{
+	int $i;
+	int $previousGroup;
+	int $numGroups = `size($groups)`;
+
+	if ($numGroups > 0)
+	{
+		formLayout -edit
+			-attachForm $groups[0] "top" 0
+			-attachNone $groups[0] "bottom"
+			-attachForm $groups[0] "left" 1
+			-attachNone $groups[0] "right"
+			$form;
+		$previousGroup = 0;
+	}
+
+	for ($i=1; $i<$numGroups; $i++)
+	{
+		if ($groups[$i] != "")
+		{
+			formLayout -edit
+					-attachForm		$groups[$i] "top" 0
+					-attachNone		$groups[$i] "bottom"
+					-attachControl	$groups[$i] "left" 1 $groups[$previousGroup]
+					-attachNone		$groups[$i] "right"
+				$form;
+			$previousGroup = $i;
+		}
+	}
+}
+
+global proc textureWindowNudgeUVs( string $dir, float $val )
+{
+	float $mult = 1.0;
+
+	if (`floatField -exists NudgeFactor_FF`)
+	{
+		$mult = `floatField -q -value NudgeFactor_FF`;
+	}
+
+	$val *= $mult;
+
+	// to move the manip 
+	string $selectObj[] = `ls -objectsOnly -selection`;
+	for ( $obj in $selectObj )
+	{
+		float $uvPivot[] = `getAttr ($obj+".uvPivot")`;
+		if ( $dir == "-u" )
+		{
+			$uvPivot[0] += $val;
+		}
+		if ( $dir == "-v" )
+		{
+			$uvPivot[1] += $val;
+		}
+		string $setAttrCmd = ("setAttr " + $obj+".uvPivot -type double2 " + $uvPivot[0] + " " + $uvPivot[1]);
+		evalEcho ($setAttrCmd); 
+	}
+
+	// 
+	string $cmd = ("polyEditUV " + $dir + " " + $val);
+	evalEcho ($cmd);	
+}
+
+global proc textureWindowNudgeFactorChanged ( float $newVal )
+{
+	optionVar -floatValue "NudgeUVsMultiplier" $newVal;
+}
+
+global proc int textureWindowCreateToolBar_isUVTransformed()
+//
+// Description:
+//	this procedure updates the fields if the UV is transformed or
+//	if a new UV is selected. If more than 1 UV is selected, the lowest 
+//	indexed UV's coordinates are displayed
+//
+//	this will also only apply to the first object in the selection list,
+//	which should match the uvs showing in the uv editor.
+//
+//	if the uv entry mode is in transform mode, we do not update at all.
+//
+
+{
+	int $return = 0;
+	global float $gUVvalues[];
+	global float $gPreviousUVvalues[];
+
+	global int $gUVEntryTransformMode;
+
+	// If the UV entry mode is in transform mode, we do not update at all.
+	//
+	if( $gUVEntryTransformMode )
+	{
+		return $return;
+	}
+
+	//	is the texture editor visible?
+	int $texturePanelVisible = 0;
+	string $visiblePanels[] = `getPanel -visiblePanels`;
+	for ($panel in $visiblePanels){
+		if ($panel == "polyTexturePlacementPanel1") $texturePanelVisible = 1;
+	}
+
+	if ($texturePanelVisible){
+
+		// Determine the type of the object to determine which editUV command
+		// to query.
+		//
+		string $shapes[] = `ls -dag -o -g -sl`;
+		string $hiliteList[] = `ls -dag -o -g -hl`;
+		$shapes = stringArrayCatenate( $shapes, $hiliteList );
+		$shapes = stringArrayRemoveDuplicates( $shapes );
+		
+		int $nShapes = size($shapes);
+
+		// Only pay attention to first selected shape
+		//
+		string $shape;
+		string $type;
+		if( $nShapes )
+		{
+			$shape = $shapes[0];
+			$type = `objectType $shape`;
+		}
+
+		// Now execute the command
+		//
+		string $cmd;
+		string $UVs[];
+		int $skipEval = 0;
+		switch( $type )
+		{
+		case "mesh":
+			$UVs = `filterExpand -ex false -selectionMask 35`;
+			$cmd = "polyEditUV -query " + $UVs[0];
+			break;
+		case "subdiv":
+			$UVs = `filterExpand -ex false -selectionMask 73`;
+			$cmd = "subdEditUV -query " + $UVs[0];
+			break;
+		case "nurbsSurface":
+			// There is no selection mask built-in for NURBS as of this
+			// implementation. So just query it all and take first two values
+			// and ignore the cmd and UVs[0].
+			//
+			float $UVvalues[] = `nurbsEditUV -q -u -v`;
+			$gUVvalues[0] = $UVvalues[0];
+			$gUVvalues[1] = $UVvalues[1];
+			$UVs[0] = "";
+			$cmd = "";
+
+			// Skip the eval of the command since we've manually calculated it
+			// to workaround current limitations in NURBS UVs
+			//
+			$skipEval = 1;
+			break;
+		}
+		
+		if ((size($UVs)) > 0){
+
+			if( !$skipEval )
+			{
+				$gUVvalues = eval($cmd);
+			}
+
+			if (!`size ($gPreviousUVvalues)`){
+				// Initialize previous values to 0.0 since that is what
+				// the default values of the float fields are anyway.
+				//
+				// This will fix the problem where the first update always
+				// thinks it has the right value when in fact it doesn't.
+				// This was happening when we defaulted the previous values
+				// to be initialized to the current UV values.
+				//
+				$gPreviousUVvalues[0] = 0.0;
+				$gPreviousUVvalues[1] = 0.0;
+			}
+			if ($gPreviousUVvalues[0] != $gUVvalues[0]){
+				floatField -edit
+					-value $gUVvalues[0]
+					uvEntryFieldU;		
+				$gPreviousUVvalues[0] = $gUVvalues[0];
+				$return = 1;
+			}
+			if ($gPreviousUVvalues[1] != $gUVvalues[1]){
+				floatField -edit
+					-value $gUVvalues[1]
+					uvEntryFieldV;		
+				$gPreviousUVvalues[1] = $gUVvalues[1];
+				$return = 1;
+			}
+		} else {
+			//	need to initiate values if they've not been set yet
+			$gUVvalues[0] = 0.0001; $gUVvalues[1] = 0.0001;
+			$gPreviousUVvalues[0] = 0.0002; $gPreviousUVvalues[1] = 0.0002;
+		}
+	}
+	return $return;
+}
+
+global proc textureWindowCreateToolBar_uvCopy()
+//
+// Description:
+//	this procedure defines the copy behaviour for UV mode
+//
+{
+	global float $gUVcopyValues[];
+	$gUVcopyValues = `polyEditUV -q`;
+}
+
+global proc textureWindowCreateToolBar_uvPaste( int $u, int $v)
+//
+// Description:
+//	this procedure defines the paste behaviour for UV mode
+//		$u: boolean - paste U value
+//		$v: boolean - paste V value
+//
+{
+	global float $gUVcopyValues[];
+	string $UVs[] = `ls -selection -flatten`;
+	for ($UV in $UVs){
+		if ($u == 1){
+			polyEditUV -r false -u $gUVcopyValues[0];
+		}
+		if ($v == 1){
+			polyEditUV -r false -v $gUVcopyValues[1];
+		}
+	}
+}
+
+
+global proc textureWindowCreateToolBar_copyPasteMode (int $mode)
+//
+// Description:
+//	this procedure updates the copy paste mode for the 
+//	toolbar
+//		0: off - copy faces
+//		1: on  - copy UVs
+//
+{
+	int $iconSize = 30;
+
+	setUITemplate -pushTemplate TexWinButtonTemplate;
+
+	switch ($mode){
+	case 0:
+		iconTextButton -edit
+			-command "PolygonCopy"
+			-annotation (getRunTimeCommandAnnotation ("PolygonCopy"))
+			copyUVButton;
+
+		popupMenu -button 3
+			-parent copyUVButton
+			-postMenuCommand "PolygonCopyOptions"
+			copyUVButtonPopup;
+
+		iconTextButton -edit
+			-command "PolygonPaste"
+			-annotation (uiRes("m_textureWindowCreateToolBar.kPasteUVsToSelectedFacesAnnot"))
+			pasteUVButton;
+
+		popupMenu -button 3
+			-parent pasteUVButton
+			-postMenuCommand "PolygonPasteOptions"
+			pasteUVButtonPopup;
+
+		iconTextButton -edit 
+			-enable false 
+			-image1 "pasteUDisabled.png"
+			pasteUButton;
+
+		iconTextButton -edit 
+			-enable false 
+			-image1 "pasteVDisabled.png"
+			pasteVButton;
+
+		break;
+
+	case 1:
+		//	adjust copy/paste buttons
+		iconTextButton -edit
+			-command "textureWindowCreateToolBar_uvCopy"
+			-annotation (uiRes("m_textureWindowCreateToolBar.kCopySelectedUVAnnot"))
+			copyUVButton;
+
+		iconTextButton -edit
+			-command "textureWindowCreateToolBar_uvPaste 1 1"
+			-annotation (uiRes("m_textureWindowCreateToolBar.kPasteToSelectedUVsAnnot"))
+			pasteUVButton;
+
+		//	delete their popup menus
+		deleteUI -menu copyUVButtonPopup;
+		deleteUI -menu pasteUVButtonPopup;
+
+		//	enable paste U and V buttons
+		iconTextButton -edit 
+			-enable true 
+			-image1 "pasteU.png"
+			pasteUButton;
+
+		iconTextButton -edit 
+			-enable true 
+			-image1 "pasteV.png"
+			pasteVButton;
+
+		break;
+	}
+
+	setUITemplate -popTemplate;
+
+}
+
+
+global proc textureWindowCreateToolBar_toggleIcons ( int $arg, 
+													 string $iconLayout, 
+													 string $collapsedLayout, 
+													 string $shiftedLayout, 
+													 string $statusVariable )
+//
+// Description:
+//  Show and Hide the file icons
+// Parameters:
+//  $arg: 1 means show, 0 means hide, -1 means use optionVar
+//  $iconLayout: the name of the layout being toggled
+//  $collapsedLayout: the name of the layout/icon containing the open/close bar
+//  $shiftedLayout: The name of the layout neighboring iconLayout to the right.
+//                  This layout will be shifted over when iconLayout is hidden.
+//					If no righthand layout exists, this parameter should be any
+//					invalid layout name (ex: "").
+//  $statusVariable: the optionVar storing whether or not $iconLayout is hidden
+//					 or shown.
+//
+{	
+	// UV Texture Editor Toolbar (the parent of all icon layouts)
+	//
+	global string $gUVTexEditToolBar;
+	setParent $gUVTexEditToolBar;
+
+	int $state = $arg;
+	if ($state < 0) $state = (!`optionVar -q $statusVariable`);
+
+	// Determine whether or not the specified $shiftedLayout exists
+	//
+	int $doesShiftedExist = false;
+	string $children[] = `flowLayout -q -childArray $gUVTexEditToolBar`;
+	int $i = 0;
+	for ($i = 0; $i < `flowLayout -q -numberOfChildren $gUVTexEditToolBar`; $i++ ) {
+		if ($children[$i] == $shiftedLayout) {
+			$doesShiftedExist = true;
+			break;
+		}
+	}
+
+	// number of pixels between neighboring layouts
+	//
+	int $edging = 2;
+	if ($state) {
+		// Show $iconLayout
+		//
+		layout -edit -manage true $iconLayout;
+		iconTextButton -edit -i1 textureEditorOpenBar.png $collapsedLayout;
+	} else {
+		// Hide $iconLayout
+		//
+		layout -edit -manage false $iconLayout;
+		iconTextButton -edit -i1 textureEditorCloseBar.png $collapsedLayout;
+	}
+
+	// the status variable should now represent the current state
+	// (shown: 1, hidden: 0)
+	//
+	optionVar -intValue $statusVariable $state;
+}
+
+global proc smudgeSetToTool( )
+// 
+// Descriptoin: 
+//  This is a wrapper around setToTool for the UV smudge tool. It
+//  allows us to setup a few things before we switch to the uv smudge
+//  tool.  Namely, we want to make sure the current selection is
+//  converted to UVs and make sure the user is in uv selection mode
+//  (the only applicable mode for smudge uv manip).
+//
+{
+	// Convert the current selection to uvs. 
+	//
+	ConvertSelectionToUVs; 
+	string $componentCmd = "";
+	
+	// Now switch to UV selection mode. 
+	//
+	if ( `selectMode -q -object` ) { 
+		$componentCmd = ("changeSelectMode -component; setComponentPickMask \"ParmPoint\" true; " +
+						 "selectType -ocm -alc false; selectType -ocm -puv true;" + 
+						 "selectType -smf false; selectType -sme false; selectType -smp false;" );
+	} else { 
+		$componentCmd =  ("changeSelectMode -component; setComponentPickMask \"ParmPoint\" true; " +
+						  "selectType -ocm -alc false; selectType -puv true;" +
+						  "selectType -smf false; selectType -sme false; selectType -smp false;" );
+	}
+	
+	eval( $componentCmd ); 
+}
+
+global proc textureWindowUVEntryCommand( int $isU )
+{
+	global string $uvEntryFieldU;
+	global string $uvEntryFieldV;
+
+	global int $gUVEntryTransformMode;
+
+	string $field;
+	string $otherField;
+	string $dimension;
+	if( $isU )
+	{
+		$field = $uvEntryFieldU;
+		$otherField = $uvEntryFieldV;
+		$dimension = "-u";
+	}
+	else
+	{
+		$field = $uvEntryFieldV;
+		$otherField = $uvEntryFieldU;
+		$dimension = "-v";
+	}
+
+	// For each object in the selection list, use the appropriate
+	// editUV command based on objectType.
+	//
+	string $shapes[];
+	txtWndShapesFromSelList( $shapes );
+	int $nShapes = size($shapes);
+	int $i;
+
+	// Create a list of shapes we've already processed, so we don't toggle back
+	// and forth over the same shape when we should only do it once.
+	//
+	string $processedShapes[];
+	int $nProcessedShapes = size($processedShapes);
+
+	// Record types of objects selected
+	//
+	int $hasPolys = 0;
+	int $hasSubDs = 0;
+	int $hasNurbs = 0;
+
+	for( $i = 0; $i < $nShapes; $i++ )
+	{
+		// For each shape, we check to see if we have an object type
+		// with an associated edit UV command. If so, we note that we
+		// need to run that type of edit UV command at the end.
+		//
+		// Edit UV commands will run on everything on the selection list
+		// that it knows how to process. So it is more efficient to call
+		// the requested commands once at the end than once per shape.
+		//
+		string $shape = $shapes[$i];
+		string $type = `objectType $shape`;
+
+		// Firewall: Only do each shape once.
+		//
+		int $k;
+		int $skipObject = 0;
+		for( $k = 0; $k < $nProcessedShapes; $k++ )
+		{
+			if( $shape == $processedShapes[$k] )
+			{
+				$skipObject = 1;
+			}
+		}
+
+		if( $skipObject )
+		{
+			continue;
+		}
+
+		switch( $type )
+		{
+		case "mesh":
+			$hasPolys = 1;
+			break;
+		case "subdiv":
+			$hasSubDs = 1;
+			break;
+		case "nurbsSurface":
+			$hasNurbs = 1;
+			break;
+		}
+
+		// If we have one of each type no need to look any further.
+		//
+		if( $hasPolys && $hasSubDs && $hasNurbs )
+		{
+			break;
+		}
+
+		$processedShapes[$nProcessedShapes] = $shape;
+		$nProcessedShapes = size($processedShapes);
+	}
+
+	// Retrieve input argument
+	//
+	float $value = `floatField -q -value $field`;
+
+	// If we are using transform mode, execute transformation commands
+	//
+	if( $gUVEntryTransformMode )
+	{
+		// Detect the current context and execute accordingly
+		//
+		string $context = `currentCtx`;
+		switch( $context )
+		{
+		case "moveSuperContext":
+		case "RotateSuperContext":
+		case "scaleSuperContext":
+			// Special operation for Rotate
+			//
+			if( $context == "RotateSuperContext" )
+			{
+				// numericalInput procedure uses scmh command which
+				// operates counter-clockwise. More intuitive to
+				// operate clockwise on positive rotation amounts.
+				//
+				$value *= -1;
+			}
+
+			// Build input string for numericalInput procedure
+			//
+			string $input;
+			if( $isU )
+			{
+				$input = $value;
+				$input += " 0.0";
+			}
+			else
+			{
+				$input = "0.0 ";
+				$input += $value;
+			}
+
+			// Add -relative flag
+			//
+			$input += " -r";
+
+			// Use numericalInput procedure (see numericalInputChangeCommand.mel
+			// for usage).
+			//
+			numericalInput( $input );
+			break;
+		};
+	}
+	else
+	{
+		string $cmd;
+		if( $hasPolys )
+		{
+			$cmd = "polyEditUV -r false " + $dimension + " " + $value;
+			eval($cmd);
+		}
+
+		if( $hasSubDs )
+		{
+			$cmd = "subdEditUV -r false " + $dimension + " " + $value;
+			eval($cmd);
+		}
+		
+		if( $hasNurbs )
+		{
+			$cmd = "nurbsEditUV -r false " + $dimension + " " + $value;
+			eval($cmd);
+		}
+	}
+}
+
+global proc uvEntryTransformModeCommand()
+{
+	global string $uvEntryFieldV;
+	global int $gUVEntryTransformMode;
+	if( $gUVEntryTransformMode )
+	{
+		$gUVEntryTransformMode = 0;
+	}
+	else
+	{
+		$gUVEntryTransformMode = 1;
+	}
+
+	// Update the state of the UV entry fields
+	//
+	uvEntryFieldScriptJob();
+
+	// Update our EntryTransformMode button
+	//
+	iconTextCheckBox -e -v $gUVEntryTransformMode uvEntryTransformModeButton;
+}
+
+global proc uvEntryFieldScriptJob()
+{
+	global string $uvEntryFieldV;
+
+	global int $gUVEntryTransformMode;
+	if( $gUVEntryTransformMode )
+	{
+		string $context = `currentCtx`;
+		if( $context == "RotateSuperContext" )
+		{
+			floatField -e -enable false -value 0.0 $uvEntryFieldV;
+		}
+		else
+		{
+			floatField -e -enable true $uvEntryFieldV;
+		}
+	}
+	else
+	{
+		floatField -e -enable true $uvEntryFieldV;
+	}
+}
+
+global proc performPolyFlipUV(int $flipType)
+{
+	string $objects[] = `ls -sl`;
+	string $resultantSelection[] = rearrangeSelection($objects);
+
+	int $i;
+	for( $i = 0; $i < size($resultantSelection); $i++ )
+	{
+		string $cmd = "polyFlipUV -flipType "+$flipType+" -local on "+$resultantSelection[$i];
+		evalEcho($cmd);
+	}
+}
+
+global proc textureWindowCreateToolBar(string $toolBar,
+									   string $editor,
+									   string $editorCmd)
+//
+// Description:
+//	Add the texture window toolbar
+//
+//  A call to txtWndUpdateEditor has been added to several of the
+//	buttons. This is to keep those buttons (which toggle between two
+//	states) and the equivalent menuItems in sync.
+// 
+// Returns: name of toolbar widget
+//
+{
+	// So the icon toggle procedures know who their parent is
+	string $showHideFlipRotateIcons = (uiRes("m_textureWindowCreateToolBar.kShowHideFlipRotateIconsAnnot"));
+	
+	global string $gUVTexEditToolBar;
+	$gUVTexEditToolBar = $toolBar;
+
+	global int $gUVEntryTransformMode;
+	
+    int $edgeMargins = 2; 
+
+    //Margin for icons (for the first sections of the toolbar)
+    int $margin = 1; //margins between icons
+    
+    // Space between icons (for the last section of the toolbar)
+	int $vertGap = 3;
+	int $horizGap = $margin;
+
+	// Add in the icons
+	// Here we need to make sure all the toolButton has a size of (24, 24), 
+	// it's calculated as icon size (20) + margin (2+2). This has to be 
+	// exact otherwise it will cause problem in Mac retina. See MAYA-49712.
+	// Please do note that although we have variable named as "iconSize", but 
+	// it's actually meant for "buttonSize", button size = icon size + margin.
+	int $iconSize = 24;
+	int $floatWidth = 24;
+
+	// Open/Close bar size
+	int $barHeight = 2 * $iconSize + $margin + $edgeMargins * 2;
+	int $barWidth = 9;
+
+	// Template for the quick collapse bar, and the hide/show bars
+	//
+    if (`uiTemplate -exists TexWinBarTemplate`) {
+    	deleteUI -uiTemplate TexWinBarTemplate;
+    }
+    uiTemplate TexWinBarTemplate;
+	iconTextButton -defineTemplate TexWinBarTemplate
+		-width $barWidth -height $barHeight;
+
+	// Template for all the toolbar push buttons
+	// 
+	if (`uiTemplate -exists TexWinButtonTemplate`) {
+    	deleteUI -uiTemplate TexWinButtonTemplate;
+    }
+    uiTemplate TexWinButtonTemplate;
+	iconTextButton -defineTemplate TexWinButtonTemplate
+		-width $iconSize -height $iconSize;
+
+	// Template for all the toolbar toggle buttons
+	//
+    if (`uiTemplate -exists TexWinCheckBoxTemplate`) {
+    	deleteUI -uiTemplate TexWinCheckBoxTemplate;
+    }
+    uiTemplate TexWinCheckBoxTemplate;
+	iconTextCheckBox -defineTemplate TexWinCheckBoxTemplate
+		-width $iconSize -height $iconSize;
+
+	// Template for the toolbar float fields
+	//
+    if (`uiTemplate -exists TexWinFloatFieldTemplate`) {
+    	deleteUI -uiTemplate TexWinFloatFieldTemplate;
+    }
+    uiTemplate TexWinFloatFieldTemplate;
+	iconTextCheckBox -defineTemplate TexWinFloatFieldTemplate
+		-width $floatWidth -height $iconSize;
+	
+
+	// callback for updating the state of all editor controls
+	//
+	string $updateEditor = ( "txtWndUpdateEditor(\"" + $editor + "\", \"" +
+							 $editorCmd + "\", \"null\", 101);" );
+
+
+
+	//
+	// Init hidden/shown option var
+	//
+	if (!`optionVar -exists "showStatusManipSelect"`) {
+		optionVar -intValue "showStatusManipSelect" 1;
+	}
+
+	string $toggleManipSelectCmd = "\"manipLayout\", " + 
+								   "\"manipCollapse\", " + 
+								   "\"UVBrushCollapse\", " + 
+								   "\"showStatusManipSelect\")";
+
+	//
+	// Set up open/close bar
+	//
+	setUITemplate -pushTemplate TexWinBarTemplate;
+
+	iconTextButton -vis true
+		-parent $gUVTexEditToolBar
+		-annotation (uiRes("m_textureWindowCreateToolBar.kShowHideUVToolAnnot"))
+		-i1 textureEditorOpenBar.png  
+		-c ("textureWindowCreateToolBar_toggleIcons(-1," + $toggleManipSelectCmd)
+		manipCollapse;
+
+	setUITemplate -popTemplate;
+
+	formLayout manipLayout;
+
+	setUITemplate -pushTemplate TexWinButtonTemplate;
+
+	toolButton 
+		-doubleClickCommand toolPropertyWindow
+		-collection toolCluster 
+		-tool texLatticeDeformSuperContext
+		-style "iconOnly"
+		-image1 "uvlattice.png"
+		-width $iconSize -height $iconSize
+		texLatticeUVButton;
+
+	toolButton 
+		-doubleClickCommand toolPropertyWindow
+		-collection toolCluster 
+		-tool texMoveUVShellSuperContext 
+		-style "iconOnly"
+		-image1 "moveUVShell.png" 
+		-width $iconSize -height $iconSize
+		texMoveShellButton;
+
+	toolButton 
+		-doubleClickCommand toolPropertyWindow
+		-collection toolCluster 
+		-tool texTweakSuperContext 
+		-style "iconOnly"
+		-image1 "tweakUV.png" 
+		-width $iconSize -height $iconSize
+		texTweakButton;
+
+	global string $gPolyshortestEdgePath;
+	toolButton 
+		-doubleClickCommand toolPropertyWindow
+		-collection toolCluster 
+		-tool $gPolyshortestEdgePath
+		-style "iconOnly"
+		-image1 "textureEditorShortestEdgePath.png" 
+		-width $iconSize -height $iconSize
+		texSelectEdgePathButton;
+
+	setUITemplate -popTemplate;
+
+	formLayout -edit
+		-attachForm     texLatticeUVButton		"top"   $edgeMargins
+		-attachForm		texLatticeUVButton		"left"  0 
+
+		-attachForm		texMoveShellButton		"top"	$edgeMargins
+		-attachControl	texMoveShellButton		"left"  $margin texLatticeUVButton
+		
+		-attachControl	texSelectEdgePathButton	"top"	$margin texLatticeUVButton
+		-attachForm		texSelectEdgePathButton	"left"	0
+
+		-attachControl	texTweakButton			"top"	$margin texMoveShellButton
+		-attachControl	texTweakButton			"left"	$margin texSelectEdgePathButton
+		
+		manipLayout;
+
+
+	setParent ..;
+
+	///////////////////////////////
+	// UV Brushes				 //
+	///////////////////////////////
+
+	if (!`optionVar -exists "showStatusUVBrushes"`) {
+		optionVar -intValue "showStatusUVBrushes" 1;
+	}
+
+	string $toggleUVBrushesCmd = "\"brushLayout\", " +
+								 "\"UVBrushCollapse\", " +
+								 "\"flipRotateCollapse\", " +
+								 "\"showStatusUVBrushes\")";
+
+	setUITemplate -pushTemplate TexWinBarTemplate;
+	iconTextButton -vis true
+		-parent $gUVTexEditToolBar
+		-annotation (uiRes("m_textureWindowCreateToolBar.kShowHideBrushIconsAnnot"))
+		-i1 textureEditorOpenBar.png  
+		-c ("textureWindowCreateToolBar_toggleIcons(-1," + $toggleUVBrushesCmd)
+		UVBrushCollapse;
+
+	setUITemplate -popTemplate;
+
+	formLayout brushLayout;
+
+	setUITemplate -pushTemplate TexWinButtonTemplate;
+
+	int $u3DLoaded = `pluginInfo -q -loaded Unfold3D`;
+	if ( $u3DLoaded )
+	{
+		toolButton 
+			-doubleClickCommand toolPropertyWindow
+			-onCommand "Unfold3DContext -e -unfold -i1 \"UV_Unfold_BrushLarge.png\" texUnfoldUVContext;"
+			-ann (uiRes("m_textureWindowCreateToolBar.kUnfoldToolAnnot"))
+			-collection toolCluster 
+			-tool texUnfoldUVContext
+			-style "iconOnly"
+			-image1 "UV_Unfold_Brush.png"
+			-width $iconSize -height $iconSize
+			-version 2016
+			texUnfoldUVBrushButton;
+
+		toolButton 
+			-doubleClickCommand toolPropertyWindow
+			-onCommand "Unfold3DContext -e -optimize -i1 \"UV_Optimize_BrushLarge.png\" texUnfoldUVContext;"
+			-ann (uiRes("m_textureWindowCreateToolBar.kOptimizeToolAnnot"))
+			-collection toolCluster 
+			-tool texUnfoldUVContext 
+			-style "iconOnly"
+			-image1 "UV_Optimize_Brush.png"
+			-width $iconSize -height $iconSize
+			-version 2016
+			texOptimizeUVBrushButton;
+	}
+
+	toolButton 
+		-doubleClickCommand toolPropertyWindow
+        -onCommand "texCutContext -e -m Cut -i1 \"UV_Cut_ToolLarge.png\" texCutUVContext;"
+		-ann (uiRes("m_textureWindowCreateToolBar.kCutUVToolAnnot"))
+		-collection toolCluster 
+		-tool texCutUVContext 
+		-style "iconOnly"
+		-image1 "UV_Cut_Tool.png" 
+		-width $iconSize -height $iconSize
+		-version 2016
+		texCutUVButton;
+        
+	toolButton 
+		-doubleClickCommand toolPropertyWindow
+		-onCommand "texCutContext -edit -mode Sew -i1 \"UV_Sew_ToolLarge.png\" texCutUVContext;"
+		-ann (uiRes("m_textureWindowCreateToolBar.kSewUVToolAnnot"))
+		-collection toolCluster 
+		-tool texCutUVContext 
+		-style "iconOnly"
+		-image1 "UV_Sew_Tool.png" 
+		-width $iconSize -height $iconSize
+		-version 2016
+		texSewUVButton;
+
+	toolButton 
+		-doubleClickCommand toolPropertyWindow
+		-onCommand "texSculptCacheContext -e -m Grab -i1 \"UV_Grab_BrushLarge.png\" texSculptCacheContextObj;"
+		-ann (uiRes("m_textureWindowCreateToolBar.kGrabUVToolAnnot"))
+		-collection toolCluster 
+		-tool texSculptCacheContextObj 
+		-style "iconOnly"
+		-image1 "UV_Grab_Brush.png"
+		-width $iconSize -height $iconSize
+		-version 2016
+		texGrabUVButton;
+        
+	toolButton 
+		-doubleClickCommand toolPropertyWindow
+		-onCommand "texSculptCacheContext -e -m Pinch -i1 \"UV_Pinch_ToolLarge.png\" texSculptCacheContextObj;"
+		-ann (uiRes("m_textureWindowCreateToolBar.kPinchUVToolAnnot"))
+		-collection toolCluster 
+		-tool texSculptCacheContextObj 
+		-style "iconOnly"
+		-image1 "UV_Pinch_Tool.png"
+		-width $iconSize -height $iconSize
+		-version 2016
+		texPinchUVButton;
+        
+	toolButton 
+		-doubleClickCommand toolPropertyWindow
+		-onCommand "texSculptCacheContext -e -m Smear -i1 \"UV_Smear_ToolLarge.png\" texSculptCacheContextObj;"
+		-ann (uiRes("m_textureWindowCreateToolBar.kSmearUVToolAnnot"))
+		-collection toolCluster 
+		-tool texSculptCacheContextObj 
+		-style "iconOnly"
+		-image1 "UV_Smear_Tool.png"
+		-width $iconSize -height $iconSize
+		-version 2016
+		texSmearUVButton; 
+        
+	toolButton 
+		-doubleClickCommand toolPropertyWindow
+		-onCommand "texSculptCacheContext -e -m Freeze -i1 \"UV_Freeze_ToolLarge.png\" texSculptCacheContextObj;"
+		-ann (uiRes("m_textureWindowCreateToolBar.kPinUVToolAnnot"))
+		-collection toolCluster 
+		-tool texSculptCacheContextObj 
+		-style "iconOnly"
+		-image1 "UV_Freeze_Tool.png"
+		-width $iconSize -height $iconSize
+		-version 2016
+		texPinUVButton;
+
+	if ( $u3DLoaded )
+	{
+		formLayout -edit
+			// row 1 
+			-attachForm		texUnfoldUVBrushButton		"top"	$edgeMargins
+			-attachForm		texUnfoldUVBrushButton		"left"	0 
+
+			-attachForm		texCutUVButton				"top"	$edgeMargins
+			-attachControl	texCutUVButton				"left"	$margin texUnfoldUVBrushButton
+
+			-attachForm		texGrabUVButton				"top"	$edgeMargins
+			-attachControl	texGrabUVButton				"left"	$margin texCutUVButton
+
+			-attachForm		texPinchUVButton			"top"	$edgeMargins
+			-attachControl	texPinchUVButton			"left"	$margin texGrabUVButton 
+
+			// row 2 
+			-attachControl	texOptimizeUVBrushButton	"top"	$margin texUnfoldUVBrushButton
+			-attachForm		texOptimizeUVBrushButton	"left"	0 
+
+			-attachControl	texSewUVButton				"top"	$margin texCutUVButton
+			-attachControl	texSewUVButton				"left"	$margin texOptimizeUVBrushButton
+
+			-attachControl	texPinUVButton				"top"	$margin texGrabUVButton
+			-attachControl	texPinUVButton				"left"	$margin texSewUVButton
+
+			-attachControl	texSmearUVButton			"top"	$margin texPinchUVButton
+			-attachControl	texSmearUVButton			"left"	$margin texPinUVButton
+
+			brushLayout;
+	}
+	else
+	{
+		formLayout -edit
+			// row 1 
+			-attachForm		texCutUVButton				"top"	$edgeMargins
+			-attachForm		texCutUVButton				"left"	0
+
+			-attachForm	    texGrabUVButton				"top"	$edgeMargins
+			-attachControl	texGrabUVButton				"left"	$margin texCutUVButton
+
+			-attachForm	    texPinchUVButton			"top"	$edgeMargins
+			-attachControl	texPinchUVButton			"left"	$margin texGrabUVButton 
+
+			// row 2 
+			-attachControl	texSewUVButton				"top"	$margin texCutUVButton
+			-attachForm		texSewUVButton				"left"	0 
+            
+			-attachControl	texPinUVButton				"top"	$margin texGrabUVButton
+			-attachControl	texPinUVButton				"left"	$margin texSewUVButton 
+
+			-attachControl	texSmearUVButton			"top"	$margin texPinchUVButton
+			-attachControl	texSmearUVButton			"left"	$margin texPinUVButton
+
+			brushLayout;
+	}
+
+	setParent ..;
+
+	//////////////////
+	// 	Flip/Rotate //
+	//////////////////
+		
+	
+	// 
+	// Init hidden/shown option var
+	//
+	if (!`optionVar -exists "showStatusFlipRotate"`) {
+		optionVar -intValue "showStatusFlipRotate" 1;
+	}
+
+
+	string $toggleFlipRotateCmd = "\"flipRotateLayout\", " +
+							 	  "\"flipRotateCollapse\", " + 
+							 	  "\"moveSewCollapse\", " + 
+							 	  "\"showStatusFlipRotate\")";
+
+	//
+	// Set up open/close bar
+	//
+	setUITemplate -pushTemplate TexWinBarTemplate;
+
+	iconTextButton -vis true
+		-parent $gUVTexEditToolBar
+		-annotation $showHideFlipRotateIcons
+		-i1 textureEditorOpenBar.png  
+		-c ("textureWindowCreateToolBar_toggleIcons(-1," + $toggleFlipRotateCmd)
+		flipRotateCollapse;
+
+	setUITemplate -popTemplate;
+
+	//
+	// Set up icons
+	//
+	formLayout flipRotateLayout;
+
+	setUITemplate -pushTemplate TexWinButtonTemplate;
+
+	iconTextButton
+		-image1 "flipU.png"
+		//	note polyForceUVs may be phased out - it's marked obsolete
+		//	but it converts the selection and doesn't mess up tri-strips
+		//	like polyFlipUV (if you change, don't forget flipV below)
+		//-command "ConvertSelectionToFaces; polyFlipUV -flipType 0 -local on"
+		-command "performPolyFlipUV 0"
+		-commandRepeatable true -label (uiRes("m_textureWindowCreateToolBar.kFlipUVsInUdirectionLbl"))
+		-annotation (uiRes("m_textureWindowCreateToolBar.kFlipUVsInUdirectionAnnot"))
+		flipUButton;
+
+	iconTextButton
+		-image1 "flipV.png"
+		//-command "ConvertSelectionToFaces; polyFlipUV -flipType 1 -local on"
+		-command "performPolyFlipUV 1"
+		-commandRepeatable true -label (uiRes("m_textureWindowCreateToolBar.kFlipUVsInVdirectionLbl"))
+		-annotation (uiRes("m_textureWindowCreateToolBar.kFlipUVsInVdirectionAnnot"))
+		flipVButton;
+
+	iconTextButton
+		-image1 "rotateUVcw.png"
+		-command "performPolyRotateUVsDirectional 0 1"
+		-commandRepeatable true -label (uiRes("m_textureWindowCreateToolBar.kRotateUVsClockwiseLbl"))
+		-annotation (uiRes("m_textureWindowCreateToolBar.kRotateUVsClockwiseAnnot"))
+		rotateCWButton;
+
+	popupMenu -button 3
+		-parent rotateCWButton
+		-postMenuCommand "performPolyRotateUVsDirectional 1 1"
+		rotateCWButtonPopup;
+
+	iconTextButton
+		-image1 "rotateUVccw.png"
+		-command "performPolyRotateUVsDirectional 0 0"
+		-commandRepeatable true -label (uiRes("m_textureWindowCreateToolBar.kRotateUVsCounterClockwiseLbl"))
+		-annotation (uiRes("m_textureWindowCreateToolBar.kRotateUVsCounterClockwiseAnnot"))
+		rotateCCWButton;
+		
+	popupMenu -button 3
+		-parent rotateCCWButton
+		-postMenuCommand "performPolyRotateUVsDirectional 1 0"
+		rotateCCWButtonPopup;
+
+	setUITemplate -popTemplate;
+
+	//
+	// Position icons
+	//
+	formLayout -edit
+		-attachForm     flipUButton		    "top"   $edgeMargins
+		-attachForm     flipUButton		    "left"  0
+
+		-attachControl  flipVButton		    "left"	$margin flipUButton
+		-attachForm     flipVButton			"top"	$edgeMargins
+
+		-attachForm     rotateCCWButton		"left"  0
+		-attachControl  rotateCCWButton		"top"	$margin flipUButton
+		-attachControl  rotateCWButton		"left"  $margin rotateCCWButton
+		-attachControl  rotateCWButton		"top"	$margin flipVButton
+
+		flipRotateLayout;
+
+	//////////////
+	// Move/Sew //
+	//////////////
+
+	setParent ..;
+
+	//
+	// Init hidden/shown option var
+	//
+	if (!`optionVar -exists "showStatusMoveSew"`) {
+		optionVar -intValue "showStatusMoveSew" 0;
+	}
+
+	string $toggleMoveSewCmd = "\"moveSewLayout\", " + 
+							   "\"moveSewCollapse\", " + 
+							   "\"autoAlignCollapse\", " + 
+							   "\"showStatusMoveSew\")";
+
+		//
+	// Set up open/close bar
+	//
+	setUITemplate -pushTemplate TexWinBarTemplate;
+	iconTextButton -vis true
+		-parent $gUVTexEditToolBar
+		-annotation (uiRes("m_textureWindowCreateToolBar.kShowHideMoveSewIconsAnnot"))
+		-i1 textureEditorOpenBar.png  
+		-c ("textureWindowCreateToolBar_toggleIcons(-1," + $toggleMoveSewCmd)
+		moveSewCollapse;
+
+	setUITemplate -popTemplate;
+
+	//
+	// Set up icons
+	//
+	formLayout moveSewLayout;
+
+	setUITemplate -pushTemplate TexWinButtonTemplate;
+
+	iconTextButton
+		-image1 "cutUV.png"
+		-command "polyMapCut"
+		-commandRepeatable true -label (uiRes("m_textureWindowCreateToolBar.kSeparateUVsAlongSelectedEdgesLbl"))
+		-annotation (uiRes("m_textureWindowCreateToolBar.kSeparateUVsAlongSelectedEdgesAnnot"))
+		cutButton;
+
+	iconTextButton 
+		-image1 "polySplitUVs.png" 
+		-annotation (uiRes("m_textureWindowCreateToolBar.kSplitSelectedUV"))
+		-command "polySplitTextureUV"
+		-commandRepeatable true -label (uiRes("m_textureWindowCreateToolBar.kSplitSelectedUVLbl"))
+		splitUVButton;
+
+	iconTextButton
+		-image1 "sewUV.png"
+		// merge UVs if not edges
+		-command ("string $edges[] = `filterExpand -ex false -selectionMask 32`;" +
+			"string $uvs[] = `filterExpand -ex false -selectionMask 35`;" +
+			"if (size($edges) > 0) polyMapSew;" +
+			"if (size($uvs) > 0) performPolyMergeUV 0;")
+		-commandRepeatable true -label (uiRes("m_textureWindowCreateToolBar.kSewSelectedUVsTogetherLbl"))
+		-annotation (uiRes("m_textureWindowCreateToolBar.kSewSelectedUVsTogetherAnnot"))
+		sewButton;
+
+	popupMenu -button 3
+		-parent sewButton
+		-postMenuCommand "performPolyMergeUV 1"
+		sewButtonPopup;
+
+	iconTextButton
+		-image1 "moveSewUV.png"
+		-command "performPolyMapSewMove 0"
+		-commandRepeatable true -label (uiRes("m_textureWindowCreateToolBar.kMoveAndSewSelectedEdgesLbl"))
+		-annotation (uiRes("m_textureWindowCreateToolBar.kMoveAndSewSelectedEdgesAnnot"))
+		moveSewButton;
+
+	popupMenu -button 3
+		-parent moveSewButton
+		-postMenuCommand "performPolyMapSewMove 1"
+		moveSewButtonPopup;
+
+	setUITemplate -popTemplate;
+	
+	//
+	// Position icons
+	//
+	formLayout -edit
+	
+		// row 1
+		-attachForm     cutButton		    "top"   $edgeMargins
+		-attachForm     cutButton		    "left"  0
+
+		-attachForm     splitUVButton		"top"	$edgeMargins
+		-attachControl  splitUVButton		"left"	$margin cutButton
+
+		// row 2
+		-attachControl  sewButton			"top"	$margin cutButton
+		-attachForm     sewButton			"left"  0
+		
+		-attachControl  moveSewButton		"top"	$margin splitUVButton
+		-attachControl  moveSewButton		"left"  $margin sewButton
+
+		moveSewLayout;
+
+	/////////////////////////////////
+	// Layout, Grid, Unfold, Relax //
+	/////////////////////////////////
+	setParent ..;
+	
+	//
+	// Init hidden/shown option var
+	//
+	if (!`optionVar -exists "showStatusAutoAlign"`) {
+		optionVar -intValue "showStatusAutoAlign" 1;
+	}
+
+	string $toggleAutoAlignCmd = "\"autoAlignLayout\", " + 
+							 "\"autoAlignCollapse\", " + 
+							 "\"alignCollapse\", " + 
+							 "\"showStatusAutoAlignUnfold\")";
+
+	//
+	// Set up open/close bar
+	//
+	setUITemplate -pushTemplate TexWinBarTemplate;
+
+	iconTextButton -vis true
+		-parent $gUVTexEditToolBar
+		-annotation (uiRes("m_textureWindowCreateToolBar.kShowHideLayoutGridUnfoldRelaxAnnot"))
+		-i1 textureEditorOpenBar.png  
+		-c ("textureWindowCreateToolBar_toggleIcons(-1," + $toggleAutoAlignCmd)
+		autoAlignCollapse;
+
+	setUITemplate -popTemplate;
+
+	formLayout autoAlignLayout;
+
+	setUITemplate -pushTemplate TexWinButtonTemplate;
+
+	iconTextButton
+		-image1 "layoutUV.png"
+		-command "ConvertSelectionToFaces; performPolyLayoutUV 0"
+		-commandRepeatable true -label (uiRes("m_textureWindowCreateToolBar.kSelectFacesToMoveLbl"))
+		-annotation (uiRes("m_textureWindowCreateToolBar.kSelectFacesToMoveAnnot"))
+		layoutButton;
+
+	popupMenu -button 3
+		-parent layoutButton
+		-postMenuCommand "performPolyLayoutUV 1"
+		layoutButtonPopup;
+
+	iconTextButton
+		-image1 "polySnapUVsToGrid.png"
+		-command "GridUV"
+		-commandRepeatable true -label (uiRes("m_textureWindowCreateToolBar.kSnapSelectedUVsToSpecifiedGridLbl"))
+		-annotation (uiRes("m_textureWindowCreateToolBar.kSnapSelectedUVsToSpecifiedGridAnnot"))
+		gridUVButton;
+
+	popupMenu -button 3
+		-parent gridUVButton
+		-postMenuCommand "GridUVOptions"
+		gridUVPopup;
+
+	iconTextButton
+		-image1 "textureEditorUnfoldUVs.png"
+		-command "performUnfold 0"
+		-commandRepeatable true -label (uiRes("m_textureWindowCreateToolBar.kUnfoldLbl"))
+		-annotation (uiRes("m_textureWindowCreateToolBar.kUnfoldAnnot"))
+		unfoldUVButton;
+
+	popupMenu -button 3
+		-parent unfoldUVButton
+		-postMenuCommand "performUnfold 1"
+		unfoldUVPopup;
+
+	iconTextButton
+		-image1 "relaxUV.png"
+		-command "performPolyUntangleUV relax 0"
+		-commandRepeatable true -label (uiRes("m_textureWindowCreateToolBar.kRelaxUVsLbl"))
+		-annotation (uiRes("m_textureWindowCreateToolBar.kRelaxUVsAnnot"))
+		relaxButton;
+
+	popupMenu -button 3
+		-parent relaxButton
+		-postMenuCommand "performPolyUntangleUV relax 1"
+		relaxButtonPopup;
+
+	setUITemplate -popTemplate;
+
+	//
+	// Position icons
+	//
+	formLayout -edit
+	
+		// row 1
+		-attachForm     layoutButton	"top"   $edgeMargins
+		-attachForm     layoutButton	"left"  0
+
+		-attachForm     gridUVButton	"top"	$edgeMargins
+		-attachControl  gridUVButton	"left"	$margin layoutButton
+
+		// row 2
+		-attachControl  unfoldUVButton	"top"	$margin layoutButton
+		-attachForm     unfoldUVButton	"left"  0
+		
+		-attachControl  relaxButton		"top"	$margin gridUVButton
+		-attachControl  relaxButton		"left"  $margin unfoldUVButton
+
+		autoAlignLayout;
+
+	///////////
+	// Align //
+	///////////
+	setParent ..;
+
+	//
+	// Init hidden/shown option var
+	//
+	if (!`optionVar -exists "showStatusAlign"`) {
+		optionVar -intValue "showStatusAlign" 1;
+	}
+
+	string $toggleAlignCmd = "\"alignLayout\", " + 
+							 "\"alignCollapse\", " + 
+							 "\"isolateSelectCollapse\", " + 
+							 "\"showStatusAlign\")";
+
+	//
+	// Set up open/close bar
+	//
+	setUITemplate -pushTemplate TexWinBarTemplate;
+
+	iconTextButton -vis true
+		-parent $gUVTexEditToolBar
+		-annotation (uiRes("m_textureWindowCreateToolBar.kShowHideAlignUVsAnnot"))
+		-i1 textureEditorOpenBar.png  
+		-c ("textureWindowCreateToolBar_toggleIcons(-1," + $toggleAlignCmd)
+		alignCollapse;
+
+	setUITemplate -popTemplate;
+
+	formLayout alignLayout;
+
+	setUITemplate -pushTemplate TexWinButtonTemplate;
+
+	// align tools
+	iconTextButton
+		-image1 "alignUMin.png"
+		-command "alignUV 1 1 0 0"
+		-commandRepeatable true -label (uiRes("m_textureWindowCreateToolBar.kAlignUVsToMinimumULbl"))
+		-annotation (uiRes("m_textureWindowCreateToolBar.kAlignUVsToMinimumUAnnot"))
+		alignUMinButton;
+
+	iconTextButton
+		-image1 "alignUMax.png"
+		-command "alignUV 1 0 0 0"
+		-commandRepeatable true -label (uiRes("m_textureWindowCreateToolBar.kAlignUVsToMaximumULbl"))
+		-annotation (uiRes("m_textureWindowCreateToolBar.kAlignUVsToMaximumUAnnot"))
+		alignUMaxButton;
+		
+	iconTextButton
+		-image1 "alignVMin.png"
+		-command "alignUV 0 0 1 1"
+		-commandRepeatable true -label (uiRes("m_textureWindowCreateToolBar.kAlignUVsToMinimumVLbl"))
+		-annotation (uiRes("m_textureWindowCreateToolBar.kAlignUVsToMinimumVAnnot"))
+		alignVMinButton;
+		
+	iconTextButton
+		-image1 "alignVMax.png"
+		-command "alignUV 0 0 1 0"
+		-commandRepeatable true -label (uiRes("m_textureWindowCreateToolBar.kAlignUVsToMaximumVLbl"))
+		-annotation (uiRes("m_textureWindowCreateToolBar.kAlignUVsToMaximumVAnnot"))
+		alignVMaxButton;
+	
+	setUITemplate -popTemplate;
+
+	//
+	// Position icons
+	//
+	formLayout -edit
+	
+		// row 1
+		-attachForm     alignUMinButton	"top"   $edgeMargins
+		-attachForm     alignUMinButton	"left"  0
+
+		-attachForm     alignUMaxButton	"top"	$edgeMargins
+		-attachControl  alignUMaxButton	"left"	$margin alignUMinButton
+
+		// row 2
+		-attachControl  alignVMinButton	"top"	$margin alignUMinButton
+		-attachForm     alignVMinButton	"left"  0
+		
+		-attachControl  alignVMaxButton	"top"	$margin alignUMaxButton
+		-attachControl  alignVMaxButton	"left"  $margin alignVMinButton
+
+		alignLayout;
+
+	////////////////////
+	// Isolate/Select //
+	////////////////////
+
+	setParent ..;
+
+	//
+	// Init hidden/shown option var
+	//
+	if (!`optionVar -exists "showStatusIsolateSelect"`) {
+		optionVar -intValue "showStatusIsolateSelect" 1;
+	}
+
+	string $toggleIsolateSelectCmd = "\"isolateSelectLayout\", " + 
+									 "\"isolateSelectCollapse\", " + 
+									 "\"display1Collapse\", " + 
+									 "\"showStatusIsolateSelect\")";
+
+	//
+	// Set up open/close bar
+	//
+	setUITemplate -pushTemplate TexWinBarTemplate;
+
+	iconTextButton -vis true
+		-parent $gUVTexEditToolBar
+		-annotation (uiRes("m_textureWindowCreateToolBar.kShowHideIsolateSelectIconsAnnot"))
+		-i1 textureEditorOpenBar.png  
+		-c ("textureWindowCreateToolBar_toggleIcons(-1," + $toggleIsolateSelectCmd)
+		isolateSelectCollapse;
+
+	setUITemplate -popTemplate;
+
+	//
+	// Set up icons
+	//
+	formLayout isolateSelectLayout;
+
+	setUITemplate -pushTemplate TexWinCheckBoxTemplate;
+
+	iconTextCheckBox 
+			-image1 "uvIsolateSelect.png" 
+			-onCommand("textureWindow -e -useFaceGroup 1 " + $editor + "; " +
+					   "optionVar -iv textureWindowShaderFacesMode 2;" +
+						$updateEditor)
+			-offCommand ("textureWindow -e -useFaceGroup 0 " + $editor + "; " +
+						 "optionVar -iv textureWindowShaderFacesMode 0;" +
+						 $updateEditor)
+			-annotation (uiRes("m_textureWindowCreateToolBar.kToggleIsolateSelectModeAnnot"))
+			-value `optionVar -q textureWindowShaderFacesMode`				
+			isolateSelectButton;
+
+	setUITemplate -popTemplate;
+
+	setUITemplate -pushTemplate TexWinButtonTemplate;
+
+	iconTextButton
+			-image1 "uvIsolateSelectReset.png"
+			-command ("textureEditorIsolateSelect 0; textureWindow -e -isolateSelectSetUpdated " + $editor + ";")
+			-commandRepeatable true -label (uiRes("m_textureWindowCreateToolBar.kRemoveAllUVsLbl"))
+			-annotation (uiRes("m_textureWindowCreateToolBar.kRemoveAllUVsAnnot"))
+			isolateResetButton;
+
+	iconTextButton
+			-image1 "uvIsolateSelectAdd.png"
+			-command ("textureEditorIsolateSelect 1; textureWindow -e -isolateSelectSetUpdated " + $editor + ";")
+			-commandRepeatable true -label (uiRes("m_textureWindowCreateToolBar.kAddSelectedUVsLbl"))
+			-annotation (uiRes("m_textureWindowCreateToolBar.kAddSelectedUVsAnnot"))
+			uvIsolateAddButton;
+
+	iconTextButton
+			-image1 "uvIsolateSelectRemove.png"
+			-command ("textureEditorIsolateSelect 2; textureWindow -e -isolateSelectSetUpdated " + $editor + ";")
+			-commandRepeatable true -label (uiRes("m_textureWindowCreateToolBar.kRemoveSelectedUVsLbl"))
+			-annotation (uiRes("m_textureWindowCreateToolBar.kRemoveSelectedUVsAnnot"))
+			uvIsolateRemoveButton;
+
+	setUITemplate -popTemplate;
+
+	formLayout -edit
+		-attachForm     isolateSelectButton		"top"   $edgeMargins
+		-attachForm		isolateSelectButton		"left"  0 
+		-attachControl  uvIsolateAddButton		"left"	$margin isolateSelectButton
+		-attachForm     uvIsolateAddButton		"top"	$edgeMargins
+
+		-attachForm		isolateResetButton		"left"	0 
+		-attachControl	isolateResetButton		"top"	$margin isolateSelectButton
+		-attachControl	uvIsolateRemoveButton	"left"	$margin isolateResetButton
+		-attachControl	uvIsolateRemoveButton	"top"	$margin uvIsolateAddButton
+		isolateSelectLayout;
+
+	/////////////
+	// Display1 //
+	/////////////
+
+	setParent ..;
+	// Display options
+
+	//
+	// Init hidden/shown option var
+	// 
+	if (!`optionVar -exists "showStatusDisplay1"`) {
+		optionVar -intValue "showStatusDisplay1" 1;
+	}
+
+	if (!`optionVar -exists "displayEditorImage"`) {
+		optionVar -intValue "displayEditorImage" 0;
+	}
+   
+	string $toggleDisplay1Cmd = "\"display1Layout\", " + 
+							   "\"display1Collapse\", " + 
+							   "\"display2Collapse\", " + 
+							   "\"showStatusDisplay1\")";
+
+	//
+	// Set up open/close bar
+	//
+	setUITemplate -pushTemplate TexWinBarTemplate;
+
+	iconTextButton -vis true
+		-parent $gUVTexEditToolBar
+		-annotation (uiRes("m_textureWindowCreateToolBar.kShowHideDisplay1IconsAnnot"))
+		-i1 textureEditorOpenBar.png  
+		-c ("textureWindowCreateToolBar_toggleIcons(-1," + $toggleDisplay1Cmd)
+		display1Collapse;
+
+	setUITemplate -popTemplate;
+
+	//
+	// Set up icons
+	//
+	setUITemplate -popTemplate;
+
+	formLayout display1Layout;
+	
+	setUITemplate -pushTemplate TexWinCheckBoxTemplate;
+	
+	iconTextCheckBox 
+		-image1 "imageDisplay.png" 
+		-changeCommand( "textureWindowToggleTextureImage( \"" + $editor + "\", \"" + $editorCmd + "\"); " +
+						"refresh; " +
+						$updateEditor)
+		-annotation (uiRes("m_textureWindowCreateToolBar.kDisplayImageAnnot"))
+		-value `textureWindow -q -imageDisplay  $editor`
+		imageDisplayButton;
+		
+	popupMenu -button 3
+		-parent imageDisplayButton
+		-postMenuCommand "performTextureViewImageRangeOptions 1"
+		imageDisplayButtonPopup;
+		
+	iconTextCheckBox 
+		-image1 "filteredMode.png" 
+		-onCommand ("textureWindow -e -imageUnfiltered 1 " + $editor + "; " +
+					$updateEditor)
+		-offCommand ( "textureWindow -e -imageUnfiltered 0 " + $editor + "; " +
+					  $updateEditor)
+		-annotation (uiRes("m_textureWindowCreateToolBar.kToggleFilteredImageAnnot"))
+		-value `textureWindow -q -imageUnfiltered $editor`
+		filteredButton;
+		
+	float $color[] = eval ( $editorCmd +" -q -imageBaseColor "+ $editor ) ;
+	iconTextCheckBox 
+		-image1 "dimTexture.png"  
+		-onCommand ("textureWindow -e -imageBaseColor 0.5 0.5 0.5 " + $editor + "; " +
+					$updateEditor)
+		-offCommand ("textureWindow -e -imageBaseColor 1.0 1.0 1.0 " + $editor + "; " +
+					 $updateEditor)
+		-annotation (uiRes("m_textureWindowCreateToolBar.kDimImageAnnot"))
+		-value ($color[0] < 0.99)		
+		dimmerButton;
+		
+	setUITemplate -popTemplate;
+	
+	//
+	// Position icons
+	//
+	formLayout -edit
+	
+		// row 1
+		-attachForm     imageDisplayButton	"top"   $edgeMargins
+		-attachForm     imageDisplayButton	"left"  0
+
+		-attachForm     filteredButton	"top"	$edgeMargins
+		-attachControl  filteredButton	"left"	$margin imageDisplayButton
+
+		// row 2
+		-attachControl  dimmerButton	"top"	$margin imageDisplayButton
+		-attachForm     dimmerButton	"left"  0
+
+		display1Layout;
+	
+	/////////////
+	// Display2 //
+	/////////////
+
+	setParent ..;
+	// Display options
+
+	//
+	// Init hidden/shown option var
+	// 
+	if (!`optionVar -exists "showStatusDisplay2"`) {
+		optionVar -intValue "showStatusDisplay2" 1;
+	}
+
+	if (!`optionVar -exists "displayEditorImage"`) {
+		optionVar -intValue "displayEditorImage" 0;
+	}
+   
+	string $toggleDisplay2Cmd = "\"display2Layout\", " + 
+							   "\"display2Collapse\", " + 
+							   "\"display3Collapse\", " + 
+							   "\"showStatusDisplay2\")";
+
+	//
+	// Set up open/close bar
+	//
+	setUITemplate -pushTemplate TexWinBarTemplate;
+
+	iconTextButton -vis true
+		-parent $gUVTexEditToolBar
+		-annotation (uiRes("m_textureWindowCreateToolBar.kShowHideDisplay2IconsAnnot"))
+		-i1 textureEditorOpenBar.png  
+		-c ("textureWindowCreateToolBar_toggleIcons(-1," + $toggleDisplay2Cmd)
+		display2Collapse;
+
+	setUITemplate -popTemplate;
+
+	//
+	// Set up icons
+	//
+	setUITemplate -popTemplate;
+
+	formLayout display2Layout;
+
+	setUITemplate -pushTemplate TexWinCheckBoxTemplate;
+	
+	iconTextCheckBox 
+		-image1 "gridDisplay.png" 
+		-onCommand ("textureWindow -e -toggle 1 " + $editor + "; " +
+					$updateEditor)
+		-offCommand ( "textureWindow -e -toggle 0 " + $editor + "; " +
+					  $updateEditor)
+		-annotation (uiRes("m_textureWindowCreateToolBar.kViewGridAnnot"))
+		-value `textureWindow -q -toggle $editor`
+		gridDisplayButton;
+
+	popupMenu -button 3
+		-parent gridDisplayButton
+		-postMenuCommand "performTextureViewGridOptions 1"
+		gridDisplayButtonPopup;
+	
+	iconTextCheckBox 
+		-image1 "pixelSnap.png" 
+		-onCommand ("snapMode -pixelSnap 1; "  +
+					$updateEditor)
+		-offCommand ("snapMode -pixelSnap 0; "  +
+					$updateEditor)
+		-annotation (uiRes("m_textureWindowCreateToolBar.kPixelSnapAnnot"))
+		-value `snapMode -q -pixelSnap`
+		pixelSnapButton;
+		
+	popupMenu -button 3
+		-parent pixelSnapButton
+		-postMenuCommand "performPixelSnapOptions 1"
+		pixelSnapButtonPopup;
+
+	iconTextCheckBox 
+		-image1 "textureEditorShadeUVs.png" 
+		-onCommand ("textureWindow -edit -displaySolidMap 1 " + $editor + "; " +
+					$updateEditor)
+		-offCommand ("textureWindow -edit -displaySolidMap 0 " + $editor + "; " +
+					 $updateEditor)
+		-annotation (uiRes("m_textureWindowCreateToolBar.kOverlapAnnot"))
+		-value `textureWindow -q -displaySolidMap $editor`
+		overlapButton;
+
+	setUITemplate -popTemplate;
+	
+	setUITemplate -pushTemplate TexWinButtonTemplate;	
+	
+	iconTextButton
+		-image1 "textureBorder.png"
+		-command ("int $borders[] = `polyOptions -q -displayMapBorder`;" +
+				  "float $borderWidth[] = `optionVar -q displayPolyBorderEdgeSize`;" +
+				  "polyOptions -displayMapBorder (!$borders[0]) -sizeBorder $borderWidth[1]")
+		-annotation (uiRes("m_textureWindowCreateToolBar.kToggleTextureBordersAnnot"))
+		polyDisplayButton;
+
+	popupMenu -button 3
+		-parent polyDisplayButton
+		-postMenuCommand "CustomPolygonDisplayOptions"
+		polyDisplayPopup;
+
+	iconTextCheckBox
+		-image1 "textureEditorCheckered.png"
+		-annotation (uiRes("m_textureWindowCreateToolBar.kDisplayCheckeredAnnot"))
+		-onCommand ("textureWindow -edit -displayCheckered 1 " + $editor + "; " + $updateEditor)
+		-offCommand ("textureWindow -edit -displayCheckered 0 " + $editor + "; " + $updateEditor)
+		-value `textureWindow -q -displayCheckered $editor`
+		checkeredButton;
+
+	iconTextCheckBox
+		-image1 "textureEditorDistortion.png"
+		-annotation (uiRes("m_textureWindowCreateToolBar.kDisplayDistortionAnnot"))
+		-onCommand ("textureWindow -edit -displayDistortion 1 " + $editor + "; " + $updateEditor)
+		-offCommand ("textureWindow -edit -displayDistortion 0 " + $editor + "; " + $updateEditor)
+		-value `textureWindow -q -displayDistortion $editor`
+		distortionButton;
+
+	iconTextButton
+		-image1 "textureEditorDisplayColor.png"
+		-annotation (uiRes("m_textureWindowCreateToolBar.kDisplayRGBChannelsAnnot"))
+		-command
+		("textureWindow -e -displayStyle \"color\" " + $editor)
+		colorButton;	
+		
+	iconTextButton
+		-image1 "textureEditorDisplayAlpha.png"
+		-annotation (uiRes("m_textureWindowCreateToolBar.kDisplayAlphaChannelAnnot"))
+		-command 				
+		("textureWindow -e -displayStyle \"mask\" " + $editor)
+		maskButton;
+
+    int $floatFieldWidth =  $iconSize * 2 + $horizGap;
+
+    // ADSK_CLR_MGT_BEGIN
+    string $groups[3];
+    string $subgroupExposure[2];
+    string $subgroupGamma[2];
+    string $subgroupCM[2];
+
+    string $renderingEngine = getPreferredRenderingEngine();
+    int $defaultVisibilityStateOfCMControls = ($renderingEngine != "");
+
+    float $exposure = 0.0;
+    float $gamma    = 1.0;
+    int $enabled    = `colorManagementPrefs -q -cmEnabled`;
+	
+	textureWindow -e -cmEnabled $enabled $editor;
+	textureWindow -e -exposure $exposure $editor;
+	textureWindow -e -gamma $gamma $editor;
+
+    $groups[0] = `formLayout("uvEditorExposureGroup")`;
+        // subgroup Exposure
+        $subgroupExposure[0] = `iconTextButton -version "2016" -visible $defaultVisibilityStateOfCMControls -i1 "rvExposureControlIcon.png" -annotation (uiRes("m_textureWindowCreateToolBar.kExposureIconAnnotation")) ("uvEditorExposureIcon")`;
+        $subgroupExposure[1] = `floatField   -visible $defaultVisibilityStateOfCMControls -width $floatFieldWidth -value $exposure -precision 2 -step 0.1 ("uvEditorExposureField")`;
+
+        string $exposureUpdateCommand     = "callPython(\"maya.colorManagementUtilities\", \"updateExposure\",      {\"" + $editor + "\" , \"" + $subgroupExposure[1] + "\" , \"cmds.textureWindow\"})";
+        string $exposureToggleCommand     = "callPython(\"maya.colorManagementUtilities\", \"syncExposureField\", {\"" + $editor + "\" , \"" + $subgroupExposure[1] + "\" , \"cmds.textureWindow\"})";
+
+        iconTextButton -e -command       $exposureToggleCommand      $subgroupExposure[0];
+        floatField     -e -changeCommand $exposureUpdateCommand      $subgroupExposure[1];
+        floatField     -e -dragCommand   $exposureUpdateCommand      $subgroupExposure[1];
+
+        attachGroup($groups[0], $subgroupExposure);
+        clear $subgroupExposure;
+     setParent ..;   
+
+     $groups[1] = `formLayout("uvEditorGammaGroup")`;
+        // subgroup Gamma
+        $subgroupGamma[0] = `iconTextButton -version "2016" -visible $defaultVisibilityStateOfCMControls -i1 "rvGammaControlIcon.png" -annotation (uiRes("m_textureWindowCreateToolBar.kGammaIconAnnotation")) ("uvEditorGammaIcon")` ;
+        $subgroupGamma[1] = `floatField   -visible $defaultVisibilityStateOfCMControls -width $floatFieldWidth -value $gamma -min 0.0 -precision 2 -step 0.1 ("uvEditorGammaField")`;
+
+        string $gammaUpdateCommand        = "callPython(\"maya.colorManagementUtilities\", \"updateGamma\",      {\"" + $editor + "\" , \"" + $subgroupGamma[1] + "\" , \"cmds.textureWindow\"})";
+        string $gammaToggleCommand        = "callPython(\"maya.colorManagementUtilities\", \"syncGammaField\", {\"" + $editor + "\" , \"" + $subgroupGamma[1] + "\" , \"cmds.textureWindow\"})";
+
+        iconTextButton -e -command       $gammaToggleCommand $subgroupGamma[0];
+        floatField     -e -changeCommand $gammaUpdateCommand $subgroupGamma[1];
+        floatField     -e -dragCommand   $gammaUpdateCommand $subgroupGamma[1];
+
+        attachGroup($groups[1], $subgroupGamma);
+        clear $subgroupGamma;
+     setParent ..;
+
+     $groups[2] = `formLayout("uvEditorViewTransformGroup")`;
+        // subgroup CMEnable
+        $subgroupCM[0] = `symbolCheckBox -visible $defaultVisibilityStateOfCMControls -onImage "rvViewingPipelineOn.png" -offImage "rvViewingPipelineOff.png" -value $enabled ("uvEditorEnableButton")`;
+        $subgroupCM[1] = `optionMenu   -visible $defaultVisibilityStateOfCMControls -height $iconSize ("uvEditorViewTransformSelOptionMenu")`;
+
+        string $viewTransformNames[] = `colorManagementPrefs -q -viewTransformNames`; 
+        int $i, $numNames = size($viewTransformNames);
+        for($i = 0 ; $i < $numNames ; $i++)
+        {
+           menuItem -label $viewTransformNames[$i];
+        }
+
+        string $vtName = `colorManagementPrefs -q -viewTransformName`;
+		textureWindow -e -viewTransformName $vtName $editor;
+        optionMenu -e -v $vtName ("uvEditorViewTransformSelOptionMenu");
+
+        string $enableCMCommand           = "callPython(\"maya.colorManagementUtilities\", \"toggleCM\",         {\"" + $editor + "\" , \"" + $subgroupCM[0] + "\", \"cmds.textureWindow\"})";
+        string $selectViewTransformCommand = "callPython(\"maya.colorManagementUtilities\", \"setViewTransform\",{\"" + $editor + "\" , \"" + $subgroupCM[1] + "\" , \"cmds.textureWindow\"})";
+        symbolCheckBox -e -changeCommand $enableCMCommand            $subgroupCM[0];
+        optionMenu     -e -changeCommand $selectViewTransformCommand $subgroupCM[1];
+
+        int $globalCmEnabled = `colorManagementPrefs -q -cmEnabled`;
+        symbolCheckBox -e -enable $globalCmEnabled $subgroupCM[0];
+        optionMenu     -e -enable $globalCmEnabled $subgroupCM[1];
+
+        attachGroup($groups[2], $subgroupCM);
+        clear $subgroupCM;
+     setParent ..;
+
+    // ADSK_CLR_MGT_ENG
+
+	setUITemplate -popTemplate;
+	
+	//
+	// Position icons
+	//
+	formLayout -edit
+	
+		// row 1
+		-attachForm     gridDisplayButton	"top"   $edgeMargins
+		-attachForm     gridDisplayButton	"left"  0
+
+		-attachForm     pixelSnapButton		"top"	$edgeMargins
+		-attachControl  pixelSnapButton		"left"	$margin gridDisplayButton
+
+		-attachForm     overlapButton		"top"	$edgeMargins
+		-attachControl  overlapButton		"left"	$margin pixelSnapButton
+
+		-attachForm     distortionButton	"top"	$edgeMargins
+		-attachControl  distortionButton	"left"	$margin overlapButton
+
+		-attachForm		$groups[0]			"top"	$edgeMargins
+		-attachControl	$groups[0]			"left"	$margin distortionButton
+		
+		-attachForm 	$groups[1]			"top"	$edgeMargins
+		-attachControl	$groups[1]			"left" 	$margin $groups[0]
+
+		// row 2
+		-attachControl  polyDisplayButton	"top"	$margin gridDisplayButton
+		-attachForm     polyDisplayButton	"left"  0
+
+		-attachControl  checkeredButton		"top"	$margin pixelSnapButton
+		-attachControl  checkeredButton		"left"	$margin polyDisplayButton
+
+		-attachControl  colorButton			"top"	$margin overlapButton
+		-attachControl  colorButton			"left"	$margin checkeredButton
+
+		-attachControl	maskButton			"top"	$margin distortionButton
+		-attachControl  maskButton			"left"	$margin colorButton
+
+		-attachControl 	$groups[2]			"top"	$margin $groups[0]
+		-attachControl	$groups[2]			"left"	$margin maskButton
+
+		display2Layout;
+	
+	/////////////
+	// Display3 //
+	/////////////
+
+	setParent ..;
+	// Display options
+
+	//
+	// Init hidden/shown option var
+	// 
+	if (!`optionVar -exists "showStatusDisplay3"`) {
+		optionVar -intValue "showStatusDisplay3" 1;
+	}
+
+	if (!`optionVar -exists "displayEditorImage"`) {
+		optionVar -intValue "displayEditorImage" 0;
+	}
+   
+	string $toggleDisplay3Cmd = "\"display3Layout\", " + 
+							   "\"display3Collapse\", " + 
+							   "\"copyPasteCollapse\", " + 
+							   "\"showStatusDisplay3\")";
+
+	//
+	// Set up open/close bar
+	//
+	setUITemplate -pushTemplate TexWinBarTemplate;
+
+	iconTextButton -vis true
+		-parent $gUVTexEditToolBar
+		-annotation (uiRes("m_textureWindowCreateToolBar.kShowHideDisplay3IconsAnnot"))
+		-i1 textureEditorOpenBar.png  
+		-c ("textureWindowCreateToolBar_toggleIcons(-1," + $toggleDisplay3Cmd)
+		display3Collapse;
+
+	setUITemplate -popTemplate;
+
+	//
+	// Set up icons
+	//
+	setUITemplate -popTemplate;
+
+	formLayout display3Layout;
+	
+	setUITemplate -pushTemplate TexWinCheckBoxTemplate;
+	
+	iconTextCheckBox 
+		-image1 "swapBG.png" 
+		-changeCommand("textureWindowToggleEditorImage( \"" + $editor + "\" );" + 
+					$updateEditor)
+		-annotation (uiRes("m_textureWindowCreateToolBar.kUVTextureEditorBakingAnnot"))
+		-value ( `optionVar -q displayEditorImage` == 0)
+		editorImageDisplayButton;
+
+	popupMenu -button 3
+		-parent editorImageDisplayButton
+		-postMenuCommand "performTextureViewBakeTextureOptions 1" 
+		editorImageDisplayPopup;
+
+	setUITemplate -popTemplate;
+	
+	setUITemplate -pushTemplate TexWinButtonTemplate;
+		
+	iconTextButton
+		-image1 "updatePsdTextureEditor.png"
+		-annotation (uiRes("m_textureWindowCreateToolBar.kUpdatePSDNetworksAnnot"))
+		-command 				
+		("psdUpdateTextures")
+		-commandRepeatable true -label (uiRes("m_textureWindowCreateToolBar.kUpdatePSDNetworksLbl"))
+		updatePsdNetworksButton;
+		
+	iconTextButton
+		-image1 "bakeEditor.png"
+		-annotation (uiRes("m_textureWindowCreateToolBar.kForceEditorTextureRebakeAnnot"))
+		-command ("textureWindowBakeEditorImage")
+		-commandRepeatable true -label (uiRes("m_textureWindowCreateToolBar.kForceEditorTextureRebakeLbl"))
+		bakeEditorImageButton;
+
+	setUITemplate -popTemplate;
+	
+	setUITemplate -pushTemplate TexWinCheckBoxTemplate;
+
+	iconTextCheckBox 
+		-image1 "imageRatio.png" 
+		-onCommand ("textureWindow -e -imageRatio 1 " + $editor + "; " +
+					$updateEditor)
+		-offCommand ( "textureWindow -e -imageRatio 0 " + $editor + "; " +
+					  $updateEditor)
+		-annotation (uiRes("m_textureWindowCreateToolBar.kUseImageRatioAnnot"))
+		-value `textureWindow -q -imageRatio $editor`
+		ratioButton;
+
+	setUITemplate -popTemplate;
+
+	//
+	// Position icons
+	//
+	formLayout -edit
+	
+		// Row 1
+		// Maya:	editorImageDisplayButton + updatePsdNetworksButton
+		// Maya LT: editorImageDisplayButton + ratioButton
+		-attachForm     editorImageDisplayButton	"top"	$edgeMargins
+		-attachForm     editorImageDisplayButton	"left"	0
+
+		-attachForm     updatePsdNetworksButton		"top"	$edgeMargins
+		-attachControl  updatePsdNetworksButton		"left"	$margin	editorImageDisplayButton
+
+		// Row 2
+		// Maya:    bakeEditorImageButton + ratioButton
+		// Maya LT: bakeEditorImageButton
+		-attachControl  bakeEditorImageButton		"top"	$margin	editorImageDisplayButton
+		-attachForm     bakeEditorImageButton		"left"	0
+
+		-attachControl  ratioButton					"top"	$margin	updatePsdNetworksButton
+		-attachControl  ratioButton					"left"	0	bakeEditorImageButton
+
+		display3Layout;
+
+	////////////////
+	// Copy/Paste //
+	////////////////
+	setParent ..;
+
+	//
+	// Init hidden/shown option var
+	//
+	if (!`optionVar -exists "showStatusCopyPaste"`) {
+		optionVar -intValue "showStatusCopyPaste" 1;
+	}
+
+	string $toggleCopyPasteCmd = "\"copyPasteLayout\", " +
+								 "\"copyPasteCollapse\", " +
+								 "\"nudgeUVCollapse\", " + 
+								 "\"showStatusCopyPaste\")"; 
+
+	//
+	// Set up open/close bar
+	//
+	setUITemplate -pushTemplate TexWinBarTemplate;
+
+	iconTextButton -vis true
+		-parent $gUVTexEditToolBar
+		-annotation (uiRes("m_textureWindowCreateToolBar.kShowHideCopyPasteIconsAnnot"))
+		-i1 textureEditorOpenBar.png  
+		-c ("textureWindowCreateToolBar_toggleIcons(-1," + $toggleCopyPasteCmd)
+		copyPasteCollapse;
+
+	setUITemplate -popTemplate;
+
+	//
+	// Set up icons
+	//
+	// copy/paste controls
+	formLayout copyPasteLayout;
+
+	// UV Entry field. Will allow user to set current uv value
+	// of uv in selection list. Will update when selection list
+	// changes. 
+	//
+	// Ideally the fields should update as the selected UV(s)
+	// is/are transformed but there is not a good way to do
+	// this. Should be an event that exists for scriptJob.
+
+	global string $uvEntryFieldU;
+	global string $uvEntryFieldV;
+
+	setUITemplate -pushTemplate TexWinFloatFieldTemplate;
+
+	floatField 
+		-precision 3
+		-ed true
+		-cc "textureWindowUVEntryCommand(1)"
+        -width $floatFieldWidth
+		-annotation (uiRes("m_textureWindowCreateToolBar.kEnterValueTotransformInUAnnot"))
+		$uvEntryFieldU;
+
+	floatField 
+		-precision 3
+		-ed true
+		-cc "textureWindowUVEntryCommand(0)"
+        -width $floatFieldWidth
+		-annotation (uiRes("m_textureWindowCreateToolBar.kEnterValueTotransformInVAnnot"))
+		$uvEntryFieldV;
+
+	setUITemplate -popTemplate;
+
+	setUITemplate -pushTemplate TexWinButtonTemplate;
+
+	// originally planned to lock current UV values but it's
+	// more important to have an update button for the selected
+	// UV's coordinates
+	iconTextButton 
+		-image1 "uvUpdate.png" 
+		-annotation (uiRes("m_textureWindowCreateToolBar.kRefreshUVValuesAnnot"))
+		-command "undoInfo -swf false; textureWindowCreateToolBar_isUVTransformed; undoInfo -swf true;"
+		-commandRepeatable true -label (uiRes("m_textureWindowCreateToolBar.kRefreshUVValuesLbl"))
+		updateValueButton;
+
+	setUITemplate -popTemplate;
+
+	setUITemplate -pushTemplate TexWinCheckBoxTemplate;
+
+	iconTextCheckBox
+		-image1 "uvEntryToggle.png"
+		-onCommand "uvEntryTransformModeCommand"
+		-offCommand "uvEntryTransformModeCommand"
+		-value $gUVEntryTransformMode
+		-annotation (uiRes("m_textureWindowCreateToolBar.kUVTransformationEntryAnnot"))
+		uvEntryTransformModeButton;
+
+	setUITemplate -popTemplate;
+
+	setUITemplate -pushTemplate TexWinButtonTemplate;
+
+	iconTextButton
+		-image1 "copyUV.png"
+		-command "PolygonCopy"
+		-annotation (getRunTimeCommandAnnotation ("PolygonCopy"))
+		copyUVButton;
+
+	popupMenu -button 3
+		-parent copyUVButton
+		-postMenuCommand "PolygonCopyOptions"
+		copyUVButtonPopup;
+
+	iconTextButton
+		-image1 "pasteUV.png"
+		-command "PolygonPaste"
+		-annotation (getRunTimeCommandAnnotation ("PolygonPaste"))
+		pasteUVButton;
+
+	popupMenu -button 3
+		-parent pasteUVButton
+		-postMenuCommand "PolygonPasteOptions"
+		pasteUVButtonPopup;
+
+	setUITemplate -popTemplate;
+
+	setUITemplate -pushTemplate TexWinCheckBoxTemplate;
+
+	iconTextCheckBox 
+		-image1 "copyUVMode.png" 
+		-onCommand		"textureWindowCreateToolBar_copyPasteMode 1"
+		-offCommand		"textureWindowCreateToolBar_copyPasteMode 0"
+		-annotation (uiRes("m_textureWindowCreateToolBar.kToggleCopyPasteAnnot"))
+		copyModeButton;
+
+	setUITemplate -popTemplate;
+
+	setUITemplate -pushTemplate TexWinButtonTemplate;
+
+	iconTextButton
+		-enable false
+		-image1 "pasteUDisabled.png"
+		-command "textureWindowCreateToolBar_uvPaste 1 0"
+		-annotation (uiRes("m_textureWindowCreateToolBar.kPasteUValueAnnot"))
+		pasteUButton;
+
+	iconTextButton
+		-enable false
+		-image1 "pasteVDisabled.png"
+		-width $iconSize -height $iconSize
+		-command "textureWindowCreateToolBar_uvPaste 0 1"
+		-annotation (uiRes("m_textureWindowCreateToolBar.kPasteVValueAnnot"))
+		pasteVButton;
+
+	iconTextButton
+			-image1 "cycleUVs.png"
+			-command "polyRotateUVsByVertex"
+			-commandRepeatable true -label (uiRes("m_textureWindowCreateToolBar.kCycleUVsCounterClockwiseLbl"))
+			-annotation (uiRes("m_textureWindowCreateToolBar.kCycleUVsCounterClockwiseAnnot"))
+			cycleUVsButton;
+
+	setUITemplate -popTemplate;
+
+	formLayout -edit
+	
+		-attachForm     uvEntryFieldU		"top"	$vertGap
+		-attachForm		uvEntryFieldU		"left"	0 
+		-attachForm     uvEntryFieldV		"top"	$vertGap
+		-attachControl  uvEntryFieldV		"left"	$horizGap uvEntryFieldU
+		-attachForm     updateValueButton	"top"	0
+		-attachControl  updateValueButton	"left"	$horizGap uvEntryFieldV
+		-attachForm		uvEntryTransformModeButton	"top"	0
+		-attachControl	uvEntryTransformModeButton	"left" $horizGap updateValueButton
+
+		-attachControl	copyUVButton		"top"	$vertGap uvEntryFieldU
+		-attachForm		copyUVButton		"left"	0
+		-attachControl  pasteUVButton		"top"	$vertGap uvEntryFieldU
+		-attachControl  pasteUVButton		"left"	$horizGap copyUVButton
+		-attachControl  pasteUButton		"top"	$vertGap uvEntryFieldU
+		-attachControl  pasteUButton		"left"	$horizGap pasteUVButton
+		-attachControl  pasteVButton		"top"	$vertGap uvEntryFieldU
+		-attachControl  pasteVButton		"left"	$horizGap pasteUButton
+		-attachControl  copyModeButton		"top"	$vertGap uvEntryFieldU
+		-attachControl  copyModeButton		"left"	$horizGap pasteVButton
+		-attachControl  cycleUVsButton		"top"   $vertGap uvEntryFieldU
+		-attachControl  cycleUVsButton		"left"	$horizGap copyModeButton
+		copyPasteLayout;		
+
+	///////////////////////////////
+	// UV Texture Editor ToolBar //
+	///////////////////////////////
+
+	setParent ..;
+
+	///////////////////////////////
+	// Nudge UV					 //
+	///////////////////////////////
+
+	if (!`optionVar -exists "showStatusNudgeUVs"`) {
+		optionVar -intValue "showStatusNudgeUVs" 1;
+	}
+	float $nudgeFactor = 0.1;
+	if (!`optionVar -exists "NudgeUVsMultiplier"`) {
+		optionVar -floatValue "NudgeUVsMultiplier" 0.1;
+	} else {
+		$nudgeFactor = `optionVar -q "NudgeUVsMultiplier"`;
+	}
+
+	string $toggleNudgeUVCmd = "\"NudgeUVs_GL\", " +
+								 "\"nudgeUVCollapse\", " +
+								 "\"\", " +
+								 "\"showStatusNudgeUVs\")";
+
+	setUITemplate -pushTemplate TexWinBarTemplate;
+	iconTextButton -vis true
+		-parent $gUVTexEditToolBar
+		-annotation (uiRes("m_textureWindowCreateToolBar.kShowHideNudeIconsAnnot"))
+		-i1 textureEditorOpenBar.png  
+		-c ("textureWindowCreateToolBar_toggleIcons(-1," + $toggleNudgeUVCmd)
+		nudgeUVCollapse;
+
+	setUITemplate -popTemplate;
+
+	columnLayout NudgeUVs_GL;
+		rowLayout -ct1 "left" -co1 26 -nc 1;
+		iconTextButton -image1 "nudgeUp.png" -c ("textureWindowNudgeUVs \"-v\" 1.0") -w 18 -h 18 up;
+		setParent ..;
+
+		rowLayout  -nc 3;
+		iconTextButton -image1 "nudgeLeft.png" -c ("textureWindowNudgeUVs \"-u\" -1.0") -w 18 -h 18 left;
+		floatField -precision 2 -changeCommand "textureWindowNudgeFactorChanged #1" -value $nudgeFactor -w 30 -h 18 NudgeFactor_FF;
+		iconTextButton -image1 "nudgeRight.png" -c ("textureWindowNudgeUVs \"-u\" 1.0") -w 18 -h 18 right;
+		setParent ..;
+
+		rowLayout -ct1 "left" -co1 26 -nc 1;
+		iconTextButton -image1 "nudgeDown.png" -c ("textureWindowNudgeUVs \"-v\" -1.0") -w 18 -h 18 down;
+		setParent ..;
+	setParent ..;
+
+	// Evaluate all the toggle commands so that the visibiility of
+	// the toolbar layouts matches what is specified in the option
+	// variables.	
+	eval("textureWindowCreateToolBar_toggleIcons(" + `optionVar -q showStatusManipSelect` + ", " + $toggleManipSelectCmd);
+	eval("textureWindowCreateToolBar_toggleIcons(" + `optionVar -q showStatusFlipRotate` + ", " + $toggleFlipRotateCmd);
+	eval("textureWindowCreateToolBar_toggleIcons(" + `optionVar -q showStatusMoveSew` + ", " + $toggleMoveSewCmd);
+	eval("textureWindowCreateToolBar_toggleIcons(" + `optionVar -q showStatusAutoAlign` + ", " + $toggleAutoAlignCmd);
+	eval("textureWindowCreateToolBar_toggleIcons(" + `optionVar -q showStatusAlign` + ", " + $toggleAlignCmd);
+	eval("textureWindowCreateToolBar_toggleIcons(" + `optionVar -q showStatusIsolateSelect` + ", " + $toggleIsolateSelectCmd);
+	eval("textureWindowCreateToolBar_toggleIcons(" + `optionVar -q showStatusDisplay1` + ", " + $toggleDisplay1Cmd);
+	eval("textureWindowCreateToolBar_toggleIcons(" + `optionVar -q showStatusDisplay2` + ", " + $toggleDisplay2Cmd);
+	eval("textureWindowCreateToolBar_toggleIcons(" + `optionVar -q showStatusDisplay3` + ", " + $toggleDisplay3Cmd);
+	eval("textureWindowCreateToolBar_toggleIcons(" + `optionVar -q showStatusCopyPaste` + ", " + $toggleCopyPasteCmd);
+	eval("textureWindowCreateToolBar_toggleIcons(" + `optionVar -q showStatusNudgeUVs` + ", " + $toggleNudgeUVCmd);
+	eval("textureWindowCreateToolBar_toggleIcons(" + `optionVar -q showStatusUVBrushes` + ", " + $toggleUVBrushesCmd);
+
+	// scriptJob to update the UV fields
+	scriptJob -parent $editor
+		-event "SelectionChanged"
+		"undoInfo -swf false; textureWindowCreateToolBar_isUVTransformed; undoInfo -swf true;";
+
+	// scriptJob to update the UV fields in "Transform Mode"
+	scriptJob -parent $editor -event "ToolChanged" "uvEntryFieldScriptJob";
+
+	// scriptJob to update view transform option menu in UV editor
+	scriptJob -parent $editor -event "colorMgtEnabledChanged" onUVEditorColorMgtEnabledChanged;
+	scriptJob -parent $editor -event "colorMgtPrefsReloaded" onUVEditorColorMgtViewTransformChanged;
+	scriptJob -parent $editor -event "colorMgtConfigChanged" onUVEditorColorMgtViewTransformChanged;
+    scriptJob -parent $editor -event "colorMgtPrefsViewTransformChanged" onUVEditorColorMgtViewTransformChanged;
+}

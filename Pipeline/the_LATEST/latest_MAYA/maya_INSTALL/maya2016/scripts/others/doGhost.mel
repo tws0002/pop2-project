@@ -1,0 +1,398 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Sept, 2000
+//
+//	Procedure Name:
+//		doGhost
+//
+//	Description:
+//		Enable or disable ghosting on the selected objects.
+//
+//	Input Arguments:
+//	$version: The version of this option box.  Used to know how to 
+//	interpret the $args array.
+//		"1" : first version of ghosts
+//		"2" : second version of ghosts
+//  
+//	$args
+//	Version 1
+//	[0]		$enable: enable or disable ghosts
+//	Version 2
+//	[0]		$enable: enable or disable ghosts
+//	[1]		$ghostControl: ghostControl attribute value for ghosted objects
+//	[2]		$pre: ghostPreSteps attribute value for ghosted objects
+//	[3]		$post: ghostPostSteps attribute value for ghosted objects
+//	[4]		$stepSize: ghostFramesPerStep attribute value for ghosted objects
+//	[5]		$frames: ghostFrames attribute value for ghosted objects
+//	[6]		$start: ghostRangeStart attribute value for ghosted objects
+//	[7]		$end: ghostRangeEnd attribute value for ghosted objects
+//	[8]		$ghostDriver: the driver object whose keys are to ghost $obj
+//
+//	Return Value:
+//		none
+//
+
+proc string buildGhostSetAttrString(string $obj,
+									int $enable,
+									int $ghostControl,
+									int $pre,
+									int $post,
+									int $stepSize,
+									string $frames,
+									float $start,
+									float $end,
+									string $ghostDriver)
+//
+// Description: Based on the argument values, build up a setAttr
+//  command to control the specified ghosting attributes of the object.
+//   $object: object to act on
+//   $enable: enable or disable ghosting	
+//	 $ghostControl: ghostControl attribute value for ghosted objects
+//     Possible values are: 
+//           0: global preferences
+//           1: custom frames
+//           2: custom frame pre/post
+//           3: custom key pre/post
+//           4: keyframe range
+//          -1: do not modify ghost control or its associated attributes,
+//              leave them as they are	
+//	 $pre: ghostPreSteps attribute value for ghosted objects
+//	 $post: ghostPostSteps attribute value for ghosted objects
+//	 $stepSize: ghostFramesPerStep attribute value for ghosted objects
+//	 $frames: ghostFrames attribute value for ghosted objects
+//	 $start: ghostRangeStart attribute value for ghosted objects
+//	 $end: ghostRangeEnd attribute value for ghosted objects
+//	 $ghostDriver: the driver object whose keys are to ghost $obj
+//
+{
+	string $setAttrCmds = ("setAttr "+$obj+".ghosting "+$enable+"; ");
+	// Break the connection to ghostDriver attr
+	string $srcAttrs[] = `listConnections -s true -d false -p true ($obj+".ghostDriver")`;
+	if (size($srcAttrs) > 0) {
+		$setAttrCmds += ("disconnectAttr " + $srcAttrs[0] + " " + $obj + ".ghostDriver; ");
+	}
+
+	if (0 == $enable || (-1 == $ghostControl)) {
+		// the other ghosting attrs do not matter if we are not ghosting,
+		// so return the command string now
+		//
+		return $setAttrCmds;
+	}
+
+	// type of ghosting control
+	//
+	$setAttrCmds += ("setAttr "+$obj+".ghostingControl "+$ghostControl+"; ");
+
+	switch ($ghostControl) {
+	case 0:
+	{
+		// global preferences, nothing to do here
+	}	break;
+	case 1: {
+		// custom frames
+		$setAttrCmds += ("setAttr "+$obj+".ghostFrames -typ Int32Array ");
+		$setAttrCmds += ($frames+"; ");
+	}	break;
+	case 2: 
+	case 3: {
+		// custom pre, post
+		$setAttrCmds += ("setAttr "+$obj+".ghostPreSteps "+$pre+"; ");
+		$setAttrCmds += ("setAttr "+$obj+".ghostPostSteps "+$post+"; ");
+		$setAttrCmds += ("setAttr "+$obj+".ghostStepSize "+$stepSize+"; ");
+	}	break;
+	case 4: {
+		// keyframes
+		$setAttrCmds += ("setAttr "+$obj+".ghostRangeStart "+$start+"; ");
+		$setAttrCmds += ("setAttr "+$obj+".ghostRangeEnd "+$end+"; ");
+	}	break;
+	}
+
+	if ($ghostDriver != "")
+		$setAttrCmds += ("connectAttr -f " + $ghostDriver + " " + $obj + ".ghostDriver");
+
+	return $setAttrCmds;
+}
+
+proc int isTransform(string $obj) 
+{
+	string $isTransform[] = `ls -type transform $obj`;
+	return size($isTransform);
+}
+
+proc int isJoint(string $obj)
+{
+	string $type = `nodeType $obj`;
+	return $type == "joint";
+}
+
+proc int isAllTransforms(string $objs[])
+//
+// Test the objects in the list and their direct descendents to see
+// if they are all non-joint transforms.
+//
+{
+	int $result = 1;
+	for ($obj in $objs) {
+		if (isJoint($obj) || ! isTransform($obj)) {
+			$result = 0;
+			break;
+		}
+		string $rels[] = `listRelatives -pa $obj`;
+		for ($rel in $rels) {
+			if (isJoint($rel) || ! isTransform($rel)) {
+				$result = 0;
+				break;
+			}
+		}
+	}
+	return $result;
+}
+
+proc int isIntermediateObject(string $obj)
+{
+	int $val = `getAttr ($obj+".intermediateObject")`;
+	return $val == 1;
+}
+
+proc int isGeometry(string $obj)
+{
+	string $type;
+	$type = `nodeType $obj`;
+	return $type == "nurbsSurface" || $type == "mesh" ||
+	       $type == "nurbsCurve"   || $type == "subdiv";
+}
+
+proc int isLocator(string $obj)
+{
+	string $type = `nodeType $obj`;
+	return $type == "locator";
+}
+
+proc int ghostIt(string $object, int $enable,
+				 int $ghostControl,
+				 int $pre,
+				 int $post,
+				 int $stepSize,
+				 string $frames,
+				 float $start,
+				 float $end,
+				 int $hier,
+				 string $ghostDriver,
+				 int $ghostGeometry,
+				 int $ghostLocator,
+				 int $ghostJoint,
+				 int $ghostEverythingElse)
+//
+// Description: ghost or unghost an object
+// Args: 
+//   $object: object to act on
+//   $enable: whether or not to ghost
+//	 $ghostControl: ghostControl attribute value for ghosted objects
+//	 $pre: ghostPreSteps attribute value for ghosted objects
+//	 $post: ghostPostSteps attribute value for ghosted objects
+//	 $stepSize: ghostStepSize attribute value for ghosted objects
+//	 $frames: ghostFrames attribute value for ghosted objects
+//	 $start: ghostRangeStart attribute value for ghosted objects
+//	 $end: ghostRangeEnd attribute value for ghosted objects
+//	 $hierarchy: whether to ghost the hierarchy below the selected object
+//	 $ghostDriver: the driver object whose keys are to ghost $object
+//
+{
+	int $setGhost = 0;
+	string $rels[];
+	if($hier) {
+		// include all the descedents
+		$rels = `listRelatives -pa -ad $object`;
+	} else {
+		// Ghost children if $object is a transform
+		if (isTransform($object) && !isJoint($object)) {
+			$rels = `listRelatives -pa $object`;
+		}
+	}
+	// include itself at the end of $rels[]
+	$rels[size($rels)] = $object;
+
+	for($rel in $rels) {
+
+		// Selectively enable ghost based on object type
+		int $ghostThis;
+		if( isTransform($rel) ) {
+			$ghostThis = isJoint($rel) && $ghostJoint;
+		} else { 
+			$ghostThis = (isGeometry($rel) && $ghostGeometry) ||  
+				     (isLocator($rel)  && $ghostLocator)  ||
+				     (!isGeometry($rel) && !isLocator($rel) && $ghostEverythingElse);
+		}
+
+		if( !$ghostThis ) continue;
+
+		if (!isIntermediateObject($rel)) {
+			string $cmd = buildGhostSetAttrString(
+					$rel, $enable, $ghostControl,
+					$pre,$post,$stepSize,
+					$frames, $start,$end,$ghostDriver);
+			evalEcho $cmd;
+			$setGhost += 1;
+		}
+	}
+	return $setGhost;
+}
+
+global proc
+doGhostList( string $version, string $args[], string $selection[])
+//
+// Description:
+//   This procedure is used to enable or disable ghosts.
+//   The arguments are implemented using a string array to
+//	 allow a variable number of arguments depending on the
+//   version.
+// Arguments:
+//    $version: the version	
+//	  $args
+//	  Version 3
+//	   [0]		$enable: enable or disable ghosts
+//	   [1]		$hierarchy: whether to ghost the hierarchy below the selected object
+//	   [2]		$ghostControl: ghostControl attribute value for ghosted objects
+//	   [3]		$pre: ghostPreSteps attribute value for ghosted objects
+//	   [4]		$post: ghostPostSteps attribute value for ghosted objects
+//	   [5]		$stepSize: ghostStepSize attribute value for ghosted objects
+//	   [6]		$frames: ghostFrames attribute value for ghosted objects
+//	   [7]		$start: ghostRangeStart attribute value for ghosted objects
+//	   [8]		$end: ghostRangeEnd attribute value for ghosted objects
+//	   [9]		$useGhostDriver: whether to use first object's keys to ghost the rest objects
+//	   [10]		$ghostGeometry: whether to ghost geometry
+//	   [11]		$ghostLocator: whether to ghost locator
+//	   [12]		$ghostJoint: whether to ghost joint
+//	   [13]		$ghostEverythingElse: whether to ghost objects other than geometry, locator, and joint
+//
+{
+	int $counter = 0;
+	int $enable = $args[0];
+	int $ghostControl = -1; // leave ghost control as is
+	int $pre = 0;
+	int $post = 0;
+	int $stepSize = 0;
+	string $frames;
+	float $start = 0;
+	float $end = 0;
+	int $hier = 0;
+	int $useGhostDriver = 0;	
+	int $ghostGeometry = 1;
+	int $ghostLocator  = 1;
+	int $ghostJoint    = 1;
+	int $ghostEverythingElse = 1;
+
+	int $versionNo = $version;
+	if ($versionNo > 1) {
+		$hier = $args[1];
+		$ghostControl = $args[2];
+		$pre = $args[3];
+		$post = $args[4];
+		$stepSize = $args[5];
+		$frames = $args[6];
+		$start = $args[7];
+		$end = $args[8];
+		$useGhostDriver = $args[9];
+	} 
+	if ($versionNo > 2) {
+		$ghostGeometry = $args[10];
+		$ghostLocator  = $args[11];
+		$ghostJoint    = $args[12];
+		$ghostEverythingElse = $args[13];		
+	}		
+ 
+    string $errMsg = (uiRes("m_doGhost.kSelectObjectsUnghostedErr"));
+	if ($useGhostDriver) {
+		if ($enable) {
+			if (size($selection) < 2) {
+				error( (uiRes("m_doGhost.kUseGhostDriverErr")) );
+				return;
+			}
+		} else {
+			if (size($selection) == 0) {
+				error($errMsg);
+				return;
+			}
+		}
+	} else {
+		if (size($selection) == 0) {
+			if ($enable) {
+				error( (uiRes("m_doGhost.kSelectObjectsGhostedErr")) );
+			} else {
+				error($errMsg);
+			}
+			return;
+		}
+	}
+
+	int    $i = 0;
+	string $ghostDriver;
+	if ($useGhostDriver && $enable) {
+		$ghostDriver = $selection[0] + ".message";
+		$i = 1;
+	}
+
+	int $numObj = `size $selection`;
+	for( ; $i < $numObj; $i++) {
+		string $sel = $selection[$i];
+		$counter += ghostIt(	$sel,
+					$enable,
+					$ghostControl,
+					$pre,$post,$stepSize,
+					$frames,
+					$start,
+					$end,
+					$hier,
+					$ghostDriver,
+					$ghostGeometry,
+					$ghostLocator,
+					$ghostJoint,
+					$ghostEverythingElse);
+	}
+
+	if ($counter == 0 && $enable) {
+		string $errorMsg = (uiRes("m_doGhost.kCouldNotBeGhostedErr"));
+
+		// Build more informative error message if possible.
+		//
+		if (0 == $hier && isAllTransforms($selection)) {
+			$errorMsg += "  Try using the hierarchy option.";
+		} else if (! $ghostLocator ||
+				   ! $ghostJoint ||
+				   ! $ghostGeometry ||
+				   ! $ghostEverythingElse)
+		{
+			$errorMsg = (uiRes("m_doGhost.kCheckGhostingObjectErr"));
+		}
+		error($errorMsg);
+	}
+}
+
+
+global proc
+doGhost( string $version, string $args[])
+{
+    string $selection[] = `ls -sl`;
+    doGhostList($version,$args,$selection);
+}

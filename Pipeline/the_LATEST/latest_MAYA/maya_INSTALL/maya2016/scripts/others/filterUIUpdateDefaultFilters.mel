@@ -1,0 +1,316 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  24 November 1998
+//
+//	Description:
+//		These procs manipulate filter arrays on startup and file new/open.
+//
+
+global proc int filterUIClearDefaultFilters()
+//
+//	Description:
+//		Clear the internal filter lists and remove any filter
+//		attached to a view.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	global string $gFilterUIDefaultObjectFilterList[];
+	global string $gFilterUIDefaultAttributeFilterList[];
+
+	int    $result = 1;
+
+	clear($gFilterUIDefaultObjectFilterList);
+	clear($gFilterUIDefaultAttributeFilterList);
+
+	return $result;
+}
+
+global proc int filterUIUpdateDefaultFilters()
+//
+//	Description:
+//		Update all the default object and attribute filters.
+//
+//		This method no longer updates the internal list of default
+//		object and attribute filters.  That is now done by the
+//		procedures:
+//			filterUIAddDefaultObjectFilters()
+//			filterUIAddDefaultAttributeFilters()
+//
+//		All this method does now is clear the internal lists and
+//		remove any filter attached to a view.
+//
+//		This procedure is still around so that i didn't have to
+//		rename the file.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	int    $result = 1;
+
+	$result = filterUIClearDefaultFilters();
+
+	return $result;
+}
+
+global proc filterUIClearAllViews() 
+//
+//  Description:
+//		Clear any filters attached to any of the views.
+//
+{
+	global string $gFilterUIViewList[];
+
+	string $view;
+	for ($view in $gFilterUIViewList) {
+		filterUIClearFilter($view);
+	}
+}
+
+global proc filterUIClearNonMenuFilters() 
+//
+//  Description:
+//		Clear any filters attached to any of the views that are
+//      NOT the checkbox object or attribute filters
+//
+{
+	global string $gFilterUIViewList[];
+
+	string $view;
+	for ($view in $gFilterUIViewList) {
+		filterUIClearNonMenuFilter($view);
+	}
+}
+
+global proc int filterUIAddDefaultObjectFilters(string $filters[])
+//
+//	Description:
+//		Add the given list of filters to the internal list of 
+//		default object filters.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	global string $gFilterUIDefaultObjectFilterList[];
+
+	int    $result = 1;
+
+	$gFilterUIDefaultObjectFilterList = AWAppendStringsToStringArray(
+		$filters, $gFilterUIDefaultObjectFilterList);
+
+	return $result;
+}
+
+global proc int filterUIAddDefaultAttributeFilters(string $filters[])
+//
+//	Description:
+//		Add the given list of filters to the internal list of 
+//		default attribute filters.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	global string $gFilterUIDefaultAttributeFilterList[];
+
+	int    $result = 1;
+
+	$gFilterUIDefaultAttributeFilterList = AWAppendStringsToStringArray(
+		$filters, $gFilterUIDefaultAttributeFilterList);
+
+	return $result;
+}
+
+global proc int filterUIUpdateCustomFilters()
+//
+//	Description:
+//		Update all the custom object and attribute filters.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	global string $gFilterUIDefaultObjectFilterList[];
+	global string $gFilterUIDefaultAttributeFilterList[];
+	global string $gFilterUICustomObjectFilterList[];
+	global string $gFilterUICustomAttributeFilterList[];
+
+	int    $result = 1;
+
+	string $objectFilters[], $attributeFilters[], $renderFilters[];
+	string $text, $type, $filter, $filters[];
+
+	int    $objectFilterCount    = 0;
+	int    $attributeFilterCount = 0;
+	int    $renderFilterCount    = 0;
+	int    $index;
+	
+	clear($gFilterUICustomObjectFilterList);
+	clear($gFilterUICustomAttributeFilterList);
+
+	//	Get all the object and attribute filters.
+	//
+	$renderFilters = `itemFilterRender -q -listUserFilters`;
+	$objectFilters = `itemFilter -q -listUserFilters`;
+	$attributeFilters = `itemFilterAttr -q -listUserFilters`;
+	
+	//	Collect all the object and render filters 
+	// and add scriptJobs for when nodes are deleted through scripting.
+	//
+	$index = 0;
+	for ($filter in $objectFilters) {
+		$gFilterUICustomObjectFilterList[$index++] = $filter;
+		scriptJob -nodeDeleted $filter ("filterUIOnDeleteCB "+$filter);
+	}
+	for ($filter in $renderFilters) {
+		$gFilterUICustomObjectFilterList[$index++] = $filter;
+		scriptJob -nodeDeleted $filter ("filterUIOnDeleteCB "+$filter);
+	}
+
+	//	Collect all the attribute filters.
+	// and add scriptJobs for when nodes are deleted through scripting.
+	//
+	$index = 0;
+	for ($filter in $attributeFilters) {
+		$gFilterUICustomAttributeFilterList[$index++] = $filter;
+		scriptJob -nodeDeleted $filter ("filterUIOnDeleteCB "+$filter);
+	}
+		
+	return $result;
+}
+
+//
+
+//  Creation Date:  24 Oct 2011
+//
+//  Description:
+//      This procedure delete custom Outliner filter.
+//
+//  Input Arguments:
+//		 The filterName is name of the outliner filter,
+//
+//  Return Value:
+//		None
+//
+
+
+global proc deleteCustomOutlinerFilter( string $filterName)
+{
+	global string $gFilterUIPluginCustomObjectFilterList[];
+	global string $gFilterUIPluginCustomObjectFilterTypeList[];
+	global string $gFilterUIPluginCustomObjectFilterTextList[];
+	global string $gFilterUIPluginCustomObjectFilterNameList[];
+	global string $gFilterUIPluginCustomObjectFilterInsertBelowList[];
+
+	// Keep count of how many plugins register a given filter. Only
+	// remove filter if all plugins using it are unloaded.
+	global int     $gFilterUIPluginCustomObjectFilterRegCountList[];
+	
+	// Delete the object filter to the global list.and also delete in gFilterUIPluginCustomObjectFilterList.
+	int $pIndex = stringArrayFind($filterName, 0 , $gFilterUIPluginCustomObjectFilterList);
+
+	if (-1 != $pIndex) {
+		$gFilterUIPluginCustomObjectFilterRegCountList[$pIndex] -= 1;
+
+		if ($gFilterUIPluginCustomObjectFilterRegCountList[$pIndex] == 0) {
+
+			$gFilterUIPluginCustomObjectFilterList = stringArrayRemove({$filterName}, $gFilterUIPluginCustomObjectFilterList);
+			if (`itemFilter -exists $filterName`)
+				delete $filterName;
+
+			stringArrayRemoveAtIndex($pIndex, $gFilterUIPluginCustomObjectFilterTypeList);
+			stringArrayRemoveAtIndex($pIndex, $gFilterUIPluginCustomObjectFilterTextList);
+			stringArrayRemoveAtIndex($pIndex, $gFilterUIPluginCustomObjectFilterNameList);
+			stringArrayRemoveAtIndex($pIndex, $gFilterUIPluginCustomObjectFilterInsertBelowList);
+			intArrayRemoveAtIndex($pIndex, $gFilterUIPluginCustomObjectFilterRegCountList);
+						
+			filterUIDeleteFilterMenu;
+		}
+		if ($gFilterUIPluginCustomObjectFilterRegCountList[$pIndex] < 0) {
+			$gFilterUIPluginCustomObjectFilterRegCountList[$pIndex] = 0;
+		}
+	}	
+}
+
+//  Creation Date:  19 Dec 2011
+//
+//  Description:
+//      This procedure add a custom Outliner filter.
+//
+//  Input Arguments:
+//		 nodeTypeName - The nodeType name of the new filter;
+//		 filterName - The filterName is name of the outliner filter;
+//		 menuItemLabel - The actually name show in the outliner menu;
+//		 insertBelow - The outliner filter which new filter need to insert below it in the menu.
+//
+//  Return Value:
+//		None
+//
+global proc addCustomOutlinerFilter( string $nodeTypeName, string $filterName,string $menuItemLabel, string $insertBelow)
+{
+	global string $gFilterUIDefaultObjectFilterList[];
+	
+	global string $gFilterUIPluginCustomObjectFilterList[];
+	global string $gFilterUIPluginCustomObjectFilterTypeList[];
+	global string $gFilterUIPluginCustomObjectFilterTextList[];
+	global string $gFilterUIPluginCustomObjectFilterNameList[];
+	global string $gFilterUIPluginCustomObjectFilterInsertBelowList[];
+
+	// Keep count of how many plugins register a given filter. Only
+	// remove filter if all plugins using it are unloaded.
+	global int     $gFilterUIPluginCustomObjectFilterRegCountList[];
+
+
+	int $pIndex = stringArrayFind($filterName, 0 , $gFilterUIPluginCustomObjectFilterList);
+	if (-1 != $pIndex) {
+		// Filter already exists? Increment registration count
+		$gFilterUIPluginCustomObjectFilterRegCountList[$pIndex] += 1;
+	}
+	else {
+		itemFilter 
+			-byType $nodeTypeName
+			-text $menuItemLabel
+			-category "Modeling"
+			-classification "builtIn" 
+			$filterName;
+			
+		$gFilterUIPluginCustomObjectFilterList[size($gFilterUIPluginCustomObjectFilterList)] = $filterName;
+		// Save the filterName info here for registeration later
+		$gFilterUIPluginCustomObjectFilterTypeList[size($gFilterUIPluginCustomObjectFilterTypeList)] = $nodeTypeName;
+		$gFilterUIPluginCustomObjectFilterTextList[size($gFilterUIPluginCustomObjectFilterTextList)] = $menuItemLabel;
+		$gFilterUIPluginCustomObjectFilterNameList[size($gFilterUIPluginCustomObjectFilterNameList)] = $filterName;
+		$gFilterUIPluginCustomObjectFilterRegCountList[size($gFilterUIPluginCustomObjectFilterRegCountList)] = 1;
+		$gFilterUIPluginCustomObjectFilterInsertBelowList[size($gFilterUIPluginCustomObjectFilterInsertBelowList)] = $insertBelow;
+		
+		filterUIDeleteFilterMenu;
+	}
+}

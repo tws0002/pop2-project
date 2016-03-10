@@ -1,0 +1,169 @@
+#!/bin/csh -f
+#Tag 0x00C98a02
+#-
+# ==========================================================================
+# Copyright 1995,2006,2008 Autodesk, Inc. All rights reserved.
+#
+# Use of this software is subject to the terms of the Autodesk
+# license agreement provided at the time of installation or download,
+# or which otherwise accompanies this software in either electronic
+# or hard copy form.
+# ==========================================================================
+#+
+
+
+set real_exec = `basename $0`.bin
+set real_base = `basename $0`
+
+#
+#  Determine if launched from the desktop or a shell.  This will tell
+#  us how to display error messages later.
+#
+
+set tty = 1
+
+set OSname = `/bin/uname -s`
+switch ("$OSname")
+    case Linux:
+        set lib = lib
+        set lsFlags = '-l'
+        breaksw
+
+    case IRIX*:
+        set lib = lib32
+        set libn32 = 1
+        set lsFlags = '-Hl'
+        if ( -x /bin/tty ) then
+            if ( "`tty`" !~ /dev/* ) then
+                set tty = 0
+            endif
+        endif
+		breaksw
+
+    default:
+        echo "${real_base} is not supported on $OSname."
+        exit 1
+        breaksw
+endsw
+
+#
+#  If the MAYA_LOCATION is set, use it.  Otherwise, determine it.
+#
+
+if ( $?MAYA_LOCATION ) then
+    if ( -x ${MAYA_LOCATION}/bin/${real_exec} ) then
+	set real = ${MAYA_LOCATION}/bin/${real_exec}
+    else
+	unsetenv MAYA_LOCATION
+    endif
+endif
+
+
+#
+#  Need to determine where Maya resides based on how this shell was
+#  invoked.  Determine full pathname, follow soft link, and extract
+#  directory.  If the "real" executable is not in a "bin" directory,
+#  someone's been screwing around with the distribution, so bail.
+#
+
+if ( ! $?MAYA_LOCATION ) then
+    #
+    #  Create the full pathname of the invoked binary.
+    #
+
+    if ( "$0" =~ /* ) then
+	set me = "$0"
+    else
+	set me = `pwd`/$0
+    endif
+
+
+    #
+    #  If it's a link, find the actual file.
+    #
+
+    while ( -l $me )
+		set linkdirname = `dirname $me`
+		set me = `/bin/ls $lsFlags $me | tr ' ' '\012' | tail -1`
+		if ( "$me" !~ /* ) then
+	    	set me = $linkdirname/$me
+		endif
+    end
+
+
+    #
+    #  Binary should be in $MAYA_LOCATION/bin.  Verify that.
+    #
+
+    set bindir = `dirname $me`
+    if ( -d $bindir ) then
+	set bindir = `cd $bindir; echo $cwd`
+    endif
+    set binfile = `basename $bindir`
+    if ( "$binfile" =~ "bin" ) then
+	setenv MAYA_LOCATION `dirname $bindir`
+	if ( -x ${MAYA_LOCATION}/bin/${real_exec} ) then
+	    set real = ${MAYA_LOCATION}/bin/${real_exec}
+	else
+	    unsetenv MAYA_LOCATION
+	endif
+    endif
+endif
+
+# Determine the location of the A|W Common Utilties
+# 
+# - If AW_COMMON is set and the directory does not exist, unset AW_COMMON.
+# - If AW_COMMON not set and MAYA_LOCATION is set and exists, then set
+#   AW_COMMON relative to MAYA_LOCATION
+# - if AW_COMMON is still not set, then use the default location
+
+if ( $?AW_COMMON ) then
+	if ( ! -d ${AW_COMMON}/COM/bin ) then
+		echo "Warning: Invalid AW_COMMON location (${AW_COMMON}), redefining"
+		unsetenv AW_COMMON
+	endif
+endif
+
+if ( ! $?AW_COMMON && $?MAYA_LOCATION) then
+	if (-d $MAYA_LOCATION/../COM/bin) then
+		setenv AW_COMMON $MAYA_LOCATION/..
+	endif
+endif
+
+if ( ! $?AW_COMMON) then
+	setenv AW_COMMON /usr/aw
+endif
+
+
+if ( $?MAYA_LOCATION ) then
+    #
+    #  Set environment, and launch the real executable.
+    #
+
+    set path = ($MAYA_LOCATION/bin ${AW_COMMON}/COM/bin $path)
+
+    if ( $?libn32 && $?LD_LIBRARYN32_PATH ) then
+	setenv	LD_LIBRARYN32_PATH	$MAYA_LOCATION/lib:$LD_LIBRARYN32_PATH
+    else if ( $?LD_LIBRARY_PATH ) then
+	setenv	LD_LIBRARY_PATH		$MAYA_LOCATION/lib:$LD_LIBRARY_PATH
+    else
+	setenv	LD_LIBRARY_PATH		$MAYA_LOCATION/lib
+    endif
+endif
+
+if ( $?MAYA_LOCATION ) then
+    if ( -x $real ) then
+	$real $argv:q
+	exit $status
+    endif
+endif
+
+if ( ! $?real ) set real = ${real_exec}
+
+if ( $tty == 1 ) then
+    echo The executable \(\`${real}\'\) cannot be found
+else
+    xconfirm -c -t "The executable \(\`${real}\'\) cannot be found" \
+	    -icon warning >&/dev/null
+endif
+exit 1

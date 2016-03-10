@@ -1,0 +1,420 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+global string $BifrostGraphEditorName = "";
+$BifrostGraphEditorName = (uiRes("m_menu_MakeBifrost.kBifrostNodeEditor"));
+
+global string $gMainWindowMenuName = "";
+
+global string $VPEScriptedPanelType = "" ;
+
+global int $g_OverrideQuitPerformed = false ;
+
+global string $gBifrostAttributeEmitters = "Emitters";
+global string $gBifrostAttributeGuides = "Guides";
+global string $gBifrostAttributeColliders = "Colliders";
+global string $gBifrostAttributeAccelerators = "Accelerators";
+global string $gBifrostAttributeKillplanes = "killplanes";
+global string $gBifrostAttributeCamera = "cameraMatrixList";
+
+global string $gBifrostHUDMenuCheckBoxControl;
+
+global proc string GetCommand(string $cmdname)
+{
+    if (!`runTimeCommand -q -exists $cmdname`) {return "";}
+    return `runTimeCommand -q -command $cmdname`;
+}
+
+global proc SaveSceneOverrideImplementation()
+{
+	string $cmdname = "SaveScene";
+   	bifrostproject -save -nodialog;
+}
+
+// Need to create a 'SaveScene' command since runtimeCommand 'SaveScene' is default and cannot be changed/deleted
+global proc OverrideSave()
+{
+    string $cmd;
+    $cmd += "global proc SaveScene() {\n";
+    $cmd += "	SaveSceneOverrideImplementation();\n";
+    $cmd += "}";
+
+    eval($cmd);
+}
+
+global proc OpenSceneOverrideImplementation()
+{
+	string $cmdname = "OpenScene";
+	eval(`GetCommand $cmdname`);
+}
+
+global proc OverrideOpenScene()
+{
+	string $cmd;
+    $cmd += "global proc OpenScene() {\n";
+    $cmd += "	OpenSceneOverrideImplementation();\n";
+    $cmd += "}";
+
+    eval($cmd);
+}
+
+global proc NewSceneOverrideImplementation()
+{
+	string $cmdname = "NewScene";
+	eval(`GetCommand $cmdname`);
+}
+
+global proc OverrideNewScene()
+{
+	string $cmd;
+    $cmd += "global proc NewScene() {\n";
+    $cmd += "	NewSceneOverrideImplementation();\n";
+    $cmd += "}";
+
+    eval($cmd);
+}
+
+global proc SaveSceneAsOverrideImplementation()
+{
+	string $cmdname = "SaveSceneAs";
+	eval(`GetCommand $cmdname`);
+}
+
+// Need to create a 'SaveSceneAs' command since runtimeCommand 'SaveSceneAs' is default and cannot be changed/deleted
+global proc OverrideSaveAs()
+{
+    string $cmd;
+
+    $cmd += "global proc SaveSceneAs() {\n";
+    $cmd += "	SaveSceneAsOverrideImplementation();\n";
+    $cmd += "}";
+
+    eval($cmd);
+}
+
+global proc QuitOverrideImplementation()
+{
+	string $cmdname = "Quit";
+
+	if ((`bifrostproject -save`) == true) {
+    //    if ((`project -q -iscurrentfiletheloadedasset`) == true) {
+	//		file -modified 0 ;
+	//	}
+		global int $g_OverrideQuitPerformed ;
+		$g_OverrideQuitPerformed = true ;
+		eval(`GetCommand $cmdname`);
+	}
+}
+
+global proc OverrideQuit()
+{
+	string $cmd;
+	$cmd += "global proc Quit() {\n";
+	$cmd += "	QuitOverrideImplementation();\n";
+	$cmd += "}\n";
+
+    eval($cmd);
+}
+
+global proc ToggleBifrostHUD()
+{
+	global string $gBifrostHUDMenuCheckBoxControl;
+	int $newState = !(`optionVar -q bifrostHUDVisibility`);
+	if (`headsUpDisplay -ex HUDBifrostParticleCount`)
+	{
+		headsUpDisplay -e -visible $newState HUDBifrostParticleCount;
+	}
+	if (`headsUpDisplay -ex HUDBifrostVoxelCount`)
+	{
+		headsUpDisplay -e -visible $newState HUDBifrostVoxelCount;
+	}
+	menuItem -e -checkBox $newState $gBifrostHUDMenuCheckBoxControl;
+	optionVar -iv "bifrostHUDVisibility" $newState;
+}
+
+proc string bifrostPreset_melToUI( string $mel ) {
+	string $ui = $mel;
+
+	string $aero = (uiRes("m_menu_MakeBifrost.kAero"));
+	string $liquid = (uiRes("m_menu_MakeBifrost.kLiquid"));
+
+	if( $mel == "aero" ) {
+		$ui = $aero;
+	} else if ( $mel == "liquid" ) {
+		$ui = $liquid;
+	} else {
+		uiToMelMsg( "bifrostPreset_melToUI", $mel, 0 );
+	}
+
+	return $ui;
+}
+
+proc string bifrostPreset_version( string $mel ) 
+{
+	string $version = "";
+
+	if( $mel == "liquid" ) {
+		$version = "2015";
+	} else if( $mel == "aero" ) {
+		$version = "2016";
+	}
+
+	return $version;
+}
+
+proc int bifrostMenuForPreset( string $ppath, string $prefix )
+{
+	// for those presets that are uencapsulated scripts
+	int $numItems = 0;
+	string $fileList[];
+
+	if(!`exists getPresetFiles`) {
+		source "presetMenuForDir.mel";
+	}
+	int $numTokens = getPresetFiles($fileList, $ppath);
+
+	// create Directory for current node type
+	if ($numTokens > 0 && !($numTokens == 1 && $fileList[0] == "unknown")) {
+		string $file;
+		for ( $file in $fileList ) {
+			// only show .mel files
+			if(  size( match( ".mel", $file ) ) ){
+				$numItems += 1;
+				string $preset = `substitute ".mel" $file ""`;
+				string $presetName = bifrostPreset_melToUI( $preset );
+				string $presetVersion = bifrostPreset_version( $preset );
+				string $menuCommand = ("source \"" + $ppath+$file +"\"");
+				$numItems++;
+
+				string $menuLabel = "";
+				if( size( $prefix ) ) {
+					$menuLabel = `format -s $presetName $prefix`;
+				} else {
+					$menuLabel = $presetName;
+				}
+
+				if( size( $presetVersion ) ) {
+					menuItem -version $presetVersion -label $menuLabel -c $menuCommand;
+				} else {
+					menuItem -label $menuLabel -c $menuCommand;
+				}
+			}
+		}
+	}
+
+	if( !$numItems ) {
+		string $msg = (uiRes("m_menu_MakeBifrost.kNoScriptsFound2"));
+		print `format -s $ppath $msg`;
+	}
+
+	return $numItems;
+}
+
+global proc bifrostPostMenu()
+{
+	global string $gBifrostStopBackgroundProcessingMenuItem;
+	global string $gBifrostFlushScratchCacheMenuItem;
+
+	int $isProcessing = `bifrost -query -processing`;
+	menuItem -edit -enable $isProcessing $gBifrostStopBackgroundProcessingMenuItem;
+
+	int $canFlush = !$isProcessing && ( size(`ls -type "bifrostContainer"`) > 0 );
+	//$canFlush = 0; // disabled until we implement a safe destroy mechanism for the state server (MAYA-32677)
+	menuItem -edit -enable $canFlush $gBifrostFlushScratchCacheMenuItem;
+}
+
+global proc string menu_MakeBifrost(string $parent)
+{
+	global string $BifrostGameWatchPanelCategoryName;
+    global string $BifrostGraphEditorName;
+	global string $gBifrostAttributeEmitters;
+	global string $gBifrostAttributeGuides;
+	global string $gBifrostAttributeColliders;
+	global string $gBifrostAttributeAccelerators;
+	global string $gBifrostAttributeKillplanes;
+	global string $gBifrostAttributeCamera;
+	global string $gBifrostHUDMenuCheckBoxControl;
+	global string $gBifrostStopBackgroundProcessingMenuItem;
+	global string $gBifrostOptionsMenuItem;
+	global string $gBifrostFlushScratchCacheMenuItem;
+
+	global string $gMainWindow;
+	
+	setParent $parent;
+
+	// Create the bifrost menu and parent it to the main window.
+	// Do not show the menu if the current menu set is not dynamics.
+	//
+	string $bifrostMenu = `menu -version 2015 -label (uiRes("m_menu_MakeBifrost.kBifrost")) -tearOff true -vis false -postMenuCommand bifrostPostMenu mainBifrostMenu`;
+
+	menuSet -e -addMenu mainBifrostMenu dynamicsMenuSet;
+
+	// If current menu set is dynamics, show the bifrost menu
+	// Also shift the menu to the end of the dynamic menus.
+	//
+	if( `menuSet -q -currentMenuSet` == "dynamicsMenuSet" ) {
+		int $pos = size(`menuSet -q -menuArray commonMenuSet`) + size(`menuSet -q -menuArray dynamicsMenuSet`);
+		window -e -menuIndex mainBifrostMenu $pos $gMainWindow;
+		menu -e -vis true mainBifrostMenu;
+	}
+	
+	menuItem -divider true -dividerLabel (uiRes("m_menu_MakeBifrost.kBifrostCreate"));
+  	menuItem -version 2015 -label (uiRes("m_menu_MakeBifrost.kCreateLiquid")) -command "CreateBifrostLiquid";
+  	menuItem -version 2016 -label (uiRes("m_menu_MakeBifrost.kCreateAero")) -command "CreateBifrostAero";
+
+	menuItem -version 2015 -label (uiRes("m_menu_MakeBifrost.kGetBifrostExample")) -command "{VisorWindow;string $pnl=visorPanelName();if(size($pnl)>0) visorPanelMenuCommand( $pnl, \"selectOrCreateTabByLabel Bifrost Examples\");}";
+	
+	menuItem -divider true -dividerLabel (uiRes("m_menu_MakeBifrost.kBifrostAdd"));
+	menuItem -version 2015 -label (uiRes("m_menu_MakeBifrost.kAddEmitter")) -command "AddBifrostEmitter";
+	menuItem -version 2015 -label (uiRes("m_menu_MakeBifrost.kAddCollider")) -command "AddBifrostCollider";
+	menuItem -version 2015 -label (uiRes("m_menu_MakeBifrost.kAddAccelerator")) -command "AddBifrostAccelerator";
+	menuItem -version 2016 -label (uiRes("m_menu_MakeBifrost.kAddFoam")) -command "AddBifrostFoam";
+	menuItem -version 2015 -label (uiRes("m_menu_MakeBifrost.kAddKillplane")) -command "AddBifrostKillplane";
+	menuItem -version 2016 -label (uiRes("m_menu_MakeBifrost.kAddCamera")) -command "AddBifrostCamera";
+	menuItem -version 2016 -label (uiRes("m_menu_MakeBifrost.kAddAdaptiveMesh")) -command "AddBifrostAdaptiveMesh";
+	menuItem -version 2016 -label (uiRes("m_menu_MakeBifrost.kAddGuide")) -command "AddBifrostGuide";
+	
+	menuItem -divider true -dividerLabel (uiRes("m_menu_MakeBifrost.kBifrostRemove"));
+	menuItem -version 2015 -label (uiRes("m_menu_MakeBifrost.kRemoveEmitter")) -command "RemoveBifrostEmitter";
+	menuItem -version 2015 -label (uiRes("m_menu_MakeBifrost.kRemoveCollider")) -command "RemoveBifrostCollider";
+	menuItem -version 2015 -label (uiRes("m_menu_MakeBifrost.kRemoveAccelerator")) -command "RemoveBifrostAccelerator";
+	menuItem -version 2016 -label (uiRes("m_menu_MakeBifrost.kRemoveFoam")) -command "RemoveBifrostFoam";
+   	menuItem -version 2016 -label (uiRes("m_menu_MakeBifrost.kRemoveAdaptiveMesh")) -command "RemoveBifrostAdaptiveMesh";
+   	menuItem -version 2016 -label (uiRes("m_menu_MakeBifrost.kRemoveGuide")) -command "RemoveBifrostGuide";
+
+	menuItem -divider true -dividerLabel (uiRes("m_menu_MakeBifrost.kBifrostCompute"));
+	// Compute and Cache to Disk
+	menuItem -version 2015 -label (uiRes("m_menu_MakeBifrost.kComputeCacheToDisk")) -command "performCreateBifrostCache 0 0 " -dmc "performCreateBifrostCache 2 0 ";
+		menuItem -optionBox true -command "performCreateBifrostCache 1 0";
+	$gBifrostFlushScratchCacheMenuItem = `menuItem -version 2015 -label (uiRes("m_menu_MakeBifrost.kFlushScratchCache")) -command "bifrost -edit -flushScratchCache"`;
+	$gBifrostStopBackgroundProcessingMenuItem = `menuItem -version 2015 -label (uiRes("m_menu_MakeBifrost.kStopBackgroundProcessing")) -command "bifrost -edit -stopProcessing"`;
+
+	menuItem -divider true -dividerLabel (uiRes("m_menu_MakeBifrost.kBifrostMenuOptions"));
+	// Bifrost Options
+	$gBifrostOptionsMenuItem = `menuItem -version 2015 
+		-label (uiRes("m_menu_MakeBifrost.kBifrostOptions")) 
+		-command "performBifrostOptionsChange"`;
+	// Display Bifrost HUD menu item
+	int $HUDEnabled = `optionVar -query bifrostHUDVisibility`;
+	$gBifrostHUDMenuCheckBoxControl = `menuItem -version 2015 -label (uiRes("m_menu_MakeBifrost.kDisplayBifrostHud")) -checkBox $HUDEnabled -command "ToggleBifrostHUD"`;
+
+	if( enableBifrostGraphEditing() ) {
+		menuItem -divider true;
+		menuItem -label ("Dev: "+$BifrostGraphEditorName) -command ("evalEcho( \"window -title \\\"" + $BifrostGraphEditorName + "\\\" -width 1600 -height 800 -tlc 80 30; frameLayout -lv false -bv false -width 1 -height 1; mw_vpe; showWindow;\" )");
+		menuItem -label "Dev: Value Editor" -command "evalEcho( \"bifrostCreateMayaView mw.valueeditor\" )";
+
+		menuItem -label "Dev: Save" -command "evalEcho( \"bifrostproject -save -nodialog\" )";
+		menuItem -label "Dev: Open Project" -command "evalEcho( \"bifrostproject -openprojectwithdialog\" )";
+		menuItem
+			-subMenu true
+			-tearOff true
+			-label "Dev: Sanity";
+			string $dataLocation = getenv("TOP");
+			if( size($dataLocation) != 0 )
+			{
+				string $bifrostDevPresetScripts = $dataLocation + "/src/Components/BifrostTmp/presets/devScripts/";
+				bifrostMenuForPreset $bifrostDevPresetScripts "";
+			}
+			setParent -menu ..;
+
+			menuItem -label "Dev: Code Viewer" -command "evalEcho( \"bifrostCreateMayaView mw.codeviewer\" )";
+	}
+
+	return $bifrostMenu;
+}
+
+global proc string MakeScriptedPanel(string $panelName, string $addFunc)
+{
+	// Should been created in the userSetup to allow reloading a file using maya.exe <filename.ma> (which tries to use this scriptedPanelType while
+	// restoring config (and causes error on loading).
+	if (`scriptedPanelType -q -ex $panelName` == false)
+	{
+	    scriptedPanelType $panelName;
+	}
+
+	$scriptedPanelType = `scriptedPanelType
+		-e
+		-unique false
+		-retainOnFileOpen true
+		-ccb BifrostPanelCreateCallback
+		-icb BifrostPanelInitCallback
+		-acb $addFunc
+		$panelName`;
+
+	return $scriptedPanelType;
+}
+
+global proc MakeBifrost()
+{
+    //
+    // Add scripted panel
+    global string $BifrostGraphEditorName;
+	global string $VPEScriptedPanelType;
+
+	if( enableBifrostGraphEditing() ) {
+		MakeScriptedPanel "BifrostValueEditor" "BifrostPanelAddValueEditorCallback";
+		MakeScriptedPanel "BifrostDictionaryEditor" "BifrostPanelAddDictionaryEditorCallback";
+		$VPEScriptedPanelType = `MakeScriptedPanel "BifrostGraphEditor" "BifrostPanelAddGraphEditorCallback"`;
+		string $NodeGraphPanel = `scriptedPanel -unParent -type $VPEScriptedPanelType -label $BifrostGraphEditorName`;
+	}
+
+    //
+    // Add 'Bifrost' Menu item
+    global string $gMainWindowMenuName;
+	global string $gMainWindow;
+	if (`menu -exists $gMainWindowMenuName`)
+		deleteUI -menu $gMainWindowMenuName;
+	if(!`exists addBifrostCollider`) {
+		source "addBifrostCollider.mel";
+	}
+	if(!`exists getPresetFiles`) {
+		source "presetMenuForDir.mel";
+	}
+
+
+    $gMainWindowMenuName = menu_MakeBifrost($gMainWindow);
+
+	// pomerly: they do nothing for now except for OverrideSave() which is not working
+	//OverrideSave();	// Should save the db and call runtime save command since we will
+						// not allow modifying the graph in the next release (2015) this is
+						// disable until then
+	//OverrideSaveAs();
+	//OverrideQuit();
+	//OverrideNewScene();
+	//OverrideOpenScene();
+
+	// this is our fallback in case the quit was performed without going through the OverrideQuit()
+	//scriptJob -e "quitApplication" "global int $g_OverrideQuitPerformed; if ( $g_OverrideQuitPerformed == false ) { bifrostproject -checkforsaveproject false ; }";
+}
+
+global proc BifrostPanelCreateCallback(string $panelName) {}
+global proc BifrostPanelInitCallback  (string $panelName) {}
+
+global proc BifrostPanelAddGraphEditorCallback           (string $panelName) {mw_vpe;}
+global proc BifrostPanelAddValueEditorCallback           (string $panelName) {bifrostCreateMayaView -parent $panelName mw.valueeditor;}
+global proc BifrostPanelAddDictionaryEditorCallback      (string $panelName) {bifrostCreateMayaView -parent $panelName mw.dictionaryeditor;}
+
+global proc RemoveBifrost()
+{
+    global string $gMainWindowMenuName;
+	if (`menu -exists $gMainWindowMenuName`)
+		deleteUI -menu $gMainWindowMenuName;
+}

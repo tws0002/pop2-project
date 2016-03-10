@@ -1,0 +1,599 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+// Creation Date:  14 July 1996
+//
+//  Procedure Name:
+//      EditMenu
+//
+//  Description:
+//		This procedure creates the main menubar Edit menu.
+//
+//  Input Arguments:
+//      Parent window that menu will be a part of.
+//
+//  Return Value:
+//      None.
+//
+
+
+global proc deleteSelectRigidBodies() 
+//
+//	Deletes all the rigid bodies associated
+//  with the selected items.
+//
+{
+   	string $selectedItems[] = `ls -sl`; 
+
+	for ($i = 0; $i < size( $selectedItems ); $i++)
+	{
+	     string	$leaves[] = `ls -dag -leaf -showType $selectedItems[$i]`;
+
+		// Delete all the selected rigid bodies.
+		//
+	    for ($j = 0; $j < size( $leaves ); $j += 2)
+	    {
+		    if ($leaves[$j+1] == "rigidBody")
+		    {
+			    delete $leaves[$j];
+		    }
+		}
+	}
+}
+
+global proc createCharacterMenu( string $parent )
+//
+//	Creates entries in the "Select Character" subMenu
+//	in the Edit Menu.
+{
+	setParent -m $parent;
+	menu -e -dai $parent;
+
+	// Get a list of all character sets in the
+	// system, then generate an entry per set
+	//
+	string $charSets[] = `ls -sets`;
+
+	for( $character in $charSets )
+	{
+		if( `sets -q -t $character` == "gCharacterSet" )
+		{
+			menuItem -label $character -c ( "select -r " + $character );
+		}
+	}
+
+	if( `menu -q -ni $parent` == 0 ) 
+	//
+	//	No characters defined - create a default menu item
+	//	to inform the user
+	{
+		menuItem -label (uiRes("m_buildEditMenu.kNoQuickSelect")) -enable false;
+	}
+}
+
+global proc editMenuUpdate( string $parent ) {
+
+	string $lastName;
+	string $repeat = (uiRes("m_buildEditMenu.kEditRepeat"));
+
+	// Get the name of the  recent command
+	if (`repeatLast -q -numberOfHistoryItems` <= 0) {
+		menuItem -e -label $repeat -enable false 
+			( $parent + "|lastAgainItem" );
+	} else {
+		string $label[] = `repeatLast -cnl 1`;
+		$label[0] = makeStringSingleLine( $label[0] );
+		$lastName = $repeat + " \"" + $label[0] + "\"";
+		menuItem -e -label $lastName -enable true ( $parent + "|lastAgainItem" );
+	}
+
+	// Update undo & redo
+	//
+	string $actions[] = {"undo", "redo"};
+	string $labels[] = {(uiRes("m_buildEditMenu.kEditUndo")),
+						(uiRes("m_buildEditMenu.kEditRedo"))};
+	string $annots[] = {(uiRes("m_buildEditMenu.kEditUndoAnnot")) ,
+						(uiRes("m_buildEditMenu.kEditRedoAnnot"))};
+	int $i = 0;
+	while( $i < 2 ){
+		string $info = `eval("undoInfo -q -" + $actions[$i] + "Name")`;
+		string $label = $labels[$i];
+		string $annot = $annots[$i];
+		if( $info != "" ){
+			$annot += ": " + $info;
+			// Truncate to 25 characters at most, to be consistent with the
+			// recent command item; see kREPEAT_COMMAND_NAME_MAX_LENGTH in
+			// TrepeateCommandCmd.cpp
+			//
+			string $tokens[];
+			int $numTokens = `tokenize $info $tokens`;
+			if( $numTokens > 1 ){
+				$info = $tokens[0];
+			}
+			if( size($info) > 25 ){
+				$info = startString( $info, 25 ) + "...";
+			}
+			$label += " \"" + $info + "\"";
+		}
+		menuItem -e -annotation $annot -label $label ( $parent + "|" + $actions[$i] + "Item" );
+		$i++;
+	}
+
+	//Deferring some menuItems in Edit menu for Fur plugin
+	//
+	if(`pluginInfo -q -loaded Fur`)
+	{
+		HfFurCreateEditMenuUI();
+	}
+}
+
+global proc buildEditMenu ( string $parent ) {
+	int $dimWhenNoSelect = 0;
+	int $completeLicense = `licenseCheck -m "edit" -typ "complete"`;		
+
+	menu -e -postMenuCommand ("editMenuUpdate(\"" + $parent + "\")") $parent;
+
+	setParent -menu $parent;
+
+	if( `menu -q -ni $parent` != 0 ) {
+		//
+		//  Menu is built already - just return
+		//
+		return;
+	}
+
+	menuItem -label (uiRes("m_buildEditMenu.kUndo"))
+		-ecr false
+		-annotation (uiRes("m_buildEditMenu.kUndoAnnot"))
+		-command ("Undo") undoItem;
+	if( $dimWhenNoSelect )
+		dimWhen -f "UndoAvailable" ($parent+"|undoItem");
+
+	menuItem -label (uiRes("m_buildEditMenu.kRedo"))
+		-ecr false
+		-annotation (uiRes("m_buildEditMenu.kRedoAnnot"))
+		-command ("Redo") redoItem;
+	if( $dimWhenNoSelect )
+		dimWhen -f "RedoAvailable" ($parent+"|redoItem");
+
+	menuItem -label (uiRes("m_buildEditMenu.kRepeat"))
+		-ecr false -enable false -command ("RepeatLast")
+		-annotation (uiRes("m_buildEditMenu.kRepeatAnnot"))
+		lastAgainItem;
+	
+	scriptJob -permanent -parent $parent 
+		-event "RecentCommandChanged" ( "editMenuUpdate " + $parent );
+
+	scriptJob -permanent -parent $parent 
+		-event "Undo" ( "editMenuUpdate " + $parent );
+
+	scriptJob -permanent -parent $parent 
+		-event "Redo" ( "editMenuUpdate " + $parent );
+
+	menuItem -label (uiRes("m_buildEditMenu.kRecentCommands"))
+		-ecr false 
+		-annotation (uiRes("m_buildEditMenu.kRecentCommandsAnnot"))
+		-command ("RecentCommandsWindow");
+
+	menuItem -divider true -ld false;
+
+	menuItem -label (uiRes("m_buildEditMenu.kCut"))
+		-annotation (uiRes("m_buildEditMenu.kCutAnnot"))
+		-command ("CutSelected") cutItem;
+	
+	menuItem -label (uiRes("m_buildEditMenu.kCopy"))
+		-annotation (uiRes("m_buildEditMenu.kCopyAnnot"))
+		-command ("CopySelected") copyItem;
+	
+	menuItem -label (uiRes("m_buildEditMenu.kPaste"))
+		-annotation (uiRes("m_buildEditMenu.kPasteAnnot"))
+		-command ("PasteSelected") pasteItem;
+
+	//	Keys sub-menu.
+	//
+	menuItem -label (uiRes("m_buildEditMenu.kKeys")) -subMenu true;
+		menuItem -label (uiRes("m_buildEditMenu.kCutKeys"))
+			-annotation (uiRes("m_buildEditMenu.kCutKeysAnnot"))
+			-command ("CutKeys")
+			-dragMenuCommand "performCutKeyArgList 1 {\"2\", \"animationList\", \"0\"}" cutKeyItem;
+			menuItem -optionBox true 
+				-annotation (uiRes("m_buildEditMenu.kCutKeysOptionsAnnot"))
+				-command ("CutKeysOptions")
+				cutKeyDialogItem;
+
+		menuItem -label (uiRes("m_buildEditMenu.kCopyKeys"))
+			-annotation (uiRes("m_buildEditMenu.kCopyKeysAnnot"))
+			-command ("CopyKeys")
+			-dragMenuCommand "performCopyKeyArgList 1 {\"2\", \"animationList\", \"0\"}" copyKeyItem;
+			menuItem -optionBox true 
+				-annotation (uiRes("m_buildEditMenu.kCopyKeysOptionsAnnot"))
+				-command ("CopyKeysOptions")
+				copyKeyDialogItem;
+
+		menuItem -label (uiRes("m_buildEditMenu.kPasteKeys"))
+			-annotation (uiRes("m_buildEditMenu.kPasteKeysAnnot"))
+			-command ("PasteKeys")
+			-dragMenuCommand "performPasteKeyArgList 1 {\"2\", \"animationList\", \"0\"}" pasteKeyItem;
+			menuItem -optionBox true 
+				-annotation (uiRes("m_buildEditMenu.kPasteKeysOptionsAnnot"))
+				-command ("PasteKeysOptions")
+				pasteKeyDialogItem;
+
+		menuItem -label (uiRes("m_buildEditMenu.kDeleteKeys"))
+			-annotation (uiRes("m_buildEditMenu.kDeleteKeysAnnot"))
+			-command ("DeleteKeys")
+			-dragMenuCommand "performClearKeyArgList 1 {\"2\", \"animationList\", \"0\", \"0\"}" clearKeyItem;
+			menuItem -optionBox true 
+				-annotation (uiRes("m_buildEditMenu.kDeleteKeysOptionsAnnot"))
+				-command ("DeleteKeysOptions")
+				clearKeyDialogItem;
+
+		menuItem -label (uiRes("m_buildEditMenu.kScaleKeys"))
+			-annotation (uiRes("m_buildEditMenu.kScaleKeysAnnot"))
+			-command ("ScaleKeys")
+			-dragMenuCommand "performScaleKeyArgList 1 {\"2\", \"animationList\", \"0\"}" scaleKeyItem;
+			menuItem -optionBox true 
+				-annotation (uiRes("m_buildEditMenu.kScaleKeysOptionsAnnot"))
+				-command ("ScaleKeysOptions")
+				scaleKeyDialogItem;
+
+		menuItem -label (uiRes("m_buildEditMenu.kSnapKeys"))
+			-annotation (uiRes("m_buildEditMenu.kSnapKeysAnnot"))
+			-command ("SnapKeys")
+			-dragMenuCommand "performSnapKeyArgList 1 { \"2\", \"animationList\", \"0\" }" 
+			snapKeyItem;
+			menuItem -optionBox true 
+				-annotation (uiRes("m_buildEditMenu.kSnapKeysOptionsAnnot"))
+				-command ("SnapKeysOptions")
+				snapKeyDialogItem;
+
+		menuItem -label (uiRes("m_buildEditMenu.kBakeSimulation"))
+			-command ("BakeSimulation")
+			-annotation (uiRes("m_buildEditMenu.kBakeSimulationAnnot"))
+			-dragMenuCommand "performBakeSimulationArgList 1 {\"2\", \"animationList\"}"
+			bakeSimulationItem;
+			menuItem -optionBox true 
+				-annotation (uiRes("m_buildEditMenu.kBakeSimulationOptionsAnnot"))
+				-command ("BakeSimulationOptions")
+				bakeSimulationDialogItem;
+	    setParent -menu ..;
+			
+	menuItem -divider true -dividerLabel (uiRes("m_buildEditMenu.kEditDelete"));
+
+	menuItem -label (uiRes("m_buildEditMenu.kDelete"))
+		-annotation (uiRes("m_buildEditMenu.kDeleteAnnot"))
+		-command ("Delete") clearItem;
+	if( $dimWhenNoSelect )
+		dimWhen -f "SomethingSelected" ($parent+"|clearItem");
+
+	//	Delete by Type sub-menu.
+	//
+	deleteByTypeSubMenu("");
+
+	//	Delete all by Type sub-menu.
+	//
+	if( $dimWhenNoSelect )
+		dimWhen -f "SomethingSelected" ($parent+"|clearActiveItem");
+
+	global string $gEditDeleteAllByTypeSubMenu;
+	$gEditDeleteAllByTypeSubMenu = `menuItem 
+		-label (uiRes("m_buildEditMenu.kDeleteAllByType"))
+		-subMenu true -allowOptionBoxes false 
+		-to true clearAllTypesItem`;
+		
+		menuItem -label (uiRes("m_buildEditMenu.kDeleteAllHistory"))
+			-annotation (uiRes("m_buildEditMenu.kDeleteAllHistoryAnnot"))
+			-command ("DeleteAllHistory")
+			clearAllHistoryTypesItem;
+
+		menuItem -label (uiRes("m_buildEditMenu.kDeleteAllNonDeformerHistory"))
+			-annotation (uiRes("m_buildEditMenu.kDeleteAllNonDeformerHistoryAnnot"))
+			-c "BakeAllNonDefHistory" deleteAllNonDefHistoryItem;
+		
+		menuItem -divider true;
+
+		menuItem -label (uiRes("m_buildEditMenu.kDeleteAllChannels"))
+			-annotation (uiRes("m_buildEditMenu.kDeleteAllChannelsAnnot"))
+			-command ("DeleteAllChannels")
+			clearAllChannelsItem;
+
+		menuItem -label (uiRes("m_buildEditMenu.kDeleteAllStaticChannels"))
+			-annotation (uiRes("m_buildEditMenu.kDeleteAllStaticChannelsAnnot"))
+			-command ("DeleteAllStaticChannels")
+			clearAllStaticTypesItem;
+
+		menuItem -divider true;
+
+		menuItem -label (uiRes("m_buildEditMenu.kDeleteAllClips"))
+			-annotation (uiRes("m_buildEditMenu.kDeleteAllClipsAnnot"))
+			-command ("DeleteAllClips")
+			clearAllClipsItem;
+
+		menuItem -label (uiRes("m_buildEditMenu.kDeleteAllConstraints"))
+			-annotation (uiRes("m_buildEditMenu.kDeleteAllConstraintsAnnot"))
+			-command ("DeleteAllConstraints")
+			clearAllConstraintTypesItem;
+
+		menuItem -label (uiRes("m_buildEditMenu.kDeleteAllMotionPaths"))
+			-annotation (uiRes("m_buildEditMenu.kDeleteAllMotionPathsAnnot"))
+			-command ("DeleteAllMotionPaths")
+			clearAllMotionPathsItem;
+		menuItem -label (uiRes("m_buildEditMenu.kDeleteAllNonParticleExpressions"))
+			-annotation (uiRes("m_buildEditMenu.kDeleteAllNonParticleExpressionsAnnot"))
+			-command ("DeleteAllExpressions")
+			clearAllExprTypesItem;
+
+		menuItem -label (uiRes("m_buildEditMenu.kDeleteAllSounds"))
+			-annotation (uiRes("m_buildEditMenu.kDeleteAllSoundsAnnot"))
+			-command ("DeleteAllSounds")
+			clearAllSoundsItem;
+
+		menuItem -divider true;
+
+		menuItem -ltVersion "2015" -label (uiRes("m_buildEditMenu.kDeleteAllIKHandles"))
+			-annotation (uiRes("m_buildEditMenu.kDeleteAllIKHandlesAnnot"))
+			-command ("DeleteAllIKHandles")
+			clearAllIKHandleTypeItem;
+
+		menuItem -label (uiRes("m_buildEditMenu.kDeleteAllJoints"))
+			-annotation (uiRes("m_buildEditMenu.kDeleteAllJointsAnnot"))
+			-command ("DeleteAllJoints")
+			clearAllJointTypeItem;
+
+		menuItem -divider true;
+
+		if ($completeLicense) {
+			menuItem -label (uiRes("m_buildEditMenu.kDeleteAllClusters"))
+				-ltVersion 2016
+				-annotation (uiRes("m_buildEditMenu.kDeleteAllClustersAnnot"))
+				-command ("DeleteAllClusters");
+		}
+
+		menuItem -label (uiRes("m_buildEditMenu.kDeleteAllLattices"))
+			-annotation (uiRes("m_buildEditMenu.kDeleteAllLatticesAnnot"))
+			-command ("DeleteAllLattices");
+
+		menuItem -label (uiRes("m_buildEditMenu.kDeleteAllNonLinearDeformers"))
+			-annotation (uiRes("m_buildEditMenu.kDeleteAllNonLinearDeformersAnnot"))
+			-command ("DeleteAllNonLinearDeformers");
+
+		if ($completeLicense) {
+			menuItem -label (uiRes("m_buildEditMenu.kDeleteAllSculptObjects"))
+				-annotation (uiRes("m_buildEditMenu.kDeleteAllSculptObjectsAnnot"))
+				-command ("DeleteAllSculptObjects");
+		}
+
+		if ($completeLicense) {
+			menuItem -label (uiRes("m_buildEditMenu.kDeleteAllWires"))
+				-annotation (uiRes("m_buildEditMenu.kDeleteAllWiresAnnot"))
+				-command ("DeleteAllWires");
+		}
+		menuItem -divider true;
+
+		menuItem -label (uiRes("m_buildEditMenu.kDeleteAllCameras"))
+			-enable true 
+			-annotation (uiRes("m_buildEditMenu.kDeleteAllCamerasAnnot"))
+			-command ("DeleteAllCameras")
+			clearAllCamerasTypesItem;
+
+		menuItem -label (uiRes("m_buildEditMenu.kDeleteAllImagePlanes"))
+			-annotation (uiRes("m_buildEditMenu.kDeleteAllImagePlanesAnnot"))
+			-command ("DeleteAllImagePlanes")
+			clearAllImagePlanesTypesItem;
+
+		menuItem -label (uiRes("m_buildEditMenu.kDeleteAllLights"))
+			-enable true 
+			-annotation (uiRes("m_buildEditMenu.kDeleteAllLightsAnnot"))
+			-command ("DeleteAllLights")
+			clearAllLightsTypesItem;
+
+		menuItem -label (uiRes("m_buildEditMenu.kDeleteAllShadingGroups"))
+			-enable true 
+			-annotation (uiRes("m_buildEditMenu.kDeleteAllShadingGroupsAnnot"))
+			-command ("DeleteAllShadingGroupsAndMaterials")
+			clearAllMaterialTypesItem;
+
+		menuItem -divider true;
+
+		menuItem -label (uiRes("m_buildEditMenu.kDeleteAllAssets"))
+			-annotation (getRunTimeCommandAnnotation("DeleteAllContainers"))
+			-command ("DeleteAllContainers")
+			delParticlesItem;
+
+		if( `licenseCheck -m edit -type complete` == 1 )
+		{
+			menuItem -divider true;
+
+			if( fluidEditLicenseFound() ) {
+				menuItem -label (uiRes("m_buildEditMenu.kDeleteAllFluids"))
+					-annotation (uiRes("m_buildEditMenu.kDeleteAllFluidsAnnot"))
+					-command ("DeleteAllFluids")
+					clearFluidsItem;
+			}
+
+			menuItem -label (uiRes("m_buildEditMenu.kDeleteAllParticles"))
+				-annotation (uiRes("m_buildEditMenu.kDeleteAllParticlesAnnot"))
+				-command ("DeleteAllParticles")
+				selParticlesItem;
+
+			menuItem -label (uiRes("m_buildEditMenu.kDeleteAllRigidBodies"))
+				-annotation (uiRes("m_buildEditMenu.kDeleteAllRigidBodiesAnnot"))
+				-command ("DeleteAllRigidBodies")
+				selRigidBodiesItem;
+
+			menuItem -label (uiRes("m_buildEditMenu.kDeleteAllRigidConstraints"))
+				-annotation (uiRes("m_buildEditMenu.kDeleteAllRigidConstraintsAnnot"))
+				-command ("DeleteAllRigidConstraints")
+				selRigidConstraintsItem;
+		}
+
+		if(`isTrue "MayaCreatorExists"` && (`licenseCheck -m "edit" -typ "particlePaint"`)) {
+			menuItem -d 1;
+			menuItem -label (uiRes("m_buildEditMenu.kDeleteAllStrokes"))
+				-annotation (uiRes("m_buildEditMenu.kDeleteAllStrokesAnnot"))
+				-command ("DeleteAllStrokes")
+				clearAllStrokesItem;
+		}
+
+		menuItem -divider true;
+
+		if( nClothEditLicenseFound() ) {
+			menuItem -label (uiRes("m_buildEditMenu.kDeleteAllDynamicConstraints"))
+				-annotation (uiRes("m_buildEditMenu.kDeleteAllDynamicConstraintsAnnot"))
+				-command ("DeleteAllDynamicConstraints")
+				clearDynamicConstraintsItem;
+			menuItem -label (uiRes("m_buildEditMenu.kDeleteAllNCloths"))
+				-annotation (uiRes("m_buildEditMenu.kDeleteAllNClothsAnnot"))
+				-command ("DeleteAllNCloths")
+				clearNClothsItem;
+			menuItem -label (uiRes("m_buildEditMenu.kDeleteAllNParticles"))
+				-annotation (uiRes("m_buildEditMenu.kDeleteAllNParticlesAnnot"))
+				-command ("DeleteAllNParticles")
+				clearNParticlesItem;
+			menuItem -label (uiRes("m_buildEditMenu.kDeleteAllNRigids"))
+				-annotation (uiRes("m_buildEditMenu.kDeleteAllNRigidsAnnot"))
+				-command ("DeleteAllNRigids")
+				clearNRigidsItem;
+		}
+
+		setParent -menu ..;
+
+	menuItem -divider true -dividerLabel (uiRes("m_buildEditMenu.kEditDuplicate"));
+	
+	//	Duplicate.
+	//
+	menuItem -label (uiRes("m_buildEditMenu.kDuplicate"))
+		-annotation (uiRes("m_buildEditMenu.kDuplicateAnnot"))
+		-dmc "performDuplicate 2"
+		-command ("Duplicate") dupItem;
+	if( $dimWhenNoSelect )
+		dimWhen -f "SomethingSelected" ($parent+"|dupItem");
+
+	//	Duplicate special.
+	//
+	menuItem -label (uiRes("m_buildEditMenu.kDuplicateSpecial"))
+		-annotation (uiRes("m_buildEditMenu.kDuplicateSpecialAnnot"))
+		-dmc "performDuplicateSpecial 2"
+		-command ("DuplicateSpecial") dupSpecItem;
+		menuItem -optionBox true 
+			-annotation (uiRes("m_buildEditMenu.kDuplicateSpecialOptionsAnnot"))
+			-command ("DuplicateSpecialOptions")
+			dupSpecOptItem;
+	if( $dimWhenNoSelect )
+		dimWhen -f "SomethingSelected" ($parent+"|dupSpecItem");
+
+	//	Duplicate with transforms.
+	//
+	menuItem -label (uiRes("m_buildEditMenu.kDuplicateWithTransform"))
+		-annotation (uiRes("m_buildEditMenu.kDuplicateWithTransformAnnot"))
+		-command ("DuplicateWithTransform") smartDupItem;
+	if( $dimWhenNoSelect )
+		dimWhen -f "SomethingSelected" ($parent+"|smartDupItem");
+
+	// Transfer attribute values and connections
+	//
+	menuItem -label (uiRes("m_buildEditMenu.kTransferAttributeValues"))
+		-allowOptionBoxes true
+		-annotation (getRunTimeCommandAnnotation("TransferAttributeValues"))
+		-dmc "performTransferContainer 2"
+		-c TransferAttributeValues;
+
+		menuItem -optionBox true
+			-annotation (getRunTimeCommandAnnotation("TransferAttributeValuesOptions"))
+			-c TransferAttributeValuesOptions;
+
+	menuItem -divider true -dividerLabel (uiRes("m_buildEditMenu.kEditHierarchy"));
+
+	//	Group.
+	//
+	menuItem -label (uiRes("m_buildEditMenu.kGroup")) -allowOptionBoxes true
+		-annotation (uiRes("m_buildEditMenu.kGroupAnnot"))
+		-dmc "performGroup 2"
+		-command ("Group") groupItem;
+	if( $dimWhenNoSelect )
+		dimWhen -f "SomethingSelected" ($parent+"|groupItem");
+		menuItem -optionBox true 
+			-annotation (uiRes("m_buildEditMenu.kGroupOptionsAnnot"))
+			-command ("GroupOptions") groupOptItem;
+
+	//	Ungroup.
+	//
+	menuItem -label (uiRes("m_buildEditMenu.kUngroup")) -allowOptionBoxes true 
+		-annotation (uiRes("m_buildEditMenu.kUngroupAnnot"))
+		-dmc "performUngroup 2"
+		-command ("Ungroup") ungroupItem;
+	if( $dimWhenNoSelect )
+		dimWhen -f "SomethingSelected" ($parent+"|ungroupItem");
+		menuItem -optionBox true 
+			-annotation (uiRes("m_buildEditMenu.kUngroupOptionsAnnot"))
+			-command ("UngroupOptions")
+			ungrpOptItem;
+
+	//	Level of Detail sub-menu.
+	//
+	menuItem -label (uiRes("m_buildEditMenu.kLevelOfDetail")) 
+			-subMenu true -to true levelOfDetailItem;
+
+		menuItem -label (uiRes("m_buildEditMenu.kLevelOfDetailGroup"))
+			-image "levelOfDetail.png"
+			-annotation (uiRes("m_buildEditMenu.kLevelOfDetailGroupAnnot"))
+			-command ("LevelOfDetailGroup") -ec true lodGroupItem;
+
+		menuItem -label (uiRes("m_buildEditMenu.kLevelOfDetailUngroup"))
+			-image "levelOfDetailDelete.png"
+			-annotation (uiRes("m_buildEditMenu.kLevelOfDetailUngroupAnnot"))
+			-command ("LevelOfDetailUngroup") -ec true lodRemoveItem;
+		
+		setParent -menu ..;
+
+	menuItem -divider true -ld false;
+
+	//	Parent
+	//
+	menuItem -label (uiRes("m_buildEditMenu.kParent")) -allowOptionBoxes true 
+		-annotation (uiRes("m_buildEditMenu.kParentAnnot"))
+		-dmc "performParent 2"
+		-command ("Parent") parentItem;
+	if( $dimWhenNoSelect )
+		dimWhen -f "SomethingSelected" ($parent+"|parentItem");
+		menuItem -optionBox true 
+			-annotation (uiRes("m_buildEditMenu.kParentOptionsAnnot"))
+			-command ("ParentOptions")
+			parentOptItem;
+
+	//	Unparent
+	//
+	menuItem -label (uiRes("m_buildEditMenu.kUnparent")) -allowOptionBoxes true
+		-annotation (uiRes("m_buildEditMenu.kUnparentAnnot"))
+		-dmc "performUnparent 2"
+		-command ("Unparent") unparentItem;
+	if( $dimWhenNoSelect )
+		dimWhen -f "SomethingSelected" ($parent+"|unparentItem");
+		
+		menuItem -optionBox true 
+			-annotation (uiRes("m_buildEditMenu.kUnparentOptionsAnnot"))
+			-command ("UnparentOptions")
+			unparOptItem;
+
+	editMenuUpdate($parent);
+}

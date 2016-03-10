@@ -1,0 +1,291 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// hikLiveConnectionUI.mel
+//
+// Description:
+//	UI methods for the live connection window
+//
+
+///////////////////////////////////////////////////////////////////////
+// Local Methods...
+///////////////////////////////////////////////////////////////////////
+
+
+
+proc string cleanCharacterName(string $character)
+{
+	string $sortie = "";
+	string $buffer[];
+	tokenize $character ":" $buffer;
+	
+	for($s in $buffer)
+	{
+		$sortie += $s;
+	}
+	
+	return $sortie;
+}
+
+proc buildSendUpdateButtons( string $characters[] )
+{
+
+	for( $character in $characters )
+	{
+
+		string $cmd = "hikDoLiveSendAndConnectCharacter( \""+$character+"\" );";
+
+		button
+			-label   (uiRes("m_hikLiveConnectionUI.kSendBtnLabel"))
+			-command $cmd
+			("hikLiveSendUpdateButton"+cleanCharacterName($character));
+	}
+}
+
+proc buildLiveCheckBoxes( string $characters[] )
+{
+	for( $character in $characters )
+	{
+		string $isLiveCmd = "hikIsCharacterLiveActive(\""+$character+"\")";
+
+		string $cmd = "if( "+$isLiveCmd+"){ hikEnableCharacter( \""+$character+"\",0 ); hikCustomRigSetSourceToNone; }else{ hikSetLiveCharacterInput( \""+$character+"\"); hikCustomRigSetSourceToRemote; }; hikUpdateLiveConnectionUI()";
+
+		checkBox 
+			-label         ""
+			-value         ( hikIsCharacterLiveActive( $character ) )
+			-changeCommand $cmd;
+	}
+}
+
+
+
+proc buildIPLabels( string $characters[] )
+{
+	for( $character in $characters )
+	{
+		string $liveNode = hikGetLiveStateClient( $character, false );
+
+		textField
+			-text ( $liveNode == "" ? "" : `getAttr( $liveNode + ".serverName" )` )
+			-changeCommand ("setAttr (hikGetLiveStateClient(\""+$character+"\",true)+\".serverName\") -type \"string\" (`textField -q -text (\""+$character+"\"+\"serverNameTextField\")`)")
+			( $character + "serverNameTextField" );
+	}
+}
+
+proc string getColumnChild( string $layout, int $childIndex )
+{
+
+	int $nbChild = `columnLayout -q -numberOfChildren $layout`;
+
+
+	if( $nbChild > $childIndex )
+	{
+		string $childArray[] = `columnLayout -q -childArray $layout`;
+
+		return $childArray[$childIndex];
+	}
+	return "";
+}
+
+proc setUIState( string $character, int $UIline, string $sendCol, string $activeCol, int $remotelyAvailable )
+{
+	string $sendButton = getColumnChild( $sendCol, $UIline );
+	string $activeCheck = getColumnChild( $activeCol, $UIline );
+
+	if( $remotelyAvailable )
+	{
+		int $live = hikIsCharacterLiveActive( $character );
+		
+		button -e -enable (!$live) -label (uiRes("m_hikLiveConnectionUI.kSendBtnLabelUpdate")) $sendButton;
+		checkBox -e -enable 1 -value $live $activeCheck;
+	}
+	else
+	{
+		button -e -label (uiRes("m_hikLiveConnectionUI.kSendBtnLabelSend")) -enable 1 $sendButton;
+		checkBox -e -value 0 -enable 0 $activeCheck;
+	}
+}
+
+proc buildLiveConnectionLayout()
+{
+	string $characters[ ] = `ls -type HIKCharacterNode`;
+
+	scrollLayout layout;
+	
+		rowColumnLayout -numberOfColumns 5;
+			
+			frameLayout 
+				-label        (uiRes("m_hikLiveConnectionUI.kCharacterColumn"))
+				-marginWidth  5
+				-marginHeight 4;
+				
+				columnLayout -rowSpacing 17;
+					for( $character in $characters )
+						text -label $character;
+				setParent ..;
+			setParent..;
+			
+			frameLayout 
+				-label       (uiRes("m_hikLiveConnectionUI.kSendUpdateColumn"))
+				-marginWidth 5;
+				
+				string $sendColumn = `columnLayout -rowSpacing 7`;
+					buildSendUpdateButtons( $characters );
+				setParent ..;
+			setParent..;
+			
+			frameLayout 
+				-label        (uiRes("m_hikLiveConnectionUI.kLiveColumn"))
+				-marginWidth  5
+				-marginHeight 5;
+				
+				string $liveColumn = `columnLayout -rowSpacing 17`;
+					buildLiveCheckBoxes( $characters );
+				setParent ..;
+			setParent..;
+
+			frameLayout 
+				-label        (uiRes("m_hikLiveConnectionUI.kIPColumn"))
+				-marginWidth  5
+				-marginHeight 4;
+
+				columnLayout -rowSpacing 10;
+					buildIPLabels( $characters );
+				setParent ..;
+			setParent ..;
+
+		 setParent ..;
+		 
+		 rowLayout -numberOfColumns 3;
+			
+			button
+				-label (uiRes("m_hikLiveConnectionUI.kSendAllButton"))
+				-enable 0;
+			
+			button
+				-label (uiRes("m_hikLiveConnectionUI.kUpdateAllButton"))
+				-enable 0;
+
+		 
+			button
+				-label (uiRes("m_hikLiveConnectionUI.kSyncStateButton"))
+				-command "hikUpdateLiveConnectionUI"
+				hikLiveSyncStateButton;
+		 
+		 setParent ..;
+
+	string $availCharacters[] = hikGetRawRemoteCharacters( false /* onlyLiveClients */ );
+
+	int $UIline = 0;
+	for( $character in $characters )
+	{
+		int $remotelyAvailable = stringArrayContains( "Constraint::"+$character, $availCharacters );
+
+		// Quering the device list break any actual connection, reenable the connections
+		if( $remotelyAvailable )
+		{
+			string $liveNode = hikGetLiveStateClient( $character, 0 );
+
+			if( $liveNode != "" )
+			{
+				if( `getAttr ($liveNode+".live")` )
+				{
+					hikSetLiveState( $character, 1 );
+				}
+			}
+		}
+
+		// refresh UI
+		setUIState( $character, $UIline, $sendColumn, $liveColumn, $remotelyAvailable );
+		$UIline++;
+	}
+}
+
+proc buildLiveConnectionTool( )
+{
+	
+	window
+		-title (uiRes("m_hikLiveConnectionUI.kLiveConnectionWindow"))
+		hikLiveConnectionWindow;
+
+	buildLiveConnectionLayout();
+
+	showWindow;
+
+ }
+
+
+///////////////////////////////////////////////////////////////////////
+// Global Methods...
+///////////////////////////////////////////////////////////////////////
+
+global proc hikUpdateLiveConnectionUI( )
+{
+	if ( `window -exists hikLiveConnectionWindow` )
+	{
+		
+		setParent hikLiveConnectionWindow;
+		
+		deleteUI -layout layout;
+
+		buildLiveConnectionLayout();
+		
+	}
+}
+
+// This proc enables or disables the buttons send and sync states from the live connection UI.
+// If only a send button is pressed, we want to only disable the button for this character and the sync state
+global proc hikEnableDisableLiveConnectionButton( int $enable, string $specificCharacter )
+{
+	
+	if ( `window -exists hikLiveConnectionWindow` )
+	{
+		if($specificCharacter != "")
+		{ // affect a single send button 
+
+			// verify if the live connection is on
+	
+			string $sendButton = "hikLiveSendUpdateButton" + cleanCharacterName($specificCharacter);
+			
+			if(`button -exists $sendButton`)
+			{
+				if( !$enable || !hikIsCharacterLiveActive($specificCharacter) ) 
+				{
+					button -e -enable $enable $sendButton;									
+				}
+			}
+		}
+		
+		// now the sync state button
+		button -e -enable $enable hikLiveSyncStateButton;
+	}
+}
+
+// Build and show the live connection UI
+global proc hikShowLiveConnectionTool( )
+{
+	if ( `window -exists hikLiveConnectionWindow` )
+		deleteUI -window hikLiveConnectionWindow;
+
+	buildLiveConnectionTool( );
+}
+

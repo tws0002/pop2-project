@@ -1,0 +1,307 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  3 Aug 1998
+//
+//
+//  Procedure Name:
+//      skinClusterInfluence
+//
+//  Description:
+//    This procedure is used to add or remove influence transforms
+//    from one or more skin clusters.  The last item in the
+//    selection list is the transform in question.  The rest of
+//    the items are the skinClustered geometries to be affected. 
+//    Note: Only one influence transform can be added/deleted at a time
+//
+//  Arguments:
+//    op:    The operation to be performed
+//           1 = add influence
+//           2 = remove influence
+//    flags: Any extra flags needed to run the command
+//
+global proc skinClusterInfluence(int $op, string $flags)
+{
+	// Get the currently selected objects
+	//
+	string $sel[] = `ls -sl`;
+	int $len = size($sel);
+	if ($len < 2)
+		error( (uiRes("m_skinClusterInfluence.kSelectSkinGeoms")));
+
+	// Separate the selected objects into skin objects and non-skin objects
+	//
+	string $skinClusters[];
+	string $influences[];
+	int $skinClusterCount = 0;
+	int $infCount = 0;
+	int $geomInfCount = 0;
+	for($i=0;$i < $len; $i++)
+	{
+		string $item = $sel[$i];
+		string $allShapes[] = `ls -lf -dag -type controlPoint $item`;
+
+		if (size($allShapes)) {
+			int $startSkinClusterCount = $skinClusterCount;
+			string $shape;
+			for ($shape in $allShapes)
+			{
+				int $io = `getAttr ($shape+".io")`;
+				if ($io == 1)
+					continue;
+				
+				string $skinCluster = findRelatedSkinCluster($shape);
+				if ($skinCluster != "") {
+					$skinClusters[$skinClusterCount++] = $skinCluster;
+				}
+			}
+			if ($skinClusterCount == $startSkinClusterCount) {
+				if (`nodeType $item` == "joint") {
+					$influences[$infCount++] = $item;
+				} else {
+					string $children[] = `ls -lf -dag -type controlPoint -type locator $item`;
+					for ($child in $children) {
+						$influences[$infCount++] = $child;
+					}
+					$geomInfCount++;
+				}
+			}
+		} else {
+			$influences[$infCount++] = $item;
+		}
+	}
+
+	if ($skinClusterCount == 0)
+		error( (uiRes("m_skinClusterInfluence.kNoSkinnedObjects")));
+
+	if ($infCount == 0) {
+		if ($len == 2) {
+			$skinClusterCount = 1;
+			$infCount = 1;
+			$influences[0] = $sel[1];
+			string $children[] = `ls -lf -dag -type controlPoint $sel[1]`;
+			if (size($children))
+				$geomInfCount = 1;
+
+			warning( (uiRes("m_skinClusterInfluence.kOnlySkinnedObjs")));
+		}
+
+		if ($infCount == 0) {
+			error( (uiRes("m_skinClusterInfluence.kInvalidSkinSelection")));
+			return;
+		}
+	}
+
+	// Check if the -useGeometry flag is on 
+	//
+	int $useGeometry = false;
+	if ($geomInfCount > 0) {
+		string $ug = match("-ug",$flags);
+		$useGeometry = ($ug == "-ug");
+	}
+
+	string $object;
+	string $baseShapes[];
+	int $objectCount = 0;
+	int $allBaseShapesExist = 1;
+
+	// Make the base shapes for the objects that need it
+	//
+	if ($useGeometry) {
+		for ($object in $influences) {
+			int $io = `getAttr ($object+".io")`;
+			if ($io == 1)
+				continue;
+
+			string $nodeType = `nodeType $object`;
+			string $baseShape;
+
+			if ($nodeType == "mesh" || $nodeType == "nurbsCurve" || $nodeType == "nurbsSurface") {
+				// Make the base object
+				//
+				string $dupL[] = `influenceDuplicate $object`;
+				if (size($dupL) != 0) {
+					// Rename the transform
+					//
+					string $parentNameL[] = `listRelatives -parent $object`;
+					string $parentName = $parentNameL[0];
+					string $newName = `rename $dupL[0] ($parentNameL[0]+"Base")`;
+
+					// Get from the transform to the shape
+					//
+					string $shapeL[] = `ls -lf -dag $newName`;
+					if (size($shapeL) == 1)
+						$baseShape = $shapeL[0];
+				}
+			} else {
+				// No base shape needed here
+				//
+				$baseShape = "";
+			}
+
+			if("" == $baseShape)
+				$allBaseShapesExist = 0;
+
+			$baseShapes[$objectCount++] = $baseShape;
+		}
+	}
+
+	// can issue a single command if we are not using geometry, or if
+	// we are using geometry and all geometry has a base shape
+	int $singleCommand = (0 == $useGeometry || $allBaseShapesExist);
+
+	// Perform the actual operation
+	//
+	string $skinCluster;
+	for($ii = 0; $ii < $skinClusterCount; $ii++) {
+
+		string $skinCluster = $skinClusters[$ii];
+		string $addInflCmd = ("skinCluster -e "+$flags);
+		string $disableRenderabilityCmd = "";
+		int    $newObjectToAdd = false;
+
+		string $existingInfluences[] = `skinCluster -q -inf $skinCluster`;
+		int $objectCount = 0;
+		for ($object in $influences) {
+
+			// Make sure that the node still exists
+			//
+			string $exists[] = `ls $object`;
+			if (size($exists) == 0)
+				continue;
+
+			// Ignore intermediate objects
+			//
+			int $io = `getAttr ($object+".io")`;
+			if ($io == 1)
+				continue;
+
+			// Find the transform of the driver 
+			//
+			string $nodeType = `nodeType $object`;
+			if ($nodeType != "transform" && $nodeType != "joint") {
+				string $parentL[] = `listRelatives -path -parent $object`;
+				$object = $parentL[0];
+			}
+
+			// Add influence
+			//
+			if ($op == 1) {
+
+				// If the influence is not already being used by the skinCluster.
+				//
+				if (stringArrayFind($object, 0, $existingInfluences) == -1) {
+
+					// If the object is a shape, disable its renderability.
+					//
+					string $isShape[] = `ls -type controlPoint $object`;
+					string $childIsShape[] = `listRelatives -type controlPoint $object`;
+					if (size($isShape) || size($childIsShape))
+						$disableRenderabilityCmd += ("disableRenderabilityAttrs "+$object+";");
+
+					string $shape = $baseShapes[$objectCount];
+					if( $singleCommand) {
+						// accumulate objects in command string
+						$addInflCmd += (" -ai "+$object);
+						if ($useGeometry)
+							$addInflCmd += (" -bsh " + $shape);
+
+					} else {
+						// issue one command per object
+						string $cmd = "skinCluster -e "+$flags+" -ai "+$object;
+						if (size($shape))
+							$cmd += " -bsh "+ $shape;
+
+						$cmd += " "+$skinCluster;
+						catch(evalEcho($cmd));
+					}
+
+					$newObjectToAdd = true;
+				}
+				else // otherwise, print a message
+				{
+					string $fmt = (uiRes("m_skinClusterInfluence.kDuplicateInfluence"));
+					string $msg = `format -s $object -s $skinCluster $fmt`;
+					warning($msg);
+				}
+			}
+			else
+			{
+				// Ignore the objects that are not connected to the skinCluster
+				//
+				string $connL[] = `listConnections -s false -d true $object`;
+				for ($conn in $connL) {
+					if ($conn == $skinCluster) {
+						string $cmd = "skinCluster -e "+$flags+" -ri "+$object+" "+$skinCluster;
+						catch(evalEcho($cmd));
+						break;
+					}
+				}
+			}
+
+			$objectCount++;
+		}
+
+		if ($op == 1 && $newObjectToAdd) {
+			if ($singleCommand) {
+				$addInflCmd += (" "+$skinCluster);
+				evalEcho $addInflCmd;
+			}
+			evalEcho $disableRenderabilityCmd;
+		}
+	}
+	
+	// Check if the base shapes are successfully connected 
+	// to a skinCluster node.  If not (the operation failed),
+	// they should be deleted
+	//
+	if ($op == 1)
+	{
+		for ($baseShape in $baseShapes) {
+			if ($baseShape == "")
+				continue;
+
+			string $connL[] = `listConnections -s false -d true $baseShape`;
+
+			int $connected = false;
+			for ($conn in $connL)
+				if (`nodeType $conn` == "skinCluster") {
+					$connected = true;
+					break;
+				}
+
+			if (!$connected) {
+				// delete their parent transform
+				//
+				string $parentL[] = `listRelatives -path -parent $baseShape`;
+				delete $parentL[0];
+			}
+		}
+	}
+
+	// At the end of all the operations, select just 
+	// the influence objects involved
+	//
+	select -r $influences;
+}
+

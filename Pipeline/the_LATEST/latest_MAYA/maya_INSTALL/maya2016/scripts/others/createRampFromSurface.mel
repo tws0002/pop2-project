@@ -1,0 +1,149 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+includeEffectsGlobals();
+
+global proc string createRampFromSurface( string $surface, int $width, int $height, int $hideRamps )
+{
+	string $surfaceShape = getShapeFromObject( $surface, 0, 0 );
+	if( `nodeType $surfaceShape` != "nurbsSurface" )
+	{
+		return "";
+	}
+
+	float $minWidth = `getAttr ($surfaceShape+".minValueU")`;
+	float $maxWidth = `getAttr ($surfaceShape+".maxValueU")`;
+	float $minHeight = `getAttr ($surfaceShape+".minValueV")`;
+	float $maxHeight = `getAttr ($surfaceShape+".maxValueV")`;
+
+	$width = max( 2, $width );
+	float $rangeU = $maxWidth - $minWidth;
+	float $stepU = 1.0 / ( $width - 1.0 );
+
+	$height = max( 2, $height );
+	float $rangeV = $maxHeight - $minHeight;
+	float $stepV = 1.0 / ( $height - 1.0 );
+
+	string $ramps[];
+	clear( $ramps );
+
+	string $ramp;
+	//
+	// If we were told to hide the generated ramps, then we
+	// just create them with the "createNode" command.  This
+	// does not register them as shading nodes so they will not
+	// show up in "Textures" tab of the Visor, HyperShade, and
+	// MultiLister.  They can easily clutter the UI with unneeded
+	// ramp textures.
+	//
+	// If we do not want to hide the rams, then we use the
+	// "shadingNode" command to create the ramps.  This creates
+	// them and registers them as shading nodes to be displayed
+	// in the UI.
+	//
+	// Regardless of the hiding option, they will show up in both
+	// the HyperGraph and HyperShade's network representations.
+	//
+	if( $hideRamps == 1 )
+	{
+		createNode ramp;
+		$ramp = getSelectedObject( 0 );
+	}
+	else
+	{
+		$ramp = `shadingNode -asTexture ramp`;
+	}
+	select $ramp;
+	rename $ramp ("SurfaceRamp#");
+	$ramp = getSelectedObject( 0 );
+	$ramps = appendSingleToStringArray( $ramps, $ramp );
+	setAttr ($ramp+".type") 1;
+	setAttr ($ramp+".interpolation") 4;
+
+	createNode plusMinusAverage;
+	rename "SurfaceRampCenter#";
+	string $centerPMA = getSelectedObject( 0 );
+	setAttr ($centerPMA+".operation") 3;
+
+	addAttr -at message -ln "rampCenter" $ramp;
+	connectAttr ($centerPMA+".message") ($ramp+".rampCenter");
+
+	//
+	// This polygonal plane will give an exact representation of the
+	// points on the surface that are being sampled to generate the
+	// ramps.  Its vertices will be driven directly by the pointOnSurfaceInfo
+	// nodes that sample the surface.
+	//
+	polyPlane -w 0.00001 -h 0.00001 -sx ($width-1) -sy ($height-1) -ch 0;
+	rename "rampResolutionPlane#";
+	string $polyPlane = getSelectedObject( 0 );
+
+	int $u, $v;
+	for( $u = 0; $u < $width; $u ++ )
+	{
+		float $ratioU = $u / ($width - 1.0);
+		setAttr ($ramp+".colorEntryList["+$u+"].position") $ratioU;
+		string $rampV;
+		if( $hideRamps == 1 )
+		{
+			createNode ramp;
+			$rampV = getSelectedObject( 0 );
+		}
+		else
+		{
+			$rampV = `shadingNode -asTexture ramp`;
+		}
+		select $rampV;
+		rename $rampV ("SubSurfaceRamp#");
+		$rampV = getSelectedObject( 0 );
+		setAttr ($rampV+".interpolation") 4;
+		$ramps = appendSingleToStringArray( $ramps, $rampV );
+		for( $v = 0; $v < $height; $v ++ )
+		{
+			int $centerIndex = $u * $height + $v;
+			float $ratioV = $v / ($height - 1.0);
+			setAttr ($rampV+".colorEntryList["+$v+"].position") $ratioV;
+
+			string $posi = `createNode pointOnSurfaceInfo`;
+			connectAttr ($surfaceShape+".worldSpace[0]") ($posi+".inputSurface");
+			setAttr ($posi+".turnOnPercentage") 1;
+			setAttr ($posi+".parameterU") $ratioU;
+			setAttr ($posi+".parameterV") $ratioV;
+
+			connectAttr ($posi+".result.position") ($rampV+".colorEntryList["+$v+"].color");
+			connectAttr ($posi+".result.position") ($centerPMA+".input3D["+$centerIndex+"]");
+
+			//
+			// Connect this pointOnSurfaceInfo node's resulting position to the
+			// corresponding vertex of the resolutionPlane.
+			//
+			connectAttr ($posi+".result.position") ($polyPlane+".vtx["+($v*$width+$u)+"]");
+		}
+		connectAttr ($rampV+".outColor") ($ramp+".colorEntryList["+$u+"].color");
+	}
+
+	// select $ramps;
+	// sets -name "RampFromSurfaceSet#";
+
+	select $ramp $polyPlane;
+	return $ramp;
+}
+

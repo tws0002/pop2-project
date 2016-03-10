@@ -1,0 +1,145 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+// Description:  This procedure is called to start the ipr render
+//      for maya software renderer.
+//
+global proc mayaSoftwareStartIprRender(
+    string $editor, int $resolutionX, int $resolutionY, string $camera)
+{
+    string $result;
+    string  $globals[]      = `ls -renderGlobals`;
+
+	//
+	// Make sure at least one of the IPR Render options is enabled,
+	// or else doing an IPR render would be useless
+	//
+	int $doShading = `optionVar -query iprRenderShading`;
+	int $doBlur = `optionVar -query iprRenderMotionBlur`;
+
+	if (!$doShading && !$doBlur) {
+		warning (uiRes("m_mayaSoftwareStartIprRender.kRequirementsofIPRWarning"));
+		print((uiRes("m_mayaSoftwareStartIprRender.kShading")));
+		print((uiRes("m_mayaSoftwareStartIprRender.kMotionBlur")));
+		warning (uiRes("m_mayaSoftwareStartIprRender.kIPROptionsWarning"));
+		return;
+	}
+
+	// Run the pre mel script
+	string $melScript = `getAttr defaultRenderGlobals.preMel`;
+	if( $melScript != "" ) eval $melScript;
+
+    // Save the maya software render's global IPR settings
+    //
+    int $prevCreateIprFile =
+        `getAttr ($globals[0] + ".createIprFile")`;
+    int $prevIprRenderShading =
+        `getAttr ($globals[0] + ".iprRenderShading")`;
+    int $prevIprRenderShadowMaps =
+        `getAttr ($globals[0] + ".iprRenderShadowMaps")`;
+    int $prevIprRenderMotionBlur =
+        `getAttr ($globals[0] + ".iprRenderMotionBlur")`;
+
+    setAttr ($globals[0]+".createIprFile")
+        true;
+    setAttr ($globals[0]+".iprRenderShading")
+        `optionVar -query iprRenderShading`;
+    setAttr ($globals[0]+".iprRenderShadowMaps")
+        `optionVar -query iprRenderShadowMaps`;
+    setAttr ($globals[0]+".iprRenderMotionBlur")
+        `optionVar -query iprRenderMotionBlur`;
+
+    // Perform the IPR render
+    //
+    global int $renderViewShadowsMode;
+    global int $renderViewGlowPassMode;
+
+	int $doShadows = !$renderViewShadowsMode;
+	int $doGlowPass = !$renderViewGlowPassMode;
+
+
+	string $command;
+	int $renderError;
+
+	string $renderer = "mayaSoftware";
+
+	$command = `renderer -query -iprRenderProcedure $renderer`;
+	$renderError = catch( 
+			            $result = 
+				            `eval $command 
+					              $resolutionX 
+					              $resolutionY 
+					              $doShadows 
+					              $doGlowPass 
+					              $camera`
+	                    );
+
+    string $renUIName = renderWindowCaption("IPR", 0);
+	renderWindowEditor -edit -pca $renUIName $editor;
+
+    // Reset the IPR setting
+    //
+    setAttr ($globals[0] + ".createIprFile") $prevCreateIprFile;
+    setAttr ($globals[0] + ".iprRenderShading") $prevIprRenderShading;
+    setAttr ($globals[0] + ".iprRenderShadowMaps") $prevIprRenderShadowMaps;
+    setAttr ($globals[0] + ".iprRenderMotionBlur") $prevIprRenderMotionBlur;
+
+    if (!$renderError) {
+        // Tell the IPR engine about the IPR file which has just
+        // been created.
+        //
+        renderWindowLoadIprFileCallback($editor, $result, "");
+
+        renderWindowRefreshLayout($editor);
+
+        // Prompt the user to select a region to begin tuning
+        //
+        renderWindowEditor 
+            -edit
+            -caption (uiRes("m_mayaSoftwareStartIprRender.kSelectRegionCaption"))
+            $editor;
+
+		// If we have rendered an IPR image without motion blur, turn off
+		// update motion blur on the IPR engine. Otherwise, set update 
+		// motion blur according to the user's choice in the IPR->IPR 
+		// Tuning Options menu.
+		// If we didn't turn off update motion blur when there is no motion
+		// blur, Pause IPR Tuning would prevent swatches from being updated.
+		//
+		if ($doBlur)
+		{
+			iprEngine -edit
+				-updateMotionBlur 	`optionVar -query updateMotionBlur`
+				defaultIprEngine;
+		}
+		else
+		{
+			iprEngine -edit
+				-updateMotionBlur 	false
+				defaultIprEngine;
+		}
+    }
+
+	// run post mel script
+	$melScript = `getAttr defaultRenderGlobals.postMel`;
+	if( $melScript != "" ) eval $melScript;
+
+}

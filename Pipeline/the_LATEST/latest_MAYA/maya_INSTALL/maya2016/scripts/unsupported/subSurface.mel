@@ -1,0 +1,231 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//	Description :
+//		To extract a bounded portion on a NURBS surface defined
+//		by four selected isoparams on the surface.
+//
+//	Usage :
+//		Select 4 isoparams which enclose a region on a NURBS surface.
+//		execute the script "subSurface" : 
+//		return the name of the nurbs surface extracted.
+
+proc float[] minMaxSrfRange( string $srf ) 
+//
+//
+//
+{
+	float $range[] ;
+	string $attr = $srf + ".mnu" ;
+	$range[0] = `getAttr $attr` ;
+	$attr = $srf + ".mnv" ;
+	$range[1] = `getAttr $attr` ;
+	$attr = $srf + ".mxu" ;
+	$range[2] = `getAttr $attr` ;
+	$attr = $srf + ".mxv" ;
+	$range[3] = `getAttr $attr` ;
+	return $range ;
+}
+
+proc string extractSubSurface(
+	string $srf,
+	float $umin,
+	float $vmin,
+	float $umax,
+	float $vmax )
+//
+//	Description :
+//
+{
+	string $extract = "" ;
+	//
+	// detach surface  along umin, umax
+	//
+	string $diru = " -d 1 " ; 
+	string $resultsu[] ;
+	string $cmd = "detachSurface " ;
+	$cmd += " -ch 0 " ;		
+	$cmd += " -rpo 0 " ;
+	$cmd += $diru ;
+	$cmd += " -p " ;
+	$cmd += $umin ;
+	$cmd += " -p " ;
+	$cmd += $umax ;
+	$cmd += " " ;
+
+	$cmd += $srf  ;
+	$resultsu = eval($cmd) ;
+	if( size($resultsu) == 0 ) return $extract ;
+
+	// get the piece we really want.
+	//
+	int $found = -1 ;
+	int $n = size($resultsu) ;
+	float $midu = 0.5 * ( $umin + $umax ) ;
+	float $minu, $minv ;
+	float $maxu, $maxv ;
+	for( $i = 0 ; $i < $n ; $i++ ) {
+		float $rangeu[] ;
+		$rangeu = minMaxSrfRange( $resultsu[$i] ) ;
+		if( $midu <= $rangeu[2] && $midu >= $rangeu[0] ) {
+			$found = $i;
+			break ;
+		} 
+	}
+	if( $found == -1  )  {
+		print((uiRes("m_subSurface.kFailedInDetachAlongU")) );
+		delete $resultsu ;
+		return $extract ;
+	}
+
+	// cut the found surface in v direction.
+	//
+	string $dirv = " -d 0 " ; 
+	$cmd = "detachSurface " ;
+	$cmd += " -ch 0 " ;		
+	$cmd += " -rpo 0 " ;
+	$cmd += $dirv ;
+	$cmd += " -p " ;
+	$cmd += $vmin ;
+	$cmd += " -p " ;
+	$cmd += $vmax ;
+	string $ssrf = $resultsu[$found] ;
+	$cmd += " " ;
+	$cmd += $ssrf ;
+	string $resultsv[] = eval($cmd) ;
+	if( size($resultsv) == 0 ) {
+		delete $resultsu ;
+		return $extract ;
+	}
+	int $n = size($resultsv) ;
+	float $midv = 0.5 * ( $vmin + $vmax ) ;
+	for( $i = 0 ; $i < $n ; $i++ ) {
+		float $rangev[] ;
+		$rangev = minMaxSrfRange( $resultsv[$i] ) ;
+		if( $midv <= $rangev[3] && $midv >= $rangev[1] ) {
+			$found = $i;
+			break ;
+		} 
+	}
+
+	delete $resultsu ;
+	if( $found == -1  )  {
+		print((uiRes("m_subSurface.kFailedInDetachAlongV"))) ;
+		delete $resultsv ;
+		return $extract ;
+	}
+
+	$extract = $resultsv[$found] ;	
+	for( $i = 0 ; $i < $n ; $i++ ) {
+		if( $i != $found ) delete $resultsv[$i] ;
+	}
+	return $extract ;
+}
+
+global proc string subSurface()
+//
+// Description :
+//		To extract only the enclosed portion of
+//		the surface defined by the four selected
+//		isoparms on the surface.
+//	
+//
+{
+
+	// get the surface from the select list.
+	//
+	global int $gSelectIsoparmsBit;
+
+	string $slist[] = `ls -sl` ;
+	if( size($slist) == 0 ) {
+        error (uiRes("m_subSurface.kErrorSelectSurface"));
+        return "" ;
+    }
+
+	string $srf[] ;
+    $srf = `filterExpand -ex true -sm $gSelectIsoparmsBit $slist` ;
+	if( size($srf) != 4 ) {
+        error (uiRes("m_subSurface.kErrorSelectSurfaceDefinedBy4IsoParms"));
+        return "" ;
+    }
+
+	// get the surface. and the region (min,max) in
+	// (u,v).
+	//
+	int $i ;
+	float $uvals[] ;
+	float $vvals[] ;
+	float $minu, $minv ;
+	float $maxu, $maxv ;
+	int $uindex = 0 ;
+	int $vindex = 0 ;
+
+	for( $i = 0 ; $i < 4 ; $i++ ) {
+		string $foundUStr = `match "\\.u\\[" $srf[$i]`;
+		string $foundVStr = `match "\\.v\\[" $srf[$i]`;
+		int $foundU = 0 ;
+		if(size($foundUStr) > 0 ) $foundU = 1 ;
+		int $foundV = 0 ;
+		if(size($foundVStr) > 0 ) $foundV = 1 ;
+		if( !$foundU && !$foundV ) continue ;
+
+		string $buffer[] ;
+		string $token = "[" ;
+		tokenize($srf[$i], "[", $buffer);
+
+		// get the parameter value.
+		//
+		string $b[] ;
+		$token = "]" ;
+		tokenize( $buffer[1], $token, $b) ; 	
+
+		if( $foundU ) {
+			$uvals[$uindex] = $b[0] ;
+			$uindex++ ;
+		} else if( $foundV ) {
+			$vvals[$vindex] = $b[0] ;
+			$vindex++ ;
+		}
+	}
+
+	string $buffer[] ;
+    tokenize($srf[0], ".", $buffer);
+    string $surface = $buffer[0];
+
+	$umin = $uvals[0] ;
+	$umax = $uvals[1] ;
+	if( $uvals[0] > $uvals[1] ) {
+		$umin = $uvals[1] ;
+		$umax = $uvals[0] ;
+	}
+
+	$vmin = $vvals[0] ;
+	$vmax = $vvals[1] ;
+	if( $vvals[0] > $vvals[1] ) {
+		$vmin = $vvals[1] ;
+		$vmax = $vvals[0] ;
+	}
+
+	string $subSrf = extractSubSurface($surface,$umin,$vmin,$umax,$vmax);
+	select -r $subSrf ;
+	return $subSrf ;
+}

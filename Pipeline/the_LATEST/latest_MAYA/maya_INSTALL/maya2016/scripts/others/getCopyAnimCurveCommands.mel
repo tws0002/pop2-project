@@ -1,0 +1,137 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  July 20, 1999
+//
+//	Procedure Name:
+//		getCopyAnimCurveCommands
+//
+//	Description:
+//		This is a helper proc which will return a string array of
+//	the commands necessary to copy an animCurve
+//
+//  Input Arguments:
+//		string $animCurve		The name of the object
+//
+//  Return Value:
+//      string array of commands to create a copy of the animCurve
+//
+
+global proc string[]
+getCopyAnimCurveCommands (string $animCurve)
+{
+	string $commands[];
+	int $entry = 0;
+
+	// Make sure we are trying to copy an animCurve
+	//
+	if (!isAnimCurve ($animCurve)) {
+		return ($commands);
+	}
+
+	// Set the proper units
+	//
+	string $angleUnits = `currentUnit -query -angle`;
+	string $linearUnits = `currentUnit -query -linear`;
+	string $timeUnits = `currentUnit -query -time`;
+	$commands[$entry++] = "string $angleUnits = `currentUnit -query -angle`;";
+	$commands[$entry++] = "string $linearUnits = `currentUnit -query -linear`;";
+	$commands[$entry++] = "string $timeUnits = `currentUnit -query -time`;";
+	$commands[$entry++] = (
+		"currentUnit -angle " + $angleUnits +
+		" -linear " + $linearUnits +
+		" -time " + $timeUnits +
+		";"
+	);
+
+	// Create the animCurve
+	//
+	$commands[$entry++] = ("string $animCurve = `createNode " + `nodeType $animCurve` + "`;");
+
+	// Set weighted/unweighted tangents
+	//
+	int $weightedTangents[] = `keyTangent -query -weightedTangents $animCurve`;
+	$commands[$entry++] = ("keyTangent -edit -weightedTangents " + $weightedTangents[0] + ";");
+
+	// Set infinity types
+	//
+	int $infinity = `getAttr ($animCurve + ".preInfinity")`;
+	$commands[$entry++] = ("setAttr ($animCurve + \".preInfinity\") " + $infinity + ";");
+	$infinity = `getAttr ($animCurve + ".postInfinity")`;
+	$commands[$entry++] = ("setAttr ($animCurve + \".postInfinity\") " + $infinity + ";");
+
+	// Set each of the keys
+	//
+	int $numKeys = `keyframe -query -keyframeCount $animCurve`;
+	float $time[] = `keyframe -query -timeChange $animCurve`;
+	float $value[] = `keyframe -query -valueChange $animCurve`;
+	int $breakdown[] = `keyframe -query -breakdown $animCurve`;
+	string $inTangentType[] = `keyTangent -query -inTangentType $animCurve`;
+	string $outTangentType[] = `keyTangent -query -outTangentType $animCurve`;
+	int $lock[] = `keyTangent -query -lock $animCurve`;
+	int $weightLock[] = `keyTangent -query -weightLock $animCurve`;
+	for ($key = 0; $key < $numKeys; $key++) {
+		$commands[$entry++] = (
+			"setKeyframe -time " + $time[$key] +
+			" -value " + $value[$key] +
+			" -breakdown " + $breakdown[$key] +
+			($inTangentType[$key] == "fixed" ? "" : " -inTangentType " + $inTangentType[$key]) +
+			($outTangentType[$key] == "fixed" ? "" : " -outTangentType " + $outTangentType[$key]) +
+			" $animCurve;"
+		);
+		if ($inTangentType[$key] == "fixed") {
+			float $inAngle[] = `keyTangent -index $key -query -inAngle $animCurve`;
+			float $inWeight[] = `keyTangent -index $key -query -inWeight $animCurve`;
+			$commands[$entry++] = (
+				"keyTangent -edit -index " + $key +
+				" -inTangentType fixed" +
+				" -inAngle " + $inAngle[0] +
+				" -inWeight " + $inWeight[0] +
+				" $animCurve;"
+			);
+		}
+		if ($outTangentType[$key] == "fixed") {
+			float $outAngle[] = `keyTangent -index $key -query -outAngle $animCurve`;
+			float $outWeight[] = `keyTangent -index $key -query -outWeight $animCurve`;
+			$commands[$entry++] = (
+				"keyTangent -edit -index " + $key +
+				" -outTangentType fixed" +
+				" -outAngle " + $outAngle[0] +
+				" -outWeight " + $outWeight[0] +
+				" $animCurve;"
+			);
+		}
+		$commands[$entry++] = (
+			"keyTangent -edit -index " + $key +
+			" -lock " + $lock[$key] +
+			($weightedTangents[0] ? " -weightLock " + $weightLock[$key] : "") +
+			" $animCurve;"
+		);
+	}
+
+	// Restore the original units
+	//
+	$commands[$entry++] = "currentUnit -angle $angleUnits -linear $linearUnits -time $timeUnits;";
+
+	return ($commands);
+}

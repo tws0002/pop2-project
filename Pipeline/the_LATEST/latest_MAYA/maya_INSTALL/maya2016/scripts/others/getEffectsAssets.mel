@@ -1,0 +1,185 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+global proc string[] getEffectsAssets()
+{
+	string $ecs[];
+	string $containers[];
+
+	// First see if $object is itself a fluid shape.  If it is return it.
+	//
+	$containers = `ls -type container -type dagContainer`;
+	if (size($containers) == 0)
+	{
+		return $ecs;
+	}
+
+	for( $c in $containers)
+	{
+		string $ct =  `getAttr ($c + ".containerType")`;
+		if ( $ct == "effects")
+		{
+			$ecs[size($ecs)] = $c;
+		}
+	}
+
+	return $ecs;
+}
+
+global proc string[] getUnusedEffects()
+{
+	string $unused[];
+
+	return $unused;
+}
+global proc string[] getEffectTypes()
+{
+	string $types[];
+	string $ecs[];
+	$ecs = `getEffectsAssets`;
+	if (size($ecs) == 0)
+	{
+		return $ecs;
+	}
+
+	for( $c in $ecs)
+	{
+		// should check it theres a simpler alternativ  to attributeExists
+		// it sseems like a lot of scripting for a a simple query
+		if(attributeExists("effectType", $c)) {
+			string $ct = `getAttr ($c + ".effectType")`;
+			if ( size($ct) > 0)
+			{
+				$types[size($types)] = $ct;
+			}
+		}
+	}
+	$types = stringArrayRemoveDuplicates( $types);
+
+	return $types;
+}
+global proc string[] getEffectsByType(string $type)
+{
+	string $effects[];
+
+	return $effects;
+}
+global proc string getPublishedEffectNode(string $container, string $name)
+{
+	string $boundNames[];
+	string $nodeName;
+	$boundNames = `containerPublish -q -bn $container`;
+	if (size($boundNames) == 0)
+	{
+		return "";
+	}
+
+	for( $i= 0; $i < size( $boundNames ); $i += 2 )
+	{
+		if($boundNames[$i] == $name) {
+			$nodeName = $boundNames[$i+1];
+			break;
+		}
+	}
+
+	return $nodeName;
+}
+global proc string[] applyEffect(string $effect)
+{
+	string $result[];
+
+	string $selList[] = `ls -sl`;
+	string $solver = getPublishedEffectNode( $effect, "nucleusSolver");
+	string $exampleFluidEmitter = getPublishedEffectNode( $effect, "exampleFluidEmitter"); 
+	string $targetFluid = getPublishedEffectNode( $effect, "targetFluid"); 
+	string $exampleParticleEmitter = getPublishedEffectNode( $effect, "exampleParticleEmitter"); 
+	string $targetParticle = getPublishedEffectNode( $effect, "targetParticle"); 
+	string $exampleParticle = getPublishedEffectNode( $effect, "exampleParticle"); 
+	string $exampleNCloth = getPublishedEffectNode( $effect, "exampleNCloth"); 
+
+	if(size(`ls ($effect + ".child")`) > 0)
+	{
+		$result = `parent -r ($effect + ".child")  $selList[0]`;
+	}
+	if(size($exampleNCloth) > 0) {
+		createNCloth 0;
+		string $nCloths[] = `ls -sl`;
+		string $nCloth = $nCloths[0];
+		if(size($solver) > 0) {
+			assignNSolver $solver;
+		}
+		
+		string $presetPath = saveAttrPreset( $exampleNCloth, "tempAssetPreset", 1);
+		applyAttrPreset( $nCloth, $presetPath, 1); 
+		sysFile -delete $presetPath;
+
+		string $outMeshes[] = `listConnections -sh 1 -type "mesh" ($nCloth + ".outputMesh")`;
+		// select the output mesh in case we want to emit from it later
+		select -r $outMeshes[0];
+	}
+	// parent in could be field or something
+	if( size($targetFluid) > 0)
+	{
+		fluidEmitter -type surface -der 1 -her 1 -fer 1 -fdr 2 -r 100.0 -cye none -cyi 1 -mxd 1 -mnd 0 ;
+		string $emitters[] = `ls -sl`;
+		$fluidEmitter =  $emitters[0];
+		connectDynamic -em $fluidEmitter $targetFluid;
+		$result[0] = $fluidEmitter;		
+		if( size($exampleFluidEmitter) > 0) {
+			copyAttr -v $exampleFluidEmitter $fluidEmitter;
+		}
+	}
+	if( size($targetParticle) > 0)
+	{
+		emitter -type omni -r 100 -sro 0 -nuv 0 -cye none -cyi 1 -spd 1 -srn 0 -nsp 1 -tsp 0 -mxd 0 -mnd 0 -dx 1 -dy 0 -dz 0 -sp 0 ;
+		string $pemitters[] = `ls -sl`;
+		string $emitter =  $pemitters[0];
+		connectDynamic -em $emitter $targetParticle;
+		$result[0] = $emitter;
+		if( size($exampleParticleEmitter) > 0) {
+			copyAttr -v $exampleParticleEmitter $emitter;
+		}
+	}
+	if( size($exampleParticle) > 0)
+	{
+		// need to figure out where to put the fill options
+		// or whether to use the optionvars
+		catchQuiet(`particleFill -rs 10 -maxX 1 -maxY 1 -maxZ 1 -minX 0 -minY 0 -minZ 0 -pd 1 -cp`);
+		if(size($solver) > 0) {
+			assignNSolver $solver;
+		}
+		string $particles[] = `ls -sl`;
+		string $particle =  $particles[0];
+
+		string $shapes[] = `listRelatives -s $particles[0]`;	
+		string $presetPath = saveAttrPreset( $exampleParticle, "tempAssetPreset", 1);
+		applyAttrPreset( $shapes[0], $presetPath, 1); 
+		sysFile -delete $presetPath;
+
+		select -r $selList;
+		if(size($solver) > 0) {
+			select -add $solver;
+		}
+		makeCollideNCloth;
+		$result[0] = $particle;
+	}
+	return $result;
+}

@@ -1,0 +1,216 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//	removeNCloth.mel
+//
+//	Description:
+//		Interface for creating an nCloth.
+//
+//		Arguments:
+//			None.
+//
+
+global proc transferWrapConns( string $wrapPlugs[], string $newNode )
+//
+//	Description:
+//		Given a list of wrap plugs, transfer the connections from their current
+//	source to the given $newNode.
+//
+{
+	int $numWrapPlugs = size($wrapPlugs);
+	int $wrapPlugIndex = 0;
+	while( $wrapPlugIndex < $numWrapPlugs ){
+		string $wrapPlug = $wrapPlugs[$wrapPlugIndex];
+		string $wrapNode = plugNode( $wrapPlug );
+		string $wrapAttr = plugAttr( $wrapPlug );
+		if( startsWith( $wrapAttr, "driverPoints" ) ){
+			string $meshConns[] = `listConnections -s 1 -p 1 -sh 1 -type "mesh" $wrapPlug`;
+			if( size($meshConns) > 0 ){
+				// Transfer the connection
+				//
+				string $meshAttr = plugAttr( $meshConns[0] );
+				disconnectAttr $meshConns[0] $wrapPlug;
+				connectAttr ($newNode + "." + $meshAttr) $wrapPlug;
+			}
+		}
+		$wrapPlugIndex++;
+	}
+}
+
+global proc removeNCloth( string $scope )
+//
+//	Description:
+//
+//		Given a selected list of meshes, remove them (their nObject) from any nucleus solver
+//	system to which they are associated.
+//
+//	Input:
+//		$scope	all: remove all nCloths
+//				selected: remove only selected nCloths
+//
+{
+	if( !nClothEditLicenseFound() ) {        
+		error( (uiRes("m_removeNCloth.kNClothLicenseNotFound")) );
+		return;
+	}
+	string $nBases[];
+	if( $scope == "allNCloths" ){
+		$nBases = `ls -type "nCloth"`;
+		if( size($nBases) == 0 ){
+			warning( (uiRes("m_removeNCloth.kNoNClothFound"))  );
+			return;
+		}
+	} else if( $scope == "allNRigids" ){
+		$nBases = `ls -type "nRigid"`;
+		if( size($nBases) == 0 ){
+			warning( (uiRes("m_removeNCloth.kNoNRigidFound")) );
+			return;
+		}
+	} else {	// $scope == "selected" is assumed
+		string $selected[] = `ls -sl`;
+
+		// Get the selected meshes
+		//
+		string $meshes[] = `listRelatives -pa -ni -s -type "mesh" $selected`;
+		int $numMeshes = size($meshes);
+
+		if( $numMeshes == 0 ){
+			warning( (uiRes("m_removeNCloth.kNoMeshSelected")) );
+			return;
+		}
+
+		// Get the implicitly selected nBase nodes
+		//
+		$nBases = `listConnections -sh 1 -type "nBase" $meshes`;
+		if( size($nBases) == 0 ){
+			warning( (uiRes("m_removeNCloth.kNoClothSolverMesh")));
+			return;
+		}
+	}
+
+	// For now, we just delete the nCloth or nRigid node
+	// we remove the output mesh, and make the original input mesh visible and non-intermediate
+
+	// TODO We probably want an option to say if we want to keep the output node
+	// for an active nObject.
+	// We may also want to delete the nucleus node if there's no more connections,
+	// or we might not
+	// For passive objects, we might also want to just remove it from a particular
+	// nucleus
+	
+	string $nBase;
+	$nBases = stringArrayRemoveDuplicates( $nBases );
+
+	for( $nBase in $nBases ) {
+		string $connectUp = $nBase +  ".inputMesh";
+		string $inputMeshPlug = `connectionInfo -sfd $connectUp`;
+		string $inMesh = "";
+		if( $inputMeshPlug != "" ){
+			$inMesh = `plugNode $inputMeshPlug`;
+		}
+		string $outMesh = "";
+		if( `nodeType $nBase` == "nCloth" ){
+			string $outMeshes[] = `listConnections -sh 1 -type "mesh" ($nBase + ".outputMesh")`;
+			if( size($outMeshes) > 0 ){
+				$outMesh = $outMeshes[0];
+			}
+		}
+
+		string $parents[] = `listRelatives -pa -p $nBase`;
+		delete $nBase;
+		if( size($parents) > 0 ){
+			string $parent = $parents[0];
+			if( `objExists $parent` ){
+				string $children[] = `listRelatives $parent`;
+				if( size($children) == 0 ){
+					delete $parent;
+				}
+			}
+		}
+		if( $inMesh != "" && $outMesh != "" ){
+			// Get rid of the output mesh, if:
+			//	- the only input connection is from $inMesh
+			//	- the only output connection is the shader
+			//
+			// Let's begin by checking the input connections
+			//
+			string $inPlugs[] = `listConnections -c 1 -d 0 -p 1 $outMesh`;
+			int $numPlugs = size($inPlugs);
+			int $plugIndex = 0;
+			int $deleteOutputMesh = true;
+			while( $plugIndex < $numPlugs ){
+				string $inAttr = `plugAttr $inPlugs[$plugIndex]`;
+				if( $inAttr == "inMesh" ){
+					$plugIndex++;
+					string $inNode = `plugNode $inPlugs[$plugIndex]`;
+					if( $inNode == $inMesh ){
+						$plugIndex++;
+						continue;
+					}
+				}
+				// If we get here, we've found at least one reason why we
+				// can't delete the output mesh
+				//
+				$deleteOutputMesh = false;
+				break;
+			}
+			if( $deleteOutputMesh ){
+				// Let's check the output connections
+				//
+				string $outPlugs[] = `listConnections -c 1 -s 0 -p 1 $outMesh`;
+				$numPlugs = size($outPlugs);
+				$plugIndex = 0;
+				while( $plugIndex < $numPlugs ){
+					string $outAttr = `plugAttr $outPlugs[$plugIndex]`;
+					if( !`startsWith $outAttr "instObjGroups"` ){
+						// Can't delete the output mesh
+						//
+						$deleteOutputMesh = false;
+						break;
+					}
+					$plugIndex += 2;
+				}
+			}
+			if( $deleteOutputMesh ){
+				string $inParents[] = `listRelatives -pa -p $inMesh`;
+				string $outParents[] = `listRelatives -pa -p $outMesh`;
+				if( $inParents[0] == $outParents[0] ){
+					delete $outMesh;
+				} else {
+					// TODO - what if the output mesh was instanced, perish the
+					// 		  thought
+					//
+					delete $outParents[0];
+				}
+			} else {
+				string $wrnFormat = (uiRes("m_removeNCloth.kOutputMeshNotDeleted"));
+				string $wrnMsg = `format -stringArg $inMesh -stringArg $outMesh $wrnFormat`;
+				warning $wrnMsg;
+			}
+		}
+		if( $inMesh != "" ){
+			setAttr ($inMesh + ".visibility") 1;
+			setAttr ($inMesh + ".intermediateObject") 0;
+		}
+	}
+	return;
+}

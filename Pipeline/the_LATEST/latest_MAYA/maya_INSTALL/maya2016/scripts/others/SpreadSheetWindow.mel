@@ -1,0 +1,680 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  28 Aug 1996
+//
+//  Description:
+//      This command will create if necessary and display
+//		a spread sheet editor window.
+//
+//  Input Arguments:
+//      None
+//		
+//  Return Value:
+//      None
+//
+
+global proc buildSpreadsheetContextHelpItems(string $nameRoot, string $menuParent)
+//
+//  Description:
+//		Build context sensitive menu items for this window.  
+//		
+//  Input Arguments:
+//		$nameRoot - name to use as the root of all item names
+//		$menuParent - the name of the parent of this menu
+//
+//  Return Value:
+//      None
+//
+{
+	menuItem -label (uiRes("m_SpreadSheetWindow.kHelpOnAttributeSpreadSheet")) 
+		-enableCommandRepeat false
+		-command "showHelp AttributeSpreadSheet";
+}
+
+global proc SpreadSheetWindow_showSelCol( string $edName )
+{
+	string $selectedAttrs[] = `spreadSheetEditor -q -sla $edName`;
+
+	// If columns are selected, draw only those columns
+	//
+	if( size( $selectedAttrs ) > 0 ) {
+		spreadSheetEditor -e -fixedAttrList $selectedAttrs $edName;
+	} 
+	// Error message...
+	//
+	else {
+		error (uiRes("m_SpreadSheetWindow.kNoColumnsSelected"));
+	}
+}
+
+global proc SpreadSheetWindow(){
+
+	string $formName;
+    string $menuName;
+	string $edName = "SSEd";
+
+	global string $SSEWindow_Last_Tab = "";
+
+	// If the window does not exist, create it.
+	//
+	if ( !`window -exists SSEwindow` ){
+
+		window
+			-title (uiRes("m_SpreadSheetWindow.kAttributeSpreadSheet")) 
+			-iconName (uiRes("m_SpreadSheetWindow.kSpreadSheet")) 
+			-menuBar true
+			SSEwindow;
+
+		$formName = `formLayout`;
+
+		if ( !`selectionConnection -exists SSEcon` ){
+        	selectionConnection -p $formName -act SSEcon;
+		}
+
+		// Create the editor if it does not exist;
+		// otherwise just parent it to this window.
+		//
+		if ( `spreadSheetEditor -exists $edName` ){
+			spreadSheetEditor -e
+				-ln true
+            	-parent $formName
+            	-mlc SSEcon
+            	$edName;
+		} else {
+			spreadSheetEditor
+				-ln true
+            	-parent $formName
+            	-mlc SSEcon
+            	$edName;
+		}
+
+		// Create a filter field to filter the attributes
+		//
+		text -align "center" -label (uiRes("m_SpreadSheetWindow.kSSEattrText")) SSEattrFilterText;
+		string $filterField = `textFieldGrp`;
+		textFieldGrp -e -textChangedCommand ( "SSEFilterFieldCB (\"" +  $edName + "\",\"" + $filterField + "\")")
+					$filterField;
+		
+		// Create a tab layout to use as a big switch.
+		// Put in empty layouts for the main switching items.
+		//
+		string $tabName = `tabLayout
+			-tabsVisible true
+			-preSelectCommand "SSEswitch"
+			SSEtabs`;
+
+			formLayout keyableSwitch;
+			setParent ..;
+			formLayout shapeKeyableSwitch;
+			setParent ..;
+			formLayout transformSwitch;
+			setParent ..;
+			formLayout translateSwitch;
+			setParent ..;
+			formLayout rotateSwitch;
+			setParent ..;
+			formLayout scaleSwitch;
+			setParent ..;
+			formLayout renderSwitch;
+			setParent ..;
+			formLayout tesselationSwitch;
+			setParent ..;
+			formLayout geometrySwitch;
+			setParent ..;
+			formLayout allSwitch;
+			setParent ..;
+
+		tabLayout -e
+			-tabLabel keyableSwitch		 (uiRes("m_SpreadSheetWindow.kKeyable"))
+			-tabLabel shapeKeyableSwitch (uiRes("m_SpreadSheetWindow.kShapeKeyable"))
+			-tabLabel transformSwitch	 (uiRes("m_SpreadSheetWindow.kTransform"))
+			-tabLabel translateSwitch	 (uiRes("m_SpreadSheetWindow.kTranslate"))
+			-tabLabel rotateSwitch		 (uiRes("m_SpreadSheetWindow.kRotate"))
+			-tabLabel scaleSwitch		 (uiRes("m_SpreadSheetWindow.kScale"))
+			-tabLabel renderSwitch	     (uiRes("m_SpreadSheetWindow.kRender"))
+			-tabLabel tesselationSwitch	 (uiRes("m_SpreadSheetWindow.kTessellation"))
+			-tabLabel geometrySwitch	 (uiRes("m_SpreadSheetWindow.kGeometry"))
+			-tabLabel allSwitch			 (uiRes("m_SpreadSheetWindow.kAll"))
+			$tabName;
+
+		setParent ..;
+
+
+		// Attach the tab layout and spread sheet editor to the edges of
+		// the form.
+		//
+		int $edBottomOffset = 0;
+		if(`about -mac`) {
+			// On Mac, the scrollbars are obscured by the windows resize handle.
+			// So, add an offset while attaching the spread sheet editor
+			// to the bottom of the form
+			$edBottomOffset = 15;
+		}
+		formLayout -e
+			-af SSEattrFilterText "top" 5
+			-ac $filterField "left" 0   SSEattrFilterText
+			-ac $tabName "top"		0   $filterField
+			-af $tabName "left"		0
+			-af $tabName "right"	0
+			-ac	$edName	 "top"		0	SSEtabs
+			-af $edName	 "left"		0
+			-af $edName	 "right"	0
+			-af $edName	 "bottom"	$edBottomOffset
+			$formName;
+
+		int $sseLongName = 1;
+		if (!`spreadSheetEditor -query -niceNames $edName`) {
+			$sseLongName = (`spreadSheetEditor -query -longNames $edName` ? 2 : 0);
+		}
+		$menuName = `menu -label (uiRes("m_SpreadSheetWindow.kNames"))`;
+			radioMenuItemCollection;
+			menuItem -label (uiRes("m_SpreadSheetWindow.kNiceNames"))
+				-radioButton ( 1 == $sseLongName )
+				-c ("spreadSheetEditor -e -nn true "+$edName)
+				niceNameItem;
+			menuItem -label (uiRes("m_SpreadSheetWindow.kLongNames"))
+				-radioButton ( 2 == $sseLongName )
+				-c ("spreadSheetEditor -e -ln true -nn false "+$edName)
+			longNameItem;
+			menuItem -label (uiRes("m_SpreadSheetWindow.kShortNames"))
+				-radioButton ( 0 == $sseLongName )
+				-c ("spreadSheetEditor -e -ln false -nn false "+$edName)
+				shortNameItem;
+		setParent -m ..;
+
+		$userMenuName = `menu -label (uiRes("m_SpreadSheetWindow.kLayouts"))`;
+			menuItem 
+				-label (uiRes("m_SpreadSheetWindow.kShowSelectedColumnsOnly"))
+				-c ("SpreadSheetWindow_showSelCol " + $edName );
+			menuItem -label (uiRes("m_SpreadSheetWindow.kShowAllColumns")) -c "SSEswitch";
+			menuItem -label (uiRes("m_SpreadSheetWindow.kRememberThisLayout"))
+				-c ("SSERememberWindow \"" + $edName + "\" \"" + $tabName + "\"" );
+			menuItem -label (uiRes("m_SpreadSheetWindow.kDeleteCurrentLayout"))
+				-c ("SSERemove \""+$tabName+"\"");
+
+		menu -label (uiRes("m_SpreadSheetWindow.kKey"));
+			menuItem -label (uiRes("m_SpreadSheetWindow.kKeySelected"))
+				-c ("spreadSheetEditor -e -execute \"setKeyframe -at \\\"#A\\\" \\\"#P\\\";\""+$edName);
+
+		menu -label (uiRes("m_SpreadSheetWindow.kLayer"));
+			menuItem -label (uiRes("m_SpreadSheetWindow.kCreateOverrideForSelected"))
+                -c ("spreadSheetEditor -e -execute \"editRenderLayerAdjustment \\\"#P.#A\\\";\""+$edName);
+			menuItem -label (uiRes("m_SpreadSheetWindow.kRemoveOverrideFromSelected"))
+                -c ("spreadSheetEditor -e -execute \"editRenderLayerAdjustment -remove \\\"#P.#A\\\";\""+$edName);
+
+		//	Add support for the Context Sensitive Help Menu.
+		//
+		addContextHelpProc "SSEwindow" "buildSpreadsheetContextHelpItems";
+		doHelpMenu("SSEwindow", "SSEwindow");
+
+		// There may be more items defined in the prefs.  There are two arrays of strings,
+		// called SSEitem1 and SSEitem2, which are defined pair-wise, in pairs of
+		// item-name, item-attr-list.  There is also a third array of numbers, specifying
+		// the state of the "show shapes" variable.
+		// ie, SSEitem1[n] could be "trans X Y", and SSEitem2[n] would then be "{\"tx\",\"ty\"}"
+		// Since these are attributes of the transform, SSEitem3[n] would be 0, indicating "Show Shapes"
+		// should be turned off in this tab.
+
+		if ( `optionVar -exists SSEitem1` && `optionVar -exists SSEitem2` && `optionVar -exists SSEitem3` ){
+			string $itemNames[] = `optionVar -q SSEitem1`;
+			string $itemList[] = `optionVar -q SSEitem2`;
+			int $itemShowShapes[] = `optionVar -q SSEitem3`;
+		
+			// they must be the same length
+
+			if ( size($itemNames) == size($itemList) && size($itemNames) == size($itemShowShapes) ){
+
+				// Create tabs for each one
+				//
+				int $limit = size($itemNames);
+				int $i;
+				string $formName;
+				for ( $i=0; $i<$limit; $i++ ){
+					$formName = `formLayout -p $tabName`;
+					tabLayout -e -tl $formName $itemNames[$i] $tabName;
+				}
+			} else {
+				//
+				//	The Spread Sheet Window prefs are bogus. Reset them so 
+				//	they'll at least work again the next time a layout is saved.
+				//
+				optionVar -clearArray SSEitem1;
+				optionVar -clearArray SSEitem2;
+				optionVar -clearArray SSEitem3;
+			}
+		}
+
+		if ("" != $SSEWindow_Last_Tab) {
+			//
+			//	Bug fix #142227.
+			//
+			//	Search the tab labels for the one that we believe was the last
+			//	selected tab.
+			//
+			//	Note we are now using the tab label instead of the layout
+			//	object name. Using the object name is just plain wrong since
+			//	you can't be sure that then next time your layout is created
+			//	it'll have the same name.
+			//
+			string $labelArray[];
+			int    $index;
+
+			$labelArray = `tabLayout -query -tabLabel $tabName`;
+			for ($index = 0; $index < size($labelArray); $index++) {
+				if ($SSEWindow_Last_Tab == $labelArray[$index]) {
+					//				
+					//	Found it.
+					//
+					break;
+				}
+			}
+			if ($index < size($labelArray)) {
+				//
+				//	Found the tab. Select it. Note that UI command 
+				//	indecies are 1-based.
+				//
+				tabLayout -edit -selectTabIndex ($index + 1) $tabName;
+
+			} else {
+				//
+				//	Didn't find the tab. Reset the last saved tab to an
+				//	empty string and select the first tab in the layout.
+				//
+				$SSEWindow_Last_Tab = "";
+				tabLayout -edit -selectTabIndex 1 $tabName;
+			}
+
+			SSEswitch;
+		}
+	}
+
+	// The window exists.  Bring it to the front.
+
+	showWindow SSEwindow;
+
+}
+
+global proc SSEFilterFieldCB( string $edName, string $filterField)
+{
+	string $expr = `textFieldGrp -q -text $filterField`;
+	spreadSheetEditor -e -attrRegExp $expr $edName;
+}
+
+global proc SSEswitch()
+//
+// This is called when the user clicks on one of the tabs in the spread
+// sheet editor.  The editor is set up according to the tab name.
+//
+{
+	string $tabName = "SSEtabs";
+	string $edName = "SSEd";
+
+	global string $SSEWindow_Last_Tab;
+
+	if ( `tabLayout -exists $tabName` ){
+
+		string $newTab = `tabLayout -q -selectTab $tabName`;
+
+		//	Bug fix #142227. Saving the name of the layout object is 
+		//	wrong. You can't guarantee that the same object name will
+		//	be used for new layouts. Save the label name of the tab
+		//	instead.
+		//
+		string $tabNames[] = `tabLayout -query -tabLabel $tabName`;
+		int    $index      = `tabLayout -query -selectTabIndex $tabName`;
+		
+		if ($index > 0 && $index <= size($tabNames)) {
+			$SSEWindow_Last_Tab = $tabNames[$index - 1];
+		} else {
+			$SSEWindow_Last_Tab = "";
+		}
+
+		switch( $newTab ){
+		  case "keyableSwitch":
+			spreadSheetEditor -e -fal {} -keyableOnly true -showShapes false $edName;
+		 	break;
+		  case "shapeKeyableSwitch":
+			spreadSheetEditor -e -fal {} -keyableOnly true -showShapes true $edName;
+		 	break;
+		  case "transformSwitch":
+			spreadSheetEditor -e
+				-fal {"tx","ty","tz","rx","ry","rz","sx","sy","sz"}
+				-showShapes false
+				-keyableOnly false $edName;
+		 	break;
+		  case "translateSwitch":
+			spreadSheetEditor -e
+				-fal {"tx","ty","tz"}
+				-showShapes false
+				-keyableOnly false $edName;
+		 	break;
+		  case "rotateSwitch":
+			spreadSheetEditor -e
+				-fal {"rx","ry","rz"}
+				-showShapes false
+				-keyableOnly false $edName;
+		 	break;
+		  case "scaleSwitch":
+			spreadSheetEditor -e
+				-fal {"sx","sy","sz"}
+				-showShapes false
+				-keyableOnly false $edName;
+		 	break;
+		  case "renderSwitch":
+			spreadSheetEditor -e
+				-fal {"ds","op","smo","mb","vir","vif","csh","rcsh","hot","hfm","vis","gao","gal","sso","ssa","msa","vso","vss","vbo","mvs","bscx","bscy","bscz", "ftwp", "gdsu", "gdsv", "fbda", "dsr", "xsr", "fth", "nat" }
+				-showShapes true
+				-keyableOnly false $edName;
+			break;
+          case "tesselationSwitch":
+            spreadSheetEditor -e
+                -fal { "eta", "nufa", "nvfa", "cvto", "ues", "esr",
+						   "drt", "mu","nu","mv", "numberV",
+						   "uch","ch","ucr","chr","uns","mns","es"}
+				-showShapes true
+                -keyableOnly false $edName;
+            break;
+          case "geometrySwitch":
+            spreadSheetEditor -e
+                -fal {"v","cpr","cps"}
+				-showShapes true
+                -keyableOnly false $edName;
+            break;
+		  case "allSwitch":
+			spreadSheetEditor -e -fal {} -showShapes false -keyableOnly false $edName;
+		 	break;
+		  default:
+			// The user has clicked on one of the user-defined tabs.
+			// Get the name of the form layout, then find out what its
+			// label is.  This label will help us look up the option
+			// variable with the specified set of attribute names.
+			// Indirect, isn't it?
+			//
+			if ( $index <= size($tabNames) ){
+				string $lookupName = $tabNames[$index-1];
+				if ( `optionVar -exists SSEitem1` && `optionVar -exists SSEitem2` ){
+					string $itemNames[] = `optionVar -q SSEitem1`;
+					string $itemList[] = `optionVar -q SSEitem2`;
+					int $showShapes[] = `optionVar -q SSEitem3`;
+				
+					// Look up the tab name in the first array, set the spreadsheet
+					// to use the list in the second array.
+					//
+					int $j;
+					for ( $j=0; $j<size($itemNames); $j++ ){
+						if ( $itemNames[$j] == $lookupName ){
+							eval("spreadSheetEditor -e -showShapes "+$showShapes[$j]+" -keyableOnly false -fal "+$itemList[$j]+" "+$edName);
+							break;
+						}
+					}
+				}
+			}
+			break;
+		}
+
+	}
+}
+
+
+global proc SSERememberWindow( string $spreadSheetName, string $tabName )
+//
+// This method puts up a window that asks the user for a name.  This name
+// is given to the new menu item that remembers the current list of attributes.
+//
+{
+	string $windowName = `window -title (uiRes("m_SpreadSheetWindow.kRememberLayout")) -mnb false -mxb false SSErememberWnd`;
+	formLayout SSErememberFormLayout;
+		columnLayout -adj 1 SSErememberColLayout;
+			text -label (uiRes("m_SpreadSheetWindow.kEnterLayoutName")) -align "left";
+			string $fieldName = `textField nameField`;
+		setParent ..;
+		
+		string $rememberCmdPt1 = "SSERemember \"";
+		string $rememberCmdPt2 = "\" \"";
+		string $rememberCmdPt3 = "\" `textField -q -text \"" ;
+		string $rememberCmdPt4 = "\"`; deleteUI " ;
+		string $rememberCmd = ($rememberCmdPt1+$spreadSheetName+$rememberCmdPt2+$tabName+$rememberCmdPt3+$fieldName+$rememberCmdPt4+$windowName);
+		
+		button
+			-label (uiRes("m_SpreadSheetWindow.kRemember"))
+			-c $rememberCmd
+			SSErememberButton;
+		button
+			-label (uiRes("m_SpreadSheetWindow.kCancel"))
+			-c ("deleteUI " + $windowName)
+			SSEcancelButton;
+	setParent ..;
+	
+	formLayout -edit
+		-af SSErememberColLayout "top" 5
+		-af SSErememberColLayout "left" 5
+		-af SSErememberColLayout "right" 5
+		-ac SSErememberColLayout "bottom" 5 SSErememberButton
+		-af SSErememberButton "left" 5
+		-ap SSErememberButton "right" 5 50
+		-af SSErememberButton "bottom" 5
+		-ap SSEcancelButton "left" 5 50
+		-af SSEcancelButton "right" 5
+		-af SSEcancelButton "bottom" 5
+		SSErememberFormLayout;
+
+	showWindow $windowName;
+}
+		
+
+
+global proc SSERemember ( string $spreadSheetName, string $tabName, string $itemName )
+//
+// This method creates a new menu item in the given menu that will
+// set the spreadSheet to display the given list of attributes.
+//
+{
+	global string $SSEWindow_Last_Tab;
+
+	string $attrList[] = `spreadSheetEditor -q -allAttr $spreadSheetName`;
+	int $showShapes = `spreadSheetEditor -q -showShapes $spreadSheetName`;
+
+	// Decompose the list into this format:  {"a","b","c"}	
+
+	int $limit = size($attrList);
+	int $i;
+	string $strList = "{";
+	for ( $i=0; $i<$limit; $i++ ){
+		if ( $i != 0 ){
+			$strList = $strList + ",";
+		}
+		$strList = ($strList + "\"" + $attrList[$i] + "\"");
+	}
+	$strList = $strList + "}";
+
+	// save it into the preferences
+
+	optionVar -sva SSEitem1 $itemName -sva SSEitem2 $strList -iva SSEitem3 $showShapes;
+
+	// and add the tab layout item.
+
+	setParent $tabName;
+	string $formName = `formLayout`;
+	setParent ..;
+
+	tabLayout -e
+		-tabLabel $formName $itemName
+		-selectTab $formName
+		$tabName;
+
+	$SSEWindow_Last_Tab = $itemName;
+
+	// update the spreadSheetEditor immediately
+	eval("spreadSheetEditor -e -showShapes " + $showShapes + " -keyableOnly false -fal " + $strList + " " + $spreadSheetName);
+}
+
+		
+global proc SSERemove(string $tabName)
+//
+// This removes the current tab in the spread sheet editor.
+// If there is a corresponding option var, it is removed
+// as well.
+//
+{
+	// First, get the label associated with the current tab.
+	//
+	string $tabNames[] = `tabLayout -q -tabLabel $tabName`;
+
+	// If there is only one tab left, you can't remove it.
+	//
+	if ( size($tabNames) < 2 ){
+		error (uiRes("m_SpreadSheetWindow.kCannotRemoveLastTab"));
+		return;
+	}
+
+	int $index = `tabLayout -q -selectTabIndex $tabName`;
+	if ( $index <= size($tabNames) ){
+		string $lookupName = $tabNames[$index-1];
+
+		// Now get the option var with the saved layouts.  If this
+		// label is on of those, we can delete the option var altogether.
+		//
+		if ( `optionVar -exists SSEitem1` && `optionVar -exists SSEitem2` ){
+			string $itemNames[] = `optionVar -q SSEitem1`;
+			string $itemList[] = `optionVar -q SSEitem2`;
+				
+			// Look up the tab name in the first array
+			//
+			int $j;
+			for ( $j=0; $j<size($itemNames); $j++ ){
+				if ( $itemNames[$j] == $lookupName ){
+					optionVar
+						-removeFromArray SSEitem1 $j
+						-removeFromArray SSEitem2 $j;
+				}
+			}
+		}
+	}
+
+	// Now delete the unwanted tab
+	//
+	string $tabId = `tabLayout -q -st $tabName`;
+	deleteUI $tabId;
+
+	SSEswitch();
+}
+
+global proc SSEWatchActiveList()
+//
+// This sets the window to use the active list to set its contents.
+//
+{
+	string $edName = "SSEd";
+
+	if ( !`window -exists SSEwindow` ){
+		SpreadSheetWindow;
+	}
+	
+	if ( !`selectionConnection -exists SSEcon` ){
+		selectionConnection -act SSEcon;
+	}
+
+	spreadSheetEditor -e -mlc SSEcon $edName;
+}
+
+global proc SSESetInputConnection(string $selectionConnection)
+//
+// This changes the selection connection the Window 
+// uses to set its contents.
+//
+{
+	string $edName = "SSEd";
+	global string $SSECon;
+
+	if ( !`window -exists SSEwindow` ){
+		SpreadSheetWindow;
+	}
+	
+	if ( `selectionConnection -exists $selectionConnection` ){
+		spreadSheetEditor -e -mlc $selectionConnection $edName;
+		$SSECon = $selectionConnection;
+	}
+}
+
+global proc SSEUnlockUpdates()
+//
+// This allows the Window to respond from changes to its connection.
+//
+{
+	string $edName = "SSEd";
+	global string $SSECon;
+	
+	if ( !`window -exists SSEwindow` ){
+		SpreadSheetWindow;
+	}
+	
+	if ( `selectionConnection -exists $SSECon` ){
+		spreadSheetEditor -e -mlc $SSECon $edName;
+	} else {
+		if ( !`selectionConnection -exists SSEcon` ){
+			selectionConnection -act SSEcon;
+		}
+
+		spreadSheetEditor -e -mlc SSEcon $edName;
+	}
+}
+
+global proc SSELockUpdates()
+//
+// This prevents the Window from responding from changes to its connection.
+//
+{
+	string $edName = "SSEd";
+	global string $SSECon;
+	
+	if ( !`window -exists SSEwindow` ){
+		SpreadSheetWindow;
+	}
+// this don't work!!!!!!	
+//	$SSECon = `spreadSheetEditor -q -mlc $SSECon $edName`;
+	spreadSheetEditor -e -mlc 0 $edName;
+}
+
+global proc SSEUpdateContents()
+//
+// If the Window is locked to updates, this will reload the 
+// contents from the Connection if existing.
+//
+{
+	string $edName = "SSEd";
+	global string $SSECon;
+	
+	if ( !`window -exists SSEwindow` ){
+		SpreadSheetWindow;
+	}
+	
+	string $conName = `spreadSheetEditor -e -mlc SSEcon $edName`;
+
+	if($conName != $SSECon) {
+		if ( `selectionConnection -exists $SSECon` ){
+			spreadSheetEditor -e -mlc $SSECon $edName;
+			spreadSheetEditor -e -mlc 0 $edName;
+		} 
+	}
+}

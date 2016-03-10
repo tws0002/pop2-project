@@ -1,0 +1,2357 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  1 April 1996
+//
+//
+//  Description:
+//      This implements the "Display" menu on the main menubar.
+//
+
+// helper procs. these are approxomately in the same order
+// the items are in the Display menu
+//
+global proc gridMenuUpdate() {
+//
+// This is called when a "gridDisplayChanged" event is detected.
+// Update the menu item, the option var and the gShowGrid variable.
+//
+	if( `menuItem -exists dispGridItem` ) {
+		menuItem -e -cb `grid -q -tgl` dispGridItem;
+	}
+}
+
+global proc originAxesMenuUpdate() {
+//
+// This is called when a "originAxesDisplayChanged" event is detected.
+// Update the menu item, the option var and the gToggleOriginAxis variable.
+//
+	if( `menuItem -exists originAxesItem` ) {
+		menuItem -e -cb `toggleAxis -q -o` originAxesItem;
+	}
+}
+
+global proc paintEffectsMeshDisplayMenuUpdate() 
+{
+	if( `menuItem -exists paintEffectsMeshDisplayItem` ) {
+		if( !`optionVar -exists paintEffectsDisplayMesh`) {
+			optionVar -intValue paintEffectsDisplayMesh 1;
+		}
+		
+		int $disp = `optionVar -query paintEffectsDisplayMesh`;
+		paintEffectsDisplay -me $disp;
+		menuItem -e -cb $disp paintEffectsMeshDisplayItem;
+	}
+}
+
+global proc polyNormalSizeMenuUpdate()
+{
+	if( `menuItem -exists polyNormalSizeItem` ) {
+		if(`floatSliderGrp -exists normalsSizeSlider`) {
+			float $sizeNormalArray[] = `polyOptions -q -activeObjects -sizeNormal`;
+			if(size($sizeNormalArray) > 0){
+				int $index = size($sizeNormalArray)-1;
+				floatSliderGrp -edit -value $sizeNormalArray[$index] normalsSizeSlider;
+			}
+		}		
+	}
+}
+
+global proc TogglePaintEffectsMeshDisplay()
+{
+	int $disp = `paintEffectsDisplay -q -me`;
+	$disp = !$disp;
+	optionVar -intValue paintEffectsDisplayMesh $disp;
+	paintEffectsDisplay -me $disp;
+	refresh -f;
+}
+
+global proc showLastHidden () 
+{
+	global string $gLastHiddenSelection[];
+	if (size($gLastHiddenSelection) != 0) {
+		showHidden -a $gLastHiddenSelection;
+		clear $gLastHiddenSelection;
+	} else warning (uiRes("m_buildDisplayMenu.kNoPreviouslyHidden"));
+}
+
+global proc hideShowDeformingGeom( string $state )
+//
+//	Hides or shows deforming geometry in the system.
+//	Takes a state, either hide or show, in order to
+//	perform the appropriate action.
+{
+	//	Get a list of all deformers in the system, then
+	//	hide their associated set
+	//
+	string $deformers[] = `ls -type cluster -type jointCluster
+		-type jointLattice -type boneLattice -type ffd -type jointFfd
+		-type wire -type sculpt -type blendShape
+		-type geometryFilter -type weightGeometryFilter`;
+	string $sortedDeformers[] = `sort $deformers`;
+	string $lastDeformer = "";
+	string $deformerSets[];
+	string $result[];
+	for( $deformer in $sortedDeformers ) {
+		if ( $deformer != $lastDeformer )
+		{
+			$lastDeformer = $deformer;
+			$deformerSets = `listConnections ( $deformer + ".message" )`;
+			for( $set in $deformerSets ) {
+				if ("objectSet" == nodeType($set))
+					$result[size($result)]=$set;
+			}
+		}
+	}
+
+	// $result holds a list of sets. We want the members of the sets
+	// so that we can get the parents
+	int $count = 0;
+	string $geometry[];
+	string $members[];
+	for( $set in $result ) {
+		$members = `sets -q $set`;
+		for( $member in $members ) {
+			$geometry[ $count ] = $member;
+			$count++;
+		}
+	}
+
+	// get the parents (which may be shapes) of the geometry/components
+	string $parents[] = `listRelatives -p $geometry`;
+
+	// Get the parent transforms of the shapes
+	string $shapes[] = `ls -type shape $parents`;
+	string $parentTransforms[] = `listRelatives -p $shapes`;
+
+	// extract the transforms and add then to the list of shapeTransforms
+	string $transforms[] = `ls -type transform $parents`;
+	if ( size($transforms) != 0 ) {
+		int $count = size($parentTransforms);
+		for( $xform in $transforms ) {
+			$parentTransforms[ $count ] = $xform;
+			$count++;
+		}
+	}
+
+	if( $state == "hide" ) {
+		if ( size($parentTransforms) != 0 ) {
+			hideKeepSelection $parentTransforms;
+        }
+		else warning (uiRes("m_buildDisplayMenu.kNoDeformingGeometryToHide")) ;
+	}
+	else {
+		if ( size($parentTransforms) != 0 ) {
+			string $cmd="showHidden";
+			for ($i in $parentTransforms) {
+				if (`objExists $i`)
+					$cmd=($cmd + " " + $i);
+			}
+			evalEcho $cmd;
+		}
+		else warning (uiRes("m_buildDisplayMenu.kNoDeformingGeometryToShow")) ;
+	}
+}
+
+proc string[] listWireCurves()
+//
+// Returns a list of all the curves attached to wire nodes
+// in the scene
+{
+	string $wires[];
+	$wires = `ls -type wire`;
+
+	string $connections[];
+	string $ws[];
+	int $wcount = 0;
+	for ( $wire in $wires )
+	{
+		$connections = `listConnections ($wire + ".deformedWire")`;
+		int $numConn = size($connections);
+		for ($ii=0; $ii<$numConn; $ii++)
+			$ws[$wcount++] = $connections[$ii];
+	}
+	return $ws;
+}
+
+
+proc string[] listWrapInfluences()
+//
+// Returns a list of all the influence objects
+// attached to the wrap nodes in the scene
+{
+	string $wraps[];
+	$wraps = `ls -type wrap`;
+
+	string $connections[];
+	string $infls[];
+	int $inflCount = 0;
+	for( $wrap in $wraps )
+	{
+		$connections = `listConnections ($wrap + ".driverPoints")`;
+		int $numConn = size($connections);
+		for($i=0;$i<$numConn;$i+=2)
+			$infls[$inflCount++] = $connections[$i];
+	}
+	return $infls;
+}
+
+proc string[] listRelatedMeshes( string $transforms[] )
+//
+// Returns a list of all the associated output meshes
+// for the given nodes
+{
+	string $meshes[];
+	int $numMeshes = 0;
+
+	int $numTransforms = size($transforms);
+	int $transformIndex = 0;
+	while( $transformIndex < $numTransforms ){
+		string $transform = $transforms[$transformIndex];
+		string $children[] = `listRelatives -type "nBase" $transform`;
+		int $numChildren = size($children);
+		int $childIndex = 0;
+		while( $childIndex < $numChildren ){
+			string $child = $children[$childIndex];
+			$childIndex++;
+			// Find mesh related to child
+			//
+			string $downstreamNodes[] = `listHistory -f 1 $child`;
+			string $oMeshes[] = `ls -dag -type mesh $downstreamNodes`;
+			string $iMeshes[] = `listConnections -sh true -type mesh ($child + ".inputMesh")`;
+			string $oMesh;
+			string $iMesh;
+			if( size($oMeshes) > 0 ){
+				$oMesh = $oMeshes[0];
+			}
+			if( size($iMeshes) > 0 ){
+				$iMesh = $iMeshes[0];
+			}
+			// If the input mesh is an intermediate object, then we'll want to
+			// hide the output mesh, if any. If the input mesh is not an
+			// intermediate object, then we'll hide the input mesh.
+			//
+			if( ($iMesh != "") && !`getAttr ($iMesh + ".intermediateObject")`){
+				$meshes[$numMeshes] = $iMesh;
+			} else if( $oMesh != "" ){
+				$meshes[$numMeshes] = $oMesh;
+			} else if( $iMesh != "" ){
+				$meshes[$numMeshes] = $iMesh;
+			} else {
+				$numMeshes--;
+			}
+			$numMeshes++;
+		}
+		$transformIndex++;
+	}
+	return $meshes;
+}
+
+proc string[] listSkinClusterInfluences()
+//
+// Returns a list of all the influence objects
+// attached to the skinCluster nodes in the scene
+{
+	string $skinClusters[];
+	$skinClusters = `ls -type skinCluster`;
+
+	string $connections[];
+	string $infls[];
+	int $inflCount = 0;
+	for( $skinCluster in $skinClusters )
+	{
+		$connections = `listConnections ($skinCluster + ".matrix")`;
+		int $numConn = size($connections);
+		for($i=0;$i<$numConn;$i++)
+		{
+			$transformType = `nodeType $connections[$i]`;
+			if ($transformType != "joint")
+				$infls[$inflCount++] = $connections[$i];
+		}
+	}
+	return $infls;
+}
+
+proc appendToList( string $list1[], string $list2[])
+//
+// Appends the elements of list2 to the end of list1
+{
+	$count = size($list1);
+	for( $elem in $list2 )
+	{
+		$list1[$count++] = $elem;
+	}
+}
+
+	
+global proc hideShow( string $type, string $state )
+//
+// Hides/shows objects in the scene.  Takes an object
+// type and the state to set as arguments.  
+{
+	string $list[];
+	string $meshes[];
+
+	switch( $type ) {
+		case "-cameras":
+			$list = `listTransforms "-ap -cameras"`;
+			break;
+		case "-geometry":
+			//
+			// High level setting to turn off all
+			// geometry types
+			//
+		  if (`isTrue "SubdivUIExists"`) 
+			$list = `listTransforms
+				"-type nurbsSurface -type nurbsCurve -type mesh -type subdiv"`;
+		  else
+			$list = `listTransforms
+				"-type nurbsSurface -type nurbsCurve -type mesh"`;
+			break;
+		case "-nurbsSurfaces":
+			$list = `listTransforms "-type nurbsSurface"`; 
+			break;
+		case "-nurbsCurves":
+			$list = `listTransforms "-type nurbsCurve"`;
+			break;
+		case "-polySurfaces":
+			$list = `listTransforms "-type mesh"`;
+			break;
+		case "-subdiv":
+			$list = `listTransforms "-type subdiv"`;
+			break;
+		case "-planes":
+			$list = `listTransforms "-type sketchPlane"`;
+			break;
+		case "-lights":
+			$list = `listTransforms "-type light"`;
+			break;
+		case "-strokes":
+			$list = `listTransforms "-type stroke"`;
+			break;
+		case "-strokeCurves":
+			$list = listAllStrokeCurves(false);
+			break;
+		case "-strokeControlCurves":
+			$list = listAllStrokeCurves(true);
+			break;
+		case "-place3dTexture":
+			$list = `ls -type "place3dTexture"`;
+			break;
+		case "-kinematics":
+		//
+		// High level setting to turn off
+		// all kinematics types
+		//
+			$list =
+				`ls -type joint -type hikEffector -type hikIKEffector
+					-type ikHandle`;
+			break;
+		case "-joints":
+			$list = `ls -type joint`;
+			break;
+		case "-ikHandles":
+			$list = `ls -type ikHandle -type hikEffector -type hikIKEffector`;
+			break;
+		case "-ikEff":
+			$list = `ls -type ikEffector -type hikEffector -type hikIKEffector`;
+			break;
+		case "-deformers":
+		//
+		// High level setting to turn
+		// off all deformer types
+		//
+			$list = `listTransforms
+					"-type lattice -type implicitSphere -type clusterHandle -type deformBend -type deformFlare -type deformSine -type deformSquash -type deformTwist -type deformWave"`;
+			$wraps = listWrapInfluences();
+			$wires = listWireCurves();			
+			$skinClusters = listSkinClusterInfluences();
+			appendToList($list, $wraps);
+			appendToList($list, $wires);			
+			appendToList($list, $skinClusters);
+
+			break;
+		case "-lattices":
+			$list = `listTransforms "-type lattice"`;
+			break;
+		case "-sculptObjects":
+			$list = `listTransforms "-type implicitSphere"`;
+			break;
+		case "-clusters":
+			$list = `listTransforms "-type clusterHandle"`;
+			break;
+		case "-nonlinears":
+			$list = `listTransforms "-type deformBend -type deformFlare -type deformSine -type deformSquash -type deformTwist -type deformWave"`;
+			break;
+		case "-wraps":
+			$list = listWrapInfluences();
+			break;
+		case "-skinClusters":
+			$list = listSkinClusterInfluences();
+			break;
+		case "-posMarker":
+			$list = `listTransforms "-type positionMarker"`;
+			break;
+		case "-fluids":
+			$list = `listTransforms "-type fluidShape"`;
+			break;
+		case "-fur":
+			$list = `listTransforms "-type FurFeedback"`;
+			break;
+		case "-hairSystems":
+			$list = `listTransforms "-type hairSystem"`;
+			break;
+		case "-follicles":
+			$list = `listTransforms "-type follicle"`;
+			break;
+		case "-nCloth":
+			$list = `listTransforms "-type nCloth"`;
+			$meshes = listRelatedMeshes( $list );
+			appendToList( $list, $meshes );
+			break;
+		case "-nParticle":
+			$list = `listTransforms "-type nParticle"`;
+			break;
+		case "-nRigid":
+			$list = `listTransforms "-type nRigid"`;
+			$meshes = listRelatedMeshes( $list );
+			appendToList( $list, $meshes );
+			break;
+		case "-dynamicConstraint":
+			$list = `listTransforms "-type dynamicConstraint"`;
+			break;
+		default:
+			warning (uiRes("m_buildDisplayMenu.kNodeTypeNotKnown"));
+			break;
+	}
+
+	// Do the actual hide/show, based on the
+	// list that was built in the above case
+	// statement
+	//
+	if( $state == "-hide" ) {
+		if (size($list) > 0) {
+			hideKeepSelection $list;
+		}
+		else warning (uiRes("m_buildDisplayMenu.kNoObjectsToHide"));
+	}
+	else {
+		if (size($list) > 0) {
+			string $cmd="showHidden -a";
+			for ($i in $list) {
+				if (`objExists $i`)
+					$cmd=($cmd + " " + $i);
+			}
+			evalEcho $cmd;
+		}
+		else warning (uiRes("m_buildDisplayMenu.kNoObjectsToShow"));
+	}
+}
+
+global proc adjustSmoothness ( string $selection ){
+
+	switch ( $selection ){
+		case "Rough":
+			displaySmoothness -du 0 -dv 0 -pw 4 -ps 1;
+			displaySmoothness -su 6 -sv 6 -pw 4 -ps 1;
+			break;
+		case "Medium":
+			displaySmoothness -du 1 -dv 1 -pw 8 -ps 2;
+			displaySmoothness -su 3 -sv 3 -pw 8 -ps 2;
+			break;
+		case "Fine":
+			displaySmoothness -du 2 -dv 2 -pw 16 -ps 4;
+			displaySmoothness -su 1 -sv 1 -pw 16 -ps 4;
+			break;
+		default:
+			displaySmoothness -du 1 -dv 1 -pw 8 -ps 2;
+			displaySmoothness -su 3 -sv 3 -pw 8 -ps 2;
+			break;
+	}
+}
+
+global proc setNormalsSize ( float $val ) 
+{
+	polyOptions -ao -dn true -sn $val;
+		}
+
+global proc doFastInteractionItem(int $isFast) 
+{
+	global int $gFastInteraction;
+
+	displayLevelOfDetail -lod $isFast;
+	$gFastInteraction = $isFast;
+
+    if( `menuItem -exists dispLODItem` ) {
+		menuItem -e -cb $isFast dispLODItem;
+	}
+}
+
+global proc doFastViewportTextures( int $slider )
+{
+	int $resolution;
+	switch ( $slider )
+	{
+		case 0:
+			$resolution = 32;
+			break;
+		case 1:
+			$resolution = 64;
+			break;
+		case 2:
+			$resolution = 128;
+			break;
+		case 3:
+			$resolution = 256;
+			break;
+		case 4:
+			$resolution = 512;
+			break;
+		case 5:
+			$resolution = 1024;
+			break;
+		case 6:
+			$resolution = 2048;
+			break;
+		default:
+			$resolution = 32;
+			break;
+	}
+	optionVar -intValue defaultTextureResolution $resolution;
+}
+
+global proc toggleSurfaceBackfaceCulling() 
+//
+//  Toggle the backface culling on all selected surfaces
+//
+{
+	global int $gSelectMeshesBit ;
+	global int $gSelectNurbsSurfacesBit;
+
+	// Toggle backface culling for all nurbs surfaces
+	//
+	string $nurbsSurfaces[] = `filterExpand -ex true -sm $gSelectNurbsSurfacesBit`;
+	for ( $surface in $nurbsSurfaces ) {
+		displayCull -bfc (!`displayCull -q -bfc $surface`) $surface;
+	}
+
+	//  Toggle backface culling for all mesh surfaces
+	//
+	
+	int $dispVertex = `optionVar -q polyDisplayVertexBackfaceCulling`;
+	int $dispWire = `optionVar -q polyDisplayWireBackfaceCulling`;
+	int $dispHardEdge = `optionVar -q polyDisplayHardEdgeBackfaceCulling`;
+	
+	string $meshSurfaces[] = `filterExpand -ex true -sm $gSelectMeshesBit`;
+	
+	int  $isNotCulled[] = `polyOptions -activeObjects -q -bc $meshSurfaces`;	
+	int  $isKeepingWire[] = `polyOptions -activeObjects -q -wbc $meshSurfaces`;	
+	int  $isKeepingHardEdge[] = `polyOptions -activeObjects -q -hb $meshSurfaces`;
+	int  $isNotShowingVertex[] = `polyOptions -activeObjects -q -bcv $meshSurfaces`;
+	
+	string $vertexOption = "";
+	
+	string $cmd = "";
+	
+	int    $index = 0;
+	for ( $surface in $meshSurfaces ) {
+		$cmd += "polyOptions ";
+		if ($dispVertex){
+			$vertexOption = " -bcv false ";
+		} else {
+			$vertexOption = " -bcv true ";
+		}
+		$cmd += $vertexOption;
+		if ( $isNotCulled[$index]) {
+			//Turn the correct form of culling on
+			if ($dispWire){
+				$cmd += " -activeObjects -wbc ";
+			} else 	if ($dispHardEdge){
+				$cmd += " -activeObjects -hb ";
+			} else {
+				$cmd += " -activeObjects -fb ";
+			}
+		} else {
+			//Don't always toggle off culling, because could be called by turning off one of the 
+			//culling options
+			if (!$dispWire && $isKeepingWire[$index] && $dispHardEdge){
+				$cmd += " -activeObjects -hb ";
+			} else if (!$dispHardEdge && $isKeepingHardEdge[$index] && $dispWire){
+				$cmd += " -activeObjects -wbc ";
+			} else if (!$isNotShowingVertex[$index] && !$dispVertex){
+				if ($dispWire){
+					$cmd += " -activeObjects -wbc ";
+				} else if ($dispHardEdge){
+					$cmd += " -activeObjects -hb ";
+				} else {
+					$cmd += " -activeObjects -fb ";
+				}
+			}else if ((!$dispHardEdge && $isKeepingHardEdge[$index]) || ($isKeepingWire[$index] && !$dispWire)){
+				$cmd += " -activeObjects -fb ";
+			} else if (!$isKeepingWire[$index] && $dispWire){
+				$cmd += " -activeObjects -wbc ";
+			} else if (!$isKeepingHardEdge[$index] && $dispHardEdge){
+				$cmd += " -activeObjects -hb ";
+			} else if ($isNotShowingVertex[$index] && $dispVertex){
+				if ($dispWire){
+					$cmd += " -activeObjects -wbc ";
+				} else if ($dispHardEdge){
+					$cmd += " -activeObjects -hb ";
+				} else {
+					$cmd += " -activeObjects -fb ";
+				}
+			} else {
+				$cmd += " -activeObjects -bc ";
+			}
+		}
+		$cmd += $surface;
+		
+		$cmd += "; ";
+
+		eval($cmd);
+		
+		$index++;
+	}
+}
+
+global proc toggleNormalDisplay( string $type )
+//
+//  Toggle face or vertex normals display
+//	$type - "face" or "vertex"
+//
+{
+	global int $gSelectMeshesBit ;
+	
+	string $meshSurfaces[] = `filterExpand -ex true -sm $gSelectMeshesBit`;
+	int $displayNormalOn[] = `polyOptions -query -displayNormal $meshSurfaces`;
+	int $faceNormalsOn[] = `polyOptions -query -facet $meshSurfaces`;
+	int $vertexNormalsOn[] = `polyOptions -query -point $meshSurfaces`;
+	int $bothOn[] = `polyOptions -query -pointFacet $meshSurfaces`;
+
+	int $index = 0;
+	for ( $surface in $meshSurfaces ) {
+		
+		// Figure out current state of display
+		//
+		int $displayFaceNormals = ( $displayNormalOn[$index] && ( $faceNormalsOn[$index] || $bothOn[$index]));
+		int $displayVertexNormals = ( $displayNormalOn[$index] && ( $vertexNormalsOn[$index] || $bothOn[$index]));
+		
+		// Toggle face/vertex display accordingly
+		//
+		switch ($type) {
+			case "face":
+				$displayFaceNormals = !$displayFaceNormals;
+				break;
+			case "vertex":
+				$displayVertexNormals = !$displayVertexNormals;
+				break;
+		}
+		
+		if( $displayFaceNormals && $displayVertexNormals ){
+			polyOptions -displayNormal true -pointFacet $surface;
+		} else if ( $displayFaceNormals ) {
+			polyOptions -displayNormal true -facet $surface;
+		} else if ( $displayVertexNormals ) {
+			polyOptions -displayNormal true -point $surface;
+		} else {
+			polyOptions -displayNormal false $surface;
+		}
+		
+		$index++;
+	}
+}
+
+global proc toggleTangentDisplay()
+//
+//  Toggle tangent display
+//
+{
+	global int $gSelectMeshesBit ;
+	
+	string $meshSurfaces[] = `filterExpand -ex true -sm $gSelectMeshesBit`;
+	int $displayTangentsOn[] = `polyOptions -query -displayTangent $meshSurfaces`;
+
+	int $index = 0;
+	for ( $surface in $meshSurfaces ) 
+	{
+		polyOptions -displayTangent (!$displayTangentsOn[ $index]) $surface;
+		$index++;
+	}
+}
+
+global proc ignoreHardwareShader(int $val)
+//
+// For all nurbs and poly meshes. Set the surface to
+// ignore or not ignore hardware shaders for dislay.
+//
+{
+	global int $gSelectMeshesBit ;
+	global int $gSelectNurbsSurfacesBit;
+
+	// Set attribute on nurbs surfaces
+	//
+	string $nurbsSurfaces[] = `filterExpand -ex true -sm $gSelectNurbsSurfacesBit -fp 1`;
+	for ( $surface  in $nurbsSurfaces ) 
+	{
+		setAttr ($surface + ".ignoreHwShader") $val;
+	}
+
+	//  Set attribute for all mesh surfaces
+	//
+	string $meshSurfaces[] = `filterExpand -ex true -sm $gSelectMeshesBit -fp 1`;
+	for ( $surface in $meshSurfaces ) 
+	{
+		setAttr ($surface + ".ignoreHwShader") $val;
+	}
+}
+
+global proc boundingBoxDisplayCtrl ( int $enabled, string $startNode )
+//
+// For all the shapes under the selected objects, either turn
+// bounding box display on or off based on the value of enabled.
+// 0=turn off display, non-zero=turn on display.
+//
+{
+	string $selectedObjects[];
+	string $object;
+
+	if ( $startNode == "" ) {
+		$selectedObjects = `ls -sl`;
+	} else {
+		$selectedObjects[0] = $startNode;
+	}
+
+	for ( $object in $selectedObjects ) {
+
+		string $shapes[] = `listRelatives -shapes $object`;
+		string $shape;
+
+		if ( size( $shapes ) == 0 ) {
+			string $transform;
+			$shapes = `listRelatives -children $object`;
+
+			for ( $transform in $shapes ) {
+				if ( `nodeType $transform` == "transform" ) {
+					// We encountered a group node.  Recur down until
+					// we find the shape nodes in this group.
+					boundingBoxDisplayCtrl $enabled $transform;
+				}
+			}
+		}
+
+		for ( $shape in $shapes ) {
+			if ( $enabled ) {
+				setAttr ( $shape + ".overrideEnabled") 1;
+				setAttr ( $shape + ".overrideLevelOfDetail") 1;
+			} else {
+				// Don't reset the overrideEnabled attribute. It
+				// is used for more than just bounding box display
+				// and turning if off will mess things up of you
+				// have temporarily enabled bounding box display 
+				// of an object in a layer.
+				setAttr ( $shape + ".overrideLevelOfDetail" ) 0;
+			}
+
+		}
+	}
+}
+
+global proc refreshHeadsUpDisplayMenu ( string $parent ){
+	
+	setParent -menu $parent;
+	menuItem -edit 
+		-checkBox `optionVar -query inViewMessageEnable`
+		inViewMessageToggle;
+
+	menuItem -edit
+		-checkBox `viewManip -q -v`
+		viewCubeItem;
+
+	menuItem -edit
+		-checkBox `optionVar -query inViewEditorVisible`
+		inViewEditorToggle;
+
+}
+
+global proc buildDisplayMenu ( string $parent ) {
+//
+//	Build the Display menu.  Checks to see if it's already
+//	been built, and returns if this is true.
+//
+
+	setParent -m $parent;
+
+	//HeadsUpDisplay Menu Item
+	global string $gHeadsUpDisplayMenu;
+	
+	global int $gToggleOriginAxis;
+
+	global int $gShowGrid;
+	global float $gJointDisplayScale;
+
+	setParent -m $parent;
+	if( `menu -q -ni $parent` == 0 ) {
+
+		// User Interface
+		menuItem -divider true -dividerLabel (uiRes("m_buildDisplayMenu.kDisplayUserInterface"));
+
+        // first Items that affect a whole panel's state
+		menuItem -cb $gShowGrid 
+			-label (uiRes("m_buildDisplayMenu.kShowGrid"))
+			-annotation (uiRes("m_buildDisplayMenu.kShowGridAnnot"))
+			-c "ToggleGrid"
+			dispGridItem;
+
+		menuItem -ecr false -optionBox true 
+			-annotation (uiRes("m_buildDisplayMenu.kGridOptionAnnot"))
+			-c "GridOptions" dispGridSpacingItem;
+
+		//Note: HeadsUpDisplay Toggle methods (except origin axis) are located in initHUDScripts.mel
+		//
+		if (!`exists initHUDScripts`)
+		{
+			source initHUDScripts.mel;
+		}
+
+	 $gHeadsUpDisplayMenu = `menuItem -label (uiRes("m_buildDisplayMenu.kHeadsUpDisplay")) 
+						    -sm true
+							-allowOptionBoxes true
+						    -tearOff true`;
+		menuItem -edit
+			-postMenuCommand ( "refreshHeadsUpDisplayMenu " + $gHeadsUpDisplayMenu )
+			$gHeadsUpDisplayMenu;			
+
+			menuItem -checkBox `optionVar -query animationDetailsVisibility`
+				-label (uiRes("m_buildDisplayMenu.kAnimationDetails"))
+				-command "ToggleAnimationDetails"
+				-annotation (uiRes("m_buildDisplayMenu.kAnimationDetailsAnnot"))
+				animationDetailsItem;
+
+			menuItem -checkBox `optionVar -query cameraNamesVisibility`
+				-label (uiRes("m_buildDisplayMenu.kCameraNames"))
+				-command "ToggleCameraNames"
+				-annotation (uiRes("m_buildDisplayMenu.kCameraNamesAnnot"))
+				cameraNamesItem;
+
+			menuItem -checkBox `optionVar -query capsLockVisibility`
+				-version 2016
+				-label (uiRes("m_buildDisplayMenu.kCapsLockWarn"))
+				-annotation (uiRes("m_buildDisplayMenu.kCapsLockWarnAnnot"))
+				-command "ToggleCapsLockDisplay"
+				capsLockItem;
+
+			menuItem -checkBox `optionVar -query currentContainerVisibility`
+				-label (uiRes("m_buildDisplayMenu.kCurrentContainer"))
+				-command "ToggleCurrentContainerHud"
+				-annotation (getRunTimeCommandAnnotation("ToggleCurrentContainerHud"))
+				currentContainerItem;
+
+			menuItem -checkBox `optionVar -query currentFrameVisibility`
+				-label (uiRes("m_buildDisplayMenu.kCurrentFrame"))
+				-command "ToggleCurrentFrame"
+				-annotation (uiRes("m_buildDisplayMenu.kCurrrentFrameAnnot"))
+				currentFrameItem;
+
+			menuItem -checkBox `optionVar -query evaluationVisibility`
+				-version 2016
+				-label (uiRes("m_buildDisplayMenu.kEvaluationMode"))
+				-command "ToggleEvaluationManagerVisibility"
+				-annotation (uiRes("m_buildDisplayMenu.kEvlauationModeAnnot"))
+				evaluationManagerItem;
+
+			menuItem -checkBox `optionVar -query focalLengthVisibility`
+				-label (uiRes("m_buildDisplayMenu.kFocalLength"))
+				-command "ToggleFocalLength"
+				-annotation (uiRes("m_buildDisplayMenu.kFocalLengthAnnot"))
+				focalLengthItem;
+
+			menuItem -checkBox `optionVar -query frameRateVisibility`
+				-label (uiRes("m_buildDisplayMenu.kFrameRate"))
+				-command "ToggleFrameRate"
+				-annotation (uiRes("m_buildDisplayMenu.kFrameRateAnnot"))
+				frameRateItem;
+
+			menuItem -checkBox `optionVar -query hikDetailsVisibility`
+				-label (uiRes("m_buildDisplayMenu.kHikDetails"))
+				-command "ToggleHikDetails"
+				-annotation (getRunTimeCommandAnnotation("ToggleHikDetails"))
+				hikDetailsItem;
+
+			menuItem -checkBox `optionVar -query materialLoadingDetailsVisibility`
+				-version 2016
+				-label (uiRes("m_buildDisplayMenu.kMaterialLoadingDetails"))
+				-annotation (uiRes("m_buildDisplayMenu.kMaterialLoadingDetailsAnnot"))
+				-command "ToggleMaterialLoadingDetailsVisibility"
+				materialLoadingDetailsItem;
+
+			menuItem -checkBox `optionVar -query objectDetailsVisibility`
+				-label (uiRes("m_buildDisplayMenu.kObjectDetails"))
+				-command "ToggleObjectDetails"
+				-annotation (uiRes("m_buildDisplayMenu.kObjectDetailsAnnot"))
+				objectDetailsItem;
+
+			menuItem -checkBox $gToggleOriginAxis 
+				-label (uiRes("m_buildDisplayMenu.kOriginAxis"))
+				-annotation (uiRes("m_buildDisplayMenu.kOriginAxisAnnot"))
+				-command "ToggleOriginAxis"
+				originAxesItem;
+
+			menuItem -checkBox `optionVar -query particleCountVisibility`
+				-label (uiRes("m_buildDisplayMenu.kParticleCount"))
+				-command "ToggleParticleCount"
+				-annotation (uiRes("m_buildDisplayMenu.kParticleCountAnnot"))
+				particleCountItem;
+
+			menuItem -checkBox `optionVar -query polyCountVisibility`
+				-label (uiRes("m_buildDisplayMenu.kPolyCount"))
+				-command "TogglePolyCount"
+				-annotation (uiRes("m_buildDisplayMenu.kPolyCountAnnot"))
+				polyCountItem;
+
+			menuItem -enableCommandRepeat false -optionBox true
+					 -command "performPolyCountOptions 1";
+
+			menuItem -checkBox `optionVar -query sceneTimecodeVisibility`
+				-label (uiRes("m_buildDisplayMenu.kSceneTimecode"))
+				-command "ToggleSceneTimecode"
+				-annotation (uiRes("m_buildDisplayMenu.kSceneTimecodeAnnot"))
+				sceneTimecodeItem;
+
+			menuItem -checkBox `optionVar -query selectDetailsVisibility`
+				-label (uiRes("m_buildDisplayMenu.kSelectDetails"))
+				-command "ToggleSelectDetails"
+				-annotation (uiRes("m_buildDisplayMenu.kSelectDetailsAnnot"))
+				selectDetailsItem;
+
+			if (`isTrue "SubdivUIExists"`) {
+				menuItem -checkBox `optionVar -query subdDetailsVisibility`
+					-label (uiRes("m_buildDisplayMenu.kSubdivDetails"))
+					-command "ToggleSubdDetails"
+					-annotation (uiRes("m_buildDisplayMenu.kSubdivDetailsAnnot"))
+					subdDetailsItem;
+			}
+
+			menuItem -checkBox `optionVar -query viewAxisVisibility`
+				-label (uiRes("m_buildDisplayMenu.kViewAxis"))
+				-command "ToggleViewAxis"
+				-annotation (uiRes("m_buildDisplayMenu.kViewAxisAnnot"))
+				viewAxisItem;
+
+			menuItem -checkBox `viewManip -q -v`
+				-label (uiRes("m_buildDisplayMenu.kViewCube"))
+				-annotation (uiRes("m_buildDisplayMenu.kViewCubeAnnot"))
+				-command "ToggleViewCube"
+				viewCubeItem;
+
+			menuItem -checkBox `optionVar -query viewportRendererVisibility`
+				-version 2015
+				-label (uiRes("m_buildDisplayMenu.kViewportRenderer"))
+				-command "ToggleViewportRenderer"
+				-annotation (uiRes("m_buildDisplayMenu.kViewportRendererAnnot"))
+				viewportRendererItem;
+
+			menuItem -divider true;
+			
+			menuItem -checkBox `optionVar -query inViewMessageEnable`
+				-label (uiRes("m_buildDisplayMenu.kInViewMessaging"))
+				-annotation (uiRes("m_buildDisplayMenu.kInViewMessagingAnnot"))
+				-command "optionVar -iv inViewMessageEnable #1"
+				inViewMessageToggle;
+
+			menuItem -checkBox `optionVar -query inViewEditorVisible`
+				-version 2016
+				-label (uiRes("m_buildDisplayMenu.kInViewEditor"))
+				-annotation (uiRes("m_buildDisplayMenu.kInViewEditorAnnot"))
+				-command "optionVar -iv inViewEditorVisible #1"
+				inViewEditorToggle;
+
+		// NOTE:
+		// Do not just add new things to the bottom of this menu.
+		// Look at the loose groupings above and add new things
+		// where they fit best. (modeling, animation, view...)
+
+		setParent -menu ..;
+
+		global string $gMainOptionsMenu;
+		menuItem -label (uiRes("m_buildDisplayMenu.kUIElements"))
+			-subMenu true -tearOff true
+			-familyImage "menuIconOptions.png"
+			-pmc ( "buildPreferenceMenu " + $gMainOptionsMenu )
+			$gMainOptionsMenu;
+		setParent -m $parent;
+
+		// Object
+		menuItem -divider true -dividerLabel (uiRes("m_buildDisplayMenu.kDisplayObject"));
+
+		// items that work on object's display in all panels
+			
+		$menuItem = `menuItem -label (uiRes("m_buildDisplayMenu.kHide")) -subMenu 1 -tearOff 1`;
+		global string $gDisplayHideSubmenu;
+		$gDisplayHideSubmenu = $menuItem;
+		menuItem -e -pmc ( "buildHideSubmenu " + $menuItem ) $menuItem;
+		setParent -m ..;
+		$menuItem = `menuItem -label (uiRes("m_buildDisplayMenu.kShow")) -subMenu 1 -tearOff 1`;
+		global string $gDisplayShowSubmenu;
+		$gDisplayShowSubmenu = $menuItem;
+		menuItem -e -pmc ( "buildShowSubmenu " + $menuItem ) $menuItem;
+		setParent -m ..;
+
+		menuItem -label (uiRes("m_buildDisplayMenu.kToggleShowHide"))
+			   -annotation (uiRes("m_buildDisplayMenu.kToggleShowHideAnnot"))
+			   -c "ToggleVisibilityAndKeepSelection ()"
+			   -version 2016;
+		menuItem -ecr false -optionBox true 
+			-annotation (uiRes("m_buildDisplayMenu.kToggleShowHideOptionsAnnot"))
+			-c "ToggleVisibilityAndKeepSelectionOptions ()";
+		
+		$menuItem = `menuItem -label (uiRes("m_buildDisplayMenu.kPerCameraVisibility")) -subMenu 1 -tearOff 1`;
+		global string $gDisplayPerCameraVisibilitySubmenu;
+		$gDisplayPerCameraVisibilitySubmenu = $menuItem;
+		menuItem -e -pmc ( "buildPerCameraVisibilitySubmenu " + $menuItem ) $menuItem;
+		setParent -m ..;
+
+		menuItem -d true -ld false;
+
+		menuItem -label (uiRes("m_buildDisplayMenu.kWireframeColor"))
+			   -annotation (uiRes("m_buildDisplayMenu.kWireframeColorAnnot"))
+			   -c "objectColorPalette ()"
+			   objectColorItem;
+
+		menuItem -label (uiRes("m_buildDisplayMenu.kObjectDisplay")) -subMenu true -tearOff true;
+
+			menuItem -label (uiRes("m_buildDisplayMenu.kTemplate"))
+				-annotation (uiRes("m_buildDisplayMenu.kTemplateAnnot"))
+				-c "TemplateObject" templateOnItem;
+
+			menuItem -label (uiRes("m_buildDisplayMenu.kUntemplate"))
+				-annotation (uiRes("m_buildDisplayMenu.kUntemplateAnnot"))
+				-c "UntemplateObject" templateOffItem;
+
+			menuItem -d true;
+			menuItem -label (uiRes("m_buildDisplayMenu.kBoundingBox"))
+				-annotation (uiRes("m_buildDisplayMenu.kBoundingBoxAnnot"))
+				-c "ShowBoundingBox" enableBoundingBoxDisplayItem;
+
+			menuItem -label (uiRes("m_buildDisplayMenu.kNoBoundingBox"))
+				-annotation (uiRes("m_buildDisplayMenu.kNoBoundingBoxAnnot"))
+				-c "HideBoundingBox" disableBoundingBoxDisplayItem;
+
+			menuItem -d true;
+
+			menuItem -label (uiRes("m_buildDisplayMenu.kGeometry"))       
+				-annotation (uiRes("m_buildDisplayMenu.kGeometryAnnot"))
+				-c "ShowObjectGeometry";
+
+			menuItem -label (uiRes("m_buildDisplayMenu.kNoGeometry"))       
+				-annotation (uiRes("m_buildDisplayMenu.kNoGeometryAnnot"))
+				-c "HideObjectGeometry";
+				
+			menuItem -d true;
+			
+			menuItem -label (uiRes("m_buildDisplayMenu.kIgnoreHardwareShader"))
+				-annotation (uiRes("m_buildDisplayMenu.kIgnoreHardwareShaderAnnot"))
+				-c "ignoreHardwareShader 1";
+
+			menuItem -label (uiRes("m_buildDisplayMenu.kUseHardwareShader"))
+				-annotation (uiRes("m_buildDisplayMenu.kUseHardwareShaderAnnot"))
+				-c "ignoreHardwareShader 0";
+			
+			menuItem -d true;
+
+			menuItem -cb `optionVar -q "fastInteraction"` -label (uiRes("m_buildDisplayMenu.kFastInteraction")) 
+				-annotation (uiRes("m_buildDisplayMenu.kFastInteractionAnnot"))
+				-c "doFastInteractionItem (!`displayLevelOfDetail -q -lod`)" dispLODItem;				
+
+		setParent -m ..;
+
+		menuItem -label (uiRes("m_buildDisplayMenu.kTransformDisplay")) -subMenu true -tearOff true objectsCompItem;
+			menuItem -label (uiRes("m_buildDisplayMenu.kLocalRotationAxes")) 
+				-annotation (uiRes("m_buildDisplayMenu.kLocalRotationAxesAnnot"))
+				-c "ToggleLocalRotationAxes" toggleAxisItem;
+			menuItem -label (uiRes("m_buildDisplayMenu.kRotatePivots")) 
+				-annotation (uiRes("m_buildDisplayMenu.kRotatePivotsAnnot"))
+				-c "ToggleRotationPivots" toggleRPItem;
+			menuItem -label (uiRes("m_buildDisplayMenu.kScalePivots")) 
+				-annotation (uiRes("m_buildDisplayMenu.kScalePivotsAnnot"))
+				-c "ToggleScalePivots" toggleSPItem;
+			menuItem -label (uiRes("m_buildDisplayMenu.kSelectionHandles")) 
+				-annotation (uiRes("m_buildDisplayMenu.kSelectionHandlesAnnot"))
+				-c "ToggleSelectionHandles" toggleSHItem;
+			setParent -m ..;
+
+		originAxesMenuUpdate;
+		gridMenuUpdate;
+	} else {
+		//
+		//  Update check items
+		//
+		menuItem -e -cb `displayLevelOfDetail -q -lod` dispLODItem;
+	}
+	menuItem  -divider true -ld false;
+
+	$menuItem = `menuItem -label (uiRes("m_buildDisplayMenu.kPolygons")) -subMenu 1 -tearOff 1 -allowOptionBoxes true`;
+	global string $gDisplayPolygonsSubmenu;
+	$gDisplayPolygonsSubmenu = $menuItem;
+	menuItem -e -pmc ( "buildPolygonsSubmenu " + $menuItem ) $menuItem;
+	setParent -m ..;	
+	
+	$menuItem = `menuItem -label (uiRes("m_buildDisplayMenu.kNurbs")) -subMenu 1 -tearOff 1 -allowOptionBoxes true`;
+	global string $gDisplayNurbsSubmenu;
+	$gDisplayNurbsSubmenu = $menuItem;
+	menuItem -e -pmc ( "buildNurbsSubmenu " + $menuItem ) $menuItem;
+	setParent -m ..;
+	
+	if (`isTrue "SubdivUIExists"`) {
+		$menuItem = `menuItem -label (uiRes("m_buildDisplayMenu.kSubdivSurfaces")) -subMenu true  -tearOff true -allowOptionBoxes true`;
+		global string $gDisplaySubdivSubmenu;
+		$gDisplaySubdivSubmenu = $menuItem;
+		menuItem -e -pmc ( "buildSubdivSurfaces " + $menuItem ) $menuItem;
+		setParent -m ..;
+	}
+	
+	$menuItem = `menuItem -label (uiRes("m_buildDisplayMenu.kAnimation")) -subMenu true  -tearOff true -allowOptionBoxes true`;
+	global string $gDisplayAnimationSubmenu;
+	$gDisplayAnimationSubmenu = $menuItem;
+	menuItem -e -pmc ( "buildAnimationMenu " + $menuItem ) $menuItem;
+	setParent -m ..;	
+	
+	$menuItem = `menuItem -label (uiRes("m_buildDisplayMenu.kRendering")) -subMenu true  -tearOff true -allowOptionBoxes true`;
+	global string $gDisplayRenderingSubmenu;
+	$gDisplayRenderingSubmenu = $menuItem;
+	menuItem -e -pmc ( "buildRenderingMenu " + $menuItem ) $menuItem;
+	setParent -m ..;	
+}
+
+////////////////////////////////////////////////////////
+//
+//	The following procedures build the contents of
+//	the Display menu submenus - this speeds up the
+//	initial display of the Display menu when the user
+//	clicks on the menu
+//
+////////////////////////////////////////////////////////
+
+global proc buildHideSubmenu( string $parent )
+//
+//	Build the Hide submenu contents
+{
+    int $dimWhenNoSelect = 0;
+	int $completeLicense = `licenseCheck -m "edit" -typ "complete"`;
+	
+	setParent -m $parent;
+		menuItem -label (uiRes("m_buildDisplayMenu.kHideSelection")) 
+			-annotation (uiRes("m_buildDisplayMenu.kHideSelectedAnnot"))
+			-c "HideSelectedObjects" hideItem;
+    	if( $dimWhenNoSelect ) {
+			dimWhen -f "SomethingSelected" ($parent+"|hideItem");
+		}
+
+		menuItem -label (uiRes("m_buildDisplayMenu.kHideUnselected")) 
+			-annotation (uiRes("m_buildDisplayMenu.kHideUnselectedAnnot"))
+			-c "HideUnselectedObjects" hideUnselectedItem;
+    	if( $dimWhenNoSelect ) {
+			dimWhen -f "SomethingSelected" ($parent+"|hideUnselectedItem");
+		}
+
+		menuItem -label (uiRes("m_buildDisplayMenu.kHideUnselectedCVs"))
+			-annotation (uiRes("m_buildDisplayMenu.kHideUnselectedCVsAnnot"))
+			-c "HideUnselectedCVs" hideUnselectedCVsItem;
+    	if( $dimWhenNoSelect ) {
+			dimWhen -f "SomethingSelected" ($parent+"|hideUnselectedCVsItem");
+		}
+
+		menuItem -label (uiRes("m_buildDisplayMenu.kHideAllObjects"))
+			-annotation (uiRes("m_buildDisplayMenu.kHideAllObjectsAnnot"))
+			-c "HideAll" hideAllItem;
+
+		menuItem -d true;
+
+		menuItem -label (uiRes("m_buildDisplayMenu.kHideGeometry")) -sm true -to true;
+			menuItem -label (uiRes("m_buildDisplayMenu.kHideAllGeometry"))
+				-annotation (uiRes("m_buildDisplayMenu.kHideAllGeometryAnnot"))
+				-c "HideGeometry" hideGeometryItem;
+			menuItem -d true;
+			if( `isTrue "SurfaceUIExists"` ) {
+				menuItem -label (uiRes("m_buildDisplayMenu.kHideAllNURBSSurfaces"))
+					-annotation (uiRes("m_buildDisplayMenu.kHideAllNURBSSurfacesAnnot"))
+					-c "HideNURBSSurfaces"
+					hideNurbsSurfacesItem;
+			}
+			menuItem -label (uiRes("m_buildDisplayMenu.kHideAllNURBSCurves"))
+				-annotation (uiRes("m_buildDisplayMenu.kHideAllNURBSCurvesAnnot"))
+				-c "HideNURBSCurves"
+				hideNurbsCurvesItem;
+			menuItem -label (uiRes("m_buildDisplayMenu.kHideAllPolygonSurfaces"))
+				-annotation (uiRes("m_buildDisplayMenu.kHideAllPolygonSurfacesAnnot"))
+				-c "HidePolygonSurfaces"
+				hidePolySurfacesItem;
+			menuItem -label (uiRes("m_buildDisplayMenu.kHideAllDeformingGeometry"))
+ 				-annotation (uiRes("m_buildDisplayMenu.kHideAllDeformingGeometryAnnot"))
+				-c "HideDeformingGeometry";
+
+			if (`isTrue "SubdivUIExists"`) {
+			  menuItem -label (uiRes("m_buildDisplayMenu.kHideAllSubdivSurfaces"))
+ 				-annotation (uiRes("m_buildDisplayMenu.kHideAllSubdivSurfacesAnnot"))
+				-c "HideSubdivSurfaces"
+				subdivToggleHideGeometryItem;
+			}
+			if(`isTrue "MayaCreatorExists"` && (`licenseCheck -m "edit" -typ "particlePaint"`)) {
+				menuItem -d 1;
+				menuItem  -label (uiRes("m_buildDisplayMenu.kHideAllStrokes"))
+					-annotation (uiRes("m_buildDisplayMenu.kHideAllStrokesAnnot"))
+					-c "HideStrokes" hideStrokesItem;
+				menuItem  -label (uiRes("m_buildDisplayMenu.kHideAllStrokePathCurves"))
+					-annotation (uiRes("m_buildDisplayMenu.kHideAllStrokePathCurvesAnnot"))
+					-c "HideStrokePathCurves" hideStrokeCurvesItem;
+				menuItem  -label (uiRes("m_buildDisplayMenu.kHideAllStrokeControlCurves"))
+					-annotation (uiRes("m_buildDisplayMenu.kHideAllStrokeControlCurvesAnnot"))
+					-c "HideStrokeControlCurves" hideStrokeControlCurvesItem;
+			}
+
+		setParent -m ..;
+
+		menuItem -label (uiRes("m_buildDisplayMenu.kHideKinematics")) -sm true -to true;
+			menuItem -label (uiRes("m_buildDisplayMenu.kHideAllKinematics"))
+				-annotation (uiRes("m_buildDisplayMenu.kHideAllKinematicsAnnot"))
+				-c "HideKinematics" hideKinItem;
+			menuItem -d true;
+			menuItem -label (uiRes("m_buildDisplayMenu.kHideAllJoints"))
+				-annotation (uiRes("m_buildDisplayMenu.kHideAllJointsAnnot"))
+				-c "HideJoints" hideJointsItem;
+			menuItem -label (uiRes("m_buildDisplayMenu.kHideAllIKHandles"))
+				-annotation (uiRes("m_buildDisplayMenu.kHideAllIKHandlesAnnot"))
+				-c "HideIKHandles"
+				hideHandleItem;
+		setParent -m ..;
+
+		menuItem -label (uiRes("m_buildDisplayMenu.kHideDeformers")) -sm true -to true hideDeformersItem;
+			menuItem -label (uiRes("m_buildDisplayMenu.kHideAllDeformers"))
+				-annotation (uiRes("m_buildDisplayMenu.kHideAllDeformersAnnot"))
+				-c "HideDeformers" hideDeformItem;
+			menuItem -d true;
+			menuItem -label (uiRes("m_buildDisplayMenu.kHideAllLattices"))
+				-annotation (uiRes("m_buildDisplayMenu.kHideAllLatticesAnnot"))
+				-c "HideLattices" hideFFDItem;
+
+			if ($completeLicense) {			
+				menuItem -label (uiRes("m_buildDisplayMenu.kHideAllSculptObjects"))
+					-annotation (uiRes("m_buildDisplayMenu.kHideAllSculptObjectsAnnot"))
+					-c "HideSculptObjects" hideSculptItem;
+
+				menuItem -label (uiRes("m_buildDisplayMenu.kHideAllClusters"))
+					-annotation (uiRes("m_buildDisplayMenu.kHideAllClustersAnnot"))
+					-ltVersion 2016
+					-c "HideClusters" hideClusterItem;
+			}
+			menuItem -label (uiRes("m_buildDisplayMenu.kHideAllNonLinears"))
+				-annotation (uiRes("m_buildDisplayMenu.kHideAllNonlinearsAnnot"))
+				-c "HideNonlinears" hideNonlinearItem;
+
+			if ($completeLicense) {
+				menuItem -label (uiRes("m_buildDisplayMenu.kHideAllWrapInfluences"))
+					-annotation (uiRes("m_buildDisplayMenu.kHideAllWrapInfluencesAnnot"))
+					-c "HideWrapInfluences" hideWrapItem;
+			}
+			menuItem -label (uiRes("m_buildDisplayMenu.kHideAllSmoothSkinInfluences"))
+				-annotation (uiRes("m_buildDisplayMenu.kHideAllSmoothSkinInfluencesAnnot"))
+				-c "HideSmoothSkinInfluences" hideSkinClusterItem;
+
+		setParent -m ..;
+
+
+		menuItem  -label (uiRes("m_buildDisplayMenu.kHideAllLights"))
+			-annotation (uiRes("m_buildDisplayMenu.kHideAllLightsAnnot"))
+			-c "HideLights" hideLightsItem;
+		menuItem  -label (uiRes("m_buildDisplayMenu.kHideAllCameras"))
+			-annotation (uiRes("m_buildDisplayMenu.kHideAllCamerasAnnot"))
+			-c "HideCameras" hideCamerasItem;
+		menuItem  -label (uiRes("m_buildDisplayMenu.kHideAllTexturePlacements"))
+			-annotation (uiRes("m_buildDisplayMenu.kHideAllTexturePlacementsAnnot"))
+			-c "HideTexturePlacements" hidePlace3dTxItem;
+		menuItem  -label (uiRes("m_buildDisplayMenu.kHideAllConstructionPlanes"))
+			-annotation (uiRes("m_buildDisplayMenu.kHideAllConstructionPlanesAnnot"))
+			-c "HidePlanes" hidePlanesItem;
+
+		if( fluidEditLicenseFound() ) {
+			menuItem  -label (uiRes("m_buildDisplayMenu.kHideAllFluids"))
+				-annotation (uiRes("m_buildDisplayMenu.kHideAllFluidsAnnot"))
+				-c "HideFluids" hideFluidsItem;
+		}
+
+		if( fluidEditLicenseFound() ) {
+			menuItem  -label (uiRes("m_buildDisplayMenu.kHideAllHairSystems"))
+				-annotation (uiRes("m_buildDisplayMenu.kHideAllHairSystemsAnnot"))
+				-c "HideHairSystems" hideHairSystemsItem;
+
+			menuItem  -label (uiRes("m_buildDisplayMenu.kAllFollicles"))
+				-annotation (uiRes("m_buildDisplayMenu.kHideAllFollicles"))
+				-c "HideFollicles" hideFolliclesItem;
+		}
+
+		if( `exists buildFurFiles` ) {
+			global string $gHideFurItem;
+
+			$gHideFurItem = `menuItem  -label (uiRes("m_buildDisplayMenu.kHideAllFur"))
+								-annotation (uiRes("m_buildDisplayMenu.kHideAllFurAnnot"))
+								-c "HideFur" hideFurItem`;
+		}
+
+		if( nClothEditLicenseFound() ) {
+			menuItem  -label (uiRes("m_buildDisplayMenu.kHideAllNCloths"))
+				-annotation (uiRes("m_buildDisplayMenu.kHideAllNClothsAnnot"))
+				-c "HideNCloths" hideNClothsItem;
+			menuItem  -label (uiRes("m_buildDisplayMenu.kHideAllNParticles"))
+				-annotation (uiRes("m_buildDisplayMenu.kHideAllNParticlessAnnot"))
+				-c "HideNParticles" hideNParticleItem;
+			menuItem  -label (uiRes("m_buildDisplayMenu.kHideAllNRigids"))
+				-annotation (uiRes("m_buildDisplayMenu.kHideAllNRigidsAnnot"))
+				-c "HideNRigids" hideNRigidsItem;
+			menuItem  -label (uiRes("m_buildDisplayMenu.kHideAllDynamicConstraints"))
+				-annotation (uiRes("m_buildDisplayMenu.kHideAllDynamicConstraintsAnnot"))
+				-c "HideDynamicConstraints" hideDynamicConstraintsItem;
+		}
+
+		menuItem -d true;
+
+		menuItem  -label (uiRes("m_buildDisplayMenu.kHideAllAnimationMarkers"))
+			-annotation (uiRes("m_buildDisplayMenu.kHideAllAnimationMarkersAnnot"))
+			-c "HideMarkers" hideMarkersItem;
+
+		if (`isTrue "RenderingExists"`)	{ 
+			menuItem  -label (uiRes("m_buildDisplayMenu.kHideAllLightManipulators"))
+				-annotation (uiRes("m_buildDisplayMenu.kHideAllLightManipulatorsAnnot"))
+				-c "HideLightManipulators"	
+				hideLightManipItem;
+			menuItem  -label (uiRes("m_buildDisplayMenu.kHideAllCameraManipulators"))
+				-annotation (uiRes("m_buildDisplayMenu.kHideAllCameraManipulatorsAnnot"))
+				-c "HideCameraManipulators"	
+				hideCameraManipItem;
+			}
+
+	// Delete the -pmc now that the contents of the submenu are built
+	//
+	menuItem -e -pmc "" $parent;
+}
+
+global proc buildShowSubmenu( string $parent )
+//
+//	Build the Show submenu contents
+{
+    int $dimWhenNoSelect = 0;
+	int $completeLicense = `licenseCheck -m "edit" -typ "complete"`;		
+	setParent -m $parent;
+
+		menuItem -label (uiRes("m_buildDisplayMenu.kShowSelection"))
+			-annotation (uiRes("m_buildDisplayMenu.kShowSelectionAnnot"))
+			-c "ShowSelectedObjects" showHiddenItem;
+	    	if( $dimWhenNoSelect ) {
+			dimWhen -f "SomethingSelected" ($parent+"|showHiddenItem");
+		}
+		menuItem -label (uiRes("m_buildDisplayMenu.kShowLastHidden")) -ecr false
+				-annotation (uiRes("m_buildDisplayMenu.kShowLastHiddenAnnot"))
+				-c "ShowLastHidden" showLastHiddenItem;	
+		menuItem -label (uiRes("m_buildDisplayMenu.kShowAllSurfaceCVs")) -ecr false
+			-annotation (uiRes("m_buildDisplayMenu.kShowAllSurfaceCVsAnnot"))
+				-c "ShowSurfaceCVs" showAllSurfaceCVsItem;	
+		menuItem -label (uiRes("m_buildDisplayMenu.kShowAllObjects"))
+			-annotation (uiRes("m_buildDisplayMenu.kShowAllObjectsAnnot"))
+			-c "ShowAll" visibilityShowAllItem2;
+
+		menuItem -d true;
+
+		menuItem -label (uiRes("m_buildDisplayMenu.kShowGeometry")) -sm true -to true;
+			menuItem -label (uiRes("m_buildDisplayMenu.kShowAllGeometry"))
+			-annotation (uiRes("m_buildDisplayMenu.kShowAllGeometryAnnot"))
+			-c "ShowGeometry" showGeometryItem;
+			menuItem -d true;
+			if( `isTrue "SurfaceUIExists"` ) {
+				menuItem -label (uiRes("m_buildDisplayMenu.kShowNURBSSurfaces"))
+					-annotation (uiRes("m_buildDisplayMenu.kShowNURBSSurfacesAnnot"))
+					-c "ShowNURBSSurfaces"
+					showNurbsSurfacesItem;
+			}
+			menuItem -label (uiRes("m_buildDisplayMenu.kShowNURBSCurves"))
+				-annotation (uiRes("m_buildDisplayMenu.kShowNURBSCurvesAnnot"))
+				-c "ShowNURBSCurves"
+				showNurbsCurvesItem;
+			menuItem -label (uiRes("m_buildDisplayMenu.kShowPolygonSurfaces"))
+				-annotation (uiRes("m_buildDisplayMenu.kShowPolygonSurfacesAnnot"))
+				-c "ShowPolygonSurfaces"
+				showPolySurfacesItem;
+			menuItem -label (uiRes("m_buildDisplayMenu.kShowDeformingGeometry"))
+				-annotation (uiRes("m_buildDisplayMenu.kShowDeformingGeometryAnnot"))
+				-c "ShowDeformingGeometry";
+
+			if (`isTrue "SubdivUIExists"`) {
+			  menuItem -label (uiRes("m_buildDisplayMenu.kShowSubdivSurfaces"))
+ 				-annotation (uiRes("m_buildDisplayMenu.kShowSubdivSurfacesAnnot"))
+				-c "ShowSubdivSurfaces"
+			    subdivToggleShowGeometryItem;
+			}
+			if(`isTrue "MayaCreatorExists"` && (`licenseCheck -m "edit" -typ "particlePaint"`)) {
+				menuItem -d 1;
+				menuItem  -label(uiRes("m_buildDisplayMenu.kShowStrokes")) 
+					-annotation (uiRes("m_buildDisplayMenu.kShowStrokesAnnot"))
+					-c "ShowStrokes" showStrokesItem;
+				menuItem  -label (uiRes("m_buildDisplayMenu.kShowStrokePathCurves"))
+					-annotation (uiRes("m_buildDisplayMenu.kShowStrokePathCurvesAnnot"))
+					-c "ShowStrokePathCurves" showStrokeCurvesItem;
+				menuItem  -label (uiRes("m_buildDisplayMenu.kShowStrokeControlCurves"))
+					-annotation (uiRes("m_buildDisplayMenu.kShowStrokeControlCurvesAnnot"))
+					-c "ShowStrokeControlCurves" showStrokeControlCurvesItem;
+			}
+
+		setParent -m ..;
+
+		menuItem -label (uiRes("m_buildDisplayMenu.kShowKinematics")) -sm true -to true;
+			menuItem -label (uiRes("m_buildDisplayMenu.kShowAllKinematics"))
+				-annotation (uiRes("m_buildDisplayMenu.kShowAllKinematicsAnnot"))
+				-c "ShowKinematics" showKinItem;
+			menuItem -d true;
+			menuItem -label (uiRes("m_buildDisplayMenu.kShowAllJoints"))
+				-annotation (uiRes("m_buildDisplayMenu.kShowAllJointsAnnot"))
+				-c "ShowJoints" showJointsItem;
+			menuItem -label (uiRes("m_buildDisplayMenu.kShowAIKHandles"))
+				-annotation (uiRes("m_buildDisplayMenu.kShowAIKHandlesAnnot"))
+				-c "ShowIKHandles" showHandleItem;
+		setParent -m ..;
+
+		menuItem -label (uiRes("m_buildDisplayMenu.kShowDeformers")) -sm true -to true showDeformersItem;
+			menuItem -label (uiRes("m_buildDisplayMenu.kShowAllDeformers"))
+				-annotation (uiRes("m_buildDisplayMenu.kShowAllDeformersAnnot"))
+				-c "ShowDeformers" showDeformItem;
+			menuItem -d true;
+			menuItem -label (uiRes("m_buildDisplayMenu.kShowLattices"))
+				-annotation (uiRes("m_buildDisplayMenu.kShowLatticesAnnot"))
+				-c "ShowLattices" showFFDItem;
+
+			if ($completeLicense) {
+				menuItem -label (uiRes("m_buildDisplayMenu.kShowSculptObjects"))
+					-annotation (uiRes("m_buildDisplayMenu.kShowSculptObjectsAnnot"))
+					-c "ShowSculptObjects" showSculptItem;
+
+				menuItem -label (uiRes("m_buildDisplayMenu.kShowClusters"))
+					-ltVersion 2016
+					-annotation (uiRes("m_buildDisplayMenu.kShowClustersAnnot"))
+					-c "ShowClusters" showClusterItem;
+			}
+
+			menuItem -label (uiRes("m_buildDisplayMenu.kShowNonLinears"))
+				-annotation (uiRes("m_buildDisplayMenu.kShowNonLinearsAnnot"))
+				-c "ShowNonlinears" showNonlinearItem;
+			if ($completeLicense) {
+				menuItem -label (uiRes("m_buildDisplayMenu.kShowWrapInfluences"))
+					-annotation (uiRes("m_buildDisplayMenu.kShowWrapInfluencesAnnot"))
+					-c "ShowWrapInfluences" showWrapItem;
+			}
+			menuItem -label (uiRes("m_buildDisplayMenu.kShowSmoothSkinInfluences"))
+				-annotation (uiRes("m_buildDisplayMenu.kShowSmoothSkinInfluencesAnnot"))
+				-c "ShowSmoothSkinInfluences" showSkinClusterItem;
+
+		setParent -m ..;
+		
+
+		menuItem  -label (uiRes("m_buildDisplayMenu.kShowLights"))
+			-annotation (uiRes("m_buildDisplayMenu.kShowLightsAnnot"))
+			-c "ShowLights" showLightsItem;
+		menuItem  -label (uiRes("m_buildDisplayMenu.kShowCameras"))
+			-annotation (uiRes("m_buildDisplayMenu.kShowCamerasAnnot"))
+			-c "ShowCameras" showCamerasItem;
+		menuItem  -label (uiRes("m_buildDisplayMenu.kShowTexturePlacements"))
+			-annotation (uiRes("m_buildDisplayMenu.kShowTexturePlacementsAnnot"))
+			-c "ShowTexturePlacements" showPlace3dTxItem;
+		menuItem  -label (uiRes("m_buildDisplayMenu.kShowConstructionPlanes"))
+			-annotation (uiRes("m_buildDisplayMenu.kShowConstructionPlanesAnnot"))
+			-c "ShowPlanes" showPlanesItem;
+
+		if( fluidEditLicenseFound() ) {
+			menuItem  -label (uiRes("m_buildDisplayMenu.kShowFluids"))
+				-annotation (uiRes("m_buildDisplayMenu.kShowFluidsAnnot"))
+				-c "ShowFluids" showFluidsItem;
+		}
+
+		if( fluidEditLicenseFound() ) {
+			menuItem  -label (uiRes("m_buildDisplayMenu.kShowHairSystems"))
+				-annotation (uiRes("m_buildDisplayMenu.kShowHairSystemsAnnot"))
+				-c "ShowHairSystems" showHairSystemsItem;
+			menuItem  -label (uiRes("m_buildDisplayMenu.kShowHairFollicles"))
+				-annotation (uiRes("m_buildDisplayMenu.kShowHairFolliclesAnnot"))
+				-c "ShowFollicles" showFolliclesItem;
+		}
+
+		if( `exists buildFurFiles` ) {
+			global string $gShowFurItem;
+
+			$gShowFurItem = `menuItem  -label (uiRes("m_buildDisplayMenu.kShowFur"))
+							-annotation (uiRes("m_buildDisplayMenu.kShowFurAnnot"))
+							-c "ShowFur" showFurItem`;
+		}
+
+		if( nClothEditLicenseFound() ) {
+			menuItem  -label (uiRes("m_buildDisplayMenu.kShowNCloths"))
+				-annotation (uiRes("m_buildDisplayMenu.kShowNClothsAnnot"))
+				-c "ShowNCloths" showNClothsItem;
+			menuItem  -label (uiRes("m_buildDisplayMenu.kShowNParticles"))
+				-annotation (uiRes("m_buildDisplayMenu.kShowNParticlesAnnot"))
+				-c "ShowNParticles" showNParticlesItem;
+			menuItem  -label (uiRes("m_buildDisplayMenu.kShowNRigids"))
+				-annotation (uiRes("m_buildDisplayMenu.kShowNRigidsAnnot"))
+				-c "ShowNRigids" showNRigidsItem;
+			menuItem  -label (uiRes("m_buildDisplayMenu.kShowDynamicConstraints"))
+				-annotation (uiRes("m_buildDisplayMenu.kShowDynamicConstraintsAnnot"))
+				-c "ShowDynamicConstraints" showDynamicConstraintsItem;
+		}
+
+		menuItem -d true;
+
+		menuItem  -label (uiRes("m_buildDisplayMenu.kShowAnimationMarkers"))
+			-annotation (uiRes("m_buildDisplayMenu.kShowAnimationMarkersAnnot"))
+			-c "ShowMarkers" showMarkersItem;
+
+		if (`isTrue "RenderingExists"`)	{ 
+			menuItem  -label (uiRes("m_buildDisplayMenu.kShowLightManipulators"))
+				-annotation (uiRes("m_buildDisplayMenu.kShowLightManipulatorsAnnot"))
+				-c "ShowLightManipulators"	
+				showLightManipItem;
+ 	   		if( $dimWhenNoSelect ) {
+				dimWhen -f "SomethingSelected"
+				($parent+"|showLightManipItem");
+			}
+			menuItem  -label (uiRes("m_buildDisplayMenu.kShowCameraManipulators"))
+				-annotation (uiRes("m_buildDisplayMenu.kShowCameraManipulatorsAnnot"))
+				-c "ShowCameraManipulators"
+				showCameraManipItem;
+    		if( $dimWhenNoSelect ) {
+				dimWhen -f "SomethingSelected"
+					($parent+"|showCameraManipItem");
+			}
+		}
+
+	// Delete the -pmc now that the submenu contents are built
+	//
+	menuItem -e -pmc "" $parent;
+}
+
+global proc doPerCameraVisibility( int $action )
+{
+	if ( $action == 5 )
+	{
+		evalEcho( "perCameraVisibility -removeAll" );
+		return;
+	}
+	
+	string $items;
+	string $cameras[];
+	string $selected[] = `ls -sl`;
+	
+	for ( $item in $selected )
+	{
+		if ( catchQuiet( `camera -q -aspectRatio $item` ) )
+			$items += " " + $item;
+		else
+			$cameras[ size( $cameras ) ] = $item;
+	}
+
+	if ( size($cameras) == 0 )
+	{
+		source "sequenceEditorPanel.mel";
+		string $cam = getSequencerViewCamera();
+		$cameras[0] = $cam;
+	}
+
+	for ( $camera in $cameras )
+	{
+		string $cmd = "perCameraVisibility -c " + $camera + " ";
+		switch ( $action )
+		{
+			case 0:
+				$cmd += "-exclusive" + $items;
+				break;
+			case 1:
+				$cmd += "-hide" + $items;
+				break;
+			case 2:
+				$cmd += "-exclusive -remove" + $items;
+				break;
+			case 3:
+				$cmd += "-hide -remove" + $items;
+				break;
+			case 4:
+				$cmd += "-removeCamera";
+				break;
+		}
+		evalEcho( $cmd );
+	}
+}
+
+global proc buildPerCameraVisibilitySubmenu( string $parent )
+//
+//	Build the PerCameraVisibility submenu contents
+{
+	setParent -m $parent;
+
+		menuItem -label (uiRes("m_buildDisplayMenu.kExclusiveToCamera"))
+			-annotation (uiRes("m_buildDisplayMenu.kExclusiveToCameraAnnot"))
+			-c "doPerCameraVisibility 0" exclusiveToCameraItem;
+		menuItem -label (uiRes("m_buildDisplayMenu.kHiddenFromCamera"))
+			-annotation (uiRes("m_buildDisplayMenu.kHiddenFromCameraAnnot"))
+			-c "doPerCameraVisibility 1" hiddenFromCameraItem;
+		menuItem -d true;
+		menuItem -label (uiRes("m_buildDisplayMenu.kRemoveFromExclusive"))
+			-annotation (uiRes("m_buildDisplayMenu.kRemoveFromExclusiveAnnot"))
+			-c "doPerCameraVisibility 2" removeFromExclusiveItem;
+		menuItem -label (uiRes("m_buildDisplayMenu.kRemoveFromHidden"))
+			-annotation (uiRes("m_buildDisplayMenu.kRemoveFromHiddenAnnot"))
+			-c "doPerCameraVisibility 3" removeFromHiddenItem;
+		menuItem -label (uiRes("m_buildDisplayMenu.kRemoveAllForCamera"))
+			-annotation (uiRes("m_buildDisplayMenu.kRemoveAllForCameraAnnot"))
+			-c "doPerCameraVisibility 4" removeAllForCameraItem;
+		menuItem -d true;
+		menuItem -label (uiRes("m_buildDisplayMenu.kRemoveAll"))
+			-annotation (uiRes("m_buildDisplayMenu.kRemoveAllAnnot"))
+			-c "doPerCameraVisibility 5" removeAllItem;
+
+	// Delete the -pmc now that the submenu contents are built
+	//
+	menuItem -e -pmc "" $parent;
+}
+
+global proc polyNonPlanarFaceDisplay()
+{
+	string $cmd = "polyOptions -activeObjects -dw ";
+	int $val[] = `polyOptions -q -dw`;
+	if($val[0])
+		$cmd = $cmd + "0";
+	else
+		$cmd = $cmd + "1";
+
+	eval($cmd);
+}
+
+
+//
+//  Procedure Name:
+//      resetMetadataMenuOptions
+//
+//  Description:
+//		Reset metadata menu options,
+//		such as the checkbox of visual status
+//		
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+global proc resetMetadataMenuOptions()
+{
+	// reset current stream to get the stream 
+	// in the new scene
+	optionVar -sv metadataVisualCurrentStreamMember "";
+	
+	updateMetadataVisualMenu();
+}
+
+//
+//  Procedure Name:
+//      updateMetadataVisualMenu
+//
+//  Description:
+//		Update the checkbox on the menu according
+//		to the current activated metadata stream
+//		This callback method is called when the command
+//		"showMetadata" change the current activated metadata
+//		
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+global proc updateMetadataVisualMenu() {
+	global string $metadataVisualCheckBox;
+	
+	if(!`exists getCurrentStreamMember`)
+		source performVisualizeMetadataOptions.mel;
+		
+	string $currentStreamMember = getCurrentStreamMember();
+	string $tokens[] = stringToStringArray($currentStreamMember, ".");
+	string $allShapes[] = `ls -shapes`;
+	int $isActivated = 0;
+	if(size($allShapes) > 0) 
+		$isActivated = `showMetadata -query -isActivated -stream $tokens[0] -member $tokens[1] -dataType $tokens[2] $allShapes`;
+		
+	menuItem -e -checkBox $isActivated $metadataVisualCheckBox;
+}
+
+//
+//  Procedure Name:
+//      updateMetadataUI
+//
+//  Description:
+//		Update all metadata UI to reflects
+//		the current metadata status.
+//		The metadata windows work rely on each other.
+//		They are sharing the option vars to handle 
+//		the visualization of metadata, that means it is
+//		possible that a setting in one window break another
+//		window. To control the update order, we refresh 
+//		the independent UI together by one event message. 
+//		
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+global proc updateMetadataUI()
+{
+	// update menu
+	updateMetadataVisualMenu();
+
+	// update option box
+	if (!`exists updateMetadataOptionBox`)
+		source performVisualizeMetadataOptions.mel;
+	updateMetadataOptionBox();
+		
+	// update edit window
+	if (!`exists updateEditMetadataWindow`)
+		source editMetadataWindow.mel;
+	updateEditMetadataWindow();
+}
+
+//
+//  Procedure Name:
+//      resetMetadataUI
+//
+//  Description:
+//		Set all metadata UI to default settings.
+//		The metadata windows work rely on each other.
+//		They are sharing the option vars to handle 
+//		the visualization of metadata, that means it is
+//		possible that a setting in one window break another
+//		window. To control the update order, we refresh 
+//		the independent UI together by one event message. 
+//		
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+global proc resetMetadataUI()
+{
+	// reset menu
+	resetMetadataMenuOptions();
+
+	// reset option box
+	if (!`exists resetMetadataOptionBox`)
+		source performVisualizeMetadataOptions.mel;
+	resetMetadataOptionBox();
+		
+	// reset edit window
+	if (!`exists resetEditMetadataWindow`)
+		source editMetadataWindow.mel;
+	resetEditMetadataWindow();
+}
+
+//
+//  Procedure Name:
+//      toggleMetadata
+//
+//  Description:
+//		Show or hide the current stream.
+//		This method is called when user modify the status
+//		of the checkbox on the menu.
+//
+//  Input Arguments:
+//      menuItemPath		the path of the menu item widget
+//
+//  Return Value:
+//      None.
+//
+global proc toggleMetadata()
+{
+	global string $metadataVisualCheckBox;
+	int $checkStatus = `menuItem -q -checkBox $metadataVisualCheckBox`;
+	
+	if(!`exists getCurrentStreamMember`)
+		source performVisualizeMetadataOptions.mel;
+		
+	string $currentStreamMember = getCurrentStreamMember();
+	string $tokens[] = stringToStringArray($currentStreamMember, ".");
+	if($checkStatus)
+		showMetadata -stream $tokens[0] -member $tokens[1] -dataType $tokens[2] `ls -shapes`;
+	else
+		showMetadata -stream $tokens[0] -member $tokens[1] -dataType $tokens[2] -off `ls -shapes`;
+}
+
+global proc buildPolygonsSubmenu( string $parent )
+//
+//	Build the Polygons submenu contents
+{
+	setParent -m $parent;
+		
+	menuItem -label (uiRes("m_buildDisplayMenu.kBackfaceCulling")) 
+		-annotation (uiRes("m_buildDisplayMenu.kBackfaceCullingAnnot"))
+		-command "ToggleBackfaceGeometry"
+		polyBackfaceCullingItem
+		;
+	
+	$menuItem = `menuItem -label (uiRes("m_buildDisplayMenu.kCullingOptions")) -subMenu 1 -tearOff 1`;
+		menuItem -label (uiRes("m_buildDisplayMenu.kKeepWireCulling"))
+			-checkBox `optionVar -q polyDisplayWireBackfaceCulling`
+			-annotation (uiRes("m_buildDisplayMenu.kKeepWireCullingAnnot"))
+			-c "ToggleKeepWireCulling" toggleKeepWireBackCullingItem;
+		menuItem -label (uiRes("m_buildDisplayMenu.kKeepHardEdges"))
+			-checkBox `optionVar -q polyDisplayHardEdgeBackfaceCulling`
+			-annotation (uiRes("m_buildDisplayMenu.kKeepHardEdgesAnnot"))
+			-c "ToggleKeepHardEdgeCulling" toggleKeepHardEdgesCullingItem;
+		menuItem -label (uiRes("m_buildDisplayMenu.kVertices"))
+			-checkBox `optionVar -q polyDisplayVertexBackfaceCulling`
+			 -annotation (uiRes("m_buildDisplayMenu.kVerticesCullingAnnot"))
+			 -c "ToggleCullingVertices" toggleCullingVerticesItem;			 
+	setParent -m ..;	
+		
+	menuItem -divider true;
+
+	menuItem -label (uiRes("m_buildDisplayMenu.kTogglePolyVertices"))
+			-annotation (uiRes("m_buildDisplayMenu.kTogglePolyVerticesAnnot"))
+			-c "ToggleVertices" togglePolyvItem;
+			 
+	menuItem -label (uiRes("m_buildDisplayMenu.kVertexSize"))
+			 -annotation (uiRes("m_buildDisplayMenu.kVertexSizeAnnot"))
+			 -c  "ChangeVertexSize" polyVertexSizeItem;
+	
+	menuItem -label (uiRes("m_buildDisplayMenu.kPolyCreaseVertices"))
+			 -annotation (uiRes("m_buildDisplayMenu.kPolyCreaseVerticesAnnot"))
+			 -c "ToggleCreaseVertices" showCreaseVertex;			 
+
+	menuItem -label (uiRes("m_buildDisplayMenu.kTogglePolyUV"))
+			-annotation (uiRes("m_buildDisplayMenu.kTogglePolyUVAnnot"))
+			-c "ToggleUVs" ;	
+
+	menuItem -label (uiRes("m_buildDisplayMenu.kUnsharedUVs"))
+			 -annotation (uiRes("m_buildDisplayMenu.kUnsharedUVsAnnot"))
+			 -command "ToggleUnsharedUVs";
+			 
+	menuItem -label (uiRes("m_buildDisplayMenu.kUVSize"))
+			 -annotation (uiRes("m_buildDisplayMenu.kUVSizeAnnot"))
+			 -c  "ChangeUVSize" polyUVSizeItem;
+	
+	$menuItem = `menuItem -label (uiRes("m_buildDisplayMenu.kCoponentIDs")) -subMenu 1 -tearOff 1`;
+		menuItem -label (uiRes("m_buildDisplayMenu.kTogglePolyComponentIDVertices"))
+			-annotation (uiRes("m_buildDisplayMenu.kTogglePolyComponentIDVerticesAnnot"))
+			-c "ToggleVertIDs" togglePolyVItemNum;
+		menuItem -label (uiRes("m_buildDisplayMenu.kPolyComponentIDEdges"))
+			-annotation (uiRes("m_buildDisplayMenu.kPolyComponentIDEdgesAnnot"))
+			-c "ToggleEdgeIDs" togglePolyEItemNum;
+		menuItem -label (uiRes("m_buildDisplayMenu.kCompIDFaces"))
+			 -annotation (uiRes("m_buildDisplayMenu.kCompIDFacesAnnot"))
+			 -c "ToggleFaceIDs" togglePolyFItemNum;			 
+		menuItem -label (uiRes("m_buildDisplayMenu.kTogglePolyCompIDUV"))
+			-annotation (uiRes("m_buildDisplayMenu.kTogglePolyCompIDUVAnnot"))
+			-c "ToggleCompIDs";	
+	setParent -m ..;				 
+	
+	menuItem -divider true;
+	
+	menuItem -label (uiRes("m_buildDisplayMenu.kFaceNormals"))
+			 -annotation (uiRes("m_buildDisplayMenu.kFaceNormalsAnnot"))
+			 -command "ToggleFaceNormalDisplay" showFaceNormal;			 
+	
+	menuItem -label (uiRes("m_buildDisplayMenu.kVertexNormals"))
+			 -annotation (uiRes("m_buildDisplayMenu.kVertexNormalsAnnot"))
+			 -command "ToggleVertexNormalDisplay" showVertexNormal;			 			 
+
+	menuItem -label (uiRes("m_buildDisplayMenu.kTangents"))
+			 -annotation (uiRes("m_buildDisplayMenu.kTangentsAnnot"))
+			 -command "ToggleTangentDisplay" showTangents;			 			 
+
+	menuItem -label (uiRes("m_buildDisplayMenu.kPolyNormalSize"))
+			 -annotation (uiRes("m_buildDisplayMenu.kPolyNormalSizeAnnot"))
+			 -c ("ChangeNormalSize") polyNormalSizeItem;
+
+	menuItem -divider true;
+	
+	menuItem -label (uiRes("m_buildDisplayMenu.kPolyStandardEdges"))
+			 -annotation (uiRes("m_buildDisplayMenu.kPolyEdgesAnnot"))
+			 -c "TogglePolyDisplayEdges" showEdge;			 
+    
+    menuItem -label (uiRes("m_buildDisplayMenu.kPolySoftEdges"))
+			-annotation (uiRes("m_buildDisplayMenu.kSoftHardEdgesAnnot"))
+			-c "TogglePolyDisplaySoftEdges" togglePolySoftEdgesItem;
+			 
+	menuItem -label (uiRes("m_buildDisplayMenu.kPolyHardEdgesColor"))
+			-version 2016
+			 -annotation (uiRes("m_buildDisplayMenu.kPolyHardEdgesColorAnnot"))
+			 -c "TogglePolyDisplayHardEdgesColor" showHardEdgeColor;	
+
+	menuItem -label (uiRes("m_buildDisplayMenu.kPolyHardEdges"))
+			-version 2016
+			 -annotation (uiRes("m_buildDisplayMenu.kPolyHardEdgesAnnot"))
+			 -c "TogglePolyDisplayHardEdges" showHardEdge;				 
+
+
+	menuItem -divider true;
+
+	menuItem -label (uiRes("m_buildDisplayMenu.kPolyBorderEdges")) 
+			-annotation (uiRes("m_buildDisplayMenu.kPolyBorderEdgesAnnot"))
+			-c "ToggleBorderEdges" togglePolyBEItem;
+	
+	menuItem -label (uiRes("m_buildDisplayMenu.kPolyCreaseEdges"))
+			 -annotation (uiRes("m_buildDisplayMenu.kPolyCreaseEdgesAnnot"))
+			 -c "ToggleCreaseEdges" showCreaseEdge;			 
+
+	menuItem -label (uiRes("m_buildDisplayMenu.kPolyTextureBorderEdges"))
+			 -annotation (uiRes("m_buildDisplayMenu.kPolyTextureBorderEdgesAnnot"))
+			 -c "ToggleTextureBorderEdges" showPolyTextureBorderEdge;			 
+				 
+	menuItem -label (uiRes("m_buildDisplayMenu.kEdgeSize"))
+			 -annotation (uiRes("m_buildDisplayMenu.kEdgeSizeAnnot"))
+			 -c  "ChangeEdgeWidth" polyEdgeSizeItem;
+	
+	menuItem -divider true;
+	
+	menuItem -label (uiRes("m_buildDisplayMenu.kPolyFaceCenters"))
+			-annotation (uiRes("m_buildDisplayMenu.kPolyFaceCenterAnnot"))
+			-c "TogglePolygonFaceCenters";
+			 			 
+	menuItem -label (uiRes("m_buildDisplayMenu.kPolyFaceTriangles"))
+			 -annotation (uiRes("m_buildDisplayMenu.kPolyFaceTrianglesAnnot"))
+			 -c "TogglePolygonFaceTriangles       polyOptions -r -dt 1" showPolyFaceTriangle;			 			 			 
+
+	menuItem -label (uiRes("m_buildDisplayMenu.kPolyFaceNonplanarFaces"))
+			 -annotation (uiRes("m_buildDisplayMenu.kPolyNonplanarFacesAnnot"))
+			 -c "TogglePolyNonPlanarFaceDisplay" showPolyNonplanarFace;
+				
+	menuItem -label (uiRes("m_buildDisplayMenu.kPolyHoleFaces"))
+			 -annotation (uiRes("m_buildDisplayMenu.kPolyHoleFacesAnnot"))
+			 -c "ToggleHoleFaces" showSubdivHoleFaces;
+	
+	menuItem -divider true;	
+	
+	// Metadata menu
+	$menuItem = `menuItem -version 2016 -label (uiRes("m_buildDisplayMenu.kMetadataMenu")) -subMenu 1 -tearOff 1`;
+		
+		string $allShapes[] = `ls -shapes`;
+		string $visibleStream[] = `showMetadata -query -listVisibleStreams $allShapes`;
+		int $visibleStreamNum = size($visibleStream);
+		int $isActivated = 0;
+		if($visibleStreamNum>0)
+		{
+			$isActivated = 1 ;
+		}
+		else
+		{
+			$isActivated = 0 ;
+		}
+		
+		global string $metadataVisualCheckBox;
+		$metadataVisualCheckBox = `menuItem -cb $isActivated 
+									-label (uiRes("m_buildDisplayMenu.kShowMetadata"))
+									-annotation (uiRes("m_buildDisplayMenu.kShowMetadataAnnot"))
+									showMetadataItem`;
+											
+		string $toggleMetadataCmd = "toggleMetadata;";
+		menuItem -e -c $toggleMetadataCmd showMetadataItem;
+			
+		menuItem -ecr false -optionBox true 
+			-annotation (uiRes("m_buildDisplayMenu.kVisualMetadataOptionAnnot"))
+			-c "VisualizeMetadataOptions" showMetadataOptionBoxItem;
+	setParent -m ..;
+			
+	menuItem -divider true;
+	
+	menuItem
+		-label (uiRes("m_buildDisplayMenu.kResetDisplay"))
+		-command "PolyDisplayReset" 
+		-enableCommandRepeat 1
+		-image "commandButton.png" 
+		-echoCommand 0
+		;
+		
+	menuItem
+		-checkBox `optionVar -q polyDisplayLimitedToSelectedOV`
+		-label (uiRes("m_buildDisplayMenu.kPolyLimitToSelected"))
+		-annotation (uiRes("m_buildDisplayMenu.kPolyLimitToSelectedAnnot"))
+		-command "TogglePolyDisplayLimitToSelected"
+		PolyDisplayLimitedToSelectedMI
+		;
+		
+	menuItem
+		-label (uiRes("m_buildDisplayMenu.kPolyDisplayOptionBox"))
+		-annotation (uiRes("m_buildDisplayMenu.kPolyDisplayOptionBoxAnnot"))
+		-command "CustomPolygonDisplayOptions"
+		PolyDisplayOptionBox
+		;
+				
+	// Delete the -pmc now that the submenu contents are built
+	//
+	menuItem -e -pmc "" $parent;			 
+}
+
+global proc buildNurbsSubmenu( string $parent )
+{
+	setParent -m $parent;
+	
+	menuItem -label (uiRes("m_buildDisplayMenu.kCVs"))
+		-annotation (uiRes("m_buildDisplayMenu.kCVSAnnot"))
+		-c "ToggleCVs" toggleCVItem;
+	menuItem -label (uiRes("m_buildDisplayMenu.kEditPoints"))
+		-annotation (uiRes("m_buildDisplayMenu.kEditPointsAnnot"))
+		-c "ToggleEditPoints" toggleEPItem;
+	menuItem -label (uiRes("m_buildDisplayMenu.kHulls"))
+		-annotation (uiRes("m_buildDisplayMenu.kHullsAnnot"))
+		-c "ToggleHulls"  toggleHullItem;
+	if( `isTrue SurfaceUIExists` ) {
+		menuItem -label (uiRes("m_buildDisplayMenu.kNormalsToggleShaded"))	
+			-imageOverlayLabel (uiRes("m_buildDisplayMenu.kNormalsOverlayLabel")) 
+			-annotation (uiRes("m_buildDisplayMenu.kNormalsToggleVisibleAnnot"))
+			-c "ToggleNormals"  toggleNormalItem;
+	}
+	menuItem -label (uiRes("m_buildDisplayMenu.kPatchCenters"))
+		-annotation (uiRes("m_buildDisplayMenu.kPatchCentersAnnot"))
+		-c "ToggleSurfaceFaceCenters" toggleSurfaceFaceItem;
+	menuItem -label (uiRes("m_buildDisplayMenu.kSurfaceOrigins"))
+		-annotation (uiRes("m_buildDisplayMenu.kSurfaceOriginsAnnot"))
+		-c "ToggleSurfaceOrigin" toggleOriginItem;
+	menuItem -label (uiRes("m_buildDisplayMenu.kCustomComponentsDisplay")) 
+		-annotation (uiRes("m_buildDisplayMenu.kCustomComponentsDisplayAnnot"))
+		-dmc "performDisplayControl 2"
+		-c "ToggleCustomNURBSComponents" dispSmthnessCustomItem;
+	menuItem -ecr false -optionBox true 
+		-annotation (uiRes("m_buildDisplayMenu.kCustomNURBSAnnot"))
+		-c "CustomNURBSComponentsOptions" dispSmthnessCustomOBItem;
+	
+	menuItem -divider true;
+	
+	menuItem -label (uiRes("m_buildDisplayMenu.kSetDisplaySmoothnessToHull"))
+		-annotation (uiRes("m_buildDisplayMenu.kSetDisplaySmoothnessToHullAnnot"))
+		-dmc "performDisplaySmoothnessHull 2"
+		-c "NURBSSmoothnessHull"
+		dispSmthnessHullItem;
+	menuItem -ecr false -optionBox true 
+		-annotation (uiRes("m_buildDisplayMenu.kHullOptionAnnot"))
+		-c "NURBSSmoothnessHullOptions"
+		dispSmthnessHullOptionItem;
+
+	menuItem -label (uiRes("m_buildDisplayMenu.kDisplayRoughSetDisplaySmoothness"))
+		-annotation (uiRes("m_buildDisplayMenu.kDisplayRoughSetDisplaySmoothnessAnnot"))
+		-dmc "performDisplaySmoothnessRough 2"
+		-c "NURBSSmoothnessRough"
+		dispSmthnessRoughItem;
+	menuItem -ecr false -optionBox true 
+		-annotation (uiRes("m_buildDisplayMenu.kRoughOptionAnnot"))
+		-c "NURBSSmoothnessRoughOptions"
+		dispSmthnessRoughOptionItem;
+
+	menuItem -label (uiRes("m_buildDisplayMenu.kDisplayMediumSetDisplaySmoothness"))
+		-annotation (uiRes("m_buildDisplayMenu.kDisplayMediumSetDisplaySmoothnessAnnot"))
+		-dmc "performDisplaySmoothnessMedium 2"
+		-c "NURBSSmoothnessMedium"
+		dispSmthnessMediumItem;
+	menuItem -ecr false -optionBox true 
+		-annotation (uiRes("m_buildDisplayMenu.kDisplayMediumOptionAnnot"))
+		-c "NURBSSmoothnessMediumOptions"
+		dispSmthnessMediumOptionItem;
+
+	menuItem -label (uiRes("m_buildDisplayMenu.kDisplayFineSetDisplaySmoothness"))
+		-annotation (uiRes("m_buildDisplayMenu.kDisplayFineSetDisplaySmoothnessAnnot"))
+		-dmc "performDisplaySmoothnessFine 2"
+		-c "NURBSSmoothnessFine"
+		dispSmthnessFineItem;
+	menuItem -ecr false -optionBox true 
+		-annotation (uiRes("m_buildDisplayMenu.kFineOptionAnnot"))
+		-c "NURBSSmoothnessFineOptions"
+		dispSmthnessFineOptionItem;
+
+	menuItem -label (uiRes("m_buildDisplayMenu.kCustomSmoothnessDisplay"))
+		-annotation (uiRes("m_buildDisplayMenu.kCustomSmoothnessDisplayAnnot"))
+		-dmc "performDisplaySmoothnessCustom 2"
+		-c "CustomNURBSSmoothness"
+		dispNurbsSmthnessCustomItem;
+	menuItem -ecr false -optionBox true 
+		-annotation (uiRes("m_buildDisplayMenu.kDisplayCustomOptionAnnot"))
+		-c "CustomNURBSSmoothnessOptions"
+		dispNurbsSmthnessCustomOptionItem;
+	
+	// Delete the -pmc now that the submenu contents are built
+	//
+	menuItem -e -pmc "" $parent;
+}
+
+global proc buildSubdivSurfaces(string $parent)
+{
+	setParent -m $parent;
+
+	menuItem -label (uiRes("m_buildDisplayMenu.kSubdivVertices"))
+		-annotation (uiRes("m_buildDisplayMenu.kSubdivVerticesAnnot"))
+		-c "ToggleMeshPoints" subdivToggleMeshPointItem;
+	menuItem -label (uiRes("m_buildDisplayMenu.kSubdivEdges"))
+		-annotation (uiRes("m_buildDisplayMenu.kSubdivEdgesAnnot"))
+		-c "ToggleMeshEdges" subdivToggleMeshEdgeItem;
+	menuItem -label (uiRes("m_buildDisplayMenu.kSubdivFaces"))
+		-annotation (uiRes("m_buildDisplayMenu.kSubdivFacesAnnot"))
+		-c "ToggleMeshFaces" subdivToggleMeshFaceItem;
+	menuItem -label (uiRes("m_buildDisplayMenu.kSubdivUVs"))
+		-annotation (uiRes("m_buildDisplayMenu.kSubdivUVsAnnot"))
+		-c "ToggleMeshMaps" subdivToggleMeshMapItem;
+
+	menuItem -label (uiRes("m_buildDisplayMenu.kSubdivNormals"))	
+		-imageOverlayLabel (uiRes("m_buildDisplayMenu.kNormalsOverlayLabel2")) 
+		-annotation (uiRes("m_buildDisplayMenu.kSubdivNormalsAnnot"))
+		-c "ToggleNormals"  toggleNormalSubdivItem;
+
+	menuItem -label (uiRes("m_buildDisplayMenu.kSubdivUVBorders")) 
+		-annotation (uiRes("m_buildDisplayMenu.kSubdivUVBordersAnnot"))
+		-c "ToggleMeshUVBorders" subdivToggleMeshCreasesItem;
+	
+	menuItem -d true;
+	
+	menuItem -label (uiRes("m_buildDisplayMenu.kSubdivHulls")) 
+		-annotation (uiRes("m_buildDisplayMenu.kSubdivHullsAnnot"))
+		-dmc "performSubdivDisplaySmoothnessHull 2"
+		-c "SubdivSmoothnessHull"
+		dispSmthnessHullItem;
+	menuItem -ecr false -optionBox true 
+		-annotation (uiRes("m_buildDisplayMenu.kSubdivHullOptionAnnot"))
+		-c "SubdivSmoothnessHullOptions"
+		subdivSetHullOptionItem;
+		menuItem -label (uiRes("m_buildDisplayMenu.kSubdivRough"))
+		-annotation (uiRes("m_buildDisplayMenu.kSubdivRoughAnnot"))
+  		-dmc "performSubdivDisplaySmoothnessRough 2"
+  		-c "SubdivSmoothnessRough"
+		subdivSetRoughItem;
+	menuItem -ecr false -optionBox true 
+		-annotation (uiRes("m_buildDisplayMenu.kSubdivRoughOptionAnnot"))
+		-c "SubdivSmoothnessRoughOptions"
+		subdivSetRoughOptionItem;
+
+		menuItem -label (uiRes("m_buildDisplayMenu.kSubdivMedium"))	
+		-annotation (uiRes("m_buildDisplayMenu.kSubdivMediumAnnot"))
+  		-dmc "performSubdivDisplaySmoothnessMedium 2"
+  		-c "SubdivSmoothnessMedium"
+		subdivSetMediumItem;
+	menuItem -ecr false -optionBox true 
+		-annotation (uiRes("m_buildDisplayMenu.kSubdivMediumOptionAnnot"))
+		-c "SubdivSmoothnessMediumOptions"
+		subdivSetMediumOptionItem;
+
+	menuItem -label (uiRes("m_buildDisplayMenu.kSubdivFine"))
+		-annotation (uiRes("m_buildDisplayMenu.kSubdivFineAnnot"))
+  		-dmc "performSubdivDisplaySmoothnessFine 2"
+  		-c "SubdivSmoothnessFine"
+		subdivSetFineItem;
+	menuItem -ecr false -optionBox true 
+		-annotation (uiRes("m_buildDisplayMenu.kSubdivFineOptionAnnot"))
+		-c "SubdivSmoothnessFineOptions"
+		subdivSetFineOptionItem;
+
+	// Delete the -pmc now that the submenu contents are built
+	//
+	menuItem -e -pmc "" $parent;
+}
+global proc buildAnimationMenu(string $parent)
+{
+	setParent -m $parent;
+	
+	menuItem -label (uiRes("m_buildDisplayMenu.kAnimLatticePoints")) 
+		-annotation (uiRes("m_buildDisplayMenu.kAnimLatticePointsAnnot"))
+		-c "ToggleLatticePoints" toggleLatticePtItem;
+	menuItem -label (uiRes("m_buildDisplayMenu.kAnimLatticeShape")) 
+		-annotation (uiRes("m_buildDisplayMenu.kAnimLatticeShapeAnnot"))
+		-c "ToggleLatticeShape" toggleLatticeShapeItem;
+	
+	menuItem -d true;		
+	
+	menuItem -label (uiRes("m_buildDisplayMenu.kAnimJointSize")) 
+		-annotation (uiRes("m_buildDisplayMenu.kAnimJointSizeAnnot")) 
+		-c "jdsWin" jdsItem5;
+	menuItem -label (uiRes("m_buildDisplayMenu.kAnimIKFKJointSize")) 
+		-annotation (uiRes("m_buildDisplayMenu.kAnimIKFKJointSizeAnnot")) 
+		-c "ikfkjdsWin" ikfkjdsItem5;
+	menuItem -label (uiRes("m_buildDisplayMenu.kAnimIKHandleSize"))
+		-annotation (uiRes("m_buildDisplayMenu.kAnimIKHandleSizeAnnot"))
+		-c "ikHdsWin" ikHdsItem5;
+
+	menuItem -d true;		
+	
+	menuItem -label (uiRes("m_buildDisplayMenu.kAnimJointLabels")) 
+	-annotation (uiRes("m_buildDisplayMenu.kAnimJointLabelsAnnot"))
+	-c "displayJointLabels 2" toggleJointLabelsItem;
+		
+	// Delete the -pmc now that the submenu contents are built
+	//
+	menuItem -e -pmc "" $parent;	
+}
+global proc buildRenderingMenu(string $parent)
+{
+	setParent -m $parent;
+	// This menu cannot be tear-off-able since it is dynamically built
+	string $menu = `menuItem -label (uiRes("m_buildDisplayMenu.kCameraLightManipulator")) -sm true`;
+	menuItem -e -pmc ("buildRenderManipMenu "+ $menu) $menu;
+	setParent -m ..;
+
+	if (`isTrue "MayaCreatorExists"` && (`licenseCheck -m "edit" -typ "particlePaint"`))
+	{
+		menuItem -d 1;
+		menuItem -cb 0 
+			-label (uiRes("m_buildDisplayMenu.kPaintEffectMeshDisplay"))
+			-annotation (uiRes("m_buildDisplayMenu.kPaintEffectMeshDisplayAnnotation")) 
+			-c "TogglePaintEffectsMeshDisplay" 
+			paintEffectsMeshDisplayItem;
+
+		$menuItem = `menuItem -label (uiRes("m_buildDisplayMenu.kStrokeDisplayQuality"))	
+						-subMenu true -tearOff true`;
+		menuItem -e -pmc ( "buildStrokeDisplayQualitySubmenu "
+						+ $menuItem ) $menuItem;
+		setParent -m ..;
+		paintEffectsMeshDisplayMenuUpdate;
+	}
+
+	// Delete the -pmc now that the submenu contents are built
+	//
+	menuItem -e -pmc "" $parent;
+}
+//The following two methods displays a window for Normals Size and Edge Width.
+global proc winReset(string $op)
+{
+	if($op == "VertSz"){
+		floatSliderGrp -edit -value 3.0 vertexSizeSlider;
+		polyOptions -sizeVertex `floatSliderGrp -query -value vertexSizeSlider`;
+	}
+	else if($op == "UVSz"){
+		floatSliderGrp -edit -value 4.0 uvSizeSlider;
+		polyOptions -sizeUV `floatSliderGrp -query -value uvSizeSlider`;
+	}
+	else if($op == "NormSz"){
+		floatSliderGrp -edit -value 0.4 normalsSizeSlider;
+		polyOptions -sizeNormal `floatSliderGrp -query -value normalsSizeSlider`;
+	}
+	else if($op == "EdgeSz"){
+		floatSliderGrp -edit -value 2.0 edgeSizeSlider;
+		polyOptions -sizeBorder `floatSliderGrp -query -value edgeSizeSlider`;
+	}
+}
+
+global proc dispWindow(string $op)
+{
+	string $wndName = ($op+"wnd");
+	string $wndTitle = "";
+	if($op == "VertSz"){
+		$wndTitle = (uiRes("m_buildDisplayMenu.kVertexSizeWindow"));
+	}
+	else if($op == "UVSz"){
+		$wndTitle = (uiRes("m_buildDisplayMenu.kUVSizeWindow"));
+	}
+	else if($op == "NormSz"){
+		$wndTitle = (uiRes("m_buildDisplayMenu.kNormalSizeWindow"));
+	}
+	else if($op == "EdgeSz"){
+		$wndTitle = (uiRes("m_buildDisplayMenu.kEdgeWidthWindow"));
+	}
+		
+	string $resetMenu = ($op+"ResetMenu");
+	string $resetMenuItem = ($op+"ResetToItem");
+	
+    if ( `window -exists $wndName`) 
+	{
+    	showWindow $wndName;
+	}
+	else 
+	{
+		window 
+			-resizeToFitChildren 1
+			-title $wndTitle 
+			-iconName $op 
+			-menuBar 1 
+			-height 75
+			-width 250
+			-sizeable 0 
+			$wndName;
+		
+		menu -parent $wndName 
+			-label (uiRes("m_buildDisplayMenu.kResetMenu")) 
+			-enable 1 
+			-familyImage "menuIconReset.png" 
+			$resetMenu;
+			
+		menuItem -parent $resetMenu 
+			-label (uiRes("m_buildDisplayMenu.kResetSettings"))
+			-command ("winReset "+$op) 
+			$resetMenuItem; 			
+			
+		setParent $wndName;
+		
+		string $formLayout = `formLayout`;
+		string $control;
+
+		if($op == "VertSz"){
+			$control = `floatSliderGrp -field 1 
+				-minValue 0.02 
+				-maxValue 10 
+				-precision 2 
+				-value 3.0
+				-changeCommand ("setVertexSize()") 
+				vertexSizeSlider`;
+		}
+		else if($op == "UVSz"){
+			$control = `floatSliderGrp -field 1 
+				-minValue 0.02 
+				-maxValue 10 
+				-precision 2 
+				-value 4.0
+				-changeCommand ("setUVSize()") 
+				uvSizeSlider`;
+		}
+		else if($op == "NormSz"){
+			$control = `floatSliderGrp -field 1 
+				-minValue 0.02 
+				-maxValue 10 
+				-fieldMaxValue 10000
+				-precision 2 
+				-value 0.4
+				-changeCommand ("setNormalSize()") 
+				normalsSizeSlider`;
+		}
+		else if($op == "EdgeSz"){
+			$control = `floatSliderGrp -field 1 
+				-minValue 0.02 
+				-maxValue 10 
+				-precision 2 
+				-value 2.0
+				-changeCommand ("setEdgeWidth()") 
+				edgeSizeSlider`;
+		}
+      	
+      	formLayout -edit
+      		-attachForm $control top 3 
+      		-attachForm $control left 3 
+      		-attachForm $control right 3
+      		-attachForm $control bottom 3 
+      		$formLayout;
+   	}
+   	
+    showWindow $wndName;
+}

@@ -1,0 +1,394 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+//  Creation Date:  March, 2006
+//
+//  Procedure Name:
+//      performAnimTurntable
+//
+//  Description:
+//
+//
+//  Input Arguments:
+//        $option : Whether to set the options to default values.
+//  Return Value:
+//        None
+//
+
+
+proc disconnectTranRotScl( string $nodeName )
+{
+
+    if( (`objectType -isa "stereoRigTransform" $nodeName` == 0) &&
+        (`objectType -isa "transform" $nodeName` == 0))
+    {
+        return;
+    }
+
+    //Attributes list to be deleted
+    string $attrConnectionTobeDelete[] = {
+        "rotateX",
+        "rotateY",
+        "rotateZ",
+        "translateX",
+        "translateY",
+        "translateZ",
+        "scaleX",
+        "scaleY",
+        "scaleZ"};
+
+        for ( $attr in $attrConnectionTobeDelete)
+        {
+            //Disconnect any incoming connections to translate, rotate and scale
+            string $sourceNodes[] = `listConnections -source on -destination off -plugs on ($nodeName + "." + $attr )` ;
+            for( $srcNode in $sourceNodes )
+            {
+                disconnectAttr $srcNode ($nodeName + "." + $attr ) ;
+            }
+
+        }
+
+}
+
+
+//  Procedure Name:
+//		performAnimTurntable
+//
+//  Description:
+//      Setup an animation turntable around selected objects
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+global proc animTurntableCommand(int $numberOfFrames, int $direction){
+
+	string $targetObjects[] = `ls -sl`;
+	string $targetObjectsString;
+	if (`size $targetObjects`){
+		for ($object in $targetObjects){
+			$targetObjectsString = ($targetObjectsString + " " + $object);
+		}
+	} else {
+		error((uiRes("m_performAnimTurntable.kSelectObjectsError")));
+	}
+
+	if ($numberOfFrames <= 1){
+		error((uiRes("m_performAnimTurntable.kNumberOfFramesError")));
+	}
+
+    string $panel = `getPanel -withFocus`;
+
+    string $panelType = `getPanel -typeOf $panel`;
+    string $sourceCamera = "";
+
+    // If panel is outliner, we select the first available panel with a perpective camera
+    if ( $panelType == "outlinerPanel" )
+    {
+        warning((uiRes("m_performAnimTurntable.kOutlinerPanelWarning")));
+
+        // We need to actually find which panel contains the perspective camera,
+        // otherwise the outliner view will be switched to the cam view
+        string $visPanels[] = `getPanel -vis`;
+        string $visPanelType = "";
+        string $visPanelCamera = "";
+        for ($visPanel in $visPanels)
+        {
+            $visPanelType = `getPanel -typeOf $visPanel`;
+            if ( $visPanelType == "modelPanel" )
+            {
+                $visPanelCamera = `modelPanel -q -camera $visPanel`;
+                if ( `camera -q -o $visPanelCamera` == 0 )
+                {
+                    $panelType = $visPanelType;
+                    $panel = $visPanel;
+                    break;
+                }
+            }
+        }
+    }
+
+    if ( $panelType == "modelPanel" )
+    {
+        $sourceCamera = `modelPanel -q -camera $panel`;
+    }
+    else
+    {
+        if ( $panelType != "scriptedPanel" )
+        {
+            error((uiRes("m_performAnimTurntable.kNot3DViewPortPanelError")));
+        }
+        else
+        {
+            string $scriptedPanelType = `scriptedPanel -query -type $panel`;
+            if ( `scriptedPanelType -q -customView $scriptedPanelType` )
+            {
+                $sourceCamera = `stereoCameraView -q -camera ( $panel + "Editor" )` ;
+            }
+            else
+            {
+                error( uiRes("m_performAnimTurntable.kNot3DViewPortPanelError") );
+            }
+        }
+    }
+
+    string $camera[] = `duplicate -inputConnections -name "turnTableCamera#" $sourceCamera`;
+
+    //Disconnect incoming connections :translation rotate and scale.
+    disconnectTranRotScl( $camera[0] ) ;
+
+    string $cameraGroup[] = `listRelatives -p $camera[0]`;
+
+    if (!`size $cameraGroup`){
+        string $group = `group $camera[0]`;
+        $cameraGroup[0] = $group;
+    }
+
+    if( strcmp($panelType, "scriptedPanel") )
+    {
+        lookThroughModelPanel $camera[0] $panel;
+    }
+    else
+    {
+        lookThroughSelected 0 ( $panel + "Editor" );
+    }
+
+    select -replace $targetObjects;
+
+	float $bbox[6] = `exactWorldBoundingBox`;
+	float $pivot[3] = {($bbox[3]+$bbox[0])/2.0,($bbox[4]+$bbox[1])/2.0,($bbox[5]+$bbox[2])/2.0};
+
+	xform -a -ws -rotatePivot $pivot[0] $pivot[1] $pivot[2] $cameraGroup[0];
+	xform -a -ws -scalePivot $pivot[0] $pivot[1] $pivot[2] $cameraGroup[0];
+	setAttr ($cameraGroup[0] + ".inheritsTransform") 0;
+
+	//key group y or z rotate
+	int $rotationValue;
+	if ($direction == 1){
+		$rotationValue = 360;
+	}else{
+		$rotationValue = -360;
+	}
+
+	// Support Y and Z up
+	string $rotationAxis = ".ry";
+	if ("y" != `upAxis -query -axis`)
+		$rotationAxis = ".rz";
+
+	setKeyframe -time 1 -value 0 ($cameraGroup[0] + $rotationAxis);
+	setKeyframe -time $numberOfFrames -value $rotationValue ($cameraGroup[0] + $rotationAxis);
+
+	//set current time to 1 so that camera tumble is predictable
+	currentTime 1 ;
+
+	// lock camera so user doesn't get bad tumble behaviour
+	// - bad tumble happens if  the rotation on the group node != 0
+	setAttr -lock true ($camera[0] + ".tx");
+	setAttr -lock true ($camera[0] + ".ty");
+	setAttr -lock true ($camera[0] + ".tz");
+	setAttr -lock true ($camera[0] + ".rx");
+	setAttr -lock true ($camera[0] + ".ry");
+	setAttr -lock true ($camera[0] + ".rz");
+
+}
+
+
+proc setOptionVars (int	$forceFactorySettings)
+{
+
+	//default to 24 or 30 frames
+	if ($forceFactorySettings || !`optionVar -exists "animTurntableFrames"`)
+		optionVar -intValue "animTurntableFrames" 24;
+
+	//default to clockwise rotation
+	if ($forceFactorySettings || !`optionVar -exists "animTurntableDirection"`)
+		optionVar -intValue "animTurntableDirection" 1;
+
+}
+
+global proc AnimTurntableSetup (string $parent, int $forceFactorySettings)
+{
+	setOptionVars($forceFactorySettings);
+	setParent $parent;
+
+	intSliderGrp
+        -edit
+        -value `optionVar -query animTurntableFrames`
+        animTurntableFrames;
+
+	radioButtonGrp -edit
+		-select `optionVar -query animTurntableDirection`
+		animTurntableDirectionBtn;
+
+}
+
+global proc AnimTurntableCallback (string $parent, int $doIt)
+{
+	setParent $parent;
+
+	optionVar -intValue "animTurntableFrames"
+		`intSliderGrp -query -value animTurntableFrames`;
+
+	optionVar -intValue "animTurntableDirection"
+		`radioButtonGrp -query -select animTurntableDirectionBtn`;
+
+
+	if ($doIt)
+	{
+		performAnimTurntable 0;
+		string $tmpCmd = "performAnimTurntable 0 ";
+		addToRecentCommandQueue $tmpCmd "Animation Turntable";
+	}
+}
+
+proc AnimTurntableOptions ()
+{
+	string $commandName = "AnimTurntable";
+	string $callback = ($commandName + "Callback");
+	string $setup = ($commandName + "Setup");
+	//	STEP 1:  Get the option box.
+	//	============================
+	//
+	string $layout = getOptionBox();
+	setParent $layout;
+	//	STEP 2:  Pass the command name to the option box.
+	//	=================================================
+	//
+	setOptionBoxCommandName($commandName);
+	//	STEP 3:  Activate the default UI template.
+	//	==========================================
+	//
+	setUITemplate -pushTemplate DefaultTemplate;
+	//	STEP 4: Create option box contents.
+	//	===================================
+	//
+	waitCursor -state 1;
+
+	string $parent = `columnLayout -adjustableColumn 1`;
+
+	setParent $parent;
+
+	string $tabForm = `columnLayout -adj true`;
+
+	intSliderGrp
+		-label (uiRes("m_performAnimTurntable.kNumberOfFrames"))
+        -value 24
+		-minValue 1
+		-maxValue 30000
+		animTurntableFrames;
+
+	radioButtonGrp
+		-numberOfRadioButtons 2
+		-label (uiRes("m_performAnimTurntable.kTurntableDirection"))
+		-label1 (uiRes("m_performAnimTurntable.kClockwise"))
+		-label2 (uiRes("m_performAnimTurntable.kCounterClockwise"))
+		-select 1
+		animTurntableDirectionBtn;
+
+	waitCursor -state 0;
+	//	Step 5: Deactivate the default UI template.
+	//	===========================================
+	//
+	setUITemplate -popTemplate;
+
+	//	Step 6: Customize the buttons.
+	//	==============================
+	//
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit
+		-label (uiRes("m_performAnimTurntable.kApplyTurntable"))
+		-command ($callback + " " + $parent + " " + 1)
+		$applyBtn;
+
+	string $applyAndCloseBtn = getOptionBoxApplyAndCloseBtn();
+	button -edit
+		-label (uiRes("m_performAnimTurntable.kApplyAndCloseTurntable"))
+		$applyAndCloseBtn;
+
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit
+		-command ($callback + " " + $parent + " " + 0 + " " +"; hideOptionBox")
+		$saveBtn;
+
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit
+		-command ($setup + " " + $parent + " " + 1)
+		$resetBtn;
+
+	//	Step 7: Set the option box title.
+	//	=================================
+	//
+	setOptionBoxTitle((uiRes("m_performAnimTurntable.kAnimTurntable")));
+
+	//	Step 8: Customize the 'Help' menu item text.
+	//	============================================
+	//
+	setOptionBoxHelpTag("AnimTurntable");
+
+	//	Step 9: Set the current values of the option box.
+	//	=================================================
+	//
+	eval (($setup + " " + $parent + " " + 0));
+	//	Step 10: Show the option box.
+	//	=============================
+	//
+	showOptionBox();
+}
+
+
+proc string assembleCmd()
+{
+	setOptionVars (false);
+
+	int $numberOfFrames = `optionVar -query "animTurntableFrames"`;
+	string $direction = `optionVar -query "animTurntableDirection"`;
+
+	string $cmd = "animTurntableCommand ";
+	$cmd += $numberOfFrames;
+	$cmd += " ";
+	$cmd += $direction;
+
+	return $cmd;
+}
+
+
+global proc string performAnimTurntable (int $option)
+{
+	string $cmd="";
+
+	switch ($option)
+	{
+		case 0:
+			$cmd = `assembleCmd`;
+			eval($cmd);
+			break;
+		case 1:
+			AnimTurntableOptions;
+			break;
+		case 2:
+			$cmd = `assembleCmd`;
+			break;
+	}
+	return $cmd;
+}

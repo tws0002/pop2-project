@@ -1,0 +1,147 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//
+//  Creation Date:  2001 
+//
+//<doc>
+//<name computePolysetVolume>
+//
+//<synopsis>
+//		computePolysetVolume
+//
+//<returns>
+//		None.	
+//
+//<description>
+//		Prints the total volume of all polysets on the pick list.
+//		For accurate results the geometry should be closed, with no
+//		holes or minimal gaps and no interpenetrating surfaces( such as
+//		as two overlapping spheres ).
+//		The method uses the divergence theorem:
+//			\int_{vol} Div(f) dV = int_{surf} Dot(f,n) dS
+//		To use it to compute volumes set f=(0,0,z), you then have
+//			Volume = \int_{vol} 1 dV = int_{surf} n_z(u,v) du dv
+//		Where n_z is the "z" component of the normal to the surface at the parameter value (u,v).
+//		If you only have triangles then the formula reads:
+//			Volume = sum_{over all triangles} (z0+z1+z2)/3*n_z*A
+//
+//
+//<flags>
+//	None.
+//
+//<examples>
+//	// Create a poly cube and find its volume 
+//  polyCube;
+// // Result: pCube2 polyCube1 //
+// computePolysetVolume;
+// // pCube3 faces = 6 //
+// // TOTAL VOLUME = 1 //
+//
+//</doc>
+
+global proc float triangleArea( float $v1[], float $v2[], float $v3[] )
+{
+	float $c1[] = crossProduct( $v1, $v2, 0, 0 );
+	float $c2[] = crossProduct( $v2, $v3, 0, 0 );
+	float $c3[] = crossProduct( $v3, $v1, 0, 0 );
+	float $vec[3];
+	$vec[0] = $c1[0] + $c2[0] + $c3[0];
+	$vec[1] = $c1[1] + $c2[1] + $c3[1];
+	$vec[2] = $c1[2] + $c2[2] + $c3[2];
+	float $area = sqrt( $vec[0]*$vec[0] + $vec[1]*$vec[1] + $vec[2] * $vec[2])/2.0;
+	return( $area );
+}
+
+global proc float quadArea( float $v1[], float $v2[], float $v3[], float $v4[] )
+{
+	float $a1 = triangleArea( $v1,$v2,$v3 );
+	// float $a2 = triangleArea( $v3,$v4,$v1 );
+	float $a2 = triangleArea( $v3,$v4,$v2 );
+	return( $a1 + $a2 );
+}
+
+global proc float computePolysetVolume()
+{
+	string $pobjList[], $pobjListDup[], $pobj;
+
+	$pobjList = `ls -dag -sl -type mesh`;
+	if(size( $pobjList ) < 1 ){
+		error( (uiRes("m_computePolysetVolume.kNoPolyObjectsSelected")));
+		return 0.0;
+	}
+	$pobjListDup = `duplicate -rr $pobjList`;
+
+	select -r $pobjListDup;
+	FreezeTransformations;
+	
+	int $obj, $i, $k;
+	string $normalInfo[];
+	string $curFace;
+	string $ni[];
+	string $verts[];
+	float $nx,$ny,$nz, $nLen;
+	float $v1[3], $v2[3], $v3[3], $v4[3];
+	float $A;
+	int $numFaces[], $nVerts;
+	float $totalVolume = 0;
+	for( $obj = 0; $obj < size($pobjListDup); $obj++ ) {
+		$pobj = $pobjListDup[$obj];
+		$numFaces = `polyEvaluate -f $pobj`;
+		print( "// " + $pobj + " faces = " +$numFaces[0]+ " //\n" );
+		for( $i = 0; $i < $numFaces[0]; $i++ ){
+			$curFace = ($pobj + ".f[" + $i + "]");	
+			$normalInfo = `polyInfo -faceNormals $curFace`;
+			tokenize $normalInfo[0] $ni; 
+			$nx = $ni[2];
+			$ny = $ni[3];
+			$nz = $ni[4];
+			$nLen = sqrt( $nx*$nx + $ny*$ny + $nz*$nz );
+			if( $nLen > 0.0 && $nz != 0.0 ){
+				$nz /= $nLen;
+				$verts = `listAttr $curFace`;
+				$nVerts = size( $verts )/4;
+				float $val;
+				if( $nVerts == 3 ){
+					$v1 = pointPosition( $pobj + "." + $verts[0] );
+					$v2 = pointPosition( $pobj + "." + $verts[4] );
+					$v3 = pointPosition( $pobj + "." + $verts[8] );
+					$A = triangleArea($v1,$v2,$v3);
+					$val = $A * $nz * ( $v1[2] + $v2[2] + $v3[2] )/3.0;
+				} else if( $nVerts == 4 ){
+					$v1 = pointPosition( $pobj + "." + $verts[0] );
+					$v2 = pointPosition( $pobj + "." + $verts[4] );
+					$v3 = pointPosition( $pobj + "." + $verts[8] );
+					$v4 = pointPosition( $pobj + "." + $verts[12] );
+					$A = quadArea($v1,$v2,$v3, $v4);
+					$val = $A * $nz * ( $v1[2] + $v2[2] + $v3[2] + $v4[2])/4.0;
+				}
+				$totalVolume += $val;
+			}
+		}
+	}
+	print ("// TOTAL VOLUME = " +$totalVolume+ " //\n");
+	delete $pobjListDup;
+	select -r $pobjList;
+	return $totalVolume;
+}

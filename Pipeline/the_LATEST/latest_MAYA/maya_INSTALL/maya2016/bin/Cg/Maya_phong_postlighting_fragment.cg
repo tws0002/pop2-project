@@ -1,0 +1,474 @@
+// phong_fragment.cg
+//
+// This file cannot be directly compiled through CG... it first must be
+// parsed to insert channel-specific instructions.
+//
+// For example:
+// cgc.exe "$(InputPath)" -profile fp30 -o $(InputName).fp -DSPOT_LIGHT -DTRANSP_IN_TRANSP_RGB -DPROJ_LIGHT_TEXTURE
+
+#include "Maya_EnvironmentMap.cgh"
+
+struct vert2frag
+{
+    float4 hPosition            : POSITION;
+#if defined(COLOR_PER_VERTEX_CHANNEL_all)
+	float4	colorPerVertex		: COLOR0;
+#else
+
+	#if defined(BUMP_MAP)
+		float3 wNormal				: TEXCOORD0;
+		float4 wTangent				: TEXCOORD1;
+		float4 bumpTexUv			: TEXCOORD2;
+	#elif defined (OBJECT_NORMAL)
+		float4 bumpTexUv			: TEXCOORD2;
+	#else
+		float3 wNormal				: TEXCOORD0;
+	#endif // BUMP_MAP
+	
+#if defined(TWO_SIDED_LIGHTING)
+	float4	frontColor		: COLOR1; // Secondary front color
+	float4	backColor		: BCOL1;  // Seondary back color
+#endif // TWO_SIDED_LIGHTING
+
+	#if defined(COLOR_PER_VERTEX)
+		// Optional color per vertex
+		float4	colorPerVertex		: COLOR0;
+	#endif // COLOR_PER_VERTEX
+
+#if defined(COLOR_PER_VERTEX_MASK)
+	// Optional color per vertex mask, mapped to
+	// user attribute 0
+	float colorPerVertexMask;
+#endif	
+	
+	#if !defined(CONSTANT_TRANSPARENCY)	
+		float4 transpTexUv			: TEXCOORD3;
+	#endif	
+	#if !defined(CONSTANT_INCAND)	
+		float4 incanTexUv			: TEXCOORD4;
+	#endif
+	#if !defined(CONSTANT_REFLECTIVITY)		
+		float4 reflectivityTexUv	: TEXCOORD5;
+	#endif	
+		float4 wPosition			: TEXCOORD6;
+
+#endif // COLOR_PER_VERTEX_CHANNEL_all
+};
+
+// Explicit matrix to transform object space normal vector to world space
+#if defined(OBJECT_NORMAL)
+	uniform float4x4 objToWorldMatrix;
+#endif
+
+
+float4 main(vert2frag        IN
+#if !defined(COLOR_PER_VERTEX_CHANNEL_all)
+			,
+			uniform float4  gWorldEyePos,
+	#if !defined(TWO_SIDED_LIGHTING)			
+			uniform float	normalMultiplier,
+	#endif
+
+	#if defined(CONSTANT_INCAND)
+			uniform float3 constantIncand,
+	#endif
+
+	#if defined(BUMP_MAP) || defined (OBJECT_NORMAL)
+			uniform sampler2D bumpTex,
+			uniform float4	bumpTexMatrix0,
+			uniform float4	bumpTexMatrix1,
+	#endif // BUMP_MAP || OBJECT_NORMAL
+
+			//[claforte] May one day be used to mimic software.
+			//uniform sampler2D specTex,
+			//uniform float4	specTexMatrix0,
+			//uniform float4	specTexMatrix1,
+
+	#if !defined(CONSTANT_TRANSPARENCY)			
+			uniform sampler2D transpTex,
+			uniform float4	transpTexMatrix0,
+			uniform float4	transpTexMatrix1,
+	#else			
+			uniform float3	constantTransparency,
+	#endif			
+
+			uniform sampler2D incanTex,
+			uniform float4	incanTexMatrix0,
+			uniform float4	incanTexMatrix1,
+
+	#if defined(CONSTANT_REFLECTED)	
+			uniform float3 constantReflected,
+	#else
+		#if defined(REFLECT_CUBE_LOOKUP) || defined(REFRACT_CUBE_LOOKUP)
+			uniform float3 worldToCubeRotationMatrix0,
+			uniform float3 worldToCubeRotationMatrix1,
+			uniform float3 worldToCubeRotationMatrix2,
+			uniform samplerCUBE reflectedColTex,
+		#endif // (REFLECT_CUBE_LOOKUP) || (REFRACT_CUBE_LOOKUP)
+
+		#if defined(REFLECT_SPHERE_LOOKUP)
+			uniform sampler2D reflectedColTex,
+		#endif
+	
+		#if defined (REFRACT_CUBE_LOOKUP)
+			// Refractive indices for red, green, blue.
+			uniform float3 refractiveIndices,
+		#endif				
+	#endif		
+
+	#if defined(ENVIRONMENT_RAMP_LOOKUP)
+		#if defined(CONSTANT_ENVIRONMENT)	
+			uniform float3 constantEnvironment,
+		#else
+			uniform sampler2D environmentColTex,
+		#endif
+	#endif
+
+	#if !defined(CONSTANT_REFLECTIVITY)
+			uniform sampler2D reflectivityTex,
+			uniform float4	reflectivityTexMatrix0,
+			uniform float4	reflectivityTexMatrix1
+	#else			
+			uniform float	constantReflectivity
+	#endif
+			
+#endif // !COLOR_PER_VERTEX_CHANNEL_all		
+			) : COLOR
+{ 
+#if defined(COLOR_PER_VERTEX_CHANNEL_all)
+	// We are replacing everything. Just set the final color
+	// to be the CPV color.
+	float4 finalColor = float4(IN.colorPerVertex.rgb * IN.colorPerVertex.aaa, 1);
+#else
+
+    // Calculate view direction in world space,
+	// from point to eye.
+    //
+    float3 wViewDir = normalize(gWorldEyePos.xyz - IN.wPosition.xyz);
+
+#if defined(TWO_SIDED_LIGHTING)
+	float faceMultiplier = IN.frontColor.x > 0.3 ? 1.0 : -1.0;
+#else
+	float faceMultiplier = normalMultiplier;
+#endif	
+
+#if defined (BUMP_MAP)
+	// Compute an orthonomal basis to transform from tangent space
+	// to world space, and vice-versa.
+	//
+	float3 wTangent  = normalize(IN.wTangent.xyz);
+	float3 wNormal   = normalize(IN.wNormal);
+
+#if defined (BINORMAL_SIGN)
+	float3 wBinormal = cross(wNormal, wTangent) * IN.wTangent.w;
+#else
+	float3 wBinormal = cross(wNormal, wTangent);
+#endif
+
+	// Translate and scale bump texture coordinates, by multiplying
+	// the uvs by the bump texture matrix.
+	//
+	float2 placedBumpTexUv;
+	float4 bumpTexUv = float4(IN.bumpTexUv.xy, 0.0, 1.0);
+	placedBumpTexUv.x = dot(bumpTexMatrix0, bumpTexUv);
+	placedBumpTexUv.y = dot(bumpTexMatrix1, bumpTexUv);
+
+	// Fetch the bumped normal (in tangent space) from the bump texture.
+	// The (... * 2 - 1) at the end is used to unpack the normal components,
+	// from the [0,1] to [-1, -1] range.
+	//
+	float3 tBumpedNormal = normalize(tex2D(bumpTex, placedBumpTexUv).xyz * 2 - 1);
+
+	#if defined(INVERT_TANGENT_SPACE_BASIS)
+		 faceMultiplier = -faceMultiplier;		
+	#endif							
+
+	// Compute the world-space bumped normal.
+	//
+	float3 wBumpedNormal = faceMultiplier * tBumpedNormal.x * wTangent + 
+						faceMultiplier * tBumpedNormal.y * wBinormal + 
+						tBumpedNormal.z * wNormal;
+
+#elif defined (OBJECT_NORMAL)
+
+	// Translate and scale bump texture coordinates, by multiplying
+	// the uvs by the bump texture matrix.
+	//
+	// [Should be moved to vertex program for efficiency]
+	float4 bumpTexUv = float4(IN.bumpTexUv.xy, 0.0, 1.0);
+	float2 placedBumpTexUv;
+	placedBumpTexUv.x = dot(bumpTexMatrix0, bumpTexUv);  
+	placedBumpTexUv.y = dot(bumpTexMatrix1, bumpTexUv);
+
+	// Fetch the bumped normal (in object space) from the bump texture.
+	// The (... * 2 - 1) at the end is used to unpack the normal components,
+	// from the [0,1] to [-1, 1] range.
+	//
+	float3 oBumpedNormal = tex2D(bumpTex, placedBumpTexUv).xyz * 2.0 - 1.0;
+
+	// tranform the normal to world space.
+	float3 wBumpedNormal = normalize(mul(objToWorldMatrix, float4(oBumpedNormal, 0.0)).xyz);
+
+#else  // !defined(BUMP_MAP)
+	float3 wNormal = normalize(IN.wNormal);
+	float3 wBumpedNormal = wNormal;	
+#endif // BUMP_MAP
+
+	// To support transparency and back-face lighting,
+	// allow normal inversion.
+	//
+	wBumpedNormal = faceMultiplier * wBumpedNormal;
+
+	// Compute the viewer's reflection direction.
+	//
+#if !defined(CONSTANT_REFLECTED) || defined(ENVIRONMENT_RAMP_LOOKUP)
+	float3 wReflectDir = reflect(-wViewDir, wBumpedNormal);
+#endif
+
+#if defined(CONSTANT_REFLECTED)	
+	float3 reflectedColor = constantReflected;
+#else
+
+	#if defined(REFLECT_CUBE_LOOKUP)
+
+		// Transform the reflection vector from world space to
+		// cube space. Ideally, we'd take the full cube placement
+		// information into account, but since this is quite
+		// complicated, we use the traditional OpenGL-shortcut of 
+		// only applying a rotation.
+		//
+		float3 cReflectDir;
+		cReflectDir.x = dot(wReflectDir, worldToCubeRotationMatrix0);
+		cReflectDir.y = dot(wReflectDir, worldToCubeRotationMatrix1);
+		cReflectDir.z = dot(wReflectDir, worldToCubeRotationMatrix2);
+		float3 reflectedColor = MAYA_environmentLookup(cReflectDir, reflectedColTex, kEnvironmentCube ).xyz;
+
+	#elif defined(REFLECT_SPHERE_LOOKUP)
+		float3 reflectedColor = MAYA_environmentLookup(wReflectDir, reflectedColTex, kEnvironmentSphere ).xyz;
+	#else
+
+		// Set the reflected color to black.
+		float3 reflectedColor = float3(0, 0, 0);
+
+	#endif
+#endif
+
+
+#if !defined(CONSTANT_REFLECTIVITY)
+	// Apply the reflectivity lookup then fetch the appropriate texel.
+	//
+	float2 placedReflectivityTexUv;
+	
+	#if defined(CAMERA_ANGLE_REFLECTIVITY_UVS)
+		float EDotN = dot(wBumpedNormal, wViewDir);
+		EDotN = max(EDotN, 0.0);
+		placedReflectivityTexUv.x = EDotN;
+		placedReflectivityTexUv.y = 0.5;
+		float reflectivity = tex2D(reflectivityTex, placedReflectivityTexUv).r;
+		reflectivity = max(reflectivity, 0.0);
+	#else
+		float4 reflectivityTexUv = float4(IN.reflectivityTexUv.xy, 0.0, 1.0);
+		placedReflectivityTexUv.x = dot(reflectivityTexMatrix0, reflectivityTexUv);
+		placedReflectivityTexUv.y = dot(reflectivityTexMatrix1, reflectivityTexUv);
+		float reflectivity = tex2D(reflectivityTex, placedReflectivityTexUv).r;
+	#endif	
+#else
+	float reflectivity = constantReflectivity;
+#endif	
+
+#if defined(ENVIRONMENT_RAMP_LOOKUP)
+		
+	// This is taken from Maya's ramp shader lookup
+	// for it's "environment" lookup.
+	//
+	if (reflectivity > 0.0)
+	{
+		#if defined(CONSTANT_ENVIRONMENT)	
+			reflectedColor += constantEnvironment;
+		#else
+			float2 rampUv;
+			rampUv.x = ( wReflectDir.y + 1.0 ) * 0.5;
+			rampUv.y = 0.5;
+			reflectedColor += tex2D(environmentColTex, rampUv).xyz;		
+		#endif
+	}
+#endif
+
+	// Apply either the incandescence texture matrix to the corresponding texture 
+	// coordinates, then fetch the appropriate texel, 
+	//
+	// or
+	//
+	// apply the color per vertex if this channel is overridden.
+	//
+#if defined(COLOR_PER_VERTEX) 
+
+	// CPV code path
+	#if !defined(CONSTANT_INCAND)
+		// Textured incandescence
+		#if !defined(CAMERA_ANGLE_INCAND_UVS)
+			float2 placedIncanTexUv;
+			float4 incanTexUv = float4(IN.incanTexUv.xy, 0.0, 1.0);
+			placedIncanTexUv.x = dot(incanTexMatrix0, incanTexUv);
+			placedIncanTexUv.y = dot(incanTexMatrix1, incanTexUv);
+			float3 incandescenceTex = tex2D(incanTex, placedIncanTexUv).xyz;
+		#else
+			float2 placedIncanTexUv;
+			// Don't recompute twice if already done for reflectivity
+			#if !defined(CAMERA_ANGLE_REFLECTIVITY_UVS)			
+				float EDotN = dot(wViewDir, wBumpedNormal);
+				EDotN = max(EDotN, 0.001);
+			#endif	
+			placedIncanTexUv.x = EDotN;
+			placedIncanTexUv.y = 0.5;
+			float3 incandescenceTex = tex2D(incanTex, placedIncanTexUv).xyz;
+		#endif
+	#else
+		float3 incandescenceTex = constantIncand;
+	#endif	
+
+	// CPV incandescence
+	float3 incandescenceCPV = IN.colorPerVertex.rgb * IN.colorPerVertex.aaa;
+
+	#if defined(COLOR_PER_VERTEX_MASK)
+		float3 mask = IN.colorPerVertexMask.rrrr;
+		float3 invMask = float3(1.0, 1.0, 1.0) - mask;
+		
+		#if defined(COLOR_PER_VERTEX_OPERATOR_replace)
+			float3 incandescence = (incandescenceCPV * mask) + (incandescenceTex * invMask);
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_add)
+			float3 incandescence = incandescenceTex + (incandescenceCPV * mask);
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_subtract)
+			float3 incandescence = incandescenceTex - (incandescenceCPV * mask);
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_modulate)
+			float3 incandescence = incandescenceTex * (incandescenceCPV * mask);
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_divide)
+			float3 incandescence = incandescenceTex / (incandescenceCPV * mask);
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_average)
+			float3 incandescence = (incandescenceTex  + (incandescenceCPV * mask)) / 2;
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_modulate2x)
+			float3 incandescence = (incandescenceTex * (incandescenceCPV * mask)) * 2.0;
+		#else		
+			float3 incandescence = incandescenceCPV;
+		#endif
+	#else	
+		#if defined(COLOR_PER_VERTEX_OPERATOR_replace)
+			float3 incandescence = incandescenceCPV;	
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_add)
+			float3 incandescence = incandescenceTex + incandescenceCPV;
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_subtract)
+			float3 incandescence = incandescenceTex - incandescenceCPV;
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_modulate)
+			float3 incandescence = incandescenceTex * incandescenceCPV;
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_divide)
+			float3 incandescence = incandescenceTex / incandescenceCPV;
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_average)
+			float3 incandescence = (incandescenceTex  + incandescenceCPV) / 2;
+		#elif defined(COLOR_PER_VERTEX_OPERATOR_modulate2x)
+			float3 incandescence = (incandescenceTex * incandescenceCPV) * 2.0;
+		#else		
+			float3 incandescence = incandescenceCPV;
+		#endif
+	#endif // _COLOR_PER_VERTEX_MASK
+
+#else
+	// Non CPV code path
+	#if !defined(CONSTANT_INCAND)
+
+		#if !defined(CAMERA_ANGLE_INCAND_UVS)
+			float2 placedIncanTexUv;
+			float4 incanTexUv = float4(IN.incanTexUv.xy, 0.0, 1.0);
+			placedIncanTexUv.x = dot(incanTexMatrix0, incanTexUv);
+			placedIncanTexUv.y = dot(incanTexMatrix1, incanTexUv);
+			float3 incandescence = tex2D(incanTex, placedIncanTexUv).xyz;
+		#else
+			float2 placedIncanTexUv;
+			// Don't recompute twice if already done for reflectivity
+			#if !defined(CAMERA_ANGLE_REFLECTIVITY_UVS)			
+				float EDotN = dot(wViewDir, wBumpedNormal);
+				EDotN = max(EDotN, 0.0);
+			#endif				
+			placedIncanTexUv.x = max(EDotN, 0.001);
+			placedIncanTexUv.y = 0.5;
+			float3 incandescence = tex2D(incanTex, placedIncanTexUv).xyz;
+		#endif
+	#else
+		float3 incandescence = constantIncand;
+	#endif	
+#endif
+
+	float3 refractedColor = 0;
+
+#if defined(REFRACT_CUBE_LOOKUP)
+
+	float3 opacityColor;
+
+#if defined(CONSTANT_TRANSPARENCY)
+	opacityColor = constantTransparency;
+#else
+	// Apply the transparency texture matrix to the corresponding texture 
+	// coordinates, then fetch the appropriate texel.
+	//
+	float2 placedTranspTexUv;
+	float4 transpTexUv = float4(IN.transpTexUv.xy, 0.0, 1.0);
+	placedTranspTexUv.x = dot(transpTexMatrix0, transpTexUv);
+	placedTranspTexUv.y = dot(transpTexMatrix1, transpTexUv);
+	float4 fetchedTranspColor = tex2D(transpTex, placedTranspTexUv);
+
+	#if defined(OPACITY_IN_COLOR_ALPHA)
+		// The opacity is encoded in the base color texture's alpha.
+		// (NOTE: the cpp code is expected to bind the color_tex texture
+		// to the transpTex sampler2D.)
+		//
+		opacityColor = fetchedTranspColor.aaa;
+
+	#else	// TRANSP_IN_TRANSP_RGB
+
+		// The transparency color is encoded in the transparency texture's RGB,
+		// and the opacity is stored in the transparency texture's alpha.
+		//
+		opacityColor = 1-fetchedTranspColor.rgb;
+	#endif // 
+#endif	
+
+#if defined(COLOR_PER_VERTEX) 
+	// Post-modulate any textured opacity with CPV opacity
+	#if defined(COLOR_PER_VERTEX_MASK)
+		opacityColor = opacityColor * IN.colorPerVertex.aaa * colorPerVertexMask;
+	#else	
+		opacityColor = opacityColor * IN.colorPerVertex.aaa;
+	#endif
+#endif
+	
+	// Compute the refracted color.
+	float3 cViewDir;
+	cViewDir.x = dot(-wViewDir, worldToCubeRotationMatrix0);
+	cViewDir.y = dot(-wViewDir, worldToCubeRotationMatrix1);
+	cViewDir.z = dot(-wViewDir, worldToCubeRotationMatrix2);
+
+	float3 cBumpedNormal;
+	cBumpedNormal.x = dot(wBumpedNormal, worldToCubeRotationMatrix0);
+	cBumpedNormal.y = dot(wBumpedNormal, worldToCubeRotationMatrix1);
+	cBumpedNormal.z = dot(wBumpedNormal, worldToCubeRotationMatrix2);
+
+	// TODO: implement and test chromatic abherration.
+	//
+	float3 cRefractDir = refract(cViewDir, cBumpedNormal, refractiveIndices.r);
+	refractedColor = texCUBE(reflectedColTex, cRefractDir).xyz;
+
+	// Modulate the refracted color by the transparency.
+	// (ie: a highly transparent surface will translate into a highly
+	// refractive surface.)
+	//
+	refractedColor.rgb = refractedColor * (1-opacityColor);
+
+#endif // REFRACT_CUBE_LOOKUP
+
+	float4 finalColor;
+	finalColor.rgb = reflectivity * reflectedColor + incandescence + refractedColor;
+	finalColor.a = 1;
+
+#endif // COLOR_PER_VERTEX_all
+	return finalColor;
+
+}

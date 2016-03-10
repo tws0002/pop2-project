@@ -1,0 +1,3656 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Description:
+//      This file implements the assetWindow for managing publication of
+//  attributes on container nodes.
+//
+
+global string $gAssetInfos[];
+global int $gNumAssetInfos = 0;
+global string $gPinnedContainerForTemplateAssign = "";
+global string $gPinnedContainerForAutobind = "";
+global string $gPinnedContainerForBindingSetCmd = "";
+
+proc string getField( string $assetInfo, int $childIndex )
+//
+//	Description:
+//		Given the asset info UI element, retrieve the child at the given index,
+//	and return it.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//		$childIndex	: Child index
+//
+//	Return Value:
+//		Child
+//
+{
+	string $children[] = `formLayout -q -ca $assetInfo`;
+	int $numChildren = size( $children );
+	if( $childIndex >= $numChildren ){
+		error( (uiRes("m_assetWindow.kGetFieldErr")) );
+	}
+	return( $children[$childIndex] );
+}
+
+proc setAssetIntField( string $assetInfo, int $childIndex, int $val )
+//
+//	Description:
+//		Given the asset info UI element, retrieve the child at the given index,
+//	and set it's int field value.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//		$index		: Child index
+//
+//	Return Value:
+//		Child label or ""
+//
+{
+	string $intField = getField( $assetInfo, $childIndex );
+	if( !`intField -exists $intField` ){
+		error( uiRes( "m_assetWindow.kGetFieldErr") );
+	}
+	intField -e -v $val $intField;
+}
+
+proc int getAssetIntField( string $assetInfo, int $childIndex )
+//
+//	Description:
+//		Given the asset info UI element, retrieve the child at the given index,
+//	and return it's intField value.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//		$index		: Child index
+//
+//	Return Value:
+//		intField value or 0
+//
+{
+	string $intField = getField( $assetInfo, $childIndex );
+	if( !`intField -exists $intField` ){
+		error( uiRes( "m_assetWindow.kGetFieldErr") );
+	}
+	return(`intField -q -v $intField`);
+}
+
+proc setAssetTextField( string $assetInfo, int $childIndex, string $val )
+//
+//	Description:
+//		Given the asset info UI element, retrieve the child at the given index,
+//	and set it's text label.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//		$index		: Child index
+//
+//	Return Value:
+//		Child label or ""
+//
+{
+	string $text = getField( $assetInfo, $childIndex );
+	if( !`text -exists $text` ){
+		error( uiRes( "m_assetWindow.kGetFieldErr") );
+	}
+	text -e -label $val $text;
+}
+
+proc string getTextLabel( string $text )
+//
+//	Description:
+//		Given a text field $text, return the value of its label. On linux, the
+//	empty value is returned as " ", so check for that value and return ""
+//	instead.
+//
+//	Inputs:
+//		$text	: text field
+//
+//	Return value:
+//		label of text field, "" if none or " ".
+//
+{
+	string $value = `text -q -label $text`;
+	if( $value == " " ){
+		$value = "";
+	}
+	return( $value );
+}
+
+proc string getAssetTextField( string $assetInfo, int $childIndex )
+//
+//	Description:
+//		Given the asset info UI element, retrieve the child at the given index,
+//	and return it's text label.	Return "" if none.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//		$index		: Child index
+//
+//	Return Value:
+//		Child label or ""
+//
+{
+	string $text = getField( $assetInfo, $childIndex );
+	if( $childIndex < 3 ){
+		return( $assetInfo + "|" + $text );
+	} else {
+		if( !`text -exists $text` ){
+			error( uiRes( "m_assetWindow.kGetFieldErr") );
+		}
+		return( getTextLabel( $text ) );
+	}
+}
+
+proc string getLayoutField(	string $layout,
+							int $index )
+//
+//	Description:
+//		Given a generic layout, return the child at the requested index, and
+//	issue an error where appropriate.
+//
+//	Inputs:
+//		$layout	: UI layout
+//		$index	: child index
+//
+{
+	string $children[] = `layout -q -ca $layout`;
+	int $numChildren = size( $children );
+	if( $index >= $numChildren ){
+		error( (uiRes("m_assetWindow.kIncorrectUILayout")) );
+	}
+	string $text = ($layout + "|" + $children[$index]);
+	return( $text );
+}
+
+proc string getLeftPanel( string $assetInfo )
+//
+//	Description:
+//		Given asset info, retrieve name of left panel.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		Name of left panel.
+//
+{
+	return( getAssetTextField( $assetInfo, 0 ) );
+}
+
+proc string getButtonPanel( string $assetInfo )
+//
+//	Description:
+//		Given asset info, retrieve name of right panel.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		Name of right panel.
+//
+{
+	return( getAssetTextField( $assetInfo, 1 ) );
+}
+
+proc string getRightPanel( string $assetInfo )
+//
+//	Description:
+//		Given asset info, retrieve name of right panel.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		Name of right panel.
+//
+{
+	return( getAssetTextField( $assetInfo, 2 ) );
+}
+
+proc string getLeftWin( string $assetInfo )
+//
+//	Description:
+//		Given asset info, retrieve name of left window.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		Name of left window.
+//
+{
+	return( getAssetTextField( $assetInfo, 11 ) );
+}
+
+proc string getRightTabLayout( string $assetInfo )
+//
+//	Description:
+//		Given asset info, retrieve name of right window.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		Name of right window.
+//
+{
+	return( getAssetTextField( $assetInfo, 3 ) );
+}
+
+proc setTemplateMenu( string $assetInfo, string $templateMenu )
+//
+//	Description:
+//		Given asset info, set the value of the template menu.
+//
+//	Inputs:
+//		$assetInfo		: Asset Editor information
+//		$templateMenu	: Name of template menu
+//
+//	Return Value:
+//		None.
+//
+{
+	setAssetTextField( $assetInfo, 5, $templateMenu );
+}
+
+proc string getTemplateMenu( string $assetInfo )
+//
+//	Description:
+//		Given asset info, retrieve name of template menu.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		Name of template menu.
+//
+{
+	return( getAssetTextField( $assetInfo, 5 ) );
+}
+
+global proc string getEditedContainer( string $assetInfo )
+//
+//	Description:
+//		Given asset info, retrieve name of edited container.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		Name of edited container.
+//
+{
+	return( getAssetTextField( $assetInfo, 6 ) );
+}
+
+proc setEditedContainer( string $assetInfo, string $editedContainer )
+//
+//	Description:
+//		Given asset info, set the value of the edited container.
+//
+//	Inputs:
+//		$assetInfo			: Asset Editor information
+//		$editedContainer	: Name of edited container
+//
+//	Return Value:
+//		None.
+//
+{
+	setAssetTextField( $assetInfo, 6, $editedContainer );
+}
+
+proc string getLastKnownSelectedRow( string $assetInfo )
+//
+//	Description:
+//		Given asset info, retrieve name of last known selected row.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		Name of last known selected row.
+//
+{
+	return( getAssetTextField( $assetInfo, 7 ) );
+}
+
+proc setLastKnownSelectedRow( string $assetInfo, string $lastKnownSelectedRow )
+//
+//	Description:
+//		Given asset info, set the value of the last known selected row.
+//
+//	Inputs:
+//		$assetInfo			: Asset Editor information
+//		$editedContainer	: Name of last known selected row
+//
+//	Return Value:
+//		None.
+//
+{
+	setAssetTextField( $assetInfo, 7, $lastKnownSelectedRow );
+}
+
+proc string getAssetWindow( string $assetInfo )
+//
+//	Description:
+//		Given asset info, retrieve name of this asset window.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		Name of asset window.
+//
+{
+	return( getAssetTextField( $assetInfo, 8 ) );
+}
+
+proc string getLeftFilterName( string $assetInfo )
+//
+//	Description:
+//		Given asset info, retrieve name of left panel filter
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		Name of left panel filter.
+//
+{
+	return( getAssetTextField( $assetInfo, 9 ) );
+}
+
+proc setLeftFilterName( string $assetInfo, string $leftFilterName )
+//
+//	Description:
+//		Given asset info, set the value of the left filter name.
+//
+//	Inputs:
+//		$assetInfo			: Asset Editor information
+//		$leftFilterName		: Name of left panel filter
+//
+//	Return Value:
+//		None.
+//
+{
+	setAssetTextField( $assetInfo, 9, $leftFilterName );
+}
+
+proc setViewMenu( string $assetInfo, string $viewMenu )
+//
+//	Description:
+//		Given asset info, set the value of the view menu.
+//
+//	Inputs:
+//		$assetInfo		: Asset Editor information
+//		$viewMenu	: Name of view menu
+//
+//	Return Value:
+//		None.
+//
+{
+	setAssetTextField( $assetInfo, 10, $viewMenu );
+}
+
+proc string getViewMenu( string $assetInfo )
+//
+//	Description:
+//		Given asset info, retrieve name of view menu.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		Name of view menu.
+//
+{
+	return( getAssetTextField( $assetInfo, 10 ) );
+}
+
+proc string getLeftSelList( string $assetInfo )
+//
+//	Description:
+//		Given asset info, retrieve contents of LHS selection list, as a string
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		Last know leftSelList contents, as a string
+//
+{
+	return( getAssetTextField( $assetInfo, 12 ) );
+}
+
+proc setLeftSelList( string $assetInfo, string $leftSelList )
+//
+//	Description:
+//		Given asset info, set the value of the LHS selection list as a string.
+//
+//	Inputs:
+//		$assetInfo			: Asset Editor information
+//		$leftSelList		: LHS selection list, as a string
+//
+//	Return Value:
+//		None.
+//
+{
+	setAssetTextField( $assetInfo, 12, $leftSelList );
+}
+
+proc setNumTemplates(	string $assetInfo,
+						int	$numTemplates )
+//
+//	Description:
+//		Given asset info, set the current number of templates
+//
+//	Inputs:
+//		$assetInfo			: Asset Editor information
+//		$numTemplates		: Number of templates
+//
+//	Return Value:
+//		None.
+//
+{
+	setAssetIntField( $assetInfo, 14, $numTemplates );
+}
+
+
+proc int getNumTemplates( string $assetInfo )
+//
+//	Description:
+//		Given asset info, get the current number of templates
+//
+//	Inputs:
+//		$assetInfo			: Asset Editor information
+//
+//	Return Value:
+//		Number of templates.
+//
+{
+	return(getAssetIntField( $assetInfo, 14 ) );
+}
+
+proc pushTemplate(	string $assetInfo,
+					string $templateName )
+//
+//	Description:
+//		Given asset info, push this template onto template stack
+//
+//	Inputs:
+//		$assetInfo			: Asset Editor information
+//		$leftFilterName		: Name of left panel filter
+//
+//	Return Value:
+//		None.
+//
+{
+	int $numTemplates = getNumTemplates( $assetInfo );
+	$numTemplates++;
+	text -p $assetInfo -m false -l $templateName;
+	setNumTemplates( $assetInfo, $numTemplates );
+}
+
+proc string[] getTemplates( string $assetInfo )
+//
+//	Description:
+//		Given asset info, get the existing templates
+//
+//	Inputs:
+//		$assetInfo			: Asset Editor information
+//
+//	Return Value:
+//		None.
+//
+{
+	int $numTemplates = getNumTemplates( $assetInfo );
+	string $children[] = `formLayout -q -ca $assetInfo`;
+	int $numChildren = size( $children );
+	if( $numChildren < (15+$numTemplates) ){
+		error( uiRes( "m_assetWindow.kGetFieldErr") );
+	}
+	string $templates[];
+	int $index = 0;
+	while( $index < $numTemplates ){
+		string $text = $children[$index+15];
+		if( !`text -exists $text` ){
+			error( uiRes( "m_assetWindow.kGetFieldErr") );
+		}
+		$templates[$index] = getTextLabel( $text );
+		$index++;
+	}
+	return( $templates );
+}
+
+proc clearTemplates( string $assetInfo )
+//
+//	Description:
+//		Given asset info, clear the existing templates
+//
+//	Inputs:
+//		$assetInfo			: Asset Editor information
+//
+//	Return Value:
+//		None.
+//
+{
+	int $numTemplates = getNumTemplates( $assetInfo );
+	string $children[] = `formLayout -q -ca $assetInfo`;
+	int $numChildren = size( $children );
+	if( $numChildren < (15+$numTemplates) ){
+		error( uiRes( "m_assetWindow.kGetFieldErr") );
+	}
+	int $index = $numTemplates;
+	while( $index > 0 ){
+		$index--;
+		string $text = $children[$index+15];
+		if( !`text -exists $text` ){
+			error( uiRes( "m_assetWindow.kGetFieldErr") );
+		}
+		deleteUI -control ($assetInfo + "|" + $text);
+	}
+	setNumTemplates( $assetInfo, 0 );
+}
+
+proc string getRightWin( string $rightTabLayout )
+//
+//	Description:
+//		Given the right tab layout, return the actual right window id.
+//
+//	Inputs:
+//		$rightTabLayout	: right tabLayout
+//
+//	Return:
+//		actual id of right window
+//
+{
+	string $tabs[] = `tabLayout -query -childArray $rightTabLayout`;
+	string $rightScroll = ($rightTabLayout + "|" + $tabs[0]);
+	string $children[] = `scrollLayout -query -childArray $rightScroll`;
+	return($rightScroll + "|" + $children[0]);
+}
+
+proc clearRightWin( string $assetInfo )
+//
+//	Description:
+//		Clear the contents of the right window.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+{
+	string $rightTabLayout = getRightTabLayout( $assetInfo );
+	tabLayout -e -sti 2 $rightTabLayout;
+	string $rightWin = getRightWin( $rightTabLayout );
+	string $children[] = `columnLayout -query -childArray $rightWin`;
+	int $numChildren = size($children);
+	if( $numChildren > 0 ){
+		string $cmd = "deleteUI ";
+		int $childIndex = 0;
+		while( $childIndex < $numChildren ){
+			$cmd += $children[$childIndex];
+			$cmd += " ";
+			$childIndex++;
+		}
+		eval( $cmd );
+	}
+	tabLayout -e -sti 1 $rightTabLayout;
+}
+
+global proc string[] getTemplateNames( string $assetInfo )
+//
+//	Description:
+//		Return a list of names defined in the current template, if any.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		The list of template names, if any.
+//
+{
+	string $templateNames[];
+	string $editedContainer = getEditedContainer( $assetInfo );
+	string $templateName = `getAttr ($editedContainer + ".templateName")`;
+	if( $templateName != "" ){
+		if( `containerTemplate -exists $templateName` ){
+			$templateNames = `containerTemplate -q -al $templateName`;
+		}
+	}
+	return( $templateNames );
+}
+
+proc updateRightWin( string $assetInfo )
+//
+//	Description:
+//		Update the contents of the right window.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+{
+	string $rightTabLayout = getRightTabLayout( $assetInfo );
+	string $rightWin = getRightWin( $rightTabLayout );
+	if( !`exists containerPublishedUpdate`){
+		eval("source \"AEcontainerTemplate.mel\"");
+	}
+	string $templateNames[] = getTemplateNames( $assetInfo );
+	containerPublishedUpdate( $assetInfo, $rightWin, $templateNames );
+}
+
+proc enableBtn( string $assetInfo, int $index, int $enable )
+//
+//	Description:
+//		Get the button with the given index, and sets it enable state
+//	appropriately.
+//
+//	Inputs:
+//		$assetInfo			: Asset Editor information
+//		$index				: index of right panel child to enable/disable
+//		$enable				: state to which we set the child
+//
+//	Return Value:
+//		None.
+//
+{
+	string $rightPanel = getButtonPanel( $assetInfo );
+	string $button = getLayoutField( $rightPanel, $index );
+	symbolButton -e -w 26 -h 26 -en $enable $button;
+}
+
+proc string getTemplateText( string $assetInfo )
+//
+//	Description:
+//		Return the control that displays the current template's name
+//
+//	Inputs:
+//		$assetInfo			: Asset Editor information
+//
+//	Return Value:
+//		None.
+//
+{
+	string $rightPanel = getRightPanel( $assetInfo );
+	return( getLayoutField( $rightPanel, 1 ) );
+}
+
+proc setViewText( string $assetInfo, string $viewName )
+//
+//	Description:
+//		Set the controls that displays the current view's name to the given
+//	view name.
+//
+//	Inputs:
+//		$assetInfo			: Asset Editor information
+//		$viewName			: view name to display
+//
+//	Return Value:
+//		None.
+//
+{
+	string $rightPanel = getRightPanel( $assetInfo );
+	string $textFieldGrp = getLayoutField( $rightPanel, 3 );
+	textFieldGrp -e -text $viewName $textFieldGrp;
+}
+
+proc string getRowSelectionBtn( string $row )
+//
+//	Description:
+//		Return a row's selection button field
+//
+//	Inputs:
+//		$row	: row field
+//
+//	Return Value:
+//		None.
+//
+{
+	return( getLayoutField( $row, 0 ) );
+}
+
+proc string getRowPublicText( string $row )
+//
+//	Description:
+//		Return a row's public text field
+//
+//	Inputs:
+//		$row	: row field
+//
+//	Return Value:
+//		None.
+//
+{
+	return( getLayoutField( $row, 1 ) );
+}
+
+proc string getRowInternText( string $row )
+//
+//	Description:
+//		Return a row's internal text field
+//
+//	Inputs:
+//		$row	: row field
+//
+//	Return Value:
+//		None.
+//
+{
+	return( getLayoutField( $row, 3 ) );
+}
+
+proc string getRowBindBtn( string $row )
+//
+//	Description:
+//		Return a row's bind/unbind button field
+//
+//	Inputs:
+//		$row	: row field
+//
+//	Return Value:
+//		None.
+//
+{
+	return( getLayoutField( $row, 2 ) );
+}
+
+proc string getPinBtn( string $assetInfo )
+//
+//	Description:
+//		Return the control for the "Pin/Unpin" button.
+//
+//	Inputs:
+//		$assetInfo			: Asset Editor information
+//
+//	Return Value:
+//		None.
+//
+{
+	string $leftPanel = getLeftPanel( $assetInfo );
+	string $leftWinForm = getLayoutField( $leftPanel, 0 );
+	return( getLayoutField( $leftWinForm, 0 ) );
+}
+
+proc updateTemplateAndViewText(string $assetInfo)
+//
+//	Description:
+//		Given the template name, update the template text field that displays
+//		the name of the text in the Asset Editor.
+//
+//	Inputs:
+//		$assetInfo		: Asset Editor information
+//
+//	Return Value:
+//		None.
+//
+{
+	string $editedContainer = getEditedContainer( $assetInfo );
+	string $templateName;
+	string $viewName;
+	string $fileName;
+	if( $editedContainer != "" ){
+		// Get the template name, if any
+		//
+		int $viewMode = `getAttr ($editedContainer + ".viewMode")`;
+		if( $viewMode == 0 ){
+			$viewName = (uiRes("m_assetWindow.kFlat"));
+		} else if( $viewMode == 2 ){
+			$viewName = (uiRes("m_assetWindow.kGroupByNode"));
+		}
+		$templateName = `getAttr ($editedContainer + ".templateName")`;
+		if( $templateName != "" ){
+			if( `containerTemplate -exists $templateName` ){
+				$fileName = `containerTemplate -q $templateName -fn`;
+			}
+			// Get the view name
+			//
+			if( $viewMode == 1 ){
+				$viewName = `getAttr ($editedContainer + ".viewName")`;
+				if( $viewName == "" ){
+					$viewName = (uiRes("m_assetWindow.kNoViewDisplay"));
+				}
+			}
+		}
+	}
+	// Now set the template name, and if we know the filename, set that as the
+	// value of the annotation.
+	//
+	
+	string $textFieldGrp = getTemplateText( $assetInfo );
+	textFieldGrp -e -text $templateName -annotation $fileName $textFieldGrp;
+
+	// ... and set the view name
+	//
+	setViewText( $assetInfo, $viewName );
+}
+
+proc enableAllEditButtons(	string $assetInfo,
+							int $editing )
+//
+//	Description:
+//		Enables/disables all the edit related buttons.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//		$editing	: current editing state
+//
+//	Return Value:
+//		None
+//
+{
+	enableBtn( $assetInfo, 0, $editing );	// Refresh
+	enableBtn( $assetInfo, 1, $editing );	// Publish Attribute(s)
+	enableBtn( $assetInfo, 2, $editing );	// Publish Named Attribute
+	enableBtn( $assetInfo, 3, $editing );	// Unpublish Attribute(s)
+	enableBtn( $assetInfo, 4, $editing );	// Unbind Attribute(s)
+	enableBtn( $assetInfo, 5, $editing );	// Publish Name
+	enableBtn( $assetInfo, 6, $editing );	// Unpublish unbound
+	enableBtn( $assetInfo, 7, $editing );	// Rename
+}
+
+proc setWindowTitle( string $assetInfo )
+//
+//	Description:
+//		Sets the window title appropriately. If we're editing a container, its
+//	name is displayed in the title bar, otherwise only the name of the asset
+//	editor is shown.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//      None.
+//
+//
+{
+	string $editedContainer = getEditedContainer( $assetInfo );
+	string $assetWindow = getAssetWindow( $assetInfo );
+	if( $editedContainer != "" ){
+		string $fmt = (uiRes("m_assetWindow.kAssetEditorContainer"));
+		string $windowTitle = `format -s $editedContainer $fmt`;
+		window -e -title $windowTitle $assetWindow;
+	} else {
+		window -e -title (uiRes("m_assetWindow.kAssetEditor")) $assetWindow;
+	}
+}
+
+proc forceRebuildRightWin( string $assetInfo )
+//
+//	Description:
+//		Rebuild the right window assuming the container is still valid.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		None
+//
+{
+	updateTemplateAndViewText( $assetInfo );
+	string $editedContainer = getEditedContainer( $assetInfo );
+	string $attrName = ($editedContainer + ".borderConnections");
+	if( !`exists containerPublishedCommon`){
+		eval("source \"AEcontainerTemplate.mel\"");
+	}
+	string $rightTabLayout = getRightTabLayout( $assetInfo );
+	tabLayout -e -sti 2 $rightTabLayout;
+	string $rightWin = getRightWin( $rightTabLayout );
+	containerPublishedCommon( "", $assetInfo, $rightWin, $attrName );
+	tabLayout -e -sti 1 $rightTabLayout;
+}
+
+
+proc updateAttributeEditor( string $assetInfo,
+							string $editedContainer )
+//
+//	Description:
+//		Trigger an update of the attribute editor.
+//
+//	Inputs
+//		$assetInfo		: Asset Editor information
+//		$editedContainer: Name of edited container
+//
+//	Return Value:
+//		None
+//
+{
+	if( !`exists AEcontainerRedrawAll` ){
+		eval("source \"AEcontainerTemplate.mel\"");
+	}
+	refreshAssetWindows( $assetInfo, $editedContainer );
+	AEcontainerRedrawAll( "", $editedContainer );
+}
+
+proc updateAssetEditor( string $assetInfo,
+						int $editing )
+//
+//	Description:
+//		Given the current editing state, update the asset editor; assumes that
+//	we have already validated the currently edited container, if any.
+//
+//	Inputs
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		None
+//
+{
+	// Update the window title
+	//
+	setWindowTitle( $assetInfo );
+	
+	// Update the pin/unpin button
+	//
+	string $pinBtn = getPinBtn( $assetInfo );
+	if( $editing ){
+		iconTextButton -e  -image "pinned.png"  -annotation (uiRes("m_assetWindow.kSelectContainerAnnot")) $pinBtn;
+	} else {
+		iconTextButton -e  -image "unpinned.png"  -annotation (uiRes("m_assetWindow.kPinUpAnnot")) $pinBtn;
+	}
+
+	// Reset the filter, and update the outliner's sco option
+	//
+	string $leftFilterName = getLeftFilterName( $assetInfo );
+	if( `itemFilter -exists $leftFilterName`){
+		delete $leftFilterName;
+	}
+	string $editedContainer = "";
+	if( $editing ){
+		$editedContainer = getEditedContainer( $assetInfo );
+		$leftFilterName = `itemFilter -classification "builtIn" -byName $editedContainer $leftFilterName`;
+	} else {
+		$leftFilterName = `itemFilter -classification "builtIn" -byType "dagContainer" -byType "container" $leftFilterName`;
+	}
+	string $leftWin = getLeftWin( $assetInfo );
+	filterUISetImplicitFilter( $leftWin, $leftFilterName );
+	outlinerEditor -e -sco (!$editing) $leftWin;
+
+	// Enable/disable the edit buttons
+	//
+	enableAllEditButtons( $assetInfo, $editing );
+
+	// Update the right window, templates, and views
+	//
+	if( $editing ){
+		forceRebuildRightWin( $assetInfo );
+	} else {
+		clearRightWin( $assetInfo );
+		clearTemplates( $assetInfo );
+	}
+	updateTemplateAndViewText( $assetInfo );
+	if( $editedContainer != "" ){
+		updateAttributeEditor( $assetInfo, $editedContainer );
+	}
+}
+
+proc int validateEditedContainer( string $assetInfo )
+//
+//	Description:
+//		Validates that we are editing an actual container. If not, resets the
+//	container name to the empty string, resets the template and view text,
+//	clears the right window, and resets the window title.
+//
+//	Inputs
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		true iff we have a valid container that we're editing.
+//
+{
+	string $editedContainer = getEditedContainer( $assetInfo );
+	int $editing = false;
+	if( $editedContainer != "" ){
+		$editing = true;
+		if( !( (`objExists $editedContainer`) &&
+			   (`container -q -isContainer $editedContainer`) ) ){
+			$editing = false;
+			setEditedContainer( $assetInfo, "" );
+			updateAssetEditor( $assetInfo, 0 );
+		}
+	}
+	return( $editing );
+}
+
+proc string[] getLeftWinSelection( string $assetInfo )
+//
+//	Description:
+//		Returns a string array corresponding to the left win selection.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		string array of left win selection, empty if nothing selected.
+//
+{
+	string $leftSels[];
+	string $leftWin = getLeftWin( $assetInfo );
+	string $mySLC = `outlinerEditor -q -slc $leftWin`;
+	if( $mySLC != "" ){
+		$leftSels = `selectionConnection -q -obj $mySLC`;
+	}
+	return( $leftSels );
+}
+
+global proc selectCB(	string $assetInfo,
+						int		$mode )
+//
+//	Description:
+//		Callback when a selection is done in the left window. If we're actively
+//		editing a container, we update the right window.
+//
+//	Inputs
+//		$assetInfo	: Asset Editor information
+//		$mode		: 0 - setup
+//					: 1 - selection actually occurred.
+//
+//	Return Value:
+//		None
+//
+{
+	string $leftSels[] = getLeftWinSelection( $assetInfo );
+	string $leftSelList = stringArrayToString( $leftSels, "" );
+	string $lastLeftSelList = getLeftSelList( $assetInfo );
+	if( $leftSelList == $lastLeftSelList ){
+		// Nothing has changed here, bail
+		//
+		return;
+	}
+	// Refresh the last known selection list, and make select reflect the
+	// contents of this window.
+	//
+	setLeftSelList( $assetInfo, $leftSelList );
+	select $leftSels;
+	
+	int $editing = validateEditedContainer( $assetInfo );
+
+	if( $mode ){
+		string $leftWin = getLeftWin( $assetInfo );
+		enableAllEditButtons( $assetInfo, $editing );
+		outlinerEditor -e -showSelected 1 $leftWin;
+		if( $editing ){
+			updateRightWin( $assetInfo );
+		}
+	}
+}
+
+global proc int isLeftWinSelection( string $assetInfo, 
+									string $plug )
+//
+//	Description:
+//		Given the current left win selection, returns true iff the given plug
+//	is part of the selection.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//		$plug		: plug to be tested for selection
+//
+//	Return Value:
+//		true iff $plug is part of selection
+//
+{
+	string $leftSels[] = getLeftWinSelection( $assetInfo );
+	return( stringArrayContains( $plug, $leftSels ) );
+}
+
+proc int setLeftWinSelection(	string $assetInfo,
+								string $plug,
+								int		$toggle)
+//
+//	Description:
+//		If $toggle is on, adds/removes the given plug from the selection list,
+//	otherwise, the selection list is set to be this plug. Note that to add an
+//	item from the RHS like an unbound published name, it must be converted to a
+//	plug of the form "containerName.unboundPublishedName".
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//		$plug		: plug that should become added/removed to/from list.
+//		$toggle		: if true, toggle the plug's selection only.
+//
+//	Return Value:
+//		None
+//
+{
+	int $isSelected = false;
+	string $leftWin = getLeftWin( $assetInfo );
+	string $mySLC = `outlinerEditor -q -slc $leftWin`;
+	if( $mySLC != "" ){
+		if( $toggle ){
+			string $leftSels[] = `selectionConnection -q -obj $mySLC`;
+			$isSelected = !stringArrayContains( $plug, $leftSels );
+			if( $isSelected ){
+				selectionConnection -e -s $plug $mySLC;
+			} else {
+				selectionConnection -e -d $plug $mySLC;
+			}
+		} else {
+			selectionConnection -e -clear $mySLC;
+			selectionConnection -e -s $plug $mySLC;
+			$isSelected = true;
+		}
+		// Lock the selection list during the forced callback
+		//
+		selectionConnection -e -lock 1 $mySLC;
+		selectCB( $assetInfo, 1 );
+		selectionConnection -e -lock 0 $mySLC;
+	}
+	return( $isSelected );
+}
+
+proc setTemplateName(	string $assetInfo,
+						string $templateName )
+//
+//	Description:
+//		Given the template name, set it for the edited container, and update
+//		the template and view labels in the RHS panel.
+//
+//	Inputs:
+//		$assetInfo		: Asset Editor information
+//		$templateName	: Name of template to set
+//
+//	Return Value:
+//		None.
+//
+{
+	string $editedContainer = getEditedContainer( $assetInfo );
+	if( $editedContainer == "" ){
+		return;
+	}
+
+    // Set template name value
+	setAttr -type "string" ($editedContainer + ".templateName") $templateName;
+  
+    // Set template path value
+    string $templatePath = "";
+    if (size($templateName) > 0 &&
+       (`containerTemplate -exists $templateName`))
+    {
+        $templatePath = `containerTemplate -q -fn $templateName`;
+    }
+    setAttr -type "string" ($editedContainer + ".templatePath") $templatePath;
+
+	updateTemplateAndViewText( $assetInfo );
+	updateAttributeEditor( $assetInfo, $editedContainer );
+}
+
+proc setViewMode(	string $assetInfo,
+					int $viewMode )
+//
+//	Description:
+//		Given the view mode, set it for the edited container, and update
+//		the template and view labels in the RHS panel.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//		$viewMode	: View mode
+//
+//	Return Value:
+//		None.
+//
+{
+	string $editedContainer = getEditedContainer( $assetInfo );
+	if( $editedContainer == "" ){
+		return;
+	}
+	setAttr ($editedContainer+ ".viewMode") $viewMode;
+	updateTemplateAndViewText( $assetInfo );
+	updateAttributeEditor( $assetInfo, $editedContainer );
+}
+
+proc setViewName(	string $assetInfo,
+					string $viewName )
+//
+//	Description:
+//		Given the view name, set it for the edited container, and update
+//		the template and view labels in the RHS panel.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//		$viewName	: View name
+//
+//	Return Value:
+//		None.
+//
+{
+	string $editedContainer = getEditedContainer( $assetInfo );
+	if( $editedContainer == "" ){
+		return;
+	}
+	setAttr -type "string" ($editedContainer + ".viewName") $viewName;
+	updateTemplateAndViewText( $assetInfo );
+	updateAttributeEditor( $assetInfo, $editedContainer );
+}
+
+
+global proc rebuildRightWin( string $assetInfo )
+//
+//	Description:
+//		Rebuild the right window if the container is still valid.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		None
+//
+{
+	if( validateEditedContainer( $assetInfo ) ){
+		forceRebuildRightWin( $assetInfo );
+	}
+}
+
+proc int loadContainerTemplate( string $assetInfo,
+								int $force )
+//
+//	Description:
+//		If the container's template is non-null, and isn't loaded, load it. If
+//	the $force flag is specified, force a reload.
+//
+//  Inputs:
+//		$assetInfo	: Asset Editor information
+//		$force		: if true, force a reload
+//
+//  Return Value:
+//      true		: if template is loaded, false otherwise
+//
+{
+	int $templateLoaded = false;
+	string $editedContainer = getEditedContainer( $assetInfo );
+	if( $editedContainer != ""){
+		string $templateName = `getAttr ($editedContainer + ".templateName")`;
+		string $templatePath = `getAttr ($editedContainer + ".templatePath")`;
+		if( $templateName != "" ){
+			$templateLoaded = `containerTemplate -exists $templateName`;
+			if( !$templateLoaded ){
+				if( catch(`containerTemplate -load -fn $templatePath $templateName`) ){
+					$templateLoaded = false;
+				} else {
+					$templateLoaded = true;
+				}
+			} else if( $force ){
+				if( catch(`containerTemplate -force -load -fn $templatePath $templateName`) ){
+					$templateLoaded = false;
+				}
+			}
+		}
+	}
+	return( $templateLoaded );
+}
+
+global proc updateViewMenu( string $assetInfo )
+//
+//	Description:
+//		Update the view menu
+//
+//  Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//  Return Value:
+//      None.
+//
+{
+	string $viewMenu = getViewMenu( $assetInfo );
+	string $editedContainer = getEditedContainer( $assetInfo );
+
+	string $oldParent = `setParent -q -menu`;
+	setParent -menu $viewMenu;
+
+	if( $editedContainer != ""){
+		int $templateLoaded = loadContainerTemplate( $assetInfo, 0 );
+		int $viewMode = `getAttr ($editedContainer + ".viewMode")`;
+		int $enableFlatMode = ($viewMode != 0);
+		int $enableUseTemplateMode = (($viewMode != 1) && $templateLoaded);
+		int $enableGroupByNodeMode = ($viewMode != 2);
+		menu -e -en true viewModeSubmenu;
+		menu -e -en ($viewMode == 1) viewNameSubmenu;
+		setParent -menu ($viewMenu + "|viewModeSubmenu" );
+		menuItem -e -en $enableFlatMode flatModeItem;
+		menuItem -e -en $enableUseTemplateMode useTemplateModeItem;
+		menuItem -e -en $enableGroupByNodeMode groupByNodeModeItem;
+		menuItem -e -en $templateLoaded viewAddItem;
+		menuItem -e -en $templateLoaded viewAddOptionItem;
+	} else {
+		menu -e -en false viewNameSubmenu;
+		menu -e -en false viewModeSubmenu;
+		menuItem -e -en false viewAddItem;
+		menuItem -e -en false viewAddOptionItem;
+	}
+	setParent -menu $oldParent;
+}
+
+global proc updateTemplateMenu( string $assetInfo )
+//
+//	Description:
+//		Update the template menu
+//
+//  Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//  Return Value:
+//      None.
+//
+//
+{
+	string $templateMenu = getTemplateMenu( $assetInfo );
+	string $editedContainer = getEditedContainer( $assetInfo );
+
+	string $oldParent = `setParent -q -menu`;
+	setParent -menu $templateMenu;
+
+	if( $editedContainer == ""){
+		menuItem -e -en false templateReloadItem;
+		menuItem -e -en false templateAssignItem;
+		menuItem -e -en false templateUnassignItem;
+		menuItem -e -en false templateSaveItem;
+		menuItem -e -en false templateSaveAsItem;
+		menuItem -e -en false templateAutobindItem;
+		menuItem -e -en false templateAutobindOptionItem;
+		menuItem -e -en false templateCreateBindingSetItem;
+		menuItem -e -en false templateUpdateBindingSetItem;
+		menuItem -e -en false templateUpdateBindingSetOptionItem;
+		menuItem -e -en false templateRemoveBindingSetItem;
+	} else {
+		menu -e -en true $templateMenu;
+		int $templateLoaded = loadContainerTemplate( $assetInfo, 0 );
+		string $templateName = `getAttr ($editedContainer + ".templateName")`;
+		string $fileName;
+        int $hasTemplate = 0;
+        int $hasBindings = 0;
+        int $hasDefaultBindings = 0;
+		if( $templateName != "" ){
+			$fileName = `containerTemplate -q $templateName -fn`;
+            $hasTemplate = (size($fileName) > 0);
+            string $bSets[] = `containerBind -q -bsl $editedContainer`;
+            $hasBindings = $hasTemplate && (size($bSets) > 0);
+            $hasDefaultBindings = $hasTemplate && 
+                                stringArrayContains(containerDefaultBindingSet(), 
+                                                    $bSets);
+		}
+		menuItem -e -en true templateAssignItem;
+		menuItem -e -en $templateLoaded templateReloadItem;
+		menuItem -e -en $templateLoaded templateUnassignItem;
+		menuItem -e -en $hasTemplate templateSaveItem;
+		menuItem -e -en true templateSaveAsItem;
+        // Autobind can operate on any bindings
+		menuItem -e -en $hasBindings templateAutobindItem;
+		menuItem -e -en $hasBindings templateAutobindOptionItem;
+        // Create/Update/Remove operate on default binding set 
+		menuItem -e -en ($hasTemplate && !$hasDefaultBindings)
+                         templateCreateBindingSetItem;
+		menuItem -e -en $hasDefaultBindings templateUpdateBindingSetItem;
+		menuItem -e -en $hasDefaultBindings templateUpdateBindingSetOptionItem;
+		menuItem -e -en $hasDefaultBindings templateRemoveBindingSetItem;
+	}
+	setParent -menu $oldParent;
+}
+
+proc string[] matchLeftSel(	string $assetInfo,
+							int $bindType,
+							int $nonTemplate,
+							int $wantRHS,
+							string $command,
+							int $singleSel)
+//
+//	Description:
+//		Given the current selection list associated with the LHS, find the
+//	selection(s) that satisfy the following
+//		$bindType	: 0 - don't care
+//					: 1 - selection is unbound
+//					: 2 - selection is bound
+//		$nonTemplate: published name (implicit or explicit) is not one of the
+//					  template names
+//		Returns the LHS selection(s), unless the $wantRHS is set to true, in
+//	which cast the explicit or implicit publish name(s) will be returned.
+//
+//	Inputs:
+//		$bindType, $nonTemplate, $wantRHS - as described above
+//		$command	: Name of the calling command, for error messages
+//		$singleSel	: true iff only a single match is valid
+//
+//	Return Value:
+//		string array of valid selection; empty if nothing appropriate.
+//
+{
+	string $selType = (($bindType==1?"unbound ":($bindType==2?"bound ":"")) +
+						($nonTemplate?"non-template ":"") +
+						($wantRHS?"published name":"plug") + "(s)");
+	string $editedContainer = getEditedContainer( $assetInfo );
+	// Template names, if we need a non-templated match
+	//
+	string $templateNames[];
+	if( $nonTemplate ){
+		$templateNames = getTemplateNames( $assetInfo );
+	}
+	// Unpublished names, if we need an unpublished name match
+	//
+	string $unboundNames[];
+	string $anchorNames[];
+	if( $wantRHS ){
+		if( $bindType != 2 ){
+			$unboundNames = `container -q -publishName -unbindAttr $editedContainer`;
+			if( $bindType == 0 ){
+				$anchorNames = stringArrayCatenate(
+					`container -q -publishAsParent $editedContainer`,
+					`container -q -publishAsChild $editedContainer` );
+			}
+		}
+	}
+	string $leftSels[] = getLeftWinSelection( $assetInfo );
+	int $numLeftSels = size( $leftSels );
+
+	string $matchSels[];
+	int $numMatchSels = 0;
+	string $otherSels = "";
+
+	int $index = 0;
+	while( $index < $numLeftSels ){
+		string $leftSel = $leftSels[$index++];
+		string $leftNode = `plugNode $leftSel`;
+		string $leftAttr = `plugAttr $leftSel`;
+		string $match = "";
+		string $publishedName = "";
+		int $isPlug = false;
+		if( $wantRHS ){
+			// An unbound published name is a match
+			//
+			if( $bindType != 2 ){
+				if( $leftNode == $editedContainer ){
+					if( stringArrayContains( $leftAttr, $unboundNames ) ){
+						$publishedName = $leftAttr;
+					}
+				}
+			}
+		}
+		if( ($publishedName == "") && (!( ($bindType==1) && $wantRHS) ) ){
+			// Look for a bound name if:
+			//	- we haven't found a match
+			//	- we don't want just an unbound published name from RHS
+			//
+			if( $leftNode != "" ){
+				if( $leftAttr != "" ){
+					string $leftSelContainer;
+					if( `container -q -isContainer $leftNode`){
+						// We're trying to publish something from the container
+						//
+						$leftSelContainer = $leftNode;
+					} else {
+						$leftSelContainer = `container -q -fc $leftSel`;
+					}
+					while(	($leftSelContainer != "") &&
+							($leftSelContainer != $editedContainer ) ){
+						// Is $leftSel published to $leftSelContainer? If so,
+						// keep going up the hierarchy and checking if it's
+						// published, until we either hit the edited
+						// container, or run out of containers.
+						//
+						string $publishedNames[] = `container -q -publishName -publishAttr $leftSel $leftSelContainer`;
+						if( size($publishedNames) == 1 ){
+							// Published to this container, keep going up to
+							// the next container
+							//
+							$leftSelContainer = `container -q -fc $leftSelContainer`;
+						} else {
+							// Can't publish this
+							//
+							$leftSelContainer = "";
+						}
+					}
+					if( $editedContainer == $leftSelContainer ){
+						$isPlug = true;
+						string $publishedNames[] = `container -q -publishName -publishAttr $leftSel $editedContainer`;
+						if( size($publishedNames) == 1 ){
+							$publishedName = $publishedNames[0];
+						}
+					}
+				} else if( ($bindType == 0) && $wantRHS ){
+					// A published anchor can also be a match, e.g., for
+					// renamePublishedCmd
+					//
+					if( stringArrayContains( $leftNode, $anchorNames ) ){
+						int $numAnchors = size($anchorNames);
+						int $index = 1;
+						while( $index < $numAnchors ){
+							if( $anchorNames[$index] == $leftNode ){
+								// We have a match
+								//
+								$publishedName = $anchorNames[$index-1];
+								break;
+							}
+							$index += 2;
+						}
+					}
+				}
+			}
+		}
+		if( $wantRHS ){
+			$match = $publishedName;
+		} else if( $isPlug ){
+			// Check the desired bindType & if it's satisified, set match
+			// to the leftSel.
+			//
+			if(   ( $bindType == 0 ) ||
+				( ( $bindType == 1 ) && ( $publishedName == "" ) ) ||
+				( ( $bindType == 2 ) && ( $publishedName != "" ) ) ){
+				$match = $leftSel;
+			}
+		}
+		if( ($match != "") && ($publishedName != "") ){
+			// Must the published name not come from the template?
+			//
+			if( size($templateNames) > 0 ){
+				if( stringArrayContains( $publishedName, $templateNames ) ){
+					$match = "";
+				}
+			}
+		}
+		if( $match != "" ){
+			if( $singleSel && ($numMatchSels > 0) ){
+				string $wrnFmt = (uiRes("m_assetWindow.kTooManyMatches"));
+				warning(`format -s $command -s $selType $wrnFmt`);
+				clear $matchSels;
+				return( $matchSels );
+			}
+			$matchSels[$numMatchSels] = $match;
+			$numMatchSels++;
+		} else {
+			if( $otherSels == "" ){
+				$otherSels = $leftSel;
+			} else {
+				$otherSels = ($otherSels + ", " + $leftSel);
+			}
+		}
+	}
+	if( $numMatchSels == 0 ){
+		string $wrnFmt = (uiRes("m_assetWindow.kZeroMatches"));
+		warning(`format -s $command -s $selType $wrnFmt`);
+	} else if( $otherSels != "" ){
+		string $wrnFmt = (uiRes("m_assetWindow.kOtherMatches"));
+		warning(`format -s $command -s $otherSels -s $selType $wrnFmt` );
+	}
+	return( $matchSels );
+}
+
+global proc selectionCmd(	string	$assetInfo,
+							int		$mode,
+							int		$isSelected,
+							int		$isFromTemplate,
+							string	$row )
+//
+//	Description:
+//		Callback that happens when the selection button is pressed.
+//
+// 	Inputs:
+//		$assetInfo	: Asset Editor information
+//		$mode		: Mode : 0 = setup, 1 = button clicked
+//		$isSelected	: true iff there is an attribute currently selected in the
+//					  left window, and it is bound to this row's published
+//					  attribute.
+//		$isFromTemplate : true iff the published name comes from the current
+//					  template.
+//		$row		: row on which user pressed bind/unbind
+//
+{
+	int $mods = `getModifiers`;
+	string $editedContainer = getEditedContainer( $assetInfo );
+	if( $editedContainer == "" ){
+		return;
+	}
+	string $selectionBtn = getRowSelectionBtn( $row );
+	string $publicText = getRowPublicText( $row );
+	string $internText = getRowInternText( $row );
+	string $internPlug = getTextLabel( $internText );
+	if( $mode ){
+		// Check is mods is 1 (Shift) or 4(Ctrl); if either of these modifiers
+		// is pressed down, we're in toggle mode.
+		//
+		int $doToggle = false;
+		while( $mods ){
+			if( $mods%2 ){
+				$doToggle = true;
+				break;
+			}
+			$mods /= 4;
+		}
+		string $publicName = getTextLabel( $publicText );
+		string $leftSel = $internPlug;
+		if( $leftSel == "" ){
+			string $bindBtn = getRowBindBtn( $row );
+			if( !`button -q -vis $bindBtn` ){
+				// No visible bind button, to this must be the published root,
+				// since only published parent anchors, published child anchors
+				// and published roots have invisible bind buttons, but the
+				// first two always have a non-null internal plug.
+				//
+				$leftSel = $publicName;
+			} else {
+				$leftSel = ($editedContainer + "." + $publicName);
+			}
+		}
+		int $doFullUpdate = !$doToggle;
+		if( $doFullUpdate ){
+			// If we're not simply toggling, we may need to do a full update.
+			//
+			string $leftSels[] = getLeftWinSelection( $assetInfo );
+			if( size($leftSels) == 0 ){
+				// Nothing to update since there was nothing previously selected
+				//
+				$doFullUpdate = false;
+			} else if( size($leftSels) == 1 ){
+				// If we're lucky, the row stored in $lastKnownSelectedRow was
+				// the last selected row, and we can avoid a full update.
+				//
+				string $lastKnownSelectedRow = getLastKnownSelectedRow( $assetInfo );
+				if( `rowLayout -exists $lastKnownSelectedRow` ){
+					string $lastSelectionBtn = getRowSelectionBtn( $lastKnownSelectedRow );
+					if(`iconTextCheckBox -q -v $lastSelectionBtn`){
+						iconTextCheckBox -e -w 18 -h 18 -vis true -v 0 $lastSelectionBtn;  
+						$doFullUpdate = false;
+					}
+				}
+			}
+		}
+		$isSelected = setLeftWinSelection( $assetInfo, $leftSel, $doToggle );
+		if( $doFullUpdate ){
+			// No choice, update the right window;
+			//
+			updateRightWin( $assetInfo );
+		}
+	}
+	string $templateName = `getAttr ($editedContainer + ".templateName")`;
+	int $noTemplate = ($templateName == "");
+	string $oldImage = `iconTextCheckBox -q -image $selectionBtn`;
+	string $newImage = $oldImage;
+	if( $noTemplate ){
+		$newImage = "redSelect.png";
+	} else if( $isFromTemplate ){
+		$newImage = "greenSelect.png";
+	} else {
+		$newImage = "yellowSelect.png";
+	}
+	if( $isSelected ){
+		setLastKnownSelectedRow( $assetInfo, $row );
+		iconTextCheckBox -e -v 1 $selectionBtn;
+		// The internal plug is the selected plug, show this row as the
+		// selected row.
+		//
+	} else if( !( $internPlug == "" && $isFromTemplate) ){
+		// This internal plug exists, and is selectable, or this row is not
+		// from a template; enable it
+		//
+		iconTextCheckBox -e -v 0 $selectionBtn;
+
+	} else {
+
+		$newImage = $oldImage;
+	}
+
+	int $oldVis = `iconTextCheckBox -q -vis $selectionBtn`;
+	if( $newImage == "" ){
+		if( $oldVis ){
+			// Button should no longer be visible
+			//
+			iconTextCheckBox -e -w 18 -h 18 -vis false $selectionBtn;
+		}
+	} else if( $oldImage != $newImage ){
+		// Update button
+		//
+		iconTextCheckBox -e -w 18 -h 18 -vis true -image $newImage $selectionBtn;
+	} else if( !$oldVis ){
+		// Button has right image already, but should now be visible
+		//
+		iconTextCheckBox -e -w 18 -h 18 -vis true;
+	}
+}
+
+global proc bindUnbindCmd(	string	$assetInfo,
+							int		$mode,
+							int		$isSelected,
+							int		$isFromTemplate,
+							string	$row)
+//
+//	Description:
+//		Callback that happends when the bind/unbind button is pressed.
+//
+// 	Inputs:
+//		$assetInfo	: Asset Editor information
+//		$mode		: Mode : 0 = setup, 1 = button clicked
+//		$isSelected	: true iff there is an attribute currently selected in the
+//					  left window, and it is bound to this row's published
+//					  attribute.
+//		$isFromTemplate : true iff the published name comes from the current
+//					  template.
+//		$row		: row on which user pressed bind/unbind
+//
+{
+	string $action = "Bind/Unbind";
+	string $editedContainer = getEditedContainer( $assetInfo );
+	if( $editedContainer == "" ){
+		return;
+	}
+	string $publicText = getRowPublicText( $row );
+	string $publicAttr = getTextLabel( $publicText );
+	string $internText = getRowInternText( $row );
+	string $internPlug = getTextLabel( $internText );
+	string $bindBtn = getRowBindBtn( $row );
+	if( $mode ){
+		if( $internPlug == "" ){
+			$action = "Bind";
+			// This was an unbound attribute, and we're now binding it to the
+			// selection in the left window
+			
+			string $matchSels[] = matchLeftSel(	$assetInfo, 1, 0, 0, "Bind", 1);
+			if( size($matchSels) == 1 ){
+				$internPlug = $matchSels[0];
+			}
+			if( $internPlug != "" ){
+				// Is the published name already bound?
+				//
+				string $pubs[] = `container -q -publishName -bindAttr $editedContainer`;
+				if( stringArrayContains( $publicAttr, $pubs ) ){
+					// Published name is already bound; fail
+					//
+					string $wrnFmt = (uiRes("m_assetWindow.kBoundNameWrn"));
+					warning(`format -s $action $wrnFmt` );
+				}
+				// Does the published name exists as an unbound published name?
+				//
+				string $unpubs[] = `container -q -publishName -unbindAttr $editedContainer`;
+				if( !stringArrayContains( $publicAttr, $unpubs ) ){
+					// Probably an unpublished name from a template; publish it
+					// before binding.
+					//
+					container -e -publishName $publicAttr $editedContainer;
+				}
+				string $boundNames[] = `container -e -bindAttr $internPlug $publicAttr $editedContainer`;
+				if( size($boundNames) > 1 ){
+					// Need to do a full rebuild
+					//
+					rebuildRightWin( $assetInfo );
+					return;
+				} else {
+					text -e -label $internPlug $internText;
+					$isSelected = true;
+				}
+			}
+		} else {
+			string $unboundNames[] = `container -e -unbindAttr $internPlug $publicAttr $editedContainer`;
+			if( size($unboundNames) > 1 ){
+				// A compound triggered more than one unbound operation, do a
+				// full rebuild.
+				//
+				rebuildRightWin( $assetInfo );
+				return;
+			}
+			$internPlug = "";
+			text -e -label $internPlug $internText;
+		}
+		// Update the selection button, but without changing the selection
+		// status.
+		//
+		string $selectionBtn = getRowSelectionBtn( $row );
+		string $selectionImage = `iconTextCheckBox -q -image $selectionBtn`;
+		string $publicName = ($editedContainer + "." + $publicAttr);
+		$isSelected = ($internPlug == "")?
+						isLeftWinSelection( $assetInfo, $publicName ) :
+						isLeftWinSelection( $assetInfo, $internPlug );
+		selectionCmd( $assetInfo, 0, $isSelected, $isFromTemplate, $row );
+	}
+	string $oldImage = `symbolButton -q -image $bindBtn`;
+	string $newImage = $oldImage;
+	string $annot;
+	string $font;
+	if( $internPlug == "" ){
+		// Button should be "bind"
+		//
+		$newImage = "bind.png";
+		$annot = (uiRes("m_assetWindow.kBindAnnot"));
+		$font = "plainLabelFont";
+	} else {
+		// Button should be "unbind"
+		//
+		$newImage = "unbind.png";
+		$annot = (uiRes("m_assetWindow.kUnbindAnnot"));
+		$font = "obliqueLabelFont";
+	}
+	if( $oldImage != $newImage ){
+		// Update image & annotation
+		//
+		symbolButton -e -w 18 -h 18 -image $newImage -annotation $annot
+			$bindBtn;
+		text -e -font $font $publicText;
+	}
+}
+
+
+global proc pinCmd(	string $assetInfo,
+					int $mode )
+//
+//  Description:
+//      script to allow us to flip between the all containers view, and the
+//	edited container view in the left panel, i.e., the pin/unpin command.
+//
+//  Inputs:
+//		$assetInfo	: Asset Editor information
+//		$mode	 	: 0 - setup
+//				 	: 1 - button clicked
+//
+//  Return Value:
+//      None.
+//
+{
+	string $editedContainer = getEditedContainer( $assetInfo );
+
+	if( $mode ){
+		if( $editedContainer == "" ){
+			// Figure out from context which container user wants to edit.
+			// 
+			//
+			int $multiWarn = false;
+			string $leftSels[] = getLeftWinSelection( $assetInfo );
+			string $containers[] = `ls -type container $leftSels`;
+			if (size($containers) == 1) {
+				// We explicitly check for this case for the case of advanced
+				// assets where auto-select root is enabled. The root may be
+				// in sub-container and confuse the code below into not 
+				// knowing the intended container.
+				//
+				$editedContainer = $containers[0];
+			} else {
+				int $numLeftSels = size($leftSels);
+				int $index = 0;
+				while( $index < $numLeftSels ){
+					// get rid of opening | on container if unneeded
+					//
+					string $partialPathName[] = `ls $leftSels[$index]`;
+					string $leftSel = $partialPathName[0];
+					string $selContainer = "";
+					if( `container -q -isContainer $leftSel` ){
+						$selContainer = `plugNode $leftSel`;
+					} else {
+						$selContainer = `container -q -fc $leftSel`;
+					}
+					if( $selContainer != "" ){
+						// Found a container, use that one.
+						//
+						if( $editedContainer == "" ){
+							$editedContainer = $selContainer;
+						} else if ( $editedContainer != $selContainer ) {
+							$multiWarn = true;
+						}
+					}
+					$index++;
+				}
+			}
+			if( $editedContainer == "" ){
+				warning( (uiRes("m_assetWindow.kNoSelectedAsset")));
+			} else if( $multiWarn ){
+				warning( (uiRes("m_assetWindow.kMultiSelectedAsset")) );
+			}
+		} else {
+			$editedContainer = "";
+		}
+		setEditedContainer( $assetInfo, $editedContainer );
+	}
+	updateAssetEditor( $assetInfo, ($editedContainer != "") );
+}
+
+global proc assignEditedTemplate( string $assetInfo,
+								string $templateName,
+								int $force )
+//
+//	Description:
+//		Assign the template with the given name.
+//
+//	Inputs:
+//		$assetInfo		: Asset Editor information
+//		$templateName	: Name of template to load
+//		$force			: if true, force a reload of the template from disk
+//
+//  Return Value:
+//      None.
+//
+{
+    int $autobind = 1;
+	if (`optionVar -exists assignTemplateFileAutobind`) {
+		$autobind = `optionVar -q assignTemplateFileAutobind`;		
+	}
+    int $standins = 1;
+	if (`optionVar -exists assignTemplateFileStandins`) {
+		$standins = `optionVar -q assignTemplateFileStandins`;
+	}
+
+    // Use common routine to assign and autobind the template
+	string $editedContainer = getEditedContainer( $assetInfo );
+    containerAssignTemplate($editedContainer, $templateName, $autobind,$standins);
+	setTemplateName( $assetInfo, $templateName );
+
+    // Refresh the editor
+    rebuildRightWin( $assetInfo );
+
+}
+
+global proc unbindAndUnpublishCmd( string $assetInfo )
+//
+//	Description:
+//		Unbind and unpublish one or more attributes.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		None
+//
+{
+	string $editedContainer = getEditedContainer( $assetInfo );
+	if( $editedContainer == "" ){
+		return;
+	}
+	string $matchSels[] = matchLeftSel(	$assetInfo, 2, 1, 0, "Unpublish", 0 );
+	int $numMatchSels = size($matchSels);
+	if( $numMatchSels > 0 ){
+		int $index = 0;
+		while( $index < $numMatchSels ){
+			string $sel = $matchSels[$index];
+			// Check if this has been unpublished, since compound attributes can
+			// trigger autounpublishing of children attributes and vice-versa.
+			//
+			string $publishedNames[] = `container -q -publishName -publishAttr $sel $editedContainer`;
+			if( size($publishedNames) == 1 ){
+				// No, go ahead
+				//
+				container -e -unbindAndUnpublish $sel $editedContainer;
+			}
+			$index++;
+		}
+		rebuildRightWin( $assetInfo );
+	}
+}
+
+global proc unbindCmd( string $assetInfo )
+//
+//	Description:
+//		Unbind one or more attributes.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		None
+//
+{
+	string $editedContainer = getEditedContainer( $assetInfo );
+	if( $editedContainer == "" ){
+		return;
+	}
+	string $matchSels[] = matchLeftSel(	$assetInfo, 2, 0, 0, "Unbind", 0 );
+	int $numMatchSels = size($matchSels);
+	if( $numMatchSels > 0 ){
+		int $index = 0;
+		while( $index < $numMatchSels ){
+			string $sel = $matchSels[$index];
+			string $publishedNames[] = `container -q -publishName -publishAttr $sel $editedContainer`;
+			if( size($publishedNames) == 1 ){
+				container -e -unbindAttr $sel $publishedNames[0] $editedContainer;
+			}
+			$index++;
+		}
+		rebuildRightWin( $assetInfo );
+	}
+}
+
+global proc publishAndBindCmd(	string $assetInfo,
+								int $publishAs )
+//
+//	Description:
+//		Publish one or more attributes.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//		$publishAs	: if true, only one unpublished plug is selected, and we'll
+//			 		  prompt the user for a name
+//
+//	Return Value:
+//		None
+//
+//
+{
+	string $editedContainer = getEditedContainer( $assetInfo );
+	if( $editedContainer == "" ){
+		return;
+	}
+	string $command = "Publish";
+	if( $publishAs ){
+		$command = "Publish As";
+	}
+	string $matchSels[] = matchLeftSel(	$assetInfo,1,0,0,$command, $publishAs );
+	int $numMatchSels = size($matchSels);
+	// Make sure option vars are set by assembling the current command; calling
+	// performPublishAttribute 2 will do just that, since it will build and
+	// return the command, initializing the option vars if necessary, but will
+	// simply return the command and not execute it.
+	//
+	performPublishAttribute(2);
+	int $nameConvention = `optionVar -query publishAttrName`;
+	string $customString = ($nameConvention > 1)? `optionVar -query publishAttrPrefix` : "";
+	if( $numMatchSels > 0 ){
+		int $index = 0;
+		while( $index < $numMatchSels ){
+			string $publishName;
+			string $sel = $matchSels[$index];
+			// Check if this has been published, since compound attributes can
+			// trigger autopublishing of children attributes and vice-versa.
+			//
+			string $publishedNames[] = `container -q -publishName -publishAttr $sel $editedContainer`;
+			if( size($publishedNames) == 0 ){
+				// No, go ahead
+				//
+				if( $publishAs ){
+					string $result = `promptDialog
+						 -title (uiRes("m_assetWindow.kSpecifyPublishedName"))
+						 -message (uiRes("m_assetWindow.kEnterPublishedName"))
+						 -text "publishedName"
+						 -button (uiRes("m_assetWindow.kOK"))
+						 -button (uiRes("m_assetWindow.kCancel"))
+						 -defaultButton (uiRes( "m_assetWindow.kOK"))
+						 -cancelButton (uiRes( "m_assetWindow.kCancel" ))
+						 -dismissString (uiRes( "m_assetWindow.kCancel" ))`;
+
+					if( $result == uiRes("m_assetWindow.kOK") ){
+						// Get the published name entered by the user
+						//
+						$publishName = `promptDialog -q`;
+					} else {
+						return;
+					}
+				} else {
+					if( !`exists "customPublishedName"` ){
+						eval("source \"doPublishAttribute.mel\"");
+					}
+					$publishName = customPublishedName( $sel,
+														$nameConvention,
+														$customString );
+				}
+				container -e -publishAndBind $sel $publishName $editedContainer;
+			}
+			$index++;
+		}
+		rebuildRightWin( $assetInfo );
+	}
+}
+
+global proc renamePublishedCmd( string $assetInfo )
+//
+//	Description:
+//		Rename the selected name, provided it doesn't come from a template.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		None
+//
+{
+	string $editedContainer = getEditedContainer( $assetInfo );
+	if( $editedContainer == "" ){
+		return;
+	}
+	string $matchSels[] = matchLeftSel(	$assetInfo, 0, 1, 1, "Rename", 1 );
+	int $numMatchSels = size($matchSels);
+	if( $numMatchSels == 1 ){
+		string $sel = $matchSels[0];
+		// Get the index of the borderConnections element
+		//
+		string $aliases[] = `aliasAttr -q $editedContainer`;
+		int $aliasesSize = size($aliases);
+		string $bcName;
+		int $index;
+		while( $index < $aliasesSize ){
+			string $aliasName = $aliases[$index++];
+			if( $aliasName == $sel ){
+				// Found it
+				//
+				$bcName = $aliases[$index];
+				break;
+			}
+			$index++;
+		}
+		if( $bcName == "" ){
+			return;
+		}
+		string $msgFmt = (uiRes("m_assetWindow.kEnterNewPublishedName"));
+		string $msg = `format -s $sel $msgFmt`;
+		string $result = `promptDialog
+			-title (uiRes("m_assetWindow.kSpecifyNewName"))
+			-message $msg
+			-text "newPublishedName"
+			-button (uiRes( "m_assetWindow.kOK"))
+			-button (uiRes( "m_assetWindow.kCancel" ))
+			-defaultButton (uiRes( "m_assetWindow.kOK"))
+			-cancelButton (uiRes( "m_assetWindow.kCancel" ))
+			-dismissString (uiRes( "m_assetWindow.kCancel" ))`;
+
+		if( $result == uiRes("m_assetWindow.kOK") ){
+			// Get the new name entered by the user
+			//
+			string $newName = `promptDialog -q`;
+			string $bcPlug = $editedContainer + "." + $bcName;
+			aliasAttr -remove $bcPlug;
+			if( catch(`aliasAttr $newName $bcPlug`) ){
+				// Restore the old alias
+				//
+				$newName = $sel;
+				aliasAttr $newName $bcPlug;
+			}
+
+			// If we're lucky, the row stored in $lastKnownSelectedRow
+			// is selected row for which we are renaming the published
+			// name, and we can avoid a full update
+			//
+			string $row = getLastKnownSelectedRow( $assetInfo );
+			if( `rowLayout -exists $row` ){
+				string $publicText = getRowPublicText( $row );
+				if( getTextLabel( $publicText ) == $sel ){
+					// Bingo! :-)
+					//
+					text -e -label $newName $publicText;
+					return;
+				}
+			}
+			// If we get to this point, we need to completely rebuild
+			// the right window.
+			//
+			rebuildRightWin( $assetInfo );
+		}
+	}
+}
+
+global proc unpublishNameCmd( string $assetInfo )
+//
+//	Description:
+//		Unpublish the selected non-template unbound name(s).
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		None
+//
+{
+	string $editedContainer = getEditedContainer( $assetInfo );
+	if( $editedContainer == "" ){
+		return;
+	}
+	string $matchSels[] = matchLeftSel(	$assetInfo, 1, 1, 1, "Unpublish Unbound", 0 );
+	int $numMatchSels = size($matchSels);
+	if( $numMatchSels > 0 ){
+		int $index = 0;
+		while( $index < $numMatchSels ){
+			string $sel = $matchSels[$index];
+			container -e -unpublishName $sel $editedContainer;
+			$index++;
+		}
+		rebuildRightWin( $assetInfo );
+	}
+}
+
+global proc publishNameCmd( string $assetInfo )
+//
+//	Description:
+//		Publish a name without binding it to anything.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		None
+//
+{
+	string $editedContainer = getEditedContainer( $assetInfo );
+	if( $editedContainer == "" ){
+		return;
+	}
+	string $result = `promptDialog
+                 -title (uiRes( "m_assetWindow.kSpecifyPublishedName"))
+                 -message (uiRes( "m_assetWindow.kEnterPublishedName"))
+                 -text "publishedName"
+                 -button (uiRes( "m_assetWindow.kOK"))
+                 -button (uiRes( "m_assetWindow.kCancel" ))
+                 -defaultButton (uiRes( "m_assetWindow.kOK"))
+                 -cancelButton (uiRes( "m_assetWindow.kCancel" ))
+                 -dismissString (uiRes( "m_assetWindow.kCancel" ))`;
+
+	if( $result == uiRes("m_assetWindow.kOK") ){
+		// Get the published name entered by the user
+		//
+		string $publishedName = `promptDialog -q`;
+		if( catch(`container -e -publishName $publishedName $editedContainer`) ){
+			return;
+		}
+		// New published name, need to rebuild window.
+		rebuildRightWin( $assetInfo );
+	}
+}
+
+proc int syncTemplate( string $assetInfo )
+//
+//	Description:
+//		Sync the current template to the container in preparation for save.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		true iff the template was synced.
+{
+	// First, get the edited container
+	//
+	string $editedContainer = getEditedContainer( $assetInfo );
+
+	// Next, get the template name
+	//
+	string $templateName = `getAttr ($editedContainer + ".templateName")`;
+	if( $templateName == "" ){
+		// Nothing to sync
+		//
+		return( false );
+	}
+	// If at least one published name isn't in the template, we need to update
+	// the template. If all published names are already in the template, there
+	// is nothing to add to the template, and we're done.
+	//
+	string $templateNames[] = getTemplateNames( $assetInfo );
+	string $publishedNames[] = `container -q -publishName $editedContainer`;
+	int $numTemplateNames = size($templateNames);
+	int $numPublishedNames = size($publishedNames);
+	int $index = 0;
+	int $update = false;
+	while( $index < $numPublishedNames ){
+		if(!stringArrayContains( $publishedNames[$index], $templateNames)){
+			$update = true;
+			break;
+		}
+		$index++;
+	}
+	if( $update ){
+		containerTemplate -e -addNames -fc $editedContainer $templateName;
+	}
+	return( $update );
+}
+
+
+global proc saveAsCB(	string $assetInfo,
+						string $fileName,
+						string $baseName )
+//
+//	Description:
+//		Callback for "Save As..." file browser dialog, and method to call for
+//	"Save" without invoking file browser dialog.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//		$fileName	: Name of file
+//		$baseName	: base name, which is essentially the template name; if
+//					  base name is "", use existing template name.
+//
+//	Return Value:
+//		None.
+//
+{
+	// First, get the edited container
+	//
+	string $editedContainer = getEditedContainer( $assetInfo );
+
+	// Next, set the template
+	//
+	int $doSyncTemplate = true;
+	string $templateName = `getAttr ($editedContainer + ".templateName")`;
+	if( !(($baseName == "") || ($templateName == $baseName )) ){
+		$templateName = $baseName;
+		// We want to override the template $baseName, otherwise we'll
+		// end up inheriting names from the existing template, so force
+		// its creation from scratch.
+		//
+		$doSyncTemplate = false;
+		if( catch(`containerTemplate -force -fc $editedContainer $templateName`)){
+			// Something went wrong, bail
+			return;
+		}
+		setTemplateName( $assetInfo, $templateName );
+		rebuildRightWin( $assetInfo );
+	}
+	if( `containerTemplate -exists $templateName` ){
+		if( $doSyncTemplate ){
+			if( syncTemplate( $assetInfo ) ){
+				rebuildRightWin( $assetInfo );
+			}
+		}
+		if( $fileName != "" ){
+			catch(`containerTemplate -save $templateName -fn $fileName`);
+		} else {
+			catch(`containerTemplate -save $templateName`);
+		}
+	}
+}
+
+
+global proc saveTemplate( string $assetInfo )
+//
+//	Description:
+//		Save the current template for the currently edited container.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//  Return Value:
+//      None.
+//
+{
+	saveAsCB( $assetInfo, "", "" );
+}
+
+global proc saveAsTemplate( string $assetInfo )
+//
+//	Description:
+//		Save the current template for the currently edited container, allowing
+//	the user to specify a name.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//  Return Value:
+//      None.
+//
+{
+	string $callback = ("saveAsCB " + $assetInfo + " ");
+	containerTemplateBrowser( $callback, "", 1 );
+}
+
+global proc unassignEditedTemplate( string $assetInfo )
+//
+//	Description:
+//		Unassign the template for the currently edited container
+//
+//	Inputs:
+//		$rightWin	: right window layout
+//
+//  Return Value:
+//      None.
+//
+{
+	string $editedContainer = getEditedContainer( $assetInfo );
+	if( $editedContainer == "" ){
+		return;
+	}
+	string $templateName = `getAttr ($editedContainer + ".templateName")`;
+	if( $templateName != "" ){
+		setTemplateName( $assetInfo, "" );
+	}
+	rebuildRightWin( $assetInfo );
+}
+
+global proc reloadEditedTemplate( string $assetInfo )
+//
+//	Description:
+//		Reload the template for the currently edited container
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//  Return Value:
+//      None.
+//
+{
+	string $editedContainer = getEditedContainer( $assetInfo );
+	if( $editedContainer == "" ){
+		return;
+	}
+
+	string $templateName = `getAttr ($editedContainer + ".templateName")`;
+	if( $templateName == "" ){
+		return;
+	}
+    
+    // Unload the template so it will be reloaded on assignment
+    containerTemplate -unload $templateName;
+    // Reassign the template, which will reload it, reassign attributes, etc.
+    containerAssignTemplate($editedContainer, $templateName, 0, 0);
+
+    // Refresh the editor info
+	setTemplateName( $assetInfo, $templateName );
+    rebuildRightWin( $assetInfo );
+}
+
+global proc buildTemplateAssignMenu(  string $assetInfo,
+									string $assignMenu )
+//
+//	Description:
+//		Build the Template->Assign menu
+//
+//  Inputs:
+//		$assetInfo	: Asset Editor information
+//		$assignMenu	: Name of Template->Assign menu
+//
+//  Return Value:
+//      None.
+//
+{
+	global string $gPinnedContainerForTemplateAssign;
+
+	string $editedContainer = getEditedContainer( $assetInfo );
+	$gPinnedContainerForTemplateAssign = $editedContainer;
+
+	string $oldParent = `setParent -q -menu`;
+	setParent -menu $assignMenu;
+
+	menu -e -dai $assignMenu;
+
+	int $numTemplates = getNumTemplates($assetInfo);
+
+	string $templateName = `getAttr ($editedContainer + ".templateName")`;
+	int $enableDefault = ($templateName != "");
+
+	// Is the template specified in .templateName already on our list? If not,
+	// add it.
+	//
+	string $editedTemplates[] = getTemplates( $assetInfo );
+	if( $enableDefault ){
+		if( !stringArrayContains( $templateName, $editedTemplates ) ){
+			pushTemplate( $assetInfo, $templateName );
+			$editedTemplates[$numTemplates] = $templateName;
+			$numTemplates++;
+		}
+	}
+	$editedTemplates = sort( $editedTemplates );
+
+	// First item is always the default. The behaviour is identical to
+	// unassigning the current template.
+	//
+	menuItem -en $enableDefault -label (uiRes("m_assetWindow.kNoTemplate"))
+		-annotation (uiRes("m_assetWindow.kNoTemplateAnnot"))
+		-c ("unassignEditedTemplate " + $assetInfo);
+
+    // Build list of templates previously used
+	int $index;
+	string $annotFmt = (uiRes("m_assetWindow.kAssignAnnotFmt"));
+	while( $index < $numTemplates ){
+		string $currTemplate = $editedTemplates[$index];
+		string $annot = `format -s $currTemplate $annotFmt`;
+		menuItem -en ($currTemplate != $templateName) -label $currTemplate
+			-annotation $annot
+			-c ("assignEditedTemplate " + $assetInfo + " " + $currTemplate + " 0");
+		$index++;
+	}
+
+	menuItem -divider true;
+
+	$editedContainer = getEditedContainer( $assetInfo );
+	string $setGV = ("global string $gPinnedContainerForTemplateAssign; $gPinnedContainerForTemplateAssign = \""+$editedContainer+"\";");
+	string $unsetGV = ("$gPinnedContainerForTemplateAssign = \"\"; ");
+	string $rebuild = ("rebuildRightWin(\""+$assetInfo+"\")");
+	menuItem -label (uiRes("m_assetWindow.kNewTemplate"))
+		-annotation (getRunTimeCommandAnnotation("AssignTemplate"))
+		-c ($setGV+" AssignTemplate; "+$unsetGV+$rebuild) ;
+		menuItem -optionBox true 
+			-annotation (getRunTimeCommandAnnotation("AssignTemplateOptions"))
+			-command "AssignTemplateOptions" ;
+
+	setParent -menu $oldParent;
+}
+
+global proc autobindEditedContainer(string $assetInfo,
+						            int $action )
+//
+//	Description:
+//		Execute the asset editor autobind command on the pinned container.
+//      We use this intermediate step to set up the global container info
+//      before calling the runtime command.
+//
+//  Inputs:
+//		$assetInfo	: Asset Editor information
+//		$action		: 0 - execute the command
+//					  1 - show the option box dialog
+//
+{
+
+	global string $gPinnedContainerForAutobind;
+
+	string $editedContainer = getEditedContainer( $assetInfo );
+	$gPinnedContainerForAutobind = $editedContainer;
+
+    performAutobindContainer($action);
+
+}
+
+
+global proc assetEdBindingSetCmd(string $assetInfo, string $bindOp,
+						         int $action )
+//
+//	Description:
+//		Execute the asset editor binding set action on the pinned container.
+//      We use this intermediate step to set up the global container info
+//      before calling the runtime command.
+//
+//  Inputs:
+//		$assetInfo	: Asset Editor information
+//		$bindOp  	: Operation, one of "create", "update", "remove"
+//		$action		: 0 - execute the command
+//					  1 - show the option box dialog
+//
+{
+
+	global string $gPinnedContainerForBindingSetCmd;
+
+	string $editedContainer = getEditedContainer( $assetInfo );
+	$gPinnedContainerForBindingSetCmd = $editedContainer;
+
+    if ($bindOp == "create")
+    {
+        CreateBindingSet();
+    }
+    else if ($bindOp == "update")
+    {
+        performUpdateBindingSet($action);
+    }
+    else if ($bindOp == "remove")
+    {
+        RemoveBindingSet();
+    }
+    else 
+    {
+        error((uiRes("m_assetWindow.kBadBindOp")));
+    }
+
+}
+
+
+
+global proc viewNameCmd(	string $assetInfo,
+							string $viewName )
+//
+//	Description:
+//		Set the view name, & refresh Asset Editor if need be.
+//
+//  Inputs:
+//		$assetInfo	: Asset Editor information
+//		$viewName	: View name to set for the current container
+//
+//  Return Value:
+//      None.
+//
+{
+	string $editedContainer = getEditedContainer( $assetInfo );
+	string $oldViewName = `getAttr ($editedContainer + ".viewName")`;
+	if( $oldViewName != $viewName ){
+		setViewName( $assetInfo, $viewName );
+		rebuildRightWin( $assetInfo );
+	}
+}
+
+global proc buildViewNameMenu(  string $assetInfo,
+								string $nameMenu )
+//
+//	Description:
+//		Build the View->Name menu
+//
+//  Inputs:
+//		$assetInfo	: Asset Editor information
+//		$nameMenu	: Name of View->Name menu
+//
+//  Return Value:
+//      None.
+//
+{
+
+	string $editedContainer = getEditedContainer( $assetInfo );
+
+	string $oldParent = `setParent -q -menu`;
+	setParent -menu $nameMenu;
+
+	menu -e -dai $nameMenu;
+	if( $editedContainer != ""){
+		if( loadContainerTemplate( $assetInfo, 0 ) ){
+			string $templateName = `getAttr ($editedContainer + ".templateName")`;
+			string $currViewName = `getAttr ($editedContainer + ".viewName")`;
+			menuItem -label (uiRes("m_assetWindow.kNoViewSelect"))
+					-enable ($currViewName != "")
+					 -c ("viewNameCmd " + $assetInfo + " \"\"" )
+					 defaultView;
+			string $viewNames[]=`containerTemplate -q -viewList $templateName`;
+			int $numNames = size($viewNames);
+			int $index;
+			while( $index < $numNames ){
+				string $viewName = $viewNames[$index];
+				menuItem -label $viewName
+						 -enable ($viewName != $currViewName)
+						 -c ("viewNameCmd " + $assetInfo + " " + $viewName )
+						 $viewName;
+				$index++;
+			}
+		}
+	}
+	setParent -menu $oldParent;
+}
+
+global proc viewModeCmd(	string $assetInfo,
+							int $viewMode )
+//
+//	Description:
+//		Set the view mode, & refresh Asset Editor if need be.
+//
+//  Inputs:
+//		$assetInfo	: Asset Editor information
+//		$viewMode	: View mode to set for the current container
+//
+//  Return Value:
+//      None.
+//
+{
+	string $editedContainer = getEditedContainer( $assetInfo );
+	int $oldViewMode = `getAttr ($editedContainer + ".viewMode")`;
+	if( $oldViewMode != $viewMode ){
+		setViewMode( $assetInfo, $viewMode );
+		rebuildRightWin( $assetInfo );
+	}
+}
+
+proc setOptionVars( int $forceFactorySettings )
+//
+//	Description:
+//		Initialize the option values.
+//
+//	Inputs:
+//		$forceFactorySettings	: true iff we want to force usage of the
+//								  default settings
+//
+//	Return Value:
+//		None.
+//
+{
+	if( $forceFactorySettings || !`optionVar -exists viewAddSyncToTemplate`){
+		// Sync container to template by default
+		//
+		optionVar -intValue viewAddSyncToTemplate 1;
+	}
+
+	if( $forceFactorySettings || !`optionVar -exists viewAddSwitchToView`){
+		// Switch to new view by default
+		//
+		optionVar -intValue viewAddSwitchToView 1;
+	}
+
+	if( $forceFactorySettings || !`optionVar -exists viewAddSaveTemplate`){
+		// Save template to disk by default
+		//
+		optionVar -intValue viewAddSaveTemplate 1;
+	}
+
+	if( $forceFactorySettings || !`optionVar -exists viewAddLayoutMode`){
+		// Default layout mode is flat (==0) (groupByNode is 1)
+		//
+		optionVar -intValue viewAddLayoutMode 1;
+	}
+
+	if( $forceFactorySettings || !`optionVar -exists viewAddExpandCompounds`){
+		// Default is not to expand compounds in views
+		//
+		optionVar -intValue viewAddExpandCompounds 0;
+	}
+
+}
+
+global proc viewAddPerform( string $assetInfo )
+//
+//	Description:
+//		Perform the view add, respecting the desired options.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		None.
+//		
+{
+	// First, get the view name
+	//
+	string $viewName;
+	if( `textFieldGrp -exists viewNameWidget` ){
+		$viewName = `textFieldGrp -q -text viewNameWidget`;
+	}
+	if( size($viewName) == 0 ){
+		$viewName = "viewName";
+	}
+
+	// Next, sync container to template, if need be
+	//
+	if( `optionVar -query viewAddSyncToTemplate` ){
+		syncTemplate( $assetInfo );
+	}
+
+	// Next, get the layout mode; note that we need to subtract one to get the
+	// correct input parameter for the -layoutMode flag.
+	//
+	int $layoutMode = `optionVar -query viewAddLayoutMode`;
+
+    // Get expandCompounds option
+    int $expandCompounds = `optionVar -query viewAddExpandCompounds`;
+
+	// Next, get the template name
+	//
+	string $editedContainer = getEditedContainer( $assetInfo );
+	string $templateName = `getAttr ($editedContainer + ".templateName")`;
+
+	// Check if the view exists on the template, and if so, add a number to
+	// make it unique.
+	//
+	int $number = 1;
+	string $baseName = $viewName;
+	string $existingViews[] = `containerTemplate -q -viewList $templateName`;
+	while( stringArrayContains( $viewName, $existingViews ) ){
+		$viewName = ($baseName + $number);
+		$number++;
+	}
+	// Next, add the view
+	//
+    if( !catch(`containerTemplate -e -av $viewName -fc $editedContainer -layoutMode $layoutMode -expandCompounds $expandCompounds $templateName`) ){
+		// Finally, save the template if need be
+		//
+		if( `optionVar -query viewAddSaveTemplate` ){
+			containerTemplate -save $templateName;
+		}
+		if( `optionVar -query viewAddSwitchToView` ){
+			int $viewMode = `getAttr ($editedContainer + ".viewMode")`;
+			if( $viewMode != 1 ){
+				setViewMode( $assetInfo, 1 );
+			}
+			setViewName( $assetInfo, $viewName );
+			rebuildRightWin( $assetInfo );
+		}
+	}
+}
+
+global proc viewAddSetup(	string $assetInfo,
+							string $parent,
+							int $forceFactorySettings )
+//
+//	Description:
+//		Update the state of the option box UI to reflect the option values.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//		$parent		: Top level parent layout of the option box UI.
+//					  Required so that UI object names can be successfully
+//					  resolved.
+//		$forceFactorySettings
+//					: if true, set option values to the defaults.
+//
+//	Return Value:
+//		None.
+//
+{
+	// Retrieve the option settings
+	//
+	setOptionVars( $forceFactorySettings );
+
+	setParent $parent;
+
+	textFieldGrp -e -text "viewName" viewNameWidget;
+
+	int $syncToTemplate = `optionVar -query viewAddSyncToTemplate`;
+	checkBoxGrp -e -value1 $syncToTemplate syncToTemplate;
+
+	int $switchToView = `optionVar -query viewAddSwitchToView`;
+	checkBoxGrp -e -value1 $switchToView switchToView;
+
+	int $saveTemplate = `optionVar -query viewAddSaveTemplate`;
+	checkBoxGrp -e -value1 $saveTemplate saveTemplate;
+
+	int $layoutMode = `optionVar -query viewAddLayoutMode`;
+	if( $layoutMode == 1 ){
+		radioButtonGrp -e -sl 1 groupByNodeLayout;
+	} else {
+		radioButtonGrp -e -sl 1 flatLayout;
+	}
+
+	int $expandCompounds = `optionVar -query viewAddExpandCompounds`;
+	checkBoxGrp -e -value1 $expandCompounds expandCompounds;
+
+}
+
+global proc viewAddCB(	string $assetInfo,
+						string $parent,
+						int $doIt )
+//
+//	Description:
+//		Update the option values with the current state of the option box UI.
+//
+//	Inputs:
+//		$assetInfo	: Asset Editor information
+//		$parent		: Top level parent layout of the option box UI.
+//		$doIt		: true iff command should be executed.
+//
+//	Return Value:
+//		None.
+//
+{
+	setParent $parent;
+
+	// sync container to template?
+	int $syncToTemplate = `checkBoxGrp -q -value1 syncToTemplate`;
+	optionVar -intValue viewAddSyncToTemplate $syncToTemplate;
+
+	// switch to new view?
+	int $switchToView = `checkBoxGrp -q -value1 switchToView`;
+	optionVar -intValue viewAddSwitchToView $switchToView;
+
+	// save template?
+	int $saveTemplate = `checkBoxGrp -q -value1 saveTemplate`;
+	optionVar -intValue viewAddSaveTemplate $saveTemplate;
+
+	// layout mode?
+	//
+	int $layoutMode = 0;
+	if( `radioButtonGrp -q -sl groupByNodeLayout` ){
+		$layoutMode = 1;
+	}
+	optionVar -intValue viewAddLayoutMode $layoutMode;
+
+	// expand compounds?
+	int $expandCompounds = `checkBoxGrp -q -value1 expandCompounds`;
+	optionVar -intValue viewAddExpandCompounds $expandCompounds;
+
+
+	if( $doIt ){
+		viewAddPerform( $assetInfo );
+	}
+}
+
+proc viewAddOptions( string $assetInfo )
+//
+//	Description:
+//		Creates the option box for the viewAdd command.
+//
+//  Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//	Return Value:
+//		None.
+//
+{
+	// Name of the command for this option box
+	//
+	string $commandName = "viewAdd";
+
+	// Build the option box actions.
+	//
+	string $callback = ($commandName + "CB");
+	string $setup = ($commandName + "Setup");
+
+	// 1. Get the option box.
+	//
+	string $layout = getOptionBox();
+	setParent $layout;
+
+	// 2. Pass the command name that's eventually used (for the help menu)
+	//
+	//... this is not applicable
+
+	// 3. Active default UI template
+	//
+	setUITemplate -pushTemplate DefaultTemplate;
+
+	// 4. Create option box contents.
+	//
+
+	// Turn on the wait cursor.
+	//
+	waitCursor -state 1;
+
+	tabLayout -tabsVisible 0 -scrollable 1;
+
+	string $parent = `columnLayout -adjustableColumn 1`;
+
+	columnLayout;//begin-columnLayout[
+		textFieldGrp
+			-label (uiRes("m_assetWindow.kName"))
+			-annotation (uiRes("m_assetWindow.kNameAnnot"))
+			viewNameWidget;
+
+		checkBoxGrp
+			-ncb 1
+			-label (uiRes("m_assetWindow.kSyncToTemplate"))
+			-annotation (uiRes("m_assetWindow.kSyncToTemplateAnnot"))
+			syncToTemplate;
+
+		checkBoxGrp
+			-ncb 1
+			-label (uiRes("m_assetWindow.kSaveToDisk"))
+			-annotation (uiRes("m_assetWindow.kSaveToDiskAnnot"))
+			saveTemplate;
+
+		checkBoxGrp
+			-ncb 1
+			-label (uiRes("m_assetWindow.kSwitchToView"))
+			-annotation (uiRes("m_assetWindow.kSwitchToViewAnnot"))
+			switchToView;
+
+		checkBoxGrp
+			-ncb 1
+			-label (uiRes("m_assetWindow.kExpandCompounds"))
+			-annotation (uiRes("m_assetWindow.kExpandCompoundsAnnot"))
+			expandCompounds;
+
+		radioButtonGrp
+			-label (uiRes("m_assetWindow.kLayoutMode"))
+			-label1 (uiRes( "m_assetWindow.kFlat" ))
+			-annotation (uiRes("m_assetWindow.kLayoutModeAnnot"))
+			flatLayout;
+
+		radioButtonGrp
+			-label ""
+			-label1 (uiRes( "m_assetWindow.kGroupByNode" ))
+			-scl flatLayout
+			groupByNodeLayout;
+
+
+	setParent ..;//]end-columnLayout
+
+	separator;
+
+	// Turn off the wait cursor
+	//
+	waitCursor -state 0;
+	
+	// 5. Deactivate the default UI template.
+	//
+	setUITemplate -popTemplate;
+
+	// 6. Customize the buttons
+	//
+	// - 'Apply' button.
+	//
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit
+		-command ($callback + " " + $assetInfo + " " + $parent + " 1")
+		$applyBtn;
+
+	// - 'Save' button.
+	//
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit
+		-command ($callback + " " + $assetInfo + " " + $parent + " 0; hideOptionBox")
+		$saveBtn;
+
+	// - 'Reset' button.
+	//
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit
+		-command ($setup + " " + $assetInfo + " " + $parent + " 1")
+		$resetBtn;
+
+	// 7. Set the option box title.
+	//
+	setOptionBoxTitle (uiRes("m_assetWindow.kAddViewOptions"));
+
+	// 8. Cutomize the 'Help' menu item text.
+	//
+	setOptionBoxHelpTag( "AddView" );
+
+	// 9. Set the current values of the option box.
+	//
+	eval( ($setup + " " + $assetInfo + " " + $parent + " 0"));
+
+	// 10. Show the option box.
+	//
+	showOptionBox();
+}
+
+global proc viewAddCmd(	string $assetInfo,
+						int $action )
+//
+//	Description:
+//		Process the add view command.
+//
+//  Inputs:
+//		$assetInfo	: Asset Editor information
+//		$action		: 0 - execute the command
+//					  1 - show the option box dialog
+//
+{
+	if( $action == 1 ){
+		viewAddOptions( $assetInfo );
+	} else {
+		viewAddPerform( $assetInfo );
+	}
+}
+
+proc buildViewMenu( string $assetInfo )
+//
+//	Description:
+//		Build the view menu
+//
+//  Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//  Return Value:
+//      None.
+//
+{
+	string $viewMenu = getViewMenu( $assetInfo );
+	setParent -menu $viewMenu;
+	if( `menu -query -numberOfItems $viewMenu` == 0 ){
+		string $modeMenu = `menuItem
+			-subMenu true
+			-label (uiRes("m_assetWindow.kViewMode"))
+			viewModeSubmenu`;
+		menuItem -label (uiRes( "m_assetWindow.kFlat" ))
+				-c ("viewModeCmd " + $assetInfo + " 0")
+				flatModeItem;
+		menuItem -label (uiRes("m_assetWindow.kUseTemplate"))
+				-c ("viewModeCmd " + $assetInfo + " 1")
+				useTemplateModeItem;
+		menuItem -label (uiRes( "m_assetWindow.kGroupByNode" ))
+				-c ("viewModeCmd " + $assetInfo + " 2")
+				groupByNodeModeItem;
+		setParent -menu ..;
+
+		string $nameMenu = `menuItem
+			-subMenu true
+			-label (uiRes("m_assetWindow.kViewName"))
+			viewNameSubmenu`;
+		menuItem -e
+			-pmc ("buildViewNameMenu " + $assetInfo + " " + $nameMenu )
+			$nameMenu;
+		setParent -menu ..;
+
+		menuItem -label (uiRes("m_assetWindow.kViewAdd"))
+				-annotation (uiRes("m_assetWindow.kViewAddAnnot"))
+				-c ("viewAddCmd " + $assetInfo + " 0" ) viewAddItem;
+		menuItem -optionBox true
+				-annotation (uiRes("m_assetWindow.kViewAddOptAnnot"))
+				-c ("viewAddCmd " + $assetInfo + " 1" ) viewAddOptionItem;
+	}
+}
+
+proc buildTemplateMenu( string $assetInfo )
+//
+//	Description:
+//		Build the template menu
+//
+//  Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//  Return Value:
+//      None.
+//
+{
+	string $templateMenu = getTemplateMenu( $assetInfo );
+	setParent -menu $templateMenu;
+	if( `menu -query -numberOfItems $templateMenu` == 0 ){
+		string $assignMenu = `menuItem
+			-subMenu true
+			-label (uiRes("m_assetWindow.kAssignTemplate"))
+			templateAssignItem`;
+		menuItem -e
+			-pmc ("buildTemplateAssignMenu " + $assetInfo + " " + $assignMenu )
+			$assignMenu;
+		setParent -menu ..;
+
+		menuItem
+			-label (uiRes("m_assetWindow.kUnassignTemplate"))
+			-annotation (uiRes("m_assetWindow.kUnassignTemplateAnnot"))
+			-c ("unassignEditedTemplate " + $assetInfo)
+			templateUnassignItem;
+
+		menuItem -divider true;
+
+		menuItem
+			-label (uiRes("m_assetWindow.kSaveTemplate"))
+			-annotation (uiRes("m_assetWindow.kSaveTemplateAnnot"))
+			-c ("saveTemplate " + $assetInfo )
+			templateSaveItem;
+		menuItem
+			-label (uiRes("m_assetWindow.kSaveAsTemplate"))
+			-annotation (uiRes("m_assetWindow.kSaveAsTemplateAnnot"))
+			-c ("saveAsTemplate " + $assetInfo )
+			templateSaveAsItem;
+
+		menuItem -divider true;
+
+        menuItem -label (uiRes("m_assetWindow.kAutobindTemplate"))
+		-annotation (getRunTimeCommandAnnotation("AutobindContainer"))
+		-c ("autobindEditedContainer " + $assetInfo + " 0") templateAutobindItem;
+		menuItem -optionBox true 
+			-annotation (getRunTimeCommandAnnotation("AutobindContainerOptions"))
+			-command ("autobindEditedContainer " + $assetInfo + " 1") 
+			templateAutobindOptionItem;
+
+        menuItem -divider true;
+
+	    menuItem -label (uiRes("m_assetWindow.kCreateBindingSet"))
+		-annotation (getRunTimeCommandAnnotation("CreateBindingSet"))
+		-c ("assetEdBindingSetCmd " + $assetInfo + " create 0")
+            templateCreateBindingSetItem ;
+
+	    menuItem -label (uiRes("m_assetWindow.kUpdateBindingSet"))
+		-annotation (getRunTimeCommandAnnotation("UpdateBindingSet"))
+		-c ("assetEdBindingSetCmd " + $assetInfo + " update 0")
+            templateUpdateBindingSetItem ;
+		menuItem -optionBox true 
+			-annotation (getRunTimeCommandAnnotation("UpdateBindingSetOptions"))
+	    	-c ("assetEdBindingSetCmd " + $assetInfo + " update 1")
+			templateUpdateBindingSetOptionItem;
+
+	    menuItem -label (uiRes("m_assetWindow.kRemoveBindingSet"))
+		-annotation (getRunTimeCommandAnnotation("RemoveBindingSet"))
+	    	-c ("assetEdBindingSetCmd " + $assetInfo + " remove 0")
+            templateRemoveBindingSetItem ;
+
+		menuItem -divider true;
+
+		menuItem
+			-label (uiRes("m_assetWindow.kReloadTemplate"))
+			-annotation (uiRes("m_assetWindow.kReloadTemplateAnnot"))
+			-c ("reloadEditedTemplate " + $assetInfo)
+			templateReloadItem;
+
+
+	}
+}
+
+global proc buildAssetContextHelpItems(string $nameRoot,
+										string $menuParent )
+//
+//	Description:
+//		Build context sensitive menu items
+//
+//	Input Arguments:
+//		$nameRoot	: name to use as the root of all item names
+//		$menuParent	: name of the parent menu
+//
+//	Return Value:
+//		None
+//
+{
+	menuItem -label (uiRes("m_assetWindow.kHelpAssetEditor"))
+		-enableCommandRepeat false
+		-command "showHelp AssetEditor";
+}
+
+proc buildAssetWindowMenu(	string $assetInfo,
+							string $outlineEd )
+//
+//  Description:
+//      Creates the menus for the asset window
+//
+//  Inputs:
+//		$assetInfo	: Asset Editor information
+//		$layout		: layout that received the menu
+//
+//  Return Value:
+//      None.
+//
+{
+	
+	// Create the "Display" and "Show" menus
+	if( !`exists "createOutlinerDisplayMenu"` ){
+		eval("source \"createOutlinerPanelMenu.mel\"");
+	}
+	string $parent = `setParent -q -menu`;
+	// Create display menu without using default runtime commands
+	createOutlinerDisplayMenu( $outlineEd, false);
+	filterUICreateMenuSub( $outlineEd, $parent, 1, 1 );
+
+	string $assetMenu = `menu -l (uiRes("m_assetWindow.kAssets"))
+		-aob true -to true
+		-postMenuCommandOnce true 
+		assetMenu`;
+	menu -e -pmc ("buildAssetsMenu( \"" + $assetInfo + "\", \"" + $assetMenu + "\")") $assetMenu;
+	setParent -menu ..;
+
+	string $templateMenu = `menu
+		-label (uiRes("m_assetWindow.kTemplate"))
+		-pmc ("updateTemplateMenu " + $assetInfo)
+		templateMenu`;
+	setTemplateMenu( $assetInfo, $templateMenu );
+	buildTemplateMenu( $assetInfo );
+	setParent -menu ..;
+
+	string $viewMenu = `menu
+		-allowOptionBoxes true
+		-label (uiRes("m_assetWindow.kView"))
+		-pmc ("updateViewMenu " + $assetInfo)
+		viewMenu`;
+	setViewMenu( $assetInfo, $viewMenu );
+	buildViewMenu( $assetInfo );
+	setParent -menu ..;
+
+	// Context sensitive help menu
+	//
+	string $assetWindow = getAssetWindow( $assetInfo );
+	addContextHelpProc $assetWindow "buildAssetContextHelpItems";
+
+	doHelpMenu $assetWindow $assetWindow;
+
+
+}
+
+global proc refreshAssetWindows(string $triggerInfo,
+								string $container)
+//
+//	Description:
+//		Refresh any asset window where the given container is currently active.
+//	Currently only called by the Attribute Editor to force a refresh of Asset
+//	Editor windows.
+//
+//	Inputs:
+//		$container	: container for which an asset window must be refreshed.
+//		$triggerInfo: If non-empty, the asset editor that triggered this
+//					  refresh; we don't want to update that Asset Editor and
+//					  cause an infinite refresh loop.
+//
+//	Return Value:
+//		None.
+//
+{
+	global string $gAssetInfos[];
+	global int $gNumAssetInfos;
+	int $iAssetInfos = 0;
+	int $stillValid = 0;
+	while( $iAssetInfos < $gNumAssetInfos ){
+		string $assetInfo = $gAssetInfos[$iAssetInfos];
+		if( `formLayout -exists $assetInfo` ){
+			if( $assetInfo != $triggerInfo ){
+				string $editedContainer = getEditedContainer( $assetInfo );
+				// Are we editing the same container?
+				//
+				if( $editedContainer == $container ){
+					// Yes -- force a rebuild
+					//
+					rebuildRightWin( $assetInfo );
+				}
+			}
+			if( $stillValid < $iAssetInfos ){
+				// We found at least one dead Asset Editor, so we need to shift
+				// values over in the array to eliminate the dead one(s).
+				//
+				$gAssetInfos[$stillValid] = $assetInfo;
+			}
+			$stillValid++;
+		}	// else invalid editor; we don't increment the $stillValid count
+		$iAssetInfos++;
+	}
+	if( $stillValid < $gNumAssetInfos ){
+		// Truncate the array
+		//
+		$gNumAssetInfos = $stillValid;
+	}
+}
+
+global proc refreshAssetEditor( string $assetInfo )
+//
+//	Description:
+//		Refresh the asset editor.
+//
+//  Inputs:
+//		$assetInfo	: Asset Editor information
+//
+//  Return Value:
+//      None.
+//
+{
+	int $editing = validateEditedContainer( $assetInfo );
+	updateAssetEditor( $assetInfo, $editing );
+}
+
+global proc assetWindow ( int $newWindow )
+//
+//  Description:
+//      Creates a window with some buttons and two node outliners,
+//		Connected and separately configured
+//
+//  Inputs:
+//		$newWindow	: if true, create a new asset window, otherwise re-use the
+//					  existing one if possible.
+//
+//  Return Value:
+//      None.
+//
+{
+	string $leftWin;
+
+	int $windowCount = 0;
+	string $assetWindow = "assetWindow";
+	if( $newWindow ){
+		while(`window -exists $assetWindow`){
+			$windowCount++;
+			$assetWindow = ("assetWindow" + $windowCount );
+		}
+	}
+	if(`window -exists $assetWindow`) {
+		showWindow $assetWindow;
+	} else {
+		window -rtf 0 -h 620 -w 520 
+			-title (uiRes( "m_assetWindow.kAssetEditor"))
+			-iconName (uiRes("m_assetWindow.kAsset"))
+			$assetWindow;//[
+
+		string $aTab = `menuBarLayout tl`;//[
+		
+			string $aForm = `formLayout publishForm`;//[
+
+				string $publishPane = `formLayout -h 300 assetWindowPane`;//[
+
+					string $leftSelList = "leftSelList";
+					if( !`selectionConnection -exists $leftSelList`){
+						$leftSelList = `selectionConnection leftSelList`;
+					}
+					selectionConnection -e -clear $leftSelList;
+					string $leftPanel = `frameLayout -w 300
+													-collapsable false
+													-labelVisible false
+													leftWinFrame`;//[
+						string $leftWinForm = `formLayout -w 296`;//[
+						string $leftWinName = "leftWin";
+						string $leftFilterName = "leftFilter";
+						if( $windowCount > 0 ){
+							$leftWinName = ("leftWin" + $windowCount);
+							$leftFilterName = ("leftFilter" + $windowCount);
+						}
+						string $pinBtn = `iconTextButton -image "unpinned.png" -p $leftWinForm
+								-w 20 -h 20
+								-c ("pinCmd " + $publishPane + " 1" )
+								pinEditButton`;
+						$leftWin = `outlinerEditor -parent $leftWinForm $leftWinName`;
+						string $leftFilter = filterUICreateField( $leftWin, $leftWinForm);
+						setParent ..;//]-leftWinForm
+						formLayout -edit
+
+							-af $leftFilter "top"		0
+							-af $leftFilter "left"		0
+							-ac $leftFilter "right"		1 $pinBtn
+	
+							-af $pinBtn		"top" 		2
+							-aof $pinBtn	"left"		-20
+							-af $pinBtn 	"right" 	0
+	
+							-af $leftWin	"left"		0
+							-ac $leftWin	"top"		4 $pinBtn
+							-af $leftWin	"right"		0
+							-af $leftWin	"bottom"	1
+
+							$leftWinForm;
+					setParent ..;//]-leftPanel
+
+					string $buttonPanel = `formLayout -w 26 buttonPanel`;//[
+						string $refreshBtn = `symbolButton -p $buttonPanel
+										-image "refresh.png"
+										-h 26 -w 26
+										-annotation (uiRes("m_assetWindow.kRefreshAnnot"))
+										-c ("rebuildRightWin " + $publishPane )
+										refreshButton`;
+						string $publishAndBindBtn = `symbolButton -p $buttonPanel
+										-image "publishAttributes.png"
+										-h 26 -w 26
+										-annotation (uiRes("m_assetWindow.kPublishAnnot"))
+										-c ("publishAndBindCmd " + $publishPane + " 0")
+										publishAndBindButton`;
+						string $publishAsAndBindBtn = `symbolButton -p $buttonPanel
+										-image "publishNamedAttribute.png"
+										-h 26 -w 26
+										-annotation (uiRes("m_assetWindow.kPublishAsAnnot"))
+										-c ("publishAndBindCmd " + $publishPane + " 1")
+										publishAsAndBindButton`;
+						string $publishNameBtn = `symbolButton -p $buttonPanel
+										-image "publishUnbound.png"
+										-h 26 -w 26
+										-annotation (uiRes("m_assetWindow.kPublishUnboundAnnot"))
+										-c ("publishNameCmd " + $publishPane )
+										publishNameButton`;
+						string $unbindAndUnpublishBtn = `symbolButton -p $buttonPanel
+										-image "unpublishAttributes.png"
+										-h 26 -w 26
+										-annotation (uiRes("m_assetWindow.kUnpublishAnnot"))
+										-c ("unbindAndUnpublishCmd " + $publishPane )
+										unbindAndUnpublishButton`;
+						string $unbindBtn = `symbolButton -p $buttonPanel
+										-image "unbindAttributes.png"
+										-h 26 -w 26
+										-annotation (uiRes("m_assetWindow.kUnbindCmdAnnot"))
+										-c ("unbindCmd " + $publishPane )
+										unbindButton`;
+						string $unpublishNameBtn = `symbolButton -p $buttonPanel
+										-image "unpublishUnbound.png"
+										-h 26 -w 26
+										-annotation (uiRes("m_assetWindow.kUnpublishUnboundAnnot"))
+										-c ("unpublishNameCmd " + $publishPane )
+										unpublishNameButton`;
+						string $renameBtn = `symbolButton -p $buttonPanel
+										-image "rename.png"
+										-h 26 -w 26
+										-annotation (uiRes("m_assetWindow.kRenameAnnot"))
+										-c ("renamePublishedCmd " + $publishPane )
+										renameButton`;
+					setParent ..;//]-buttonPanel
+					formLayout -edit
+
+						-af $publishAndBindBtn "top" 27
+						-af $publishAndBindBtn "left" 1
+						-an $publishAndBindBtn "right"
+
+						-ac $publishAsAndBindBtn "top" 1 $publishAndBindBtn
+						-af $publishAsAndBindBtn "left" 1
+						-an $publishAsAndBindBtn "right"
+
+						-ac $unbindAndUnpublishBtn "top" 1 $publishAsAndBindBtn
+						-af $unbindAndUnpublishBtn "left" 1
+						-an $unbindAndUnpublishBtn "right"
+
+						-ac $unbindBtn "top" 1 $unbindAndUnpublishBtn
+						-af $unbindBtn "left" 1
+						-an $unbindBtn "right"
+
+						-ac $publishNameBtn "top" 1 $unbindBtn
+						-af $publishNameBtn "left" 1
+						-an $publishNameBtn "right"
+
+						-ac $unpublishNameBtn "top" 1 $publishNameBtn
+						-af $unpublishNameBtn "left" 1
+						-an $unpublishNameBtn "right"
+
+						-ac $renameBtn "top" 1 $unpublishNameBtn
+						-af $renameBtn "left" 1
+						-an $renameBtn "right"
+
+						-ac $refreshBtn "top" 1 $renameBtn
+						-af $refreshBtn "left" 1
+						-an $refreshBtn "right"
+
+						$buttonPanel;
+
+					string $rightPanel = `formLayout rightPanel`;//[
+						string $templateLabel = `text -font "boldLabelFont" -p $rightPanel -label (uiRes("m_assetWindow.kActiveTemplate"))`;
+						string $templateText = `textFieldGrp -cw 1 1 -ad2 2 -en true -ed false -p $rightPanel -label ""`;
+						string $viewLabel = `text -font "boldLabelFont" -p $rightPanel -label (uiRes("m_assetWindow.kActiveView"))`;
+						string $viewText = `textFieldGrp -cw 1 1 -ad2 2 -en true -ed false -p $rightPanel -label ""`;
+
+						string $rightTabLayout = `tabLayout -tv false -scr false -childResizable true rightTabLayout`;
+						scrollLayout -mcw 400 -childResizable true rightScrollLayout;
+						columnLayout -adj true rightColumnLayout;//[
+						// On linux, insert an invisible button to force
+						// the layout to be a decent width when we
+						// initially open the Asset Editor.
+						//
+						button -vis false;
+						setParent ..;				// ]-rightColumnLayout
+						setParent ..;				// ]-rightScrollLayout
+						columnLayout -adj true ghostLayout;
+						setParent ..;
+						tabLayout -e -sti 1 $rightTabLayout;
+					setParent ..;				// ]-rightPanel
+					formLayout -edit
+
+						-af $templateLabel "top" 1
+						-af $templateLabel "left" 1
+						-an $templateLabel "right"
+
+						-af $templateText "top" 1
+						-ac $templateText "left" 1 $templateLabel
+						-ap $templateText "right" 1 50
+
+						-af $viewLabel "top" 1
+						-ac $viewLabel "left" 1 $templateText
+						-an $viewLabel "right"
+
+						-af $viewText "top" 1
+						-ac $viewText "left" 1 $viewLabel
+						-af $viewText "right" 1
+
+						-ac $rightTabLayout	"top" 	 1 $templateText
+						-af $rightTabLayout	"left"	 1
+						-af $rightTabLayout	"right"	 1
+						-af $rightTabLayout	"bottom" 1
+
+						$rightPanel;
+
+					// We'll create some extra text fields that will store
+					// needed information; we'll pass around the full name of
+					// the publish pane, so that we can always access and/or
+					// update this information. This avoids having to either
+					// use global variables, or passing around lots of
+					// parameters, or relying on UI names matching exactly.
+					//
+					// $publishPane will have the following children:
+					//	RO = Read Only, T=Text, I=Integer
+					//	0	- $leftPanel								T,RO
+					//	1	- $buttonPanel								T,RO
+					//	2	- $rightPanel								T,RO
+					//	3	- $rightTabLayout							T,RO
+					//	4	- Not used									T,RO
+					//	5	- $templateMenu	(set in buildAssetWindowMenu)T,RO
+					//	6	- $editedContainer (initially "")			T
+					//	7	- $lastKnownSelectedRow (initially "")		T
+					//	8	- $assetWindow								T,RO
+					//	9	- $leftFilterName							T
+					//	10	- $viewMenu	(set in buildAssetWindowMenu)	T,RO
+					//	11	- $leftWin									T,RO
+					//	12	- leftSelList contents (initially, "")		T
+					//	13	- enable/disable leftSelList ballback		I
+					//	14	- Number of edited templates (initally 0)	I
+					//	15+	- Edited templates (none, initially)		T
+					//
+					text -p $publishPane -m false -l $rightTabLayout;
+					text -p $publishPane -m false -l "";
+					text -p $publishPane -m false -l "";
+					text -p $publishPane -m false -l "";
+					text -p $publishPane -m false -l "";
+					text -p $publishPane -m false -l $assetWindow;
+					text -p $publishPane -m false -l $leftFilterName;
+					text -p $publishPane -m false -l "";
+					text -p $publishPane -m false -l $leftWin;
+					text -p $publishPane -m false -l "";
+					intField -p $publishPane -m false -v 1;
+					intField -p $publishPane -m false -v 0;
+				setParent ..;//]-assetWindowPane
+
+				formLayout -edit
+
+					-af $leftPanel "top" 1
+					-af $leftPanel "left" 1
+					-an $leftPanel "right"
+					-af $leftPanel "bottom" 1
+
+					-af $buttonPanel "top" 1
+					-ac $buttonPanel "left" 1 $leftPanel
+					-an $buttonPanel "right"
+					-af $buttonPanel "bottom" 1
+
+					-af $rightPanel "top" 1
+					-ac $rightPanel "left" 1 $buttonPanel
+					-af $rightPanel "right" 1
+					-af $rightPanel "bottom" 1
+
+					$publishPane;
+
+				setParent ..;//]-publishForm
+
+				// Now that we've setup the left panel & the button, set it to
+				// to the right state.
+				//
+				outlinerEditor -edit
+								-mainListConnection "worldList"
+								-allowMultiSelection true
+								-showAssets true
+								-showAttributes true
+								-showConnected false
+								-showDagOnly false
+								-showContainedOnly true
+								-showPublishedAsConnected true
+								-containersIgnoreFilters true
+								-selectCommand ("selectCB " + $publishPane + " 1" )
+								-highlightActive false
+								-directSelect false
+								$leftWin;
+				selectCB( $publishPane, 0 );
+				pinCmd( $publishPane, 0 );
+				evalDeferred( "outlinerEditor -e -slc " + $leftSelList + " " + $leftWin );
+
+			setParent ..;//]-tl
+
+		// set the attachments
+				
+		formLayout -e 
+ 			-af $publishPane "top" 1
+ 			-af $publishPane "left" 1
+ 			-af $publishPane "right" 1
+ 			-af $publishPane "bottom" 0
+
+			$aForm;
+		
+		setParent $aTab;
+		buildAssetWindowMenu( $publishPane, $leftWin );
+
+		global string $gAssetInfos[];
+		global int $gNumAssetInfos;
+		if( !stringArrayContains( $publishPane, $gAssetInfos ) ){
+			// We don't want duplicate entries; this could happen if an Asset
+			// Editor is deleted, and a new one created before we check if the
+			// deleted one is still valid. By coincidence, the two could have
+			// the same name, and we'd end up with two entries with the same
+			// name.
+			//
+			$gAssetInfos[$gNumAssetInfos] = $publishPane;
+			$gNumAssetInfos++;
+		}
+
+		showWindow $assetWindow;
+
+		// restore the parent window so next controls made
+		// don't get added to the asset Window
+		//
+
+		setParent ..; //]
+		scriptJob -permanent -parent $assetWindow -event "SceneOpened" ("refreshAssetEditor \"" + $publishPane + "\"");
+	}
+}

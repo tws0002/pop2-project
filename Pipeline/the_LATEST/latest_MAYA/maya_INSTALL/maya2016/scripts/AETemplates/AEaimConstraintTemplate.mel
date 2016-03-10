@@ -1,0 +1,260 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Procedure Name:
+//	AEaimConstraintTemplate
+//
+//  Description:
+//	Creates the attribute editor controls for the aimConstraint Node
+//
+//  Input Value:
+//	nodeName
+//
+//  Output Value:
+//	None
+//
+
+
+
+//
+//  Procedure Name:
+//	AEaimConstraintTemplate
+//
+//
+
+global proc AEenableRestAimCallback( string $nodeName )
+{
+	int $enable = `getAttr ($nodeName+".enableRestPosition")`;
+	editorTemplate -dimControl $nodeName "restRotate" (! $enable);
+}
+
+
+global string $gAEaimConstraintWorldUpWidgets[];	// hold info plus widgets
+
+global proc AEaimConstraintTemplate ( string $nodeName ) 
+{
+	editorTemplate -beginScrollLayout;
+
+		// include/call base class/node attributes
+		AEtransformMain $nodeName;
+	
+		editorTemplate -beginLayout (uiRes("m_AEaimConstraintTemplate.kAimConstraintAttributes")) -collapse 0;
+
+		    editorTemplate -addControl "lockOutput";		
+			editorTemplate -addControl "offset";
+			editorTemplate -addControl "aimVector";
+			editorTemplate -addControl "upVector";
+			editorTemplate -addControl "worldUpType" 
+					"AEaimConstraintWorldUpControls";
+			editorTemplate -addControl "worldUpVector"; 
+			editorTemplate -callCustom
+				"AEaimConstraintWorldUpObjectNew"
+				"AEaimConstraintWorldUpObjectReplace"
+				"worldUpMatrix";
+
+			editorTemplate -addSeparator;
+
+			editorTemplate -addControl "constraintRotate";
+			editorTemplate -addControl "constraintVector";
+			editorTemplate -addControl "enableRestPosition" "AEenableRestAimCallback";
+			editorTemplate -addControl "restRotate";
+			
+		editorTemplate -endLayout;
+
+		// include/call base class/node attributes
+		AEtransformNoScroll $nodeName;
+		
+		// supressed attributes
+		editorTemplate -suppress "mentalRayControls";
+		editorTemplate -suppress "constraintRotateOrder";
+		editorTemplate -suppress "constraintTranslate";
+		editorTemplate -suppress "constraintRotatePivot";
+		editorTemplate -suppress "constraintJointOrient";
+		editorTemplate -suppress "constraintParentInverseMatrix";
+		editorTemplate -suppress "target";
+		editorTemplate -suppress "constraintRotateTranslate";
+		editorTemplate -suppress "useOldOffsetCalculation";
+
+	editorTemplate -addExtraControls;
+	editorTemplate -endScrollLayout;
+}
+
+proc setStateOfWorldUpObjectControls( string $nodeName, int $state )
+{
+	global string $gAEaimConstraintWorldUpWidgets[];
+
+	// Update the world up object text field for all attribute
+	// editors looking at this node
+
+	int $i;
+    for ($i = 0; $i < size($gAEaimConstraintWorldUpWidgets); $i += 3 )
+	{
+        if ( $nodeName == $gAEaimConstraintWorldUpWidgets[$i] ) 
+		{
+			string $worldUpObjectControl = $gAEaimConstraintWorldUpWidgets[$i+2];
+			if ( `textFieldGrp -exists $worldUpObjectControl` )
+			{
+				textFieldGrp -e -enable $state $worldUpObjectControl;
+			}
+        }
+    }
+}
+
+// This proc will dim/undim the world up controls as required
+global proc AEaimConstraintWorldUpControls(string $nodeName)
+{
+	$nodeAttr = $nodeName +".worldUpType";
+	int $value = `getAttr $nodeAttr`;
+	switch ($value) 
+	{
+	case 0: // Scene Up
+	case 4: // None
+		editorTemplate -dimControl $nodeName "worldUpVector" true;
+		setStateOfWorldUpObjectControls( $nodeName, false );
+		break;
+	case 1: // Object Up
+		editorTemplate -dimControl $nodeName "worldUpVector" true;
+		setStateOfWorldUpObjectControls( $nodeName, true );
+		break;
+	case 2: // Object Rotation Up
+		editorTemplate -dimControl $nodeName "worldUpVector" false;
+		setStateOfWorldUpObjectControls( $nodeName, true );
+		break;
+	case 3: // Vector
+		editorTemplate -dimControl $nodeName "worldUpVector" false;
+		setStateOfWorldUpObjectControls( $nodeName, false );
+		break;
+	default:
+		break;
+	}
+}
+
+
+// This proc gets called by the UI widget for the
+// worldUpMatrix attribute
+//
+global proc AEaimConstraintWorldUpObjectControlProc(string $nodeName,
+													string $widget)
+{
+	// Get the current value of the widget
+
+	string $value = `textFieldGrp -q -text $widget`;
+
+	// setAttr just isn't sufficient for worldUpMatrix
+
+	aimConstraint -edit -worldUpObject $value $nodeName;
+}
+
+// This proc gets called by the scriptJob which is watching the
+// worldUpMatrix attribute
+//
+global proc AEaimConstraintWorldUpObjectScriptJobProc(string $nodeName,
+													  string $widget)
+{
+	textFieldGrp -e
+		-text `aimConstraint -q -worldUpObject $nodeName`
+		$widget;
+}
+
+// Local proc shared by AEaimConstraintWorldUpObjectNew() and AEaimConstraintWorldUpObjectReplace()
+proc updateWorldUpObject( string $nodeName, string $plug, string $worldUpObjectControl )
+{
+	// Initialize/update the textFieldGrp
+
+	string $cmd1 = "AEaimConstraintWorldUpObjectControlProc "+$nodeName+" "+$worldUpObjectControl;
+	textFieldGrp -e
+		-text `aimConstraint -q -worldUpObject $nodeName`
+		-cc $cmd1
+		$worldUpObjectControl;
+	
+	// Setup/update the scriptJob callback mechanism
+
+	string $cmd2 = "AEaimConstraintWorldUpObjectScriptJobProc "+$nodeName+" "+$worldUpObjectControl;
+	scriptJob -rp -p $worldUpObjectControl -ac $plug $cmd2;
+}
+
+// The custom creation proc for the worldUpMatrix attribute
+//
+global proc AEaimConstraintWorldUpObjectNew( string $plug )
+{
+	global string $gAEaimConstraintWorldUpWidgets[];
+
+	// Get the node name
+
+	string $buffer[];
+	tokenize($plug,".|",$buffer);
+	string $nodeName = $buffer[0];
+
+	// Save the node name and the parent info in the global
+	// string array
+
+	int $numAimConstraintAEs = size($gAEaimConstraintWorldUpWidgets);
+	$gAEaimConstraintWorldUpWidgets[$numAimConstraintAEs] = $nodeName;
+	$gAEaimConstraintWorldUpWidgets[$numAimConstraintAEs+1] = `setParent -q`;
+
+	// Create the textFieldGrp
+
+	setUITemplate -pst attributeEditorTemplate;
+
+	string $worldUpObjectControl =
+		`textFieldGrp -l (uiRes("m_AEaimConstraintTemplate.kWorldUpObject")) AEaimConstraintWorldUpObjectField`;
+
+	// Save the control for possible later reuse
+	$gAEaimConstraintWorldUpWidgets[$numAimConstraintAEs+2] = $worldUpObjectControl;
+
+	setUITemplate -ppt;
+
+	updateWorldUpObject( $nodeName, $plug, $worldUpObjectControl );
+}
+
+global proc AEaimConstraintWorldUpObjectReplace( string $plug )
+{
+	global string $gAEaimConstraintWorldUpWidgets[];
+
+	// Get the node name
+
+	string $buffer[];
+	tokenize($plug,".|",$buffer);
+	string $nodeName = $buffer[0];
+
+	// Reuse the existing control
+
+	string $curParent = `setParent -q`;
+	int $index = -1;
+	int $i;
+    for ( $i = 0; $i < size($gAEaimConstraintWorldUpWidgets); $i += 3 ) 
+	{
+        if ( $curParent == $gAEaimConstraintWorldUpWidgets[$i+1] )
+		{
+            $index = $i;
+            break;
+        }
+    }
+    string $worldUpObjectControl = "AEaimConstraintWorldUpObjectField";
+    if ($index != -1)
+	{
+        $gAEaimConstraintWorldUpWidgets[$index] = $nodeName;
+        $worldUpObjectControl = $gAEaimConstraintWorldUpWidgets[$index+2];
+    }
+
+	updateWorldUpObject( $nodeName, $plug, $worldUpObjectControl );
+}

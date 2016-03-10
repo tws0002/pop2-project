@@ -1,0 +1,276 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//<doc>
+//<name assignNSolver>
+//<owner "Autodesk">
+//
+//<synopsis>
+//		assignNSolver nucleusNode
+//
+//<returns>
+//		None.	
+//
+//<description>
+//	This transfers all the selected nucleus objects(nCloth, nRigid, nParticle)
+//  to the specified solver(nucleus node name). If one specifies "" for nucleusNode
+//  then a new solver is created.
+//
+//<flags>
+//	None.
+//
+//<examples>
+//  assignNSolver nucleus2; // assigns selected to nucleus2
+//  assignNSolver ""; // assigns selected to new solver
+//</doc>
+
+proc int getConstraintsToMove( string $object, 
+				   			   string $allObjects[],
+							   string $constraintsToMove[] )
+// 
+// Description:
+//		For the given object, get a list of all constraints
+//		that can be moved to the new solver.
+//
+{
+	// Does this node have any constraints?
+	string $related[] = getNucleusRelated($object, {"dynamicConstraint"},"",false);
+	for( $constraint in $related ) {
+		// Make sure all surfaces associated with this constraint are
+		// also selected for move.
+		string $assoc[] = getNucleusRelated($constraint,{"nCloth","nRigid"},"",false);
+		string $diff[] = stringArrayRemove( $allObjects, $assoc );
+		if( size($diff) > 0 ) {
+			string $err = (uiRes("m_assignNSolver.kSameSolver"));
+			error( $err );
+			return 0;
+		}
+		else if( !stringArrayContains( $constraint, $constraintsToMove) ) {
+			$constraintsToMove[size($constraintsToMove)] = $constraint;
+		}
+	}
+	return 1;
+}
+
+proc getSolverConnectionsToBreak( string $node,
+								  string $solvers[],
+								  string $connectionsToBreak[] )
+{
+	string $nucleusNodes[] = getNucleusRelated($node,{"nucleus"},"",false);
+	if( size($nucleusNodes) != 1 ) {
+		// nThing could have been orphaned, from bad duplicate, reckless scripting, etc
+		return;
+	}
+	string $curSolver = $nucleusNodes[0];
+
+	// Look at connections from $node to nucleus...
+	int $i = 0;
+	string $conn[] = `listConnections -t "nucleus" -c 1 -p 1 -s 1 -d 0 $node`;
+	for( $i = 0; $i < size($conn); $i=$i+2) {
+		$connectionsToBreak[size($connectionsToBreak)] = $conn[$i+1];
+		$solvers[size($solvers)] = $curSolver;
+		$connectionsToBreak[size($connectionsToBreak)] = $conn[$i];
+		$solvers[size($solvers)] = $curSolver;
+	}
+
+	// Connections from nucleus to $node...
+	$conn = `listConnections -t "nucleus" -c 1 -p 1 -s 0 -d 1 $node`;
+	for( $i = 0; $i < size($conn); $i=$i+2) {
+		$connectionsToBreak[size($connectionsToBreak)] = $conn[$i];
+		$solvers[size($solvers)] = $curSolver;
+		$connectionsToBreak[size($connectionsToBreak)] = $conn[$i+1];
+		$solvers[size($solvers)] = $curSolver;
+	}	
+}
+
+proc getOrphanedNThings( string $node,	 string $nThings[] )
+{
+	string $nucleusNodes[] = getNucleusRelated($node,{"nucleus"},"",false);
+	if( size($nucleusNodes) != 1 ) {
+//print $node;
+//print _NOL10N( "was orphaned\n");
+		$nThings[size($nThings)] = $node;
+	}
+	return;
+}
+
+proc breakConnections( string $connectionsToBreak[] )
+{
+	int $j = 0;
+	int $len = size($connectionsToBreak);
+	for( $j = 0; $j < $len; $j = $j + 2 ) {
+		disconnectAttr $connectionsToBreak[$j] $connectionsToBreak[$j+1];
+	}
+}
+
+proc makeConnections( string $newSolver,
+					  string $solvers[],
+					  string $connectionsToBreak[] )
+// 
+// Description:
+//		Re-connects objects to new solver. We process connections in 
+//		reverse order so that objects get re-connected before the
+//		dynamic constraints. Otherwise, we might inadvertantly trigger
+//		dg evaluations when the connections are in an intermmediate
+//		state.
+//
+{
+	int $j = 0;
+	int $len = size($connectionsToBreak);
+	for( $j = $len-1; $j > 0; $j = $j - 2 )
+	{
+		// substitute old solver with new solver for when we re-create
+		// connections
+		string $old = $connectionsToBreak[$j-1];
+		string $new = `substitute ("^"+$solvers[$j-1]+"\\.") $old ($newSolver+".")`;
+		$connectionsToBreak[$j-1] = $new;
+		
+		$old = $connectionsToBreak[$j];
+		$new = `substitute ("^"+$solvers[$j]+"\\.") $old ($newSolver+".")`;
+		$connectionsToBreak[$j] = $new;
+
+		// we need to know the exact multi-index when disconnecting, but for re-connect
+		// we'll need to grab a new one. So strip out the index from plug names and get
+		// new index
+		$old = $connectionsToBreak[$j-1];
+		$new = `substitute "\\[.*\\]$" $old ""`;
+		int $needToGetIndex = (size($old) > size($new));
+		$connectionsToBreak[$j-1] = $new;
+		if( $needToGetIndex ) {
+			$connectionsToBreak[$j-1] = ($new+"["+getNextFreeMultiIndexForSource($new, 0)+"]");
+		}
+		
+		$old = $connectionsToBreak[$j];
+		$new = `substitute "\\[.*\\]$" $old ""`;
+		$needToGetIndex = (size($old) > size($new));
+		$connectionsToBreak[$j] = $new;
+		if( $needToGetIndex ) {
+			$connectionsToBreak[$j] = ($new+"["+getNextFreeMultiIndex($new, 0)+"]");
+		}	
+		
+		connectAttr $connectionsToBreak[$j-1] $connectionsToBreak[$j];
+	}
+
+}
+
+global proc assignNSolver( string $solver )
+//
+// Description:
+//		Moves all selected objects to the specified solver. If 
+//		solver not specified, create a new one
+//
+{
+	string $objectsToMove[] = {};		// List of nucleus objects to be moved
+	string $constraintsToMove[] = {};	// List of constraint nodes to be moved
+										// (no duplicates)
+	
+	string $connectionsToBreak[] = {};	// pairs of plugs for each connection
+										// to the solver that we need to break
+										
+	string $solverList[] = {};			// associated solver for each plug 
+										// in connectionsToBreak
+	string $orphanedNThings[]= {};		// there could be abondoned nThings that just need a new solver
+
+	// get all nCloth/nRigid objects associated with selected objects
+	string $sel[] = `ls -sl -dag -s`;
+	string $pruneTypes[] = { "nucleus", "dynamicConstraint", "nComponent" };
+	string $notFound[];
+	string $item;
+	for( $item in $sel ) 
+	{
+		string $type = `nodeType $item`;
+		if( $type == "nCloth" || $type == "nRigid" || $type == "hairSystem") {
+			$objectsToMove[size($objectsToMove)] = $item;
+		}	else if ($type == "pfxHair") {
+			string $hsys[] = `listConnections -sh on ($item+".renderHairs")`;
+			if( size($hsys) > 0 ){
+				$objectsToMove[size($objectsToMove)] = $hsys[0];
+			} else {
+				$notFound[size($notFound)] = $item;
+			}
+		}	else {
+			// Is this node connected to an nCloth/nRigid?
+			string $nobj = findTypePrune($item, "nBase", $pruneTypes);
+			if( $nobj != "") {
+				$objectsToMove[size($objectsToMove)] = $nobj;
+			} else {
+				$notFound[size($notFound)] = $item;
+			}
+		}
+	}
+	// If some selections didn't lead to an nCloth or nRigid node, see if they
+	// are related to an nCloth or nRigid that wasn't selected.
+	//
+	for( $item in $notFound ){
+		string $assoc[] = getNucleusRelated($item,{"nCloth","nRigid"},"",false);
+		string $diff[] = stringArrayRemove( $objectsToMove, $assoc );
+		if( size($diff) > 0 ) {
+			string $fmt = (uiRes("m_assignNSolver.kSelectionErr"));
+			error(`format -s $item $fmt`);
+			return;
+		}
+		
+	}
+	if( size($objectsToMove) == 0 ){
+		error( (uiRes("m_assignNSolver.kNoNClothSelectd")));
+		return;
+	}
+
+	// Get all constraints associated with selected objects
+	int $i;
+	int $len = size($objectsToMove);
+	for( $i = 0; $i < $len; $i++) {
+		if( !getConstraintsToMove( $objectsToMove[$i], 
+								   $objectsToMove, 
+								   $constraintsToMove ) )
+		{
+			return;
+		}
+	}
+	$objectsToMove = stringArrayRemoveDuplicates( stringArrayCatenate( $constraintsToMove, $objectsToMove ) );
+	
+	// Create a new solver if one was not specified
+	if( $solver == "" )
+		$solver = `createNSystem`;
+
+	$len = size($objectsToMove);
+	for( $i = 0; $i < $len; $i++) {
+		getSolverConnectionsToBreak( $objectsToMove[$i], $solverList, $connectionsToBreak );
+		getOrphanedNThings( $objectsToMove[$i], $orphanedNThings );
+	}
+	breakConnections( $connectionsToBreak );
+	makeConnections( $solver, $solverList, $connectionsToBreak );
+
+	$len = size($orphanedNThings);
+	for( $i = 0; $i < $len; $i++) {
+		string $nType = `nodeType $orphanedNThings[$i]`;
+		if( $nType == "nCloth" || $nType == "nParticle" || $nType == "hairSystem"){
+			addActiveToNSystem($orphanedNThings[$i], $solver); 
+		} else if ( $nType == "nRigid" ){
+			addPassiveToNSystem($orphanedNThings[$i], $solver);
+		} else {
+			// if it's some other node, not sure what to do with it,  let it stay abandoned
+			continue;
+		}
+		connectAttr ($solver + ".startFrame") ($orphanedNThings[$i] +".startFrame");
+		connectAttr time1.outTime ($orphanedNThings[$i] + ".currentTime");
+	}
+}

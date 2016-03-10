@@ -1,0 +1,163 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+proc getProjectCurveNodes(string $mesh, string $projectCurveNodes[]) 
+{
+	clear $projectCurveNodes;
+
+	if (`objExists $mesh`)
+	{
+		string $attr = ($mesh + ".outMesh");
+		$projectCurveNodes = `listConnections -type "polyProjectCurve" -destination true -source false $attr`; 
+	}
+}
+
+proc string getCurveVarNode(string $projectCurveNode) 
+{
+	string $curveOutputNode;
+
+	if (`objExists $projectCurveNode`)
+	{
+		string $attr;
+
+		$attr = ($projectCurveNode + ".outputCurve");
+		string $outputNodes[] = `listConnections -type "curveVarGroup" -destination true -source false $attr`;
+		if (0 < size($outputNodes))
+		{
+			$curveOutputNode = $outputNodes[0];
+		}
+	}
+
+	return $curveOutputNode;
+}
+
+proc getProjectedCurves(string $curveOutputNode, string $curves[]) 
+{
+	clear $curves;
+
+	if (`objExists $curveOutputNode`)
+	{
+		string $attr;
+		$attr = ($curveOutputNode + ".local");
+
+		$curves = `listConnections -destination true -source false $attr`;
+		$curves = `listRelatives -noIntermediate -shapes $curves`;
+	}
+}
+
+proc getSelectedProjectedCurves( string $mesh, string $selectedCurves[], string $sourceAttributes[] )
+{
+	clear $sourceAttributes;
+
+	string $projCurveNodes[];
+	getProjectCurveNodes($mesh, $projCurveNodes);
+	if (0 == size($projCurveNodes))
+	{
+		return;
+	}
+
+	string $intersector = `stringArrayIntersector`;
+
+	for ($projCurveNode in $projCurveNodes)
+	{
+		string $curvVarNode = getCurveVarNode($projCurveNode);
+		if ("" == $curvVarNode)
+		{
+			continue;
+		}
+
+		string $splitCurves[];
+		getProjectedCurves($curvVarNode, $splitCurves);
+		if (0 == size($splitCurves))
+		{
+			continue;
+		}
+
+		stringArrayIntersector -edit -intersect $selectedCurves $intersector;
+		stringArrayIntersector -edit -intersect $splitCurves $intersector;
+
+		string $nextCurves[] = `stringArrayIntersector -query $intersector`;
+		stringArrayIntersector -edit -reset $intersector;
+
+		string $projNodeSource = ($projCurveNode + ".curvePoints[");
+		for ($curve in $nextCurves)
+		{
+			string $destAttr = ($curve + ".create");
+			string $sourceAttr = `connectionInfo -sourceFromDestination $destAttr`;
+
+			string $tokens[];
+			int $size = `tokenize $sourceAttr "[]" $tokens`;
+			if (2 == $size)
+			{
+				$sourceAttributes[size($sourceAttributes)] = ($projNodeSource + $tokens[1] + "]");
+			}
+		}
+	}
+
+	deleteUI $intersector;
+}
+
+proc getAvailableMultiIndices(string $destMulti, int $required, int $multiIndices[])
+{
+	clear $multiIndices;
+
+	int $i, $lastIndex = 0;
+	for ($i=0; $i<$required; $i++)
+	{
+		$lastIndex = getNextFreeMultiIndex( $destMulti, $lastIndex );
+		$multiIndices[$i] = $lastIndex;
+
+		$lastIndex++;
+	}
+}
+
+global proc int makeCurveSplitConnections( string $node, string $mesh, string $curves[] )
+{
+	if (!`objExists $mesh` || 0 == size($curves))
+	{
+		return 0;
+	}
+
+	string $curveTransforms[] = `filterExpand -sm 9`;
+	$curves = `listRelatives -noIntermediate -shapes $curveTransforms`;
+
+	string $sourceAttributes[];
+	getSelectedProjectedCurves( $mesh, $curves, $sourceAttributes );
+
+	string $destAttr = ($node + ".splitPoints");
+
+	int $multiIndices[], $i = 0;
+	getAvailableMultiIndices($destAttr, size($sourceAttributes), $multiIndices);
+
+	string $cmd;
+	for ($sourceAttr in $sourceAttributes)
+	{
+		$cmd += ("connectAttr " + $sourceAttr + " " + $destAttr + "[" + $multiIndices[$i] + "];\n");
+		$i++;
+	}
+
+	if ( catchQuiet( `eval $cmd` ) )
+	{
+		return 0;
+	}
+
+	return 1;
+}

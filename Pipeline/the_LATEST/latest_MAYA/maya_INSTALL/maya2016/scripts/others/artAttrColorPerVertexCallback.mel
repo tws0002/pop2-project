@@ -1,0 +1,398 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Nov 2002
+//
+//  Description:
+//      Option tool callbacks for Artisan Color per vertex tool
+//
+//
+//  Procedure Name:
+//     	artColorPerVertexCallback 
+//
+//  Description:
+//      Initialize the option values.
+//
+//  Input Arguments:
+//
+//  Return Value:
+//      None.
+//
+// 
+
+//
+//	Description:
+//		Determines whether to paint by vertex/face/vertex face
+//		and notifies Artisan
+//
+global proc artAttrPaintVertexOrFace(string $artCmd)
+{
+	int $sel = `radioButtonGrp -q -sl artAttrColorPaintChoices` ;
+	string $cmd ;
+
+	// face or vertex or vertex face ?
+	switch( $sel )
+	{
+		case 1 : // vertex
+		{
+			$cmd =  $artCmd + "-e -paintComponent 1 " + " `currentCtx`";
+			
+			//both operations possible
+			columnLayout -e -en true artImportFrameLayout ;
+			columnLayout -e -en true artExportFrameLayout ;
+		} break ;
+
+		case 2 : // vertex face
+		{
+			$cmd =  $artCmd + "-e -paintComponent 2 " + " `currentCtx`";
+
+			// we allow import operation in vertex-face mode
+			// but not export operation
+			columnLayout -e -en true artImportFrameLayout ;
+			columnLayout -e -en false artExportFrameLayout ;
+		}
+		break ;
+		case 3 : // face
+		{
+			$cmd =  $artCmd + "-e -paintComponent 3 " + " `currentCtx`";
+
+			// we allow import operation in face mode
+			// but not export operation
+			columnLayout -e -en true artImportFrameLayout ;
+			columnLayout -e -en false artExportFrameLayout ;
+		}
+		break ;
+	}
+	
+	eval $cmd ;
+}
+
+//
+//	Description:
+//		This procedure determines the newly seleted paint operation
+//		and updates the Artisan context to reflect that
+//
+global proc artAttrColorPaintOperation(string $artCmd )
+{
+	// Color Paint Operation frameLayout
+
+	// A button had to be selected in one of the operation groups!
+	// Below we get the selected operation/index number in each group
+	//
+	int $indexGroupOne=`radioButtonGrp -q -sl artAttrColorOperationChoices0`;
+	int $indexGroupTwo=`radioButtonGrp -q -sl artAttrColorOperationChoices1`;
+	int $index=0;
+
+	string $cmd, $operation;
+	
+	if ($indexGroupTwo>0)
+	{
+		// Operation was chosen in the second group (of three operations)
+		//
+		$index=$indexGroupOne+$indexGroupTwo+3;
+	}
+	else
+	{
+		$index=$indexGroupOne;
+	}
+
+	switch( $index )
+	{
+		case 6: $operation="scale"; break;
+		case 5: $operation="subtract"; break;
+		case 4: $operation="additive"; break;
+		case 3: $operation="remove"; break;
+		case 2: $operation="smooth"; break;
+		default: $operation="absolute"; break;
+	}
+
+	// Update the context regarding the newly chosen operation
+	//
+	$cmd = $artCmd + "-e -selectedattroper " + $operation + " " + " `currentCtx`";
+	eval $cmd;
+}
+
+
+//
+//	Description:
+//		This procedure accomplishes the following:
+//		- Enables sliders based on the newly selected color channel
+//		- Updates Artisan's context about the new available paint channel count
+//		- Updates Artisan's context to use the correct colour mode based on the
+//		  channel count. {4=>RGBA, 3=>RGB, 1=>A}
+//
+global proc artAttrColorPerVertexChannels(string $artCmd)
+{
+
+	string $cmd ;
+
+	// get the current user choice of channels
+	int $sel = `radioButtonGrp -q -sl artAttrColorChannelChoices` ;
+
+	// Find out the number of channels that are in that choice
+	// i.e. 1(A), 2(LA), 3(RGB), 4(RGBA)
+	int $num;
+
+	// Enable/Disable Color and Alpha sliders based on the channel mode
+	//
+
+	if ($sel == 1) { // RGB
+		$num = 3;
+		colorSliderGrp -e -en true colorPerVertexColor;
+		floatSliderGrp -e -en false colorPerVertexAlpha;
+	} else if ($sel == 2) { // RGBA
+		$num = 4;
+		colorSliderGrp -e -en true colorPerVertexColor;
+		floatSliderGrp -e -en true colorPerVertexAlpha;
+	} else { // A
+		$num = 1;
+		colorSliderGrp -e -en false colorPerVertexColor;
+		floatSliderGrp -e -en true colorPerVertexAlpha;
+	}
+
+	// Need to update the context regarding the new amount of paint channels
+	//
+	$cmd = $artCmd + " -e -paintNumChannels " + $num + " " + `currentCtx` ;
+	eval ($cmd) ;
+	
+	// Need to update the context regarding the color mode to use
+	//
+	artAttrColorPerVertexColor("artAttrPaintVertexCtx");
+
+	// Since channel modes were changed, we need to update (enable/disable)
+	// the controls that relate to them (i.e. Alpha tools, RGB Clamping, etc.)
+	//
+	updateColorPerVertexToolControls($num);
+}
+
+//
+//	Description:
+//		This routine pushes the color value onto Artisan's context, based on
+//		the current (new) colour paint mode. Painting in a mode different
+//		than the current paint mode will cause undesireable results.
+//
+global proc artAttrColorPerVertexColor(string $artCmd)
+{
+	// Deterine the current color set representation
+	//
+	string $cmd="";
+	string $currentRepresentation=`polyColorSet -q -ccs -representation`;
+
+	// 302265: Handling of non-existent color sets / initial painting
+	// Assume a default color set type of RGBA so that the initial chosen
+	// color for a non-existent color set stays consistent with the user selection
+	//
+	if ($currentRepresentation=="")
+	{
+		$currentRepresentation="RGBA";
+	}
+
+	// Deterine the current color and alpha selection
+	//
+	float $rgb[] = `colorSliderGrp -q -rgb colorPerVertexColor`;
+	float $r = $rgb[0];
+	float $g = $rgb[1];
+	float $b = $rgb[2];
+	float $a = `floatSliderGrp -q -v colorPerVertexAlpha`;
+
+	// Notice - previously the channel selection was only considered, but it wasn't
+	// always up-to-date (i.e. when one switches between color sets).
+	// Color set representation is considered for better accuracy.
+	// Note: When querying the context, you will only get a value back for "-colorXXXValue"
+	//		 if that was the MOST RECENT edited value. It needs to correspond to the current
+	//		 channel mode to work properly.
+	//
+
+	// Push colors appropriately onto the Artisan context
+	//
+	if ( $currentRepresentation == "A" ) { // A
+		$cmd =  $artCmd + " -e -colorAlphaValue " + $a + " `currentCtx`";
+	}
+	else if( $currentRepresentation == "RGB" ) { // RGB
+		$cmd = $artCmd + " -e -colorRGBValue " + $r + " " + $g + " " + $b + " `currentCtx`";
+	}
+	else if( $currentRepresentation == "RGBA" ) { // RGBA
+		// Get the current user choice of channels
+		//
+		int $sel = `radioButtonGrp -q -sl artAttrColorChannelChoices`;
+
+		if ($sel==1) {
+			$cmd = $artCmd + " -e -colorRGBValue " + $r + " " + $g + " " + $b + " " + " `currentCtx`";
+		}
+		else if ($sel==2) {
+			$cmd = $artCmd + " -e -colorRGBAValue " + $r + " " + $g + " " + $b + " " + $a + " `currentCtx`";
+		}
+	}
+
+	eval($cmd);
+
+}
+
+
+//
+//	Description:
+//		This procedure is invoked as a callback routine attached to the lower/upper Alpha
+//		floating-point value fields. Thus, this procedure is triggered when the Min or Max
+//		Alpha value has changed.
+//		Note: The new Min/Max Alpha values are validated and updated when necessary
+//		(i.e. the lower bound will be modified such that it is less than or equal to the
+//		upper bound.)
+//
+global proc updateColorPerVertexAlphaValueControls()
+{
+	// Determine alpha value status
+	//
+	float $minAlphaValue=`floatFieldGrp -q -value1 colorPerVertexMinMaxAlphaValue`;
+	float $maxAlphaValue=`floatFieldGrp -q -value2 colorPerVertexMinMaxAlphaValue`;
+	float $curAlphaValue=`floatSliderGrp -q -value colorPerVertexAlpha`;
+
+	// Ensure a correct min/max range
+	//
+	if ($minAlphaValue > $maxAlphaValue)
+	{
+		$msg = (uiRes("m_artAttrColorPerVertexCallback.kAlphaMinExceedsAlphaMax"));
+		warning($msg);
+		$minAlphaValue = $maxAlphaValue;
+	}
+
+	// Update the NEW value on the UI
+	//
+	$curAlphaValue = clamp( $minAlphaValue, $maxAlphaValue, $curAlphaValue );
+	floatFieldGrp -e -value1 $minAlphaValue -value2 $maxAlphaValue
+		colorPerVertexMinMaxAlphaValue;
+	floatSliderGrp -e -min $minAlphaValue -max $maxAlphaValue
+		-value $curAlphaValue colorPerVertexAlpha;
+}
+
+
+//
+//	Description:
+//		This procedure defines all of the appropriate callback procedures
+//		for all of the Paint-based UI components (i.e. RGB clamp, channels, etc.)
+//
+global proc artAttrColorPerVertexPaintCallback( string $artCommand )
+{
+	string $cmd1;
+	string $cmd2;
+
+	// ColorPerVertex Paint frameLayout
+
+	// Paint Operation
+	radioButtonGrp -e
+		-cc ( "artAttrColorPaintOperation " + $artCommand)
+		artAttrColorOperationChoices0;
+
+	radioButtonGrp -e
+		-cc ( "artAttrColorPaintOperation " + $artCommand)
+		artAttrColorOperationChoices1;
+
+	// Paint Vertex or Face
+	radioButtonGrp -e
+		-cc ( "artAttrPaintVertexOrFace " + $artCommand)
+		artAttrColorPaintChoices;
+
+	// Channels
+	radioButtonGrp -e
+		-cc ( "artAttrColorPerVertexChannels " + $artCommand)
+		artAttrColorChannelChoices;
+
+	// Paint Color Value
+	colorSliderGrp -e -cc ( "artAttrColorPerVertexColor " + $artCommand)
+		colorPerVertexColor;
+
+	// Color+Alpha Picker
+	symbolButton -e -command ($artCommand + " -e -pickValue `currentCtx`")
+		artAttrColorPick;
+
+	// Alpha Value
+	floatSliderGrp -e -cc ("artAttrColorPerVertexColor "+ $artCommand)
+		colorPerVertexAlpha;
+
+	// Min/Max Alpha Value
+	floatFieldGrp -e
+		-cc ( "updateColorPerVertexAlphaValueControls" )
+		colorPerVertexMinMaxAlphaValue;
+
+	// Alpha Clamp Check Box callback
+	$cmd1 = "artAttrUpdateAlphaClampLower " + $artCommand + " #1 " ;
+	$cmd2 = "artAttrUpdateAlphaClampUpper " + $artCommand + " #1 " ;
+	checkBoxGrp -e -cc1 $cmd1 -cc2 $cmd2 artAttrAlphaClampChkBox;
+
+	// Alpha Clamp Min/Max Values callback
+	floatFieldGrp -e
+		-cc ( "artAttrUpdateAlphaClampField " + $artCommand )
+		artAttrAlphaClampField;
+
+	// Clamp callback
+	$cmd1 = "artAttrUpdateClampLower " + $artCommand + " #1 " ;
+	$cmd2 = "artAttrUpdateClampUpper " + $artCommand + " #1 " ;
+	checkBoxGrp -e -cc1 $cmd1 -cc2 $cmd2 artAttrClampChkBox; 
+
+	// Clamp Min/Max Values callback
+	floatFieldGrp -e
+		-cc ( "artAttrUpdateClampField " + $artCommand )
+		artAttrClampField;
+
+	// Flood
+	button -e 
+		-c ($artCommand + " -e -clear `currentCtx`")
+		artAttrColorFloodButton;
+
+}
+
+//
+// =======================================================
+// Main Procedure.
+//	Description:
+//		This procedure initializes various Artisan callback
+//		routines.
+// =======================================================
+//
+global proc artAttrColorPerVertexCallback( string $artCommand )
+{
+
+	source "artisanCallback.mel";
+	source "artAttrCallback.mel";
+
+	string $currContext = `currentCtx`;
+	string $currTool	= `contextInfo -c $currContext`;
+
+	// Basic Brush frameLayout.
+	artisanBrushCallback( $artCommand, $currTool );
+
+	// ColorPerVertex Paint frameLayout callback.
+	artAttrColorPerVertexPaintCallback( $artCommand );
+
+	// Stroke frameLayout.
+	artisanStrokeCallback( $artCommand, $currTool );
+
+	// Pressure frameLayout.
+	artisanPressureCallback( $artCommand, $currTool );
+
+	// Attribute Maps frameLayout.
+	artisanAttrMapCallback( $artCommand, $currTool );
+
+	// Display frameLayout.
+	artisanDisplayCallback( $artCommand, $currTool );
+
+}

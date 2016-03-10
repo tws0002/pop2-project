@@ -1,0 +1,189 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+//
+//  Creation Date:  18 Nov 1996
+//
+//
+// Procs: setSoundDisplay, updateSoundMenu
+//
+//  Description:
+//  	Setup the menu for which sound to display by
+//	building up a list of audio nodes to choose from.
+//	Audio nodes can be created through File->import of
+//	a sound file.
+//
+global proc setSoundDisplay( string $node, int $state )
+{
+	global string $gPlayBackSlider;
+	timeControl -e -ds $state -s $node $gPlayBackSlider;
+
+	// If we are in playback, then we have to update the sound that 
+	// is playing
+	//
+	if ( `play -query -state` ) {
+		$direction = `play -query -forward`;
+		if ( $state ) {
+			play -sound $node -forward $direction;
+		} else {
+			play -forward $direction;
+		}
+	}
+}
+
+global proc updateSoundMenu( string $args[] )
+//
+// Description:
+//	$menu:  the name of the menu to build with
+//	entries for all the sound nodes.  
+//	
+//	$useRadio: Are all the sound node entries are to presented
+//	as a collection of radio buttons?  Yes, if $useRadio is true.
+//	$useRadio also provides an "off" button whose cmd can
+//	be set with $radioOffCmd.
+//	
+//	$cmd: the command to execute when an individual
+//	menu item is selected from the sound menu.  The name
+//	of the selected entry's sound node will be appended to
+//	the string passed in in $cmd.
+//	
+//	$annotForDelete: 1 or true if we are building a menu of sounds
+//	to delete; 0 otherwise. This guides which annotation we attach
+//	to each generated menu item.
+//	
+//	$radioOffCmd: When $useRadio is true, there is an "Off"
+//	button in the radio collection.  Use $radioOffCmd to supply
+//	the command executed when the "Off" radio is selected.
+//	
+//	$optionCmd: the command executed when an entry's
+//	option box is selected.  The name of the selected entry
+//	will be appended to the string passed in in $optionCmd.
+//	
+//	If the menu items should have no option boxes, pass
+//	in a null $optionCmd.
+//	
+{
+	string  $parent 		= `setParent -menu -query`;
+
+	// Extract the variables we need from the string array.
+	//
+	string 	$mySoundMenu	= $args[0];
+	int 	$useRadio 		= $args[1];
+	string 	$cmd 			= $args[2];
+	int 	$annotForDelete	= $args[3];
+	string 	$radioOffCmd	= $args[4];
+	string 	$optionCmd 		= $args[5];
+
+	global string $gPlayBackSlider;
+
+	setParent -m $mySoundMenu;
+
+	string $soundNodes[] = `ls -type audio`;
+	string $current = `timeControl -query -sound $gPlayBackSlider`;
+
+	// Get rid of previous contents
+	//
+	menu -edit -deleteAllItems $mySoundMenu;
+
+	//	Check to see if there's sound in the system,
+	//	and setup the menu entries appropriately
+	//
+	string $sound[] = `ls -type audio`;
+
+	if( `size( $sound )` == 0 ) {
+		//
+		//	There's no sound - inform the user
+		//
+		menuItem -label (uiRes("m_updateSoundMenu.kNoSounds")) -enable false;
+	} else {
+		// Here's the Off entry
+		//
+		if( $useRadio && ( size( $radioOffCmd ) > 0 ) ) {
+			radioMenuItemCollection;
+			menuItem -radioButton 1 -label (uiRes("m_updateSoundMenu.kOff"))
+				-annotation (uiRes("m_updateSoundMenu.kOffAnnot"))
+				-command $radioOffCmd;
+			menuItem
+				-radioButton `timeControl -query -displaySound $gPlayBackSlider`
+				-label (uiRes("m_updateSoundMenu.kUseTraxSounds"))
+				-annotation (uiRes("m_updateSoundMenu.kUseTraxSoundsAnnot"))
+				-command "setSoundDisplay \"\" 1";
+		}
+	
+		// One entry for each sound node we found
+		//
+		for( $node in $soundNodes ) {
+			string $cmdString = substitute( "%s", $cmd, $node );
+			string $menuItemName = ($node + "Item");
+
+			if( $useRadio ) {
+				menuItem -radioButton 0 $menuItemName;
+			} else {
+				menuItem $menuItemName;
+			}
+
+			string $annotFormat;
+			string $annot;
+
+			if ($annotForDelete) {
+				$annotFormat= (uiRes("m_updateSoundMenu.kDeleteAnnot"));
+			} else {
+				$annotFormat= (uiRes("m_updateSoundMenu.kDisplayAnnot"));
+			}
+			string $annot = `format -stringArg $node $annotFormat`;
+
+			menuItem -edit
+				-echoCommand on
+				-label $node 
+				-command $cmdString 
+				-annotation $annot
+				$menuItemName;
+
+			int $useOptionBox = (size( $optionCmd ) > 0);
+
+			if( $useOptionBox ) {
+				string $optionCmdString = substitute("%s", $optionCmd, $node);
+				string $optionFormat = (uiRes("m_updateSoundMenu.kOpenAttrEd"));
+				string $optionAnnot = `format -stringArg $node $optionFormat`;
+;
+				menuItem -enableCommandRepeat false -optionBox true
+					-annotation $optionAnnot
+					-command $optionCmdString
+					($node+"Dialogitem");
+			}
+
+			if( $useRadio && ( $node == $current ) ) {
+				menuItem -edit -radioButton 1 $menuItemName;
+			} 
+
+		}
+	}
+
+	if( $parent != "NONE" ) {
+		setParent -menu $parent;
+	}
+}
+
+
+
+
+

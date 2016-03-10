@@ -1,0 +1,177 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Oct. 31/97
+//
+//  Description:
+//		doBakeResultsArgList is the actual proc that is executed from the
+//	Edit->Curves->Bake option box or menu
+//
+//  Input Arguments:
+//	$version: The version of this option box.  Used to know how to 
+//	interpret the $args array.
+//		"1" : $useSE, $startTime, $endTime, $by, $preserveOutsideKeys,
+//				$selectionConnection, $options
+//
+//	$args
+//	Version 1
+//	[0]		$useSE					0 : time range all
+//									1 : use $startTime, $endTime
+//	[1]		$startTime
+//	[2]		$endTime
+//	[3]		$by
+//	[4]		$preserveOutsideKeys	0 / 1
+//	[5]		$selectionConnection	name of selection connection to use
+//									unless $options has "bufferCurve" in which
+//									case this is the name of the editor
+//	[6]		$options				a ':' delimited list of options
+//									noOptions		an empty placeholder
+//									bufferCurve		create buffer curves
+//  [7]     $sparseAnimCurveBake	0 : insert a key at every time step
+//									1 : do not insert new keys into ranges
+//                                  where animation is defined, and try to
+//                                  use as few keys as possible to bake the
+//                                  pre and post infinity behavior
+//
+//  Return Value:
+//      The number of curves baked.
+//
+
+global proc int
+doBakeResultsArgList (string $version, string $args[])
+{
+	int		$versionNum				= $version;
+
+	int		$useSE					= $args[0];
+	float	$startTime				= $args[1];
+	float	$endTime				= $args[2];
+	float	$by						= $args[3];
+	int		$preserveOutsideKeys	= $args[4];
+	string	$selectionConnection	= $args[5];
+	string	$options				= $args[6];
+	int 	$sparseAnimCurveBake	= $args[7];
+
+	string $cmd = "bakeResults";
+
+	string $realConnection = $selectionConnection;
+
+	// Check for the bufferCurve option
+	//
+	if (match ("bufferCurve", $options) == "bufferCurve") {
+		$realConnection = `editor -query -mainListConnection $selectionConnection`;
+		// Check to see if we need to create buffer curves
+		//
+		if (`animCurveEditor -query -showBufferCurves $selectionConnection` == "on") {
+			$cmd = "bufferCurve -animation \"keys\" -overwrite false; " + $cmd;
+		}
+	}
+
+	// Get the target objects
+	//
+	string $members = expandSelectionConnection ($realConnection);
+
+	// If user had specified time range is "Time Slider", then get the
+	// time slider range now.
+	//
+	if ($useSE == 0)
+	{
+		$startTime = `playbackOptions -query -minTime`;
+		$endTime = `playbackOptions -query -maxTime`;
+	}
+
+	// If there are keyframes selected, we are going to issue the
+	// bakeResults command on the selection list; otherwise we're
+	// going to issue it on the selection connection coming into the
+	// graph editor.
+	//
+	int $keyCount = 0;
+	catch($keyCount = `keyframe -an keys -q -kc`);
+
+	string $synchedCurves[] = {};
+
+	float $curvesBaked = 0;
+	if ($keyCount == 0)
+	{
+		$cmd = $cmd + " -sampleBy " + $by;
+		$cmd = $cmd + " -time \"" + ($startTime + ":" + $endTime) + "\"";
+		$cmd = $cmd + " -preserveOutsideKeys " + $preserveOutsideKeys;
+		$cmd = $cmd + " -sparseAnimCurveBake " + $sparseAnimCurveBake;
+		if (($members == "") || ($members == "{}")) {
+			$cmd = "";
+			warning ( (uiRes("m_doBakeResultsArgList.kNoObjectsSelected")) );
+		}
+		else {
+			$cmd = ($cmd + " " + $members);
+
+			string $membersArray[] = 
+				expandSelectionConnectionAsArray($realConnection);
+			for( $m in $membersArray ) {
+				string $curves[] = `keyframe -q -n $m`;
+				for( $c in $curves ) {
+					if( `rotationInterpolation -q -c $c` != "none" ) {
+						$synchedCurves[size($synchedCurves)] = $c;
+					}
+				}
+			}
+		}
+	}
+	else	// bake according to selected keys
+	{
+		$cmd = $cmd + " -sampleBy " + $by;
+		$cmd = $cmd + " -preserveOutsideKeys " + $preserveOutsideKeys;
+		$cmd = $cmd + " -sparseAnimCurveBake " + $sparseAnimCurveBake;
+		$cmd = $cmd + ";";
+
+		string $selectedCurves[] = `keyframe -sl -q -n`;
+		for( $s in $selectedCurves ) {
+			if( `rotationInterpolation -q -c $s` != "none" ) {
+				$synchedCurves[size($synchedCurves)] = $s;
+			}
+		}
+	}
+
+	if( size( $synchedCurves ) > 0 ) {
+		print( (uiRes("m_doBakeResultsArgList.kUseCurves")) );
+
+		for( $s in $synchedCurves ) {
+			string $printThis = "\t" + $s + "\n";
+			print $printThis;
+		}
+
+		error( (uiRes("m_doBakeResultsArgList.kCannotBakeChannelsErr")) );  
+	} else if( $cmd != "" ) {
+		$curvesBaked = evalEcho ($cmd);
+	}
+
+	// Since the bakeResults will give incorrect results if the
+	// attribute is driven by a simulation (IK, dynamics, or self-referenced
+	// expressions), and it's very difficult (if not impossible) to
+	// detect which those situations are, we're going to *always* warn
+	// the user when they do a "Bake Channel" operation about situations
+	// that may give them unexpected results.
+	//
+	if ($curvesBaked > 0)
+		warning( (uiRes("m_doBakeResultsArgList.kUseEditKeys")) );
+
+	return $curvesBaked;
+}

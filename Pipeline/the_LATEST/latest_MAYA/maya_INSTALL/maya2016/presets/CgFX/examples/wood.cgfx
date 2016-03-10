@@ -1,0 +1,263 @@
+/*********************************************************************NVMH3****
+File:  $Id: //sw/devtools/FXComposer2/Alpha4+/SDK/MEDIA/CgFX1.4/wood.cgfx#1 $
+
+Copyright NVIDIA Corporation 2002-2004
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THIS SOFTWARE IS PROVIDED
+*AS IS* AND NVIDIA AND ITS SUPPLIERS DISCLAIM ALL WARRANTIES, EITHER EXPRESS
+OR IMPLIED, INCLUDING, BUT NOT LIMITED TO, IMPLIED WARRANTIES OF MERCHANTABILITY
+AND FITNESS FOR A PARTICULAR PURPOSE.  IN NO EVENT SHALL NVIDIA OR ITS SUPPLIERS
+BE LIABLE FOR ANY SPECIAL, INCIDENTAL, INDIRECT, OR CONSEQUENTIAL DAMAGES
+WHATSOEVER (INCLUDING, WITHOUT LIMITATION, DAMAGES FOR LOSS OF BUSINESS PROFITS,
+BUSINESS INTERRUPTION, LOSS OF BUSINESS INFORMATION, OR ANY OTHER PECUNIARY LOSS)
+ARISING OUT OF THE USE OF OR INABILITY TO USE THIS SOFTWARE, EVEN IF NVIDIA HAS
+BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+
+Comments:
+	Similar to "RenderMan Companion" wood shader
+
+******************************************************************************/
+
+// #define PROC_NOISE
+
+/************* UN-TWEAKABLES **************/
+
+float4x4 WorldITXf : WorldInverseTranspose < string UIWidget="None";>;
+float4x4 WorldViewProjXf : WorldViewProjection < string UIWidget="None";>;
+float4x4 WorldXf : World < string UIWidget="None";>;
+float4x4 ViewIXf : ViewInverse < string UIWidget="None";>;
+
+/************************************************************/
+/*** tweakables *********************************************/
+/************************************************************/
+
+float3 LightPos : Position <
+    string UIName =  "Light Position";
+    string Object = "PointLight";
+    string Space = "World";
+> = {-10.0f, 10.0f, -10.0f};
+
+float3 LightColor : SPECULAR <
+    string UIName =  "Lamp";
+    string UIWidget = "Color";
+> = {1.0f, 1.0f, 1.0f};
+
+////
+
+float3 AmbiColor : Ambient <
+    string UIName =  "Ambient Light";
+    string UIWidget = "Color";
+> = {0.17f, 0.17f, 0.17f};
+
+////
+
+float3 WoodColor1 : DIFFUSE <
+    string UIName =  "Surface 1";
+    string UIWidget = "Color";
+> = {0.85f, 0.55f, 0.01f};
+
+float3 WoodColor2 : DIFFUSE <
+    string UIName =  "Surface 2";
+    string UIWidget = "Color";
+> = {0.60f, 0.41f, 0.0f};
+
+float Ks <
+    string UIWidget = "slider";
+    float UIMin = 0.0;
+    float UIMax = 2.0;
+    float UIStep = 0.01;
+    string UIName =  "specular";
+> = 0.6;
+
+float SpecExpon : SpecularPower <
+    string UIWidget = "slider";
+    float UIMin = 1.0;
+    float UIMax = 128.0;
+    float UIStep = 1.0;
+    string UIName =  "specular power";
+> = 12.0;
+
+float RingScale <
+    string units = "inch";
+    string UIWidget = "slider";
+    float UIMin = 0.0;
+    float UIMax = 10.0;
+    float UIStep = 0.01;
+    string UIName =  "Ring Scale";
+> = 0.46;
+
+float AmpScale <
+    string UIWidget = "slider";
+    float UIMin = 0.01;
+    float UIMax = 2.0;
+    float UIStep = 0.01;
+    string UIName = "Wobbliness";
+> = 0.7;
+
+float PScale <
+    string UIWidget = "slider";
+    float UIMin = 0.01;
+    float UIMax = 10.0;
+    float UIStep = 0.01;
+    string UIName =  "Log Scale";
+> = 8;
+
+float3 POffset <
+    string UIName =  "Log Offset";
+> = {-10.0f, -11.0f, 7.0f};
+
+/////////////
+
+#ifdef PROC_NOISE
+#define NOISE_SCALE 40.0
+//#include <include/noise_3d.fxh> HACK!
+
+	#ifndef NOISE_SCALE
+	#define NOISE_SCALE 500
+	#endif /* NOISE_SCALE */
+	
+	// predefine as 1 for "pure" noise
+	#ifndef NOISE3D_LIMIT
+	#define NOISE3D_LIMIT 256
+	#endif /* NOISE3D_LIMIT */
+	
+	// function used to fill the volume noise texture
+	float4 noise_3d(float3 Pos : POSITION) : COLOR
+	{
+		float4 Noise = (float4)0;
+		for (int i = 1; i < NOISE3D_LIMIT; i += i) {
+			Noise.r += (noise(Pos * NOISE_SCALE * i)) / i;
+			Noise.g += (noise((Pos + 1)* NOISE_SCALE * i)) / i;
+			Noise.b += (noise((Pos + 2) * NOISE_SCALE * i)) / i;
+			Noise.a += (noise((Pos + 3) * NOISE_SCALE * i)) / i;
+		}
+		return (Noise+0.5);
+	}
+	
+	#ifndef NOISE_VOLUME_SIZE
+	#define NOISE_VOLUME_SIZE 32
+	#endif /* NOISE_VOLUME_SIZE */
+	
+	texture NoiseTex  <
+		string TextureType = "VOLUME";
+		string function = "noise_3d";
+		string UIWidget = "None";
+		int width = NOISE_VOLUME_SIZE, height = NOISE_VOLUME_SIZE, depth = NOISE_VOLUME_SIZE;
+	>;
+	
+	// samplers
+	sampler NoiseSamp = sampler_state 
+	{
+		texture = <NoiseTex>;
+		WrapS = Repeat;
+		WrapT = Repeat;
+		WrapR = Repeat;
+		MinFilter = LinearMipMapLinear;
+		MagFilter = Linear;
+	};
+	
+	#define NOISE3D(p) tex3D(NoiseSamp,(p))
+	#define SNOISE3D(p) (NOISE3D(p)-0.5)
+
+#else /* !PROC_NOISE */
+
+texture NoiseTex
+<
+    string ResourceName = "noiseL8_32x32x32.dds";
+    string ResourceType = "3D";
+>;
+
+sampler3D NoiseSamp = sampler_state
+{
+	Texture = <NoiseTex>;
+	MinFilter = Nearest;
+	MagFilter = Nearest;
+};
+#endif /* !PROC_NOISE */
+
+/************* DATA STRUCTS **************/
+
+/* data from application vertex buffer */
+struct appdata {
+    float3 Position	: POSITION;
+    float4 UV		: TEXCOORD0;
+    float4 Normal	: NORMAL;
+    float4 Tangent	: TANGENT0;
+    float4 Binormal	: BINORMAL0;
+};
+
+/* data passed from vertex shader to pixel shader */
+struct vertexOutput {
+    float4 HPosition	: POSITION;
+    float4 TexCoord	: TEXCOORD0;
+    float3 LightVec	: TEXCOORD1;
+    float3 WorldNormal	: TEXCOORD2;
+    float3 WoodPos	: TEXCOORD3;
+    float3 WorldView	: TEXCOORD4;
+    float3 WorldTangent	: TEXCOORD5;
+    float3 WorldBinorm	: TEXCOORD6;
+    float4 ObjPos	: TEXCOORD7;
+};
+
+/*********** vertex shader ******/
+
+vertexOutput mainVS(appdata IN)
+{
+    vertexOutput OUT;
+    OUT.WorldNormal = mul(WorldITXf, IN.Normal).xyz;
+    OUT.WorldTangent = mul(WorldITXf, IN.Tangent).xyz;
+    OUT.WorldBinorm = mul(WorldITXf, IN.Binormal).xyz;
+    float4 Po = float4(IN.Position.xyz,1);
+    float3 Pw = mul(WorldXf,Po).xyz;
+    OUT.WoodPos = (PScale*Po.xyz) + POffset;
+    OUT.LightVec = LightPos - Pw;
+    OUT.TexCoord = IN.UV;
+    float3 Ew = float3(ViewIXf[0].w,ViewIXf[1].w,ViewIXf[2].w);
+    OUT.WorldView = (Ew - Pw);
+    float4 hpos = mul(WorldViewProjXf,Po);
+    OUT.ObjPos = Po;
+    OUT.HPosition = hpos;
+    return OUT;
+}
+
+/********* pixel shader ********/
+
+float4 woodPS(vertexOutput IN) : COLOR
+{
+    float3 Ln = normalize(IN.LightVec);
+    float3 Nn = normalize(IN.WorldNormal);
+    float3 Pwood = IN.WoodPos + (AmpScale * tex3D(NoiseSamp,IN.WoodPos.xyz/32.0).xyz);
+    float r = RingScale * sqrt(dot(Pwood.yz,Pwood.yz));
+    r = r + tex3D(NoiseSamp,r.xxx/32.0).x;
+    r = r - floor(r);
+    r = smoothstep(0.0, 0.8, r) - smoothstep(0.83,1.0,r);
+    float3 dColor = lerp(WoodColor1,WoodColor2,r);
+    float3 Vn = normalize(IN.WorldView);
+    float3 Hn = normalize(Vn + Ln);
+    float hdn = dot(Hn,Nn);
+    float ldn = dot(Ln,Nn);
+    float4 litV = lit(ldn,hdn,SpecExpon);
+    float3 diffContrib = dColor * ((litV.y*LightColor) + AmbiColor);
+    float3 specContrib = Ks * litV.y * litV.z * LightColor;
+    float3 result = diffContrib + specContrib;
+    return float4(result,1);
+}
+
+/*************/
+
+technique wood <
+	string Script = "Pass=p0;";
+> {
+	pass p0 <
+	string Script = "Draw=geometry;";
+> {		
+		DepthTestEnable = true;
+		DepthMask = true;
+		DepthFunc = LEqual;
+		
+		VertexProgram = compile arbvp1 mainVS();
+		FragmentProgram = compile arbfp1 woodPS();
+	}
+}
+
+/***************************** eof ***/

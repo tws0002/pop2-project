@@ -1,0 +1,456 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Procedure Name:  AEcontainerTemplate
+//
+//  Description Name;
+//	  Creates the attribute editor controls for the container node
+//
+//  Input Value:
+//	  nodeName 
+//
+//  Output Value:
+//	  None
+// 
+
+global proc
+anchorNamePrompt(string $container, int $asParent)
+{
+	string $sel[] = `ls -sl -type dagNode`;
+	if (size($sel) == 0) {
+		error((uiRes("m_AEcontainerTemplate.kMustSelectAnchorObject")));
+	}
+	
+	string $proposedName = "child";
+	if ($asParent) {
+		$proposedName = "parent";
+	}
+	$uniqueProposedName = findUniqueAliasName($container,$proposedName,0);
+	string $OK = (uiRes("m_AEcontainerTemplate.kOk"));
+	string $cancel = (uiRes("m_AEcontainerTemplate.kCancel"));
+	string $result = `promptDialog
+		-title (uiRes("m_AEcontainerTemplate.kPublishAnchorNode"))
+		-message (uiRes("m_AEcontainerTemplate.kSpecifyAnchorName"))
+		-text $uniqueProposedName
+		-button $OK -button $cancel
+		-defaultButton $OK -cancelButton $cancel -dismissString $cancel`;
+	if ($result == $OK) {
+		string $anchorName = `promptDialog -q`;
+		string $publishCmd;
+		if ($asParent) {
+			$publishCmd = ("publishAnchorNodes 1 2 "+$anchorName+" {} 1");
+		} else {
+			$publishCmd = ("publishAnchorNodes 0 2 "+$anchorName+" {} 1");
+		}
+		eval $publishCmd;
+	}
+}
+
+
+global proc
+updateAnchorTextField(string $widgetLabel, string $container,
+					  string $publishName, string $publishNodeType)
+//
+// This is a callback to update the UI widgets related to a particular published 
+// name when something is bound or unbound to that name.
+//
+{
+	int $isRoot = 0;
+	string $cmd;
+	if ($publishNodeType != "pnode") {
+		$cmd = ("container -q ");
+		if ($publishNodeType == "parent") {
+			$cmd += "-publishAsParent ";
+		} else if ($publishNodeType == "child") {
+			$cmd += "-publishAsChild ";
+		} else if ($publishNodeType == "root") {
+			$isRoot = 1;
+			$cmd += "-pro ";
+		}
+	} else {
+		$cmd = "containerPublish -q -bn ";
+	}
+	$cmd += $container;
+	string $textFieldName = ($widgetLabel+"TxtField");
+	
+	int $foundIt = 0;
+	if ($isRoot) {
+		string $rootObject = `eval $cmd`;
+		if (size($rootObject) > 0) {
+			textField -e -enable 1 -text $rootObject $textFieldName;
+			$foundIt = 1;
+		}
+	} else {
+		string $anchors[] = `eval $cmd`;
+		for ($ii = 0; $ii < size($anchors); $ii += 2) {
+			if ($anchors[$ii] == $publishName) {
+				textField -e -enable 1 -text $anchors[$ii+1] $textFieldName;
+				$foundIt = 1;
+				break;
+			}
+		}
+	}
+	
+	if ($foundIt == 0) {
+		string $none = (uiRes("m_AEcontainerTemplate.kNone"));
+		textField -e -enable 0 -text $none $textFieldName;
+	}
+
+	string $publishBtn = ($widgetLabel+"PubBtn");
+	string $unpublishBtn = ($widgetLabel+"UnpubBtn");	
+	string $unbindBtn = ($widgetLabel+"UnbindBtn");	
+	string $selBtn = ($widgetLabel+"SelBtn");
+	symbolButton -e -enable ($foundIt == 0) $publishBtn;				
+	symbolButton -e -enable $foundIt $selBtn;
+	symbolButton -e -enable $foundIt $unpublishBtn;
+	symbolButton -e -enable $foundIt $unbindBtn;
+}
+
+proc 
+createPublishedNodeLayout(string $title,
+						  string $widgetLabel,
+						  string $container,
+						  string $existingObject,
+						  int $promptForName)
+//
+// Creates a layout for a published node like so:
+//   [Published Name]: [AnchorName] [Publish] [Unbind] [Unpublish] [Go to AE tab]
+//
+{
+	string $publishCmd;
+	string $unpublishCmd;
+	string $unbindCmd;
+	string $publishNodeType;
+
+	string $none = (uiRes("m_AEcontainerTemplate.kNone"));
+	string $nodeName = (size($existingObject) > 0) ? $existingObject : $none;
+
+	string $layoutName = ("AEcontainer"+$widgetLabel+"Layout");
+	string $textName = ($widgetLabel+"Txt");
+	string $textFieldName = ($widgetLabel+"TxtField");
+	string $publishBtn = ($widgetLabel+"PubBtn");
+	string $unpublishBtn = ($widgetLabel+"UnpubBtn");
+	string $unbindBtn = ($widgetLabel+"UnbindBtn");	
+	string $selBtn = ($widgetLabel+"SelBtn");
+
+	
+	if ($widgetLabel == "root") {
+		string $updateWidgets = ("updateAnchorTextField(\""+$widgetLabel+"\",\""+$container+"\",\""+$title+"\",\"root\")");		
+		$unpublishCmd = ("doPublishRootTransform 2 { \"0\", \"0\", \"1\" }; "+$updateWidgets);
+		$publishCmd = ("doPublishRootTransform 2 { \"1\", \"0\", \"1\" }; "+$updateWidgets);
+		$publishNodeType = (uiRes("m_AEcontainerTemplate.kRootAnchorType"));
+		$unbindCmd = $unpublishCmd;
+	} else if (startsWith($widgetLabel,"parent")) {
+		string $updateWidgets = ("updateAnchorTextField(\""+$widgetLabel+"\",\""+$container+"\",\""+$title+"\",\"parent\")");
+		
+		if ($promptForName) {
+			$publishCmd = ("anchorNamePrompt(\""+$container+"\",1)");
+		} else {
+			$publishCmd = ("publishAnchorNodes 1 2 "+$title+" {} 1; "+$updateWidgets);
+		}
+		$unpublishCmd = ("publishAnchorNodes 1 2 \"\" {\""+$existingObject+"\"} 0");
+		$unbindCmd = ("container -e -unp "+$existingObject+" "+$container+"; "+$updateWidgets);
+		$publishNodeType = (uiRes("m_AEcontainerTemplate.kParentAnchorType"));
+	} else if (startsWith($widgetLabel,"child")) {
+		string $updateWidgets = ("updateAnchorTextField(\""+$widgetLabel+"\",\""+$container+"\",\""+$title+"\",\"child\")");
+		
+		if ($promptForName) {		
+			$publishCmd = ("anchorNamePrompt(\""+$container+"\",0)");
+		} else {
+			$publishCmd = ("publishAnchorNodes 0 2 "+$title+" {} 1; "+$updateWidgets);
+		}
+		$unpublishCmd = ("publishAnchorNodes 0 2 \"\" {\""+$existingObject+"\"} 0");
+		$unbindCmd = ("container -e -unc "+$existingObject+" "+$container+"; "+$updateWidgets);
+		$publishNodeType = (uiRes("m_AEcontainerTemplate.kChildAnchorType"));
+	} else if (startsWith($widgetLabel,"pnode")) {
+		string $updateWidgets = ("updateAnchorTextField(\""+$widgetLabel+"\",\""+$container+"\",\""+$title+"\",\"pnode\")");
+		
+		if ($promptForName) {		
+			$publishCmd = ("publishNodeNamePrompt(\""+$container+"\")");
+		} else {
+			$publishCmd = ("doNodePublish(\""+$title+"\",\""+$container+"\",1); "+$updateWidgets);
+		}
+		$unpublishCmd = ("doNodePublish(\""+$title+"\",\""+$container+"\",0); "+$updateWidgets);
+		$unbindCmd = ("evalEcho(\"containerPublish -ubn "+$title+" "+$container+"\"); "+$updateWidgets);
+		$publishNodeType = (uiRes("m_AEcontainerTemplate.kNodeType"));
+	}
+
+	formLayout $layoutName;
+
+		text -label $title $textName;
+
+		textField -editable 0 -en ($nodeName != $none) -text $nodeName $textFieldName;
+
+		string $pubAnnot = (uiRes("m_AEcontainerTemplate.kPublishAnnot"));
+		string $fmt = `format -s $publishNodeType $pubAnnot`;
+		symbolButton -image "publishAttributes.png" -w 30
+			-annotation $fmt
+			$publishBtn;
+
+		string $unbindAnnot = (uiRes("m_AEcontainerTemplate.kUnbindAnnot"));
+		$fmt = `format -s $publishNodeType $unbindAnnot`;
+		symbolButton -image "unbindAttributes.png" -w 30
+			-annotation $fmt
+			$unbindBtn;
+		
+		string $unpubAnnot = (uiRes("m_AEcontainerTemplate.kUnpublishAnnot"));
+		$fmt = `format -s $publishNodeType $unpubAnnot`;
+		symbolButton -image "unpublishAttributes.png" -w 30
+			-annotation $fmt
+			$unpublishBtn;
+
+		symbolButton -image "outArrow.png" -w 30
+			-annotation (uiRes("m_AEcontainerTemplate.kSelectNode"))
+			$selBtn;
+
+		if (size($existingObject) != 0) {
+			button -e -enable 0 $publishBtn;
+			button -e -c ("showEditor "+$nodeName) -w 30 $selBtn;
+			button -e -c $unpublishCmd -w 30 $unpublishBtn;
+			button -e -c $unbindCmd -w 30 $unbindBtn;
+		} else {
+			button -e -enable 1 $publishBtn;			
+			button -e -enable 0 -w 30 $selBtn;
+			button -e -enable 0 -w 30 $unpublishBtn;
+			button -e -enable 0 -w 30 $unbindBtn;
+		}
+		button -e -c $publishCmd -w 30 $publishBtn;
+	setParent ..;
+
+	// $textName | $textFieldName | $publishBtn | $unbindBtn | $unpublishBtn | $selBtn
+
+	int $textNameWidth = -130;
+	if (`about -uiLanguageIsLocalized`) {
+		$textNameWidth = -160;
+	}
+
+	formLayout -e
+		-aof $textName right $textNameWidth
+		-af $textName top 5
+		-af $textName bottom 5
+		-an $textName left
+		
+		-af $textFieldName top 5
+		-af $textFieldName bottom 5
+		-ac $textFieldName left 2 $textName
+		-aoc $textFieldName right -141 $textName
+		
+		-af $publishBtn top 5
+		-af $publishBtn bottom 5
+		-ac $publishBtn left 2 $textFieldName
+		-an $publishBtn right
+		
+		-af $unbindBtn top 5
+		-af $unbindBtn bottom 5
+		-ac $unbindBtn left 2 $publishBtn
+		-an $unbindBtn right
+		
+		-af $unpublishBtn top 5
+		-af $unpublishBtn bottom 5
+		-ac $unpublishBtn left 2 $unbindBtn
+		-an $unpublishBtn right
+		
+		-af $selBtn top 5
+		-af $selBtn bottom 5
+		-ac $selBtn left 2 $unpublishBtn
+		-an $selBtn right
+		
+		$layoutName;
+}
+
+proc setPublishedNodesLayout( string $attrEdInfo, string $pnLayout )
+//
+//	Description:
+//		Given attrEd info, set the value of the published nodes layout.
+//
+//	Inputs:
+//		$attrEdInfo		: Attribute Editor information
+//		$pnLayout		: Name of published nodes layout
+//
+//	Return Value:
+//		None.
+//
+{
+	setAttrEdTextField( $attrEdInfo, 5, $pnLayout );
+}
+
+proc string getPublishedNodesLayout( string $attrEdInfo )
+//
+//	Description:
+//		Given attrEd info, retrieve name of published nodes layout.
+//
+//	Inputs:
+//		$attrEdInfo	: Attribute Editor information
+//
+//	Return Value:
+//		Name of published nodes layout.
+//
+{
+	return( getAttrEdTextField( $attrEdInfo, 5 ) );
+}
+
+global proc containerPublishedNodeNew( string $attrEdInfo , string $attr)
+{
+	string $layout = `columnLayout -adjustableColumn true containerNodeMemberLayout`;
+	setPublishedNodesLayout( $attrEdInfo, $layout );
+	setParent ..;
+	containerPublishedNodeReplace( $attrEdInfo,$attr);
+}
+
+global proc containerPublishedNodeReplace( string $attrEdInfo , string $attr) 
+{
+    // Determine container node from nodename or nodename.attr passed 
+    // into this routine.
+	//
+	string $layoutName = getPublishedNodesLayout( $attrEdInfo );
+
+	// Delete the controls that are there now
+	//
+	string $children[] = `layout -query -childArray $layoutName`;
+
+	string $cmd = "deleteUI ";
+	for ( $child in $children ) {
+		$cmd += $child;
+		$cmd += " ";
+	}
+
+	// If there are no children don't call "deleteUI".
+	if ( `size $children` > 0 )
+		eval( $cmd );
+
+	setParent $layoutName;
+
+	// create controls for the root transform
+	//
+ 	string $container = plugNode($attr);
+	string $rootLabel = (uiRes("m_AEcontainerTemplate.kSelectionTransform"));
+	string $rootTransform = `container -q -publishAsRoot $container`;
+	createPublishedNodeLayout($rootLabel,"root",$container,$rootTransform,0);
+	
+	// Create controls for published parents/children
+	//
+	int $i = 0;
+
+	frameLayout -label (uiRes("m_AEcontainerTemplate.kParentAnchors"))
+		-borderVisible false 
+		-collapsable true 
+		-labelVisible true 
+		-collapse 0
+		-parent $layoutName;
+	columnLayout -adj true;
+
+	string $parents[] = `container -q -pap $container`;
+	int $len = size($parents);
+	for( $i = 0; $i < $len; $i=$i+2) {
+		createPublishedNodeLayout($parents[$i],("parent"+$i),
+								  $container,$parents[$i+1],0);
+	}
+	string $unboundParents[] = `container -q -unbindAttr -pap $container`;
+	int $newLen = size($unboundParents);
+	for( $i = 0; $i < $newLen; $i=$i+2) {
+		createPublishedNodeLayout($unboundParents[$i],("parent"+($i+$len)),
+								  $container,"",0);
+	}
+	string $newParentLabel = (uiRes("m_AEcontainerTemplate.kAddParentAnchor"));
+	createPublishedNodeLayout($newParentLabel,("parent"+($i+$len+$newLen)),
+							  $container,"",1);
+	setParent ..;
+	setParent ..;
+
+	frameLayout -label (uiRes("m_AEcontainerTemplate.kChildAnchors"))
+		-borderVisible false 
+		-collapsable true 
+		-labelVisible true 
+		-collapse 0
+		-parent $layoutName;
+	columnLayout -adj true;
+	string $children[] = `container -q -pac $container`;
+	$len = size($children);
+	for( $i = 0; $i < $len; $i=$i+2) {
+		createPublishedNodeLayout($children[$i],("child"+$i),
+								  $container,$children[$i+1],0);
+	}
+	string $unboundChildren[] = `container -q -unbindAttr -pac $container`;
+	$newLen = size($unboundChildren);
+	for( $i = 0; $i < $newLen; $i=$i+2) {
+		createPublishedNodeLayout($unboundChildren[$i],("child"+($i+$len)),
+								  $container,"",0);
+	}
+	string $newChildLabel = (uiRes("m_AEcontainerTemplate.kAddChildAnchor"));
+	createPublishedNodeLayout($newChildLabel,("child"+($i+$len+$newLen)),
+							  $container,"",1);
+	setParent ..;
+	setParent ..;
+
+	frameLayout -label (uiRes("m_AEcontainerTemplate.kNodes"))
+		-borderVisible false 
+		-collapsable true 
+		-labelVisible true 
+		-collapse 0
+		-parent $layoutName;
+	columnLayout -adj true;
+
+	string $pnodes[] = `containerPublish -q -bn $container`;
+	int $len = size($pnodes);
+	for( $i = 0; $i < $len; $i=$i+2) {
+		createPublishedNodeLayout($pnodes[$i],("pnode"+$i),
+								  $container,$pnodes[$i+1],0);
+	}
+	string $unboundNodes[] = `containerPublish -q -unbindNode $container`;
+	$newLen = size($unboundNodes);
+	for( $i = 0; $i < $newLen; $i=$i+2) {
+		createPublishedNodeLayout($unboundNodes[$i],("pnode"+($i+$len)),
+								  $container,"",0);
+	}
+	string $newNodeLabel = (uiRes("m_AEcontainerTemplate.kAddPubNode"));
+	createPublishedNodeLayout($newNodeLabel,("pnode"+($i+$len+$newLen)),
+							  $container,"",1);
+	setParent ..;
+	setParent ..;
+	
+}
+
+global proc AEcontainerTemplate( string $nodeName )
+{
+	editorTemplate -beginScrollLayout;
+
+ 	string $dataForm = AEcontainerMain($nodeName);
+
+	editorTemplate -beginLayout (uiRes("m_AEcontainerTemplate.kPublishedNodes"))
+			-collapse 1;
+		editorTemplate -callCustom ("containerPublishedNodeNew \""+$dataForm+"\"")
+			("containerPublishedNodeReplace \""+$dataForm+"\"")
+			"canBeParent";
+	editorTemplate -endLayout;
+
+	// include/call base class/node attributes
+	AEdependNodeTemplate $nodeName;
+
+	editorTemplate -addExtraControls;
+	editorTemplate -endScrollLayout;
+
+	editorTemplate -suppress "canBeChild";
+	editorTemplate -suppress "rootTransform";
+}
+
+
+

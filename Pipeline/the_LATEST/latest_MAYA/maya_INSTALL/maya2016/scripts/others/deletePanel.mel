@@ -1,0 +1,203 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Feb 18 1996
+//
+//  Description:
+//		Delete a panel.  If it is visible replace it with another panel.
+//		If it is torn off then also delete its window.
+//
+//  Input Arguments:
+//      $whichPanel:  The name of the panel to be deleted.
+//
+//  Return Value:
+//      None.
+//
+//	Note:
+//		None.
+// 
+proc deletePanel_doit( string $whichPanel, int $confirm )
+{
+	global string $gMainPane;
+
+	string $winName;
+	string $panelControl;
+	string $p1,$p2,$p3,$p4;
+	string $msg;
+	int    $pane = 0;
+	int	   $nVisPanes;
+	string $panels[];
+	string $controls[];
+
+	if (`panel -exists $whichPanel`) {
+		int $goAhead = 1;
+
+		//  Do we need to first check to confirm that this wasn't a mistake.
+		//
+		if( $confirm ) {
+			string $fmt = (uiRes("m_deletePanel.kSure"));
+			string $msg = `format -s $whichPanel $fmt`;
+			
+			string $ok = (uiRes("m_deletePanel.kOk"));
+			string $confirm = (uiRes("m_deletePanel.kConfirm"));
+			string $cancel = (uiRes("m_deletePanel.kCancel"));
+
+			string $answer = `confirmDialog -title $confirm -message $msg
+				-button $ok -button $cancel -defaultButton $ok
+				-cancelButton $cancel -dismissString $cancel`;
+
+			$goAhead = ($answer == $ok);
+		}
+
+		//  Okay to delete.
+		//
+		if( $goAhead ) {
+            $panelControl =  `panel -q -control $whichPanel`;
+			if (`panel -q -to $whichPanel`) {
+				//
+				//  panel is torn off so get rid of its window first.
+				//
+				$winName = match("^[^|]*",$panelControl);
+				deleteUI -window $winName;
+
+			} else {
+				if ("" != $panelControl) {
+					$panelControl = match("[^|]*$",$panelControl);
+					//  
+					//  Panel is parented.  Assume that it is in the main pane
+					//  since it is not torn off.
+					//
+					$p1 = `paneLayout -q -p1 $gMainPane`;
+					$p2 = `paneLayout -q -p2 $gMainPane`;
+					$p3 = `paneLayout -q -p3 $gMainPane`;
+					$p4 = `paneLayout -q -p4 $gMainPane`;
+					$nVisPanes = `paneLayout -q -nvp $gMainPane`;
+
+					if ($panelControl == $p1) {
+						$pane = 1;
+					} else if ($panelControl == $p2 && $nVisPanes > 1) {
+						$pane = 2;
+					} else if ($panelControl == $p3 && $nVisPanes > 2) {
+						$pane = 3;
+					} else if ($panelControl == $p4 && $nVisPanes > 3) {
+						$pane = 4;
+					}
+					if ($pane > 0) {
+						//
+						//  Panel is in one of the visible main panes, so
+						//  it should be replaced with something else.
+						//
+
+						//
+						//      First try to replace with something that is already
+						//	    parented to the same paneLayout.
+						//
+						string $replacementPanel = "";
+						string $cmdStr;
+
+						$controls = `paneLayout -q -ca $gMainPane`;
+						for ($control in $controls) {
+							if ($control != $panelControl && 
+								$control != $p1 && 
+								($nVisPanes < 2 || $control != $p2) &&
+								($nVisPanes < 3 || $control != $p3) && 
+								($nVisPanes < 4 || $control != $p4)
+								) 
+							{
+								$replacementPanel = `getPanel -containing $control`;
+								if ("" != $replacementPanel) {
+									break;
+								}
+							}
+						}
+
+						if ("" == $replacementPanel) {
+							//
+							//  Try to parent an unparented panel.
+							//
+							$panels = `getPanel -allPanels`;
+							for ($panel in $panels) {
+								if ("" == `panel -q -control $panel`) {
+									$replacementPanel = $panel;
+									break;
+								}
+							}
+						}
+
+						if ("" == $replacementPanel) {
+							//
+							//  Make an new model panel to fill the spot.
+							//
+							$replacementPanel = `modelPanel -unParent`;
+							modelPanel -e 
+								-label `interToUI $replacementPanel`
+								$replacementPanel;
+
+						}
+
+						if ("" == `panel -q -control $replacementPanel`) {
+							//
+							//  parent it to the main pane layout.
+							//
+							$cmdStr = `getPanel -typeOf $replacementPanel`;
+							$cmdStr += (" -e -parent $gMainPane " + $replacementPanel);
+							eval $cmdStr;
+						}
+
+						//
+						//  Move it to the correct pane.
+						//
+						paneLayout -e 
+							-sp `panel -q -control $replacementPanel` $pane
+							$gMainPane;
+					}
+				}
+			}
+
+			//  Finally, delete the panel.
+			//
+			deleteUI -panel $whichPanel;
+		}
+	} else {
+		string $msgFormat = (uiRes("m_deletePanel.kPanelNotFound"));
+		warning(`format -s $whichPanel $msgFormat`);
+	}
+}
+
+global proc deletePanelNoConfirm( string $whichPanel )
+{
+	int $confirm = false; 
+	deletePanel_doit( $whichPanel, $confirm );
+}
+
+global proc deletePanel (string $whichPanel) 
+//
+//  Description:
+//		Delete a panel.  If it is visible replace it with another panel.
+//		If it is torn off then also delete its window.
+//
+//
+{
+	int $confirm = true; 
+	deletePanel_doit( $whichPanel, $confirm );
+}

@@ -1,0 +1,112 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+/////////////////////////////////////////////////////////////////////////
+//
+//  Creation Date:  June 2002
+//
+//  Description:
+//      Delete unused animation poses or clips from the scene.
+//  Arguments:
+//      $typeToDelete (string): valid values are: "clips" or "poses"
+//
+/////////////////////////////////////////////////////////////////////////
+
+global proc int deleteUnusedTrax(string $typeToDelete )
+{
+	//	Are we being called during an Optimize Scene Size operation?
+	// 	If so, we need to display progress information.  This was done
+	//	as a global variable to avoid having to change the signature of
+	//	the proc, as that could break many scripts, both internal and
+	//	customer-written.
+	//
+	int $showProgress = cleanUp_ShouldReportProgress();
+
+	if ($typeToDelete != "poses" &&
+		$typeToDelete != "clips") {
+		error( (uiRes("m_deleteUnusedTrax.kInvalidArgument")) );
+		return 0;
+	}
+
+	// we store them up and don't delete them using a single delete command
+	// since deleting one might cause others to get deleted and the loop
+	// would get messed up
+	//
+	string $nodesToDelete;
+	string $clips[];
+	string $allClips[];	
+	if ($typeToDelete == "clips") {
+		$clips = `clip -q -allSourceClips`;			
+		$allClips = `clip -q -allClips`;
+	} else {
+		$clips = `pose -q -allPoses`;
+	}
+
+	if( $showProgress )
+	{
+		cleanUp_StartProgress( size($clips)+size($allClips), 
+							  ("Deleting unused " + $typeToDelete), 1 );
+	}
+
+	int $numDeleted = 0;
+	
+	int $i = 0;
+	for ($clip in $clips) {
+		
+		if( $showProgress )
+		{
+			if( cleanUp_SetProgress($i++) ) break;
+		}
+		
+		int $deleteIt = 1;
+		string $chs[] = `clip -q -character $clip`;
+		for ($ch in $chs) {
+			string $sched = `character -q -sc $ch`;
+			int $clipIndexList[] = `clipSchedule -n $clip -q -ci $sched`;
+			if (size($clipIndexList) > 0) {
+				$deleteIt = 0;
+			}
+		}
+		if ($deleteIt) {
+			$nodesToDelete += ($clip+" ");
+			$numDeleted++;
+		}
+	}
+	for ($clip in $allClips) {
+		string $conns[] = `listConnections $clip`;
+		if (size($conns) == 0) {
+			$nodesToDelete += ($clip+" ");
+			$numDeleted++;
+		}
+	}
+	
+	if (size($nodesToDelete)) {
+		$cmd = ("delete "+$nodesToDelete);
+		evalEcho($cmd);
+	}
+	
+	if( $showProgress )
+	{
+		cleanUp_EndProgress();
+	}
+
+	return $numDeleted;		
+}

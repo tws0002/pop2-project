@@ -1,0 +1,141 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+proc connectIfNotConnected( string $src, string $dst )
+{
+	if ( `isConnected $src $dst` == false )
+		connectAttr $src $dst;
+}
+
+proc toggleAttr( string $node, string $attr )
+{
+	string $name = ( $node + "." + $attr );
+	setAttr $name ( `getAttr $name` == 0 );
+}
+
+proc setAttrState( string $attr, string $flag, int $val )
+{
+	string $v = $val;
+	eval( `format -s $flag -s $v -s $attr "setAttr -^1s ^2s ^3s"` );
+	if ( `getAttr -type $attr` != "double3" )
+		return;
+
+	string $node     = plugNode( $attr );
+	string $compound = plugAttr( $attr );
+	string $children[] = `attributeQuery -node $node -listChildren $compound`;
+	for ( $c in $children )
+		eval( `format -s $flag -s $v -s $attr -s $c "setAttr -^1s ^2s ^3s.^4s"` );
+}
+
+global proc performCreateClipGhost( string $clips[] )
+{
+	if ( size( $clips ) == 0 )
+		return;
+
+	// Get the scheduler and character for the given clip
+	string $scheduler = getClipScheduler( $clips[0] );
+	if ( size( $scheduler ) == 0 )
+		return;
+
+	string $character = getClipCharacter( $clips[0] );
+	if ( size( $character ) == 0 )
+		return;
+
+	string $sel[] = `ls -sl`;
+	string $add[];
+	string $remove[];
+
+	// TODO: This should be pushed into the scheduler creation code.
+	connectIfNotConnected(
+		( $scheduler + ".clipStatePercentEval" ),
+		( $character + ".clipStatePercentEval_Raw" ) );
+
+	// Find the clipToGhostData node connected to the clips. Bail if we can't find one.
+	string $clip2ghostNodes[] = `listConnections -type clipToGhostData -d 1 -s 0 $clips[0]`;
+	if ( size( $clip2ghostNodes ) == 0 )
+		return;
+
+	string $clip2ghostNode = $clip2ghostNodes[0];
+
+	// Get a list of all the clips being managed by the scheduler
+	string $all_clips[] = `clipSchedule -q -name $scheduler`;
+
+	// Now walk the set of clips the user has selected, setting up the network as needed
+	for ( $clip in $clips )
+	{
+		// Determine the index of the clip in the list of clips being handled by the scheduler
+		int $idx = stringArrayFind( $clip, 0, $all_clips );
+		if ( $idx < 0 )
+		{
+			string $msg = (uiRes("m_performCreateClipGhost.kClipNotConnected")); 
+			error( `format -s $clip -s $scheduler $msg` );
+		}
+
+		string $suffix = ( "[" + $idx + "]" );
+
+		// Check if a clipGhostShape has already been created for this clip ...
+		string $ghost, $ghosts[] = `listConnections -type clipGhostShape -d 1 -s 0 ( $clip2ghostNode + ".clipGhostData" + $suffix )`;
+		if ( size($ghosts) > 0 )
+		{
+			// if so, check the visibility state and do some bookeeping
+			$ghost = $ghosts[0];
+			if ( `getAttr ( $ghost + ".visibility" )` )
+				$add[ size( $add ) ] = $ghost;
+			else
+				$remove[ size( $remove ) ] = $ghost;
+		}
+		else
+		{
+			// ... otherwise, create the clip ghost shape and setup connections with clip2ghost node.
+			$ghost = `createNode -n ( $clip + "ClipGhost" ) clipGhostShape`;
+
+			// Wire up the network ...
+			connectIfNotConnected ( $clip2ghostNode + ".clipGhostData" + $suffix ) ( $ghost + ".clipGhostData" );
+
+			connectIfNotConnected ( $ghost + ".clipData" ) ( $clip + ".clipData" );
+
+			connectIfNotConnected ( $ghost + ".intermediatePoses" ) ( $clip2ghostNode + ".clipIntermediatePoses" + $suffix );
+
+			setAttr ( $ghost + ".visibility" ) true;
+
+			$add[ size( $add ) ] = $ghost;
+		}
+
+		// Disable keyframing of translation and rotation attrs on clip ghosts ...
+		setAttrState ( $ghost + ".translate" )  "keyable" false;
+		setAttrState ( $ghost + ".rotate" )     "keyable" false;
+		setAttrState ( $ghost + ".visibility" ) "keyable" false;
+
+		setAttrState ( $ghost + ".translate" )  "channelBox" true;
+		setAttrState ( $ghost + ".rotate" )     "channelBox" true;
+		setAttrState ( $ghost + ".visibility" ) "channelBox" true;
+
+		// ... and lock attrs we don't want to the user to update
+		setAttrState ( $ghost + ".scale" )      "lock"    true;
+		setAttrState ( $ghost + ".shear" )      "lock"    true;
+		setAttrState ( $ghost + ".rotateAxis" ) "lock"    true;
+	}
+
+	$sel = stringArrayRemove( $remove, stringArrayCatenate( $add, $sel ) );
+	if ( size( $sel ) )
+		select -r $sel;
+}
+

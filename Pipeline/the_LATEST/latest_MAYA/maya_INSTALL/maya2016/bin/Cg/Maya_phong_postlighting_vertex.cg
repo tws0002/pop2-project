@@ -1,0 +1,199 @@
+// phong_vertex.cg
+//
+// This file cannot be directly compiled through CG... it first must be
+// parsed to insert channel-specific instructions.
+//
+
+struct vert2frag
+{
+    float4 hPosition            : POSITION;
+
+#if defined(BUMP_MAP)
+	float3 wNormal				: TEXCOORD0;
+	float4 wTangent				: TEXCOORD1;
+	float4 bumpTexUv			: TEXCOORD2;
+#elif defined (OBJECT_NORMAL)
+	float4 bumpTexUv			: TEXCOORD2;
+#else
+	float3 wNormal				: TEXCOORD0;
+#endif // BUMP_MAP
+	
+#if !defined(CONSTANT_TRANSPARENCY)
+	float4 transpTexUv			: TEXCOORD3;
+#endif	
+#if !defined(CONSTANT_INCAND)	
+	float4 incanTexUv			: TEXCOORD4;
+#endif	
+#if !defined(CONSTANT_REFLECTIVITY)	
+	float4 reflectivityTexUv	: TEXCOORD5;
+#endif	
+	float4 wPosition			: TEXCOORD6;
+
+#if defined(COLOR_PER_VERTEX)
+	// Optional color per vertex
+	float4	colorPerVertex		: COLOR0;
+#endif // COLOR_PER_VERTEX
+
+#if defined(COLOR_PER_VERTEX_MASK)
+	// Optional color per vertex mask, mapped to
+	// user attribute 0
+	float colorPerVertexMask;
+#endif	
+
+#if defined(TWO_SIDED_LIGHTING)
+	float4	frontColor		: COLOR1; // Secondary front color
+	float4	backColor		: BCOL1;  // Seondary back color
+#endif // TWO_SIDED_LIGHTING
+};
+
+// define inputs from application
+struct app2vert
+{
+    float4 position             : POSITION;
+    float4 normal               : NORMAL;
+
+#if defined (BUMP_MAP)
+	float4 tangent				: TEXCOORD0;
+	float4 bumpTexUv			: TEXCOORD1;
+#elif defined (OBJECT_NORMAL)
+	float4 bumpTexUv			: TEXCOORD1;
+#endif // BUMP_MAP
+
+#if !defined(CONSTANT_TRANSPARENCY)
+	float4 transpTexUv			: TEXCOORD2;
+#endif
+#if !defined(CONSTANT_INCAND)	
+	float4 incanTexUv			: TEXCOORD3;
+#endif
+#if !defined(CONSTANT_REFLECTIVITY)	
+	float4 reflectivityTexUv	: TEXCOORD4;
+#endif	
+
+#if defined(COLOR_PER_VERTEX)
+	// Optional color per vertex
+	float4	colorPerVertex  : COLOR0;
+
+	#if defined(COLOR_PER_VERTEX_MASK)
+		// Optional color per vertex mask, mapped to
+		// user attribute 0
+		float colorPerVertexMask;
+	#endif	
+#endif // COLOR_PER_VERTEX	
+
+#if defined(BINORMAL_SIGN)
+	float binormSign		: TEXCOORD6;
+#endif
+};
+
+#if defined(BINORMAL_SIGN)
+	uniform float binormalMultiplier;
+#endif
+
+vert2frag main(app2vert IN, 
+               uniform float4x4 modelViewProj,				
+               uniform float4x4 objToWorldMatrix,
+			   uniform float4x4 objToWorldMatrix_invtrans)
+{
+    vert2frag OUT;
+
+    modelViewProj = glstate.matrix.mvp;
+
+    // Compute the clip-space vertex position.
+    //
+    OUT.hPosition = mul(modelViewProj, IN.position);
+
+    // Compute the world-space vertex position.
+    //
+    OUT.wPosition = mul(objToWorldMatrix, IN.position);
+
+    // Copy the texture coordinates.
+    //
+#if !defined(CONSTANT_TRANSPARENCY)    
+	OUT.transpTexUv = IN.transpTexUv;
+#endif	
+#if !defined(CONSTANT_INCAND)		
+	OUT.incanTexUv = IN.incanTexUv;
+#endif	
+#if !defined(CONSTANT_REFLECTIVITY)	
+	OUT.reflectivityTexUv = IN.reflectivityTexUv;
+#endif	
+
+    // Compute the geometric normal, expressed in world space.
+	// Note: we pass in the tangent and binormal vector
+	// rather than the normal. Then in the fragment program,
+	// we recompute the normal using a cross-product. This ensures
+	// that we'll get the correct normal even when the model matrix
+	// has non-proportional scale, and it's cheaper than multiplying
+	// by the inverse-transpose.
+    //
+#if defined (BUMP_MAP)
+    float3 oNormal = normalize(IN.normal.xyz);
+  	float3 oBinormal = normalize(cross(oNormal, IN.tangent.xyz));
+    float3 oTangent = cross(oBinormal, oNormal);
+	float3 wTangent = mul(objToWorldMatrix_invtrans, float4(oTangent, 0)).xyz;
+
+#if defined(BINORMAL_SIGN)
+	OUT.wTangent = float4(normalize(wTangent), IN.binormSign * binormalMultiplier);
+#else
+	OUT.wTangent = float4(normalize(wTangent), 0);
+#endif
+
+	float3 wNormal = mul(objToWorldMatrix_invtrans, float4(oNormal, 0)).xyz;
+	OUT.wNormal = normalize(wNormal);
+
+	OUT.bumpTexUv = IN.bumpTexUv;
+
+#elif defined (OBJECT_NORMAL)
+	// Object space only needs the map
+	OUT.bumpTexUv = IN.bumpTexUv;
+
+#else
+	float4 oNormal = float4(normalize(IN.normal.xyz), 0);
+	OUT.wNormal = mul(objToWorldMatrix_invtrans, oNormal).xyz;
+#endif // BUMP_MAP
+
+#ifdef COLOR_PER_VERTEX
+
+	#if defined(COLOR_PER_VERTEX_MASK)
+		#if defined(COLOR_PER_VERTEX_OPERATOR_modulate) || defined(COLOR_PER_VERTEX_OPERATOR_divide) || defined(COLOR_PER_VERTEX_OPERATOR_modulate2x)
+
+			// Change mask to 1, and pass over white for 
+			// modulation.
+			if (IN.colorPerVertexMask < 0.5)
+			{
+				OUT.colorPerVertexMask = 1.0;
+				OUT.colorPerVertex = float4(1.0, 1.0, 1.0, 1.0);
+			}
+			else
+			{
+				OUT.colorPerVertexMask = IN.colorPerVertexMask;
+				OUT.colorPerVertex = IN.colorPerVertex;
+			}
+			
+		#else
+			// Pass-through color-per-vertex mask, and original color
+			OUT.colorPerVertexMask = IN.colorPerVertexMask;
+			OUT.colorPerVertex = IN.colorPerVertex;
+		#endif		
+	#else		
+		// Pass-through color-per-vertex. 
+		OUT.colorPerVertex = IN.colorPerVertex;
+	#endif
+#endif	
+
+#if defined(TWO_SIDED_LIGHTING)
+	// Use secondary color to pass sidedness value over
+	// to the fragment program. Send "white" for the
+	// front side and "black" for the back side.
+	// 
+	#if defined(INVERT_NORMAL)
+		OUT.backColor = float4(1.0, 1.0, 1.0, 1.0);
+		OUT.frontColor = float4(0.0, 0.0, 0.0, 0.0);
+	#else
+		OUT.frontColor = float4(1.0, 1.0, 1.0, 1.0);
+		OUT.backColor = float4(0.0, 0.0, 0.0, 0.0);
+	#endif
+#endif
+
+    return OUT;
+}

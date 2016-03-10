@@ -1,0 +1,222 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+// Procedure to retrieve the input color space names
+global proc string[] getInputColorSpaceNames()
+{
+    return `colorManagementPrefs -q -inputSpaceNames`;
+}
+
+// Procedure to update the color space widgets upon a warning
+proc updateColorSpaceWarning(string $menu, string $text, string $selection, string $validItems[])
+{
+    if ( !stringArrayContains($selection, $validItems) )
+    {
+        optionMenu -e -backgroundColor 1.0 0.0 0.0 $menu ;
+
+        string $fmt = (uiRes("m_colorSpaceProcedures.kColorSpaceNotFound"));
+        string $warningMessage = `format -s $selection $fmt`;
+        text -e -visible true -label $warningMessage $text;
+    }
+    else
+    {
+        optionMenu -e -backgroundColor 0.37109375 0.37109375 0.37109375 $menu ;
+
+        text -e -visible false $text;
+    }
+}
+
+// Procedure to set a given color space attribute
+proc setColorSpaceAttr(string $colorSpaceAttr, string $colorSpace)
+{
+    setAttr $colorSpaceAttr -type "string" $colorSpace ;
+}
+
+proc string getColorSpaceSelection(string $colorSpaceAttr)
+{
+    // Get the color space attribute value; it might be the empty string.
+    string $colorSpace = `getAttr $colorSpaceAttr`;
+
+    return $colorSpace;
+}
+
+// Procedure to update the contents of the option menu containing the color spaces
+proc updateColorSpaceMenu(
+    string $menu, string $text, string $selection, string $colorSpaceAttr
+)
+{
+    if ( !`optionMenu -query -exists $menu` )
+    {
+        return;
+    }
+
+    setParent -m $menu;
+
+    // Clear the current menu items
+    string $oldMenuItems[] = `optionMenu -q -ils $menu`;
+    for($oldMenuItem in $oldMenuItems)
+    {
+        deleteUI -mi $oldMenuItem;
+    }
+
+    // If the "colorManagementEnabled" input is not connected, the node is
+    // not color managed.
+    string $nodeName[];
+    tokenize $colorSpaceAttr "." $nodeName;
+    string $enabledAttr = $nodeName[0] + ".colorManagementEnabled";
+    int $colorManaged =
+        `isConnected "defaultColorMgtGlobals.cmEnabled" $enabledAttr`;
+
+    if ($colorManaged) {
+
+        // Get the color space names from SynColor and populate the option menu
+        string $colorSpaceNames[] = getInputColorSpaceNames();
+        
+        // If the colorSpace attribute from the node does not exist
+        // in the list of color spaces, add it to the list.
+        string $newMenuitems[] = $colorSpaceNames;
+        if ( !stringArrayContains($selection, $colorSpaceNames) )
+        {
+            $newMenuitems[size($newMenuitems)] = $selection;
+            $newMenuitems = `sort $newMenuitems`;
+        }
+        
+        for($newMenuitem in $newMenuitems)
+        {
+            menuItem -label $newMenuitem;
+        }
+        
+        // Make sure the correct color space menu item is selected
+        optionMenu -e -value $selection $menu ;
+        
+        updateColorSpaceWarning($menu, $text, $selection, $colorSpaceNames);
+    }
+    else {
+        menuItem -label (uiRes("m_colorSpaceProcedures.kNoColorManagement"));
+    }
+
+    optionMenu -e -enable $colorManaged $menu;
+
+    setParent -m ..;
+}
+
+// Callback used to set the colorSpace attribute
+global proc setColorSpaceAttrCB(string $menu, string $text, string $colorSpaceAttr)
+{
+    string $selectedItemValue = `optionMenu -query -value $menu`;
+
+    setColorSpaceAttr($colorSpaceAttr, $selectedItemValue);
+
+    updateColorSpaceWarning($menu, $text, $selectedItemValue, getInputColorSpaceNames());
+}
+
+global proc onColorSpaceProceduresConfigChange(string $colorSpaceAttr)
+{
+    string $menus[] = `lsUI -long -type optionMenu`;
+    for($menu in $menus)
+    {
+        if (endsWith($menu, "colorSpaceColumnLayout|colorSpaceRowLayout|colorSpaceMenu"))
+        {
+            string $menuRowLayout = `optionMenu -q -parent $menu`;
+            string $menuColumnLayout = `rowLayout -q -parent $menuRowLayout`;
+            string $warningText = $menuColumnLayout + "|colorSpaceWarningText";
+
+            string $selection = `optionMenu -q -v $menu`;
+
+            updateColorSpaceMenu($menu, $warningText, $selection, $colorSpaceAttr);
+        }
+    }
+}
+
+global proc onColorSpaceProceduresAttributeChange(string $menu, string $warningText, string $colorSpaceAttr)
+{
+    string $selection = getColorSpaceSelection($colorSpaceAttr);
+    updateColorSpaceMenu($menu, $warningText, $selection, $colorSpaceAttr);
+}
+
+proc addScriptJobs(string $colorSpaceAttr, string $menu, string $warningText)
+{
+    // Use the replace previous (rp) flag just once, as it is non-selective
+    // and removes ALL script jobs with the same parent.
+    scriptJob -rp -p $menu -event "colorMgtConfigChanged"
+        ("onColorSpaceProceduresConfigChange " + $colorSpaceAttr);
+
+    string $cmd = "onColorSpaceProceduresAttributeChange " + $menu + " " + $warningText + " " + $colorSpaceAttr;
+    // Don't use the replace previous flag here, as it would remove the
+    // scriptJob we just added.
+    scriptJob -p $menu -attributeChange $colorSpaceAttr $cmd;
+}
+
+// Add a new color space UI element to the attribute editor
+proc AEcolorSpaceControlImp(string $colorSpaceAttr, string $label)
+{
+    columnLayout -adjustableColumn true colorSpaceColumnLayout;
+
+        rowLayout -nc 2 colorSpaceRowLayout;
+
+            text -l $label colorSpaceMenuText;
+            string $menu = `optionMenu -l "" colorSpaceMenu`;
+
+            setParent ..;
+
+        string $warningText = `text -font "boldLabelFont" -al "center" -l "" colorSpaceWarningText`;
+        
+        setParent -m ..;
+
+    setParent ..;
+
+    // Set up the color space attribute callback
+    optionMenu -e -cc ("setColorSpaceAttrCB " + $menu + " " + $warningText + " " + $colorSpaceAttr) $menu;
+
+    // Update color space option menu items
+    string $selection = getColorSpaceSelection($colorSpaceAttr);
+    updateColorSpaceMenu($menu, $warningText, $selection, $colorSpaceAttr);
+
+    addScriptJobs($colorSpaceAttr, $menu, $warningText);
+}
+
+// Add a new color space UI element to the attribute editor
+global proc AEcolorSpaceNew(string $colorSpaceAttr)
+{
+    AEcolorSpaceControlImp($colorSpaceAttr, (uiRes("m_colorSpaceProcedures.kColorSpaceLabel")));
+}
+
+// this function is called to build the color space control when using a custom template in the attribute editor
+global proc PPcolorSpaceControl(string $plug, string $label, string $annot)
+{
+    AEcolorSpaceControlImp($plug, $label);
+}
+
+// Update the color space UI element in the attribute editor
+global proc AEcolorSpaceReplace(string $colorSpaceAttr)
+{
+    string $parent = `setParent -q`;
+    string $menu = $parent + "|colorSpaceColumnLayout|colorSpaceRowLayout|colorSpaceMenu";
+    string $warningText = $parent + "|colorSpaceColumnLayout|colorSpaceWarningText";
+
+    optionMenu -e -cc ("setColorSpaceAttrCB " + $menu + " " + $warningText + " " + $colorSpaceAttr) $menu;
+
+    // update the optionMenu
+    string $selection = getColorSpaceSelection($colorSpaceAttr);
+    updateColorSpaceMenu($menu, $warningText, $selection, $colorSpaceAttr);
+
+    addScriptJobs($colorSpaceAttr, $menu, $warningText);
+}

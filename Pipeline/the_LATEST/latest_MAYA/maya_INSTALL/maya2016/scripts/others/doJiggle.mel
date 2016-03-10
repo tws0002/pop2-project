@@ -1,0 +1,185 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//
+//
+//
+//
+//  Procedure Name:
+//      doJiggle
+//
+//  Description:
+//		Create a jiggle deformer using the options specified in the $args array.
+//		The $args array allows maya to change the argument list from version to
+//		version without losing backwards compatability.
+//	Input Arguments:
+//	$version: The version of this option box.  Used to know how to 
+//	interpret the $args array.
+//		"1" : first verison of nla
+//  
+//	$args
+//	Version 1
+//	[0]		stiffness (float)
+//	[1]		damping (float)
+//  [2]		weight (float)
+//	[3]		ignore transform (bool)
+//	[4]		enable only when resting (bool)
+//	[5]		positioning of deformer (string)
+//	[6]		exclusive partition name (string, or "" to indicate no partition)
+//
+//  Return Value:
+//      None.
+//
+source performDiskCache.mel;
+
+proc string[] getSelectedSurfsAndParticles()
+//
+// Description:
+//     Loops through the selection list and finds all the shapes
+//     that are below the transforms.  It fills an array with 
+//     the parent transforms of all these shapes. 
+//
+{
+	string $objects[];
+
+	// Get the selection list
+	//
+	string $selectedItems[] = `ls -sl`;
+	int $numSelected = size($selectedItems);
+
+	int $ii;
+	int $objectCount = 0;
+	string $buffer[];
+	for($ii=0;$ii < $numSelected; $ii++)
+	{
+		clear($buffer);
+		string $trans = $selectedItems[$ii];
+		int $numTokens = tokenize($selectedItems[$ii],".",$buffer);
+		if ($numTokens > 0) {
+			$trans = $buffer[0];
+		}
+		string $isShape[] = `ls -type controlPoint -type particle $trans`;
+		if (0 == size($isShape)) {
+			if ($numTokens > 1) {
+				// a component was selected
+				//
+				int $jj;
+				int $foundObject = 0;
+				for ($jj = 0; $jj < $objectCount; $jj++) {
+					clear($buffer);
+					int $numTokens = tokenize($objects[$jj],".",$buffer);
+					if ($numTokens > 1) {
+						if ($buffer[0] == $trans) {
+							$objects[$jj] = ($objects[$jj]+" "+$selectedItems[$ii]);
+							$foundObject = 1;
+							break;
+						}
+					}
+				}
+				if (! $foundObject) {
+					$objects[$objectCount++] = $selectedItems[$ii];
+				}
+			} else {
+				string $shapes[] = `ls -dag -type controlPoint -type particle $trans`;
+				string $object;
+				for($object in $shapes)
+				{
+					// Disregard intermediate objects
+					//
+					int $io = `getAttr ($object+".io")`;
+					if (!$io)
+					{
+						string $parentL[] = `listRelatives -path -p $object`;
+						$objects[$objectCount++] = $parentL[0];
+					}
+				}
+			}
+		} else {
+			string $rel[] = `listRelatives -path -p $trans`;
+			$objects[$objectCount++] = ($rel[0]+"|"+$trans);
+		}
+	}
+	return $objects;
+}
+
+
+global proc doJiggle(int $version, string $args[])
+{
+	float $stiffness = $args[0];
+	float $damping = $args[1];
+	float $weight = $args[2];
+	int $ignoreTransform = $args[3];
+	int $ifResting = $args[4];
+	string $positioning = $args[5];
+	string $exclusiveName = $args[6];
+
+	int $ii;
+	// Find all the surf transforms that have been selected
+	//
+	string $selectedObjects[] = getSelectedSurfsAndParticles();
+	int $numObjects = size($selectedObjects);
+
+	if ($numObjects == 0)
+	{
+		error( (uiRes("m_doJiggle.kNoDeformableSel")));
+		return;
+	}
+
+	// Create the jiggle deformer for each surface
+	//
+	select -clear;
+	for($ii = 0; $ii < $numObjects; $ii++) {
+		string $objects = $selectedObjects[$ii]; 
+		string $res[];
+		$cmd = "deformer -type jiggle ";
+		if ($exclusiveName != "") {
+			$cmd += (" -exclusive \""+$exclusiveName+"\"");
+		}
+		if ($positioning != "default") {
+			$cmd += (" -"+$positioning);
+		}
+		$cmd += " " + $objects; 
+
+		$res = `eval $cmd`;
+		string $jiggle = $res[0];
+
+		verifyWorkspaceFileRule( "diskCache", "data" );
+
+		string $cacheName = uniqueCacheName($res[0], ".mcj");
+		connectAttr time1.outTime ($jiggle + ".currentTime");
+		string $dskC = `createNode -name ($jiggle+"Cache") diskCache`;
+		setAttr -type "string" ($dskC + ".hiddenCacheName") $cacheName;
+		setAttr -type "string" ($dskC + ".cacheType") ("mcj");
+		connectAttr ($dskC + ".diskCache") ($jiggle + ".diskCache");
+
+		setAttr ($jiggle+".ignoreTransform") $ignoreTransform;
+		if( $ifResting )
+			setAttr ($jiggle+".enable") 2;
+		else
+			setAttr ($jiggle+".enable") 0;
+		setAttr ($jiggle+".stiffness") $stiffness;
+		setAttr ($jiggle+".damping") $damping;
+		setAttr ($jiggle+".jiggleWeight") $weight;
+	}
+}
+

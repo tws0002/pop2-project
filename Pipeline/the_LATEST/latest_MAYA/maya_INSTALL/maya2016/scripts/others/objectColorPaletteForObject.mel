@@ -1,0 +1,257 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Jan 9, 2001
+//
+//  Description:
+//      Creates a window that allows the users to specify an
+//		object colour based on the User Defined colours.
+//
+
+global proc initObjColorPalette ()
+{
+	global string $gObjColorPalette;
+
+	if (`palettePort -exists $gObjColorPalette`)
+	{
+		int $i;
+		for($i = 1; $i <= 8; $i++)
+		{
+			string $color = ("userDefined" + $i);
+			float $rgb[] = `displayRGBColor -q $color`;
+			palettePort -e -redraw -rgb ($i - 1) $rgb[0] $rgb[1] $rgb[2] $gObjColorPalette;
+		}
+	}
+}
+
+global proc updateUserColor (int $colorIndex)
+{
+	global string $gObjColorPalette;
+
+	string $color = ( "userDefined" + $colorIndex );
+	float $rgb[] = `palettePort -q -rgb $gObjColorPalette`;
+	displayRGBColor $color $rgb[0] $rgb[1] $rgb[2];
+}
+
+global proc updateUserColorInterface()
+{
+   	global string $gObjColorPalette;
+	int $indexed = `optionMenu -query -select objectColorType` == 1;
+    
+	palettePort -edit -visible $indexed $gObjColorPalette;
+	colorSliderGrp -edit -visible ($indexed ? 0: 1) objectColorRgbSlider;
+}
+
+global proc applyWireframeColors(string $object)
+{
+   	global string $gObjColorPalette;    
+	int $indexed = `optionMenu -query -select objectColorType` == 1;    
+	float $rgb[] = `colorSliderGrp -q -rgb objectColorRgbSlider`;
+
+	if ($object != "")
+	{
+		setAttr ($object + ".useObjectColor") ($indexed ? 1 : 2);
+		if ($indexed == 1)
+			setAttr ($object + ".objectColor") (`palettePort -q -scc $gObjColorPalette`);
+		else
+			setAttr ($object + ".wireColorRGB") -type double3 $rgb[0] $rgb[1] $rgb[2];
+	}
+	else
+	{
+		if  ($indexed == 1)
+			color -ud ((`palettePort -q -scc $gObjColorPalette`) + 1);
+		else
+			color -rgb $rgb[0] $rgb[1] $rgb[2];
+	}
+}
+
+global proc objectColorSelectionChanged()
+{
+   	global string $gObjColorPalette;
+	global string $gObjColorWindow = "objColorPaletteWnd";
+	if (`window -exists $gObjColorWindow`)
+	{	
+		string $sel[] = `ls -sl`;
+		string $shapes[] = `listRelatives -shapes $sel`;
+		if (size($shapes) > 0)
+		{
+			string $object = $shapes[0];
+			float $rgbColor[] = getAttr($object + ".wireColorRGB");
+			float $colorState = getAttr($object + ".useObjectColor");
+			int $objectColor = getAttr($object + ".objectColor");
+			
+			if ($colorState == 2)
+				optionMenu -edit -select 2 objectColorType;
+			else
+				optionMenu -edit -select 1 objectColorType;	
+			
+			updateUserColorInterface();
+			
+			colorSliderGrp -edit -rgb $rgbColor[0] $rgbColor[1] $rgbColor[2] objectColorRgbSlider;		
+			palettePort -edit -scc $objectColor $gObjColorPalette;
+		}
+	}
+}
+
+
+global proc objectColorPaletteForObject (string $object,string $windowTitle,int $showDefault,string $callback)
+{
+	global string $gObjColorWindow = "objColorPaletteWnd";
+	global string $gObjColorPalette;
+	global int $gObjColorWindowSelCallback = -1;
+
+    string $applyCmd; 
+    string $defaultCmd;
+    string $defaultWindowTitle = (uiRes("m_objectColorPaletteForObject.kWireframe"));
+    
+    if($object != "") 
+    {
+        $applyCmd += "applyWireframeColors " + $object;
+        
+        $defaultCmd += "setAttr ";
+        $defaultCmd += $object;	        
+        $defaultCmd += ".useObjectColor 0";
+    }
+    else 
+    {
+		$applyCmd = "applyWireframeColors \"\"";
+        $defaultCmd = "color";
+        
+    }
+    
+    if($callback != "") 
+    {
+        $applyCmd += ";";
+        $applyCmd += $callback;
+        
+        $defaultCmd += ";";
+        $defaultCmd += $callback;	        
+    }
+    
+	if ($gObjColorWindowSelCallback == -1)
+	{
+		$gObjColorWindowSelCallback = `scriptJob -e "SelectionChanged" objectColorSelectionChanged`;
+	}
+	
+	if (`window -exists $gObjColorWindow`)
+	{
+	    if($windowTitle != "") 
+	    {
+	        window -e -title $windowTitle $gObjColorWindow;
+	    }
+	    else 
+	    {
+	        window -e -title $defaultWindowTitle $gObjColorWindow;
+	    }	    
+	    
+	    button -e -command $applyCmd objectColorPaletteApplyButton;
+	    button -e -command $defaultCmd objectColorPaletteDefaultButton;
+	    
+	    button -e -visible $showDefault objectColorPaletteDefaultButton;
+	    
+		showWindow $gObjColorWindow;
+		return;
+	}
+	else
+	{
+		int $cellHeight = 30, $cellWidth = 30;
+		int $rows = 1, $columns = 8;
+
+		string $wireframe = $defaultWindowTitle;
+		if($windowTitle != "") 
+		    $wireframe = $windowTitle;		
+		    
+		int $height = 80;
+		if (`about -win` || `about -mac`) $height = 100;
+		window -title $wireframe
+			-iconName $wireframe
+			-menuBar false
+			-minimizeButton false
+			-maximizeButton false	
+			$gObjColorWindow;
+
+		formLayout form;
+
+			$frameLayout = `frameLayout -labelVisible false -borderVisible false`;
+
+			$gObjColorPalette = `palettePort -dimensions $columns $rows -editable true
+				-width ($cellWidth * $columns) -height ($cellHeight * $rows)`;
+			setParent ..;
+			
+			optionMenu -changeCommand "updateUserColorInterface" objectColorType;
+			menuItem -label (uiRes("m_objectColorPaletteForObject.kIndexed"));
+			menuItem -label (uiRes("m_objectColorPaletteForObject.kRGB"));
+			
+			palettePort -e
+					-ce "updateUserColor ((`palettePort -q -scc $gObjColorPalette` + 1))"
+					$gObjColorPalette;
+
+			initObjColorPalette;
+			
+			colorSliderGrp -cw 1 0 -cw 2 70 -label "" -visible false -rgb 0 0 0 objectColorRgbSlider;
+			
+			button -label (uiRes("m_objectColorPaletteForObject.kApply"))
+				-command $applyCmd
+				-annotation (uiRes("m_objectColorPaletteForObject.kSelectedColorAnnot")) objectColorPaletteApplyButton;
+
+			button -label (uiRes("m_objectColorPaletteForObject.kDefault"))
+				-command $defaultCmd
+				-annotation (uiRes("m_objectColorPaletteForObject.kDefaultColorAnnot")) objectColorPaletteDefaultButton;
+						    
+		    button -e -visible $showDefault objectColorPaletteDefaultButton;
+
+			string $closeButton = `button -label (uiRes("m_objectColorPaletteForObject.kClose")) 
+				-command "window -e -vis false $gObjColorWindow"
+				-annotation (uiRes("m_objectColorPaletteForObject.kCloseWindowAnnot"))`;
+
+			formLayout -e
+
+				 -af objectColorType "top" 5
+				 -af objectColorType "left" 8
+				 
+				 -ac $frameLayout "top" 10 objectColorType
+				 -af $frameLayout "left" 8
+				 -af $frameLayout "right" 8
+				 -an $frameLayout "bottom"
+				 		 
+				 -ac objectColorRgbSlider "top" 8 objectColorType
+				 -af objectColorRgbSlider "left" 8
+				 
+				 -af objectColorPaletteApplyButton "left" 5
+				 -ac objectColorPaletteApplyButton "right" 5 objectColorPaletteDefaultButton
+				 -af objectColorPaletteApplyButton "bottom" 5
+
+				 -ap objectColorPaletteDefaultButton "left" 0 33
+				 -ac objectColorPaletteDefaultButton "right" 5 $closeButton
+				 -af objectColorPaletteDefaultButton "bottom" 5
+
+				 -ap $closeButton "left" 0 67
+				 -af $closeButton "right" 5
+				 -af $closeButton "bottom" 5
+
+				 form;				
+		showWindow $gObjColorWindow;
+
+		objectColorSelectionChanged;		
+	}
+}

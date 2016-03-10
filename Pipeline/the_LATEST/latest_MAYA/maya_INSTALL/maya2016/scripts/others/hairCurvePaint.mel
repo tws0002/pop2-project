@@ -1,0 +1,1539 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//
+//
+//
+//
+//  Creation Date: 2003 
+//
+//  Description:
+//     This is an simple example script for the Artisan Script Paint
+//     tool. It will paint hairCurves onto the selected NURBS surfaces. The
+//     size of the hairCurves are controlled by the painted values.
+//
+// Usage:
+// 1) Place this script into your scripts directory (usually the
+//    maya/scripts directory in your home directory
+// 2) Select the Script Paint Tool (Modify->Script Paint Tool)
+//    and bring up the Tool Settings window
+// 3) Go to the Setup tab and enter "hairCurvePaint" into the
+//    "Tool Setup Cmd" field and hit enter
+// 4) Paint HairCurves
+//
+// Tips:
+// Once you have the HairCurve Paint Tool setup you may want to drag
+// it from the minibar to the shelf so that it is always accessible
+//
+// These are global variables used to keep track of multiple
+// surfaces and the name prefixes used for the hairCurves on each
+// surface
+//
+global string $hairCurveNamePrefix[];
+global string $gHairCurvePaintSurface;
+global string $gHairCurveHairSys = "";
+global string $gHairCurveHairSystems[];
+global int $hairCurvePaintFreeSlot = 0;
+global int $hairCurvePaintSlots = 0;
+global int $gHairCurvePaintMaxDensity = 100;
+global int $gHairCurvePaintUSkip = 150;
+global int $gHairCurvePaintVSkip = 150;
+global float $gHairCurveColor[] = {1.0,1.0,1.0};
+global int $gHairCurveStartIndex[] = {1};
+global string $gHairCurveGroup = "";
+global string $gHairOutCurveGroup = "";
+
+// This routine initializes all option vars to default 
+// values if they do not yet exist or if the passed
+// in argument is true.
+proc setOptionVars(int $forceFactorySettings )
+{
+	global float $gHairCurveColor[];
+	if( $forceFactorySettings || 
+		!`optionVar -exists createHairMaxDensity` )
+	{
+		// Currently this needs to keep in sync with createHair.mel
+		// where this var is also set.
+		optionVar -iv createHairMaxDensity 100;		
+	}
+	if( $forceFactorySettings || 
+		!`optionVar -exists hcPaintPaintMode` )
+	{
+		optionVar -sv hcPaintPaintMode (uiRes("m_hairCurvePaint.kCreateFollicles")) ;		
+	}
+	if( $forceFactorySettings || 
+		!`optionVar -exists hcPaintFollicleAttribute` )
+	{
+		optionVar -sv hcPaintFollicleAttribute (uiRes("m_hairCurvePaint.kClumpWidthMult")) ;		
+	}
+	if( $forceFactorySettings || 
+		!`optionVar -exists hcPaintFollicleDensityU` )
+	{
+		optionVar -iv hcPaintFollicleDensityU 20;		
+	}
+	if( $forceFactorySettings || 
+		!`optionVar -exists hcPaintFollicleDensityV` )
+	{
+		optionVar -iv hcPaintFollicleDensityV 20;		
+	}
+	if( $forceFactorySettings || 
+		!`optionVar -exists hcPaintPointsPerHair` )
+	{
+		optionVar -iv hcPaintPointsPerHair 6;		
+	}
+	if( $forceFactorySettings || 
+		!`optionVar -exists hcPaintHairLength` )
+	{
+		optionVar -fv hcPaintHairLength 2.0;		
+	}
+
+	// This option var is shared with createHair
+	if($forceFactorySettings || !`optionVar -exists createHairOutput`)
+	{
+		optionVar -intValue  createHairOutput 1;
+	}
+
+
+	if( $forceFactorySettings ){
+		$gHairCurveColor = {1.0,1.0,1.0};
+	}
+}
+
+global proc resetHairCurvePaintOptionVars(string $parent)
+{
+	setOptionVars( true );
+	hairCurvePaintSetupUI( $parent  );
+}
+
+proc string[] getPaintModes()
+{
+	string $attrs[];
+	string $createFollicles		    = (uiRes("m_hairCurvePaint.kCreateFollicles"));
+	string $createPassiveFollicles	= (uiRes("m_hairCurvePaint.kCreatePassiveFollicles"));
+	string $deleteFollicles		    = (uiRes("m_hairCurvePaint.kDeleteFollicles"));
+	string $editFollicle		    = (uiRes("m_hairCurvePaint.kEditFollicleAttributes"));
+	string $trimHairs		        = (uiRes("m_hairCurvePaint.kTrimHairs"));
+	string $extendHairs		        = (uiRes("m_hairCurvePaint.kExtendHairs"));
+	
+	$attrs[size($attrs)]=$createFollicles;
+	$attrs[size($attrs)]=$createPassiveFollicles;
+	$attrs[size($attrs)]=$deleteFollicles;
+	$attrs[size($attrs)]=$editFollicle;
+	$attrs[size($attrs)]=$trimHairs;
+	$attrs[size($attrs)]=$extendHairs;
+	
+	return( $attrs );
+}
+
+
+proc string getCurrentPaintMode()
+//
+//	Description:
+//		Interpretation of the modifier's keys:
+//
+//		operation           modifier key        finalOperation 
+//		-------------------------------------------------------
+//		Create Follicles			CTRL         Delete Follicles
+//		Create Passive Follicles	CTRL         Delete Follicles
+//		Delete Follicles			CTRL         Create Follicles
+//
+{	
+	int $mods = `getModifiers`;
+	int $isControl = false; 		
+ 	if (($mods / 4) % 2)
+ 		$isControl = true;
+
+	string $paintMode = uiRes("m_hairCurvePaint.kCreateFollicles");
+	if (`optionVar -exists hcPaintPaintMode`)
+		$paintMode = `optionVar -query hcPaintPaintMode`;
+	if (!$isControl)
+		return $paintMode;
+		
+	if ($paintMode == (uiRes("m_hairCurvePaint.kCreateFollicles"))
+		 || $paintMode == (uiRes("m_hairCurvePaint.kCreatePassiveFollicles")))
+	{
+		 $paintMode = (uiRes("m_hairCurvePaint.kDeleteFollicles"));
+	}
+	else if ($paintMode == (uiRes("m_hairCurvePaint.kDeleteFollicles")))
+	{
+		$paintMode = (uiRes("m_hairCurvePaint.kCreateFollicles"));
+	}
+	
+	return $paintMode;	
+}
+
+proc string[] paintableFollicleAttrs()
+{
+	string $attrs[];
+	string $clumpWidth			= (uiRes("m_hairCurvePaint.kClumpWidthMult"));
+	string $damp				= (uiRes("m_hairCurvePaint.kDamp"));
+	string $startCurveAttract	= (uiRes("m_hairCurvePaint.kStartCurveAttract"));
+	string $attractionDamp		= (uiRes("m_hairCurvePaint.kAttractionDamp"));
+	string $density				= (uiRes("m_hairCurvePaint.kDensityMult"));
+	string $curl				= (uiRes("m_hairCurvePaint.kCurlMult"));
+	string $clump				= (uiRes("m_hairCurvePaint.kClumpTwistOffset"));
+	string $color				= (uiRes("m_hairCurvePaint.kColorBlend"));
+	string $braid				= (uiRes("m_hairCurvePaint.kBraid"));
+	string $hair				= (uiRes("m_hairCurvePaint.kHairScale"));
+	string $inclination			= (uiRes("m_hairCurvePaint.kInclination"));
+	string $roll				= (uiRes("m_hairCurvePaint.kRoll"));
+	string $polar				= (uiRes("m_hairCurvePaint.kPolar"));
+	string $surface				= (uiRes("m_hairCurvePaint.kSurfaceInset"));
+	string $stiffness			= (uiRes("m_hairCurvePaint.kStiffness"));
+	
+	$attrs[size($attrs)]= $clumpWidth ; 
+	$attrs[size($attrs)]= $damp ;
+	$attrs[size($attrs)]= $startCurveAttract ;
+	$attrs[size($attrs)]= $attractionDamp ;
+	$attrs[size($attrs)]= $density ;
+	$attrs[size($attrs)]= $curl ;
+	$attrs[size($attrs)]= $clump ;
+	$attrs[size($attrs)]= $color ;
+	$attrs[size($attrs)]= $braid ;
+	$attrs[size($attrs)]= $hair ;
+	$attrs[size($attrs)]= $inclination ;
+	$attrs[size($attrs)]= $roll ;
+	$attrs[size($attrs)]= $polar ;
+	$attrs[size($attrs)]= $surface ;
+	$attrs[size($attrs)]= $stiffness ;
+
+	return( $attrs );
+}
+
+
+proc int getCurrentPaintModeIndex()
+{
+	string $mode = `optionVar -query hcPaintPaintMode`;
+	string $modes[] = getPaintModes();
+	int $i;
+	int $numModes = size($modes);
+	for( $i = 0; $i < $numModes; $i++ ){
+		if ( $mode == $modes[$i] ){
+			return $i;
+		}
+	}
+	// else incorrect optionvar setting
+	if($numModes > 0 ){
+		optionVar -sv hcPaintPaintMode $modes[0];
+	}
+	return 0;
+}
+
+proc int getCurrentFollicleAttrIndex()
+{
+	string $mode = `optionVar -query hcPaintFollicleAttribute`;
+	string $modes[] = paintableFollicleAttrs();
+	int $i;
+	int $numModes = size($modes);
+	for( $i = 0; $i < $numModes; $i++ ){
+		if ( $mode == $modes[$i] ){
+			return $i;
+		}
+	}
+	// else incorrect optionvar setting
+	if($numModes > 0 ){
+		optionVar -sv hcPaintFollicleAttributeMenu $modes[0];
+	}
+	return 0;
+}
+
+proc string[] paintableHairSystems()
+{
+	// Return all hair systems currently.
+	// (The one currently on the paint surface will 
+	// be the made the default, if it exists.)
+	string $out[] = `ls -dag -type hairSystem`;
+	return $out;
+}
+
+proc int initHairSystemMenuString( string $entries[], string $paintMode )
+{
+	global string $gHairCurveHairSystems[];
+	int $numActiveSystems = size( $gHairCurveHairSystems );
+	$entries = {};
+	string $createNew = (uiRes("m_hairCurvePaint.kCreateNew"));
+	int $doCreate =  ($paintMode == (uiRes("m_hairCurvePaint.kCreateFollicles")) || $paintMode == (uiRes("m_hairCurvePaint.kCreatePassiveFollicles")));
+	if( $numActiveSystems == 0 || $doCreate){
+		string $psys[] = `ls -dag -type hairSystem`;
+		$entries[0] = $createNew ;
+		for( $i = 0; $i < size ($psys); $i++ ){
+			$entries[$i+1] = $psys[$i];
+		}
+		return (!$doCreate);
+	} else {
+		string $allHairSystem = (uiRes("m_hairCurvePaint.kAllHairSystems"));
+		$entries[0] = $allHairSystem;
+		for( $i = 0; $i < $numActiveSystems; $i++ ){
+			$entries[$i+1] = $gHairCurveHairSystems[$i];
+		}
+		return ( false );	
+	}
+}
+
+proc rebuildHairSystemMenu(
+	string	$parent
+)
+{
+	int		$i;
+	global string $gHairCurveHairSys;
+	global string $gHairCurveHairSystems[];
+	string	$entries[];
+	string $paintMode =	`optionMenuGrp -query -v hcPaintPaintModeMenu`;
+	int $forceCreateMode = initHairSystemMenuString( $entries, $paintMode );
+	if( $forceCreateMode ){
+		$gHairCurveHairSys = "";
+		optionMenuGrp -e -sl 0 hcPaintPaintModeMenu;
+		optionVar -sv hcPaintPaintMode (uiRes("m_hairCurvePaint.kCreateFollicles")) ;
+	}
+	setParent $parent;
+	string $menuName = "hcPaintHairSystemMenu";
+	// add existing hair systems to the place into menu
+	//
+	string	$menus[] = `optionMenuGrp -q -itemListLong $menuName`;
+	int		$doRebuild = true;
+	int $nItems = size( $menus );
+	if( $nItems == size( $entries ) ){
+		$doRebuild = false;
+		// check to see if we need to update
+		int $match = true;
+		for( $i= 0; $i < $nItems; $i++ ){
+			if( $menus[$i] != $entries[$i] ){
+				$doRebuild = true;
+				break;	
+			}
+		}
+	}
+	if( $doRebuild ){
+
+		// get rid of any that are there
+		//
+		for ( $i = 0; $i < $nItems; $i++ ) {
+			deleteUI ($menus[$i]);
+		}
+
+		string	$fullName = `setParent $menuName`;
+
+		$i = 0;
+		setParent -menu ($fullName + "|OptionMenu");
+		for ( $i = 0; $i < size( $entries) ; $i++ ) {
+			menuItem -label $entries[$i] ;
+		}
+		setParent $parent;
+	}
+	if( size($gHairCurveHairSystems) == 0 ){
+		optionMenuGrp -e -enable false hcPaintPaintModeMenu;
+	}
+	if( $gHairCurveHairSys == "" ){
+		optionMenuGrp -e -sl 1 $menuName;
+		optionMenuGrp -e -enable false hcPaintFollicleAttributeMenu;
+	} else {
+		optionMenuGrp -e -enable true hcPaintPaintModeMenu;
+		string $paintMode =	`optionMenuGrp -query -v hcPaintPaintModeMenu`;
+		if( $paintMode == (uiRes("m_hairCurvePaint.kEditFollicleAttributes")) ){
+			optionMenuGrp -e -enable true hcPaintFollicleAttributeMenu;
+		}
+		for( $i= 1; $i < size( $entries ); $i++ ){
+			if( $entries[$i] == $gHairCurveHairSys ){
+				optionMenuGrp -e -sl ($i + 1) $menuName;
+			}
+		}
+	}
+}
+
+global proc hairCurvePaintCheckArray()
+{
+	global string $gHairCurveHairSys;
+	global string $gHairCurveHairSystems[];
+	global string 	$gHairCurveGroup;
+	global string 	$gHairOutCurveGroup;
+	global int 		$gHairCurveStartIndex[];
+	if( $gHairCurveHairSys == "" || $gHairCurveHairSys == (uiRes("m_hairCurvePaint.kAllHairSystems")) ){		
+		return;
+	}
+	if( objExists($gHairCurveHairSys) ){
+		if( ($gHairCurveGroup != "" && !objExists( $gHairCurveGroup ))
+			|| ($gHairOutCurveGroup != "" && !objExists( $gHairOutCurveGroup )) ){
+			// we probably had an undo that delete the current hair system group
+			// setting to null forces it to be recreated
+			$gHairCurveGroup = "";
+			$gHairOutCurveGroup = "";
+		}
+		return;
+	}
+	// probably had an undo that deleted the hair system.. we need to sync up the array
+	string $newArray[];
+	int $count = 0;
+	int $i;
+	for( $i=0; $i < size( $gHairCurveHairSystems ); $i++ ){
+		if( objExists($gHairCurveHairSystems[$i]) ){
+			$newArray[$count] = $gHairCurveHairSystems[$i];
+			$count++;
+		}
+	}
+	$gHairCurveHairSystems = $newArray;
+	$gHairCurveHairSys = "";
+	$gHairCurveStartIndex[0] = 0;	
+	$gHairCurveGroup = "";
+	$gHairOutCurveGroup = "";
+}
+
+global proc hairCurvePaintSetupUI(string $parent )
+{
+	global float $gHairCurveColor[];
+	hairCurvePaintCheckArray();
+
+	setOptionVars(false);
+	setParent $parent;
+	// this is called on initial setup and when the selection changes
+	optionMenuGrp -e -sl  (getCurrentPaintModeIndex()+1) hcPaintPaintModeMenu;
+	optionMenuGrp -e -sl  (getCurrentFollicleAttrIndex()+1) hcPaintFollicleAttributeMenu;
+	optionMenuGrp -edit 
+		-sl `optionVar -query createHairOutput`
+		hcPaintOutput;
+
+	intFieldGrp -e -v1 `optionVar -query hcPaintFollicleDensityU`
+						hcPaintFollicleDensityU;
+	intFieldGrp -e -v1 `optionVar -query hcPaintFollicleDensityV`
+						hcPaintFollicleDensityV;
+	intSliderGrp -e -v `optionVar -query hcPaintPointsPerHair`
+						hcPaintPointsPerHair;
+	floatSliderGrp -e -v `optionVar -query hcPaintHairLength`
+						hcPaintHairLength;
+	colorSliderGrp -e -rgb  $gHairCurveColor[0]
+							$gHairCurveColor[1]
+							$gHairCurveColor[2] hcPaintHairColor;
+	rebuildHairSystemMenu( $parent );
+}
+
+// This sets the option vars from the UI.
+//
+global proc hairCurvePaintEditorCallback( string $parent  )
+{
+	global string 	$gHairCurveHairSys;
+	global string 	$gHairCurveHairSystems[];
+	global int 		$gHairCurveStartIndex[];
+	global float  	$gHairCurveColor[];
+	global string 	$gHairCurveGroup;
+	global string 	$gHairOutCurveGroup;
+
+	setParent $parent;
+	int $hasActiveHsys = (size( $gHairCurveHairSystems ) > 0 );
+	string $paintMode =	`optionMenuGrp -query -v hcPaintPaintModeMenu`;
+	string $oldPaintMode = `optionVar -query hcPaintPaintMode`;
+	
+
+	if( !$hasActiveHsys && $paintMode != (uiRes("m_hairCurvePaint.kCreateFollicles")) ){
+		optionMenuGrp -e -sl 0 hcPaintPaintModeMenu;
+		$paintMode = (uiRes("m_hairCurvePaint.kCreateFollicles"));
+	}
+	optionVar -sv hcPaintPaintMode	$paintMode;	
+	int $create = ($paintMode == (uiRes("m_hairCurvePaint.kCreateFollicles")) || $paintMode == (uiRes("m_hairCurvePaint.kCreatePassiveFollicles")));
+	int $oldCreate = ($oldPaintMode == (uiRes("m_hairCurvePaint.kCreateFollicles")) || $oldPaintMode == (uiRes("m_hairCurvePaint.kCreatePassiveFollicles")));
+	if( $oldCreate != $create ){	
+		rebuildHairSystemMenu( $parent );
+	}
+	int $follicleEdit = ($paintMode == (uiRes("m_hairCurvePaint.kEditFollicleAttributes")));
+	optionMenuGrp -e -enable $follicleEdit hcPaintFollicleAttributeMenu;
+	int $follicleDelete = ($paintMode == (uiRes("m_hairCurvePaint.kDeleteFollicles")));
+
+	string $follicleAttr =	`optionMenuGrp -query -v hcPaintFollicleAttributeMenu`;
+	optionVar -sv hcPaintFollicleAttribute $follicleAttr;		
+	string $newSys = `optionMenuGrp -query -v hcPaintHairSystemMenu`;
+	if( $newSys != $gHairCurveHairSys ){
+		$gHairCurveStartIndex[0] = 0;	
+		$gHairCurveGroup = "";
+		$gHairOutCurveGroup = "";
+		$gHairCurveHairSys = $newSys;
+	}
+	optionMenuGrp -e -enable $hasActiveHsys hcPaintPaintModeMenu;
+	if( $newSys == (uiRes("m_hairCurvePaint.kCreateNew")) ){			
+		if( !$create ){
+			optionVar -sv hcPaintPaintMode	(uiRes("m_hairCurvePaint.kCreateFollicles"));	
+			optionMenuGrp -e -sl  1 hcPaintPaintModeMenu;
+			$create = true;
+		}
+		$gHairCurveHairSys = "";
+	}
+
+	optionVar -intValue createHairOutput
+		`optionMenuGrp -query -sl hcPaintOutput`;
+	optionMenuGrp -e -enable $create hcPaintOutput;
+
+	optionVar -iv hcPaintFollicleDensityU 
+		`intFieldGrp -q -v1 hcPaintFollicleDensityU`;		
+	intFieldGrp -e -enable $create hcPaintFollicleDensityU;		
+	optionVar -iv hcPaintFollicleDensityV 
+		`intFieldGrp -q -v1 hcPaintFollicleDensityV`;		
+	intFieldGrp -e -enable $create hcPaintFollicleDensityV;		
+	optionVar -iv hcPaintPointsPerHair 
+		`intSliderGrp -q -v hcPaintPointsPerHair`;		
+	intSliderGrp -e -enable (!($follicleEdit||$follicleDelete))  hcPaintPointsPerHair;		
+	optionVar -fv hcPaintHairLength 
+		`floatSliderGrp -q -v hcPaintHairLength`;		
+	floatSliderGrp -e -enable (!($follicleEdit||$follicleDelete))  hcPaintHairLength;		
+	$gHairCurveColor = 
+		`colorSliderGrp -q -rgb hcPaintHairColor`;		
+	colorSliderGrp -e -enable 
+		($follicleEdit &&($follicleAttr == (uiRes("m_hairCurvePaint.kColorBlend"))))
+		hcPaintHairColor;		
+
+}
+
+
+
+// This procedure creates the dialog box used to control various
+// parameters that control what happens when painting.
+//
+proc hairCurvePaintUI( string $context )
+{
+  	if ( `window -ex HcPaintSettingsWindow` ) {
+  		deleteUI HcPaintSettingsWindow;
+  	}
+  
+  	setUITemplate -pushTemplate DefaultTemplate;
+  	window -menuBar true -title (uiRes("m_hairCurvePaint.kPaintHairSettings")) HcPaintSettingsWindow;
+  	string $parent = `columnLayout -adj false -cal left`;
+
+	menu -label (uiRes("m_hairCurvePaint.kEdit")) -tearOff true;
+		menuItem -label (uiRes("m_hairCurvePaint.kReset")) -command ("resetHairCurvePaintOptionVars \"" + $parent + "\"");
+
+	int $i;
+  	string $paintModes[] = getPaintModes();
+	optionMenuGrp -label (uiRes("m_hairCurvePaint.kPaintMode")) 
+		-cal 1 right
+		-cc ("hairCurvePaintEditorCallback \"" + $parent + "\"")
+		hcPaintPaintModeMenu;
+		for( $i = 0; $i < size( $paintModes ); $i++ ){
+			menuItem -label $paintModes[$i];
+		}
+
+	string $follicleAttrs[] = paintableFollicleAttrs();
+	optionMenuGrp -label (uiRes("m_hairCurvePaint.kFollicleAttribute")) 
+		-cal 1 right
+		-cc ("hairCurvePaintEditorCallback \"" + $parent + "\"")
+		hcPaintFollicleAttributeMenu;
+		for( $i = 0; $i < size( $follicleAttrs ); $i++ ){
+			menuItem -label $follicleAttrs[$i];
+		}
+
+	string $hairSystems[] = paintableHairSystems();
+	optionMenuGrp -label (uiRes("m_hairCurvePaint.kHairSystem")) 
+		-cal 1 right
+		-cc ("hairCurvePaintEditorCallback \"" + $parent + "\"")
+		hcPaintHairSystemMenu;
+		menuItem -label (uiRes("m_hairCurvePaint.kCreateNew"));
+		for( $i = 0; $i < size( $hairSystems ); $i++ ){
+			menuItem -label $hairSystems[$i];
+		}
+
+	optionMenuGrp -label (uiRes("m_hairCurvePaint.kOutput"))
+		-cw 2 246
+		-cal 1 right
+		-cc ("hairCurvePaintEditorCallback \"" + $parent + "\"")
+		hcPaintOutput;
+		menuItem -label (uiRes("m_hairCurvePaint.kPaintEffects"));
+		menuItem -label (uiRes("m_hairCurvePaint.kNURBSCurves"));
+		menuItem -label (uiRes("m_hairCurvePaint.kPaintEffectsAndNURBS"));
+	
+	
+	intFieldGrp -label (uiRes("m_hairCurvePaint.kFollicleDensityU")) -cal 1 right -numberOfFields 1 
+		-cc ("hairCurvePaintEditorCallback \"" + $parent + "\"")
+		hcPaintFollicleDensityU;
+	intFieldGrp -label (uiRes("m_hairCurvePaint.kFollicleDensityV")) -cal 1 right -numberOfFields 1 
+		-cc ("hairCurvePaintEditorCallback \"" + $parent + "\"")
+		hcPaintFollicleDensityV;
+	intSliderGrp
+		-label (uiRes("m_hairCurvePaint.kPointsPerHair"))
+		-cc ("hairCurvePaintEditorCallback \"" + $parent + "\"")
+		-field 1
+		-min 0 
+		-max 100
+		-fieldMinValue 0
+		-fieldMaxValue 100000
+		hcPaintPointsPerHair;
+
+	floatSliderGrp
+		-label (uiRes("m_hairCurvePaint.kHairLength"))
+		-cc ("hairCurvePaintEditorCallback \"" + $parent + "\"")
+		-field 1
+		-min 0.001 
+		-max 10.0 
+		-fieldMinValue 0.0001
+		-fieldMaxValue 100000.0
+		-pre 3
+		hcPaintHairLength;
+
+
+/*
+	intFieldGrp -label (uiRes("m_hairCurvePaint.kMaxFollicleDensity"))  -cal 1 left -numberOfFields 1 
+		-cc ("hairCurvePaintMaxDensityCallback " + $parent)
+		hcPaintMaxFollicleDensity;
+*/
+
+
+	colorSliderGrp
+		-label (uiRes("m_hairCurvePaint.kFollicleOverrideColor"))
+		-cc ("hairCurvePaintEditorCallback \"" + $parent + "\"")
+		-rgb 1 1 1
+		hcPaintHairColor;
+
+	
+  	setParent ..;
+  	showWindow;
+  	setUITemplate -popTemplate;
+  
+  	// attach some script jobs to keep the dialog up to date
+  	//
+  	scriptJob -p HcPaintSettingsWindow -e "SelectionChanged" ("hairCurvePaintSetupUI \"" + $parent + "\"");
+  	// scriptJob -p HcPaintSettingsWindow -dri -ac (getHairGlobalsProtectPlug(true))
+	//					("HfPaintHairAttrCheck " + $context);
+
+	// make sure everything is ready for painting
+	//
+	hairCurvePaintSetupUI( $parent );
+	hairCurvePaintEditorCallback( $parent );
+
+}
+
+proc string[] findHairSystemsOnSurfaces( string $objs[] )
+{
+	string $out[];
+	int $numSystems = 0;
+	string $con[];
+	for( $obj in $objs ){
+		string $nType = `nodeType $obj`;
+		if ( $nType == "nurbsSurface" ){
+			$con = `listConnections -sh 1 ($obj + ".local")`;
+		} else if( $nType == "mesh" ){ // mesh
+			$con = `listConnections -sh 1 ($obj + ".outMesh")`;
+		} else {
+			continue;
+		}
+		int $i,$j,$k;
+		for( $i = 0; $i < size($con); $i++ ){
+			string $hc = $con[$i];
+			string $nType = `nodeType $hc`;
+			if( $nType == "follicle"){
+				string $hcon[] = `listConnections -sh 1 ($hc + ".outHair")`;	
+				for( $j = 0; $j < size($hcon); $j++ ){
+					$nType = `nodeType $hcon[$j]`;
+					if( $nType == "hairSystem" ){
+						string $hsys = $hcon[$j];
+
+						for( $k = 0; $k < $numSystems; $k++ ){
+							if( $out[$k] == $hsys ){
+								break;
+							}
+						}
+						if( $k == $numSystems ){
+							$out[$numSystems] = $hsys;
+							$numSystems++;
+						}
+					}
+				}
+			}
+		}
+	}
+	return $out;
+}
+
+proc string [] getHairGroupNames( string $hsys, string $obj )
+{
+	// search for existing follicles on surface
+	string $out[] = {"",""};
+	string $con[];
+	string $nType = `nodeType $obj`;
+	if ( $nType == "nurbsSurface" ){
+		$con = `listConnections -sh 1 ($obj + ".local")`;
+	} else if( $nType == "mesh" ){ // mesh
+		$con = `listConnections -sh 1 ($obj + ".outMesh")`;
+	} else {
+		return $out;
+	}
+	int $i,$j;
+	for( $i = 0; $i < size($con); $i++ ){
+		string $hc = $con[$i];
+		string $nType = `nodeType $hc`;
+		if( $nType == "follicle"){
+			string $hcon[] = `listConnections -sh 1 ($hc + ".outHair")`;	
+			for( $j = 0; $j < size($hcon); $j++ ){
+				$nType = `nodeType $hcon[$j]`;
+				if( $nType == "hairSystem" ){
+					if( $hcon[$j] == $hsys ){
+						// We have a follicle on the passed in object
+						// belonging to the passed in hairSystem.
+						// We now find the parent group, if any, of
+						// the follicle.
+						string $tforms[] = `listTransforms $hc`;
+						if( size($tforms) >0 ){
+							$tforms = `listTransforms $tforms[0]`;				
+							if( size( $tforms ) > 0 ){
+								$out[0] = $tforms[0];
+							}
+						}
+						// find the out parent group for the follicle outCurve
+						string $outCon[] = `listConnections -sh 1 ($hc + ".outCurve")`;	
+						if( size( $outCon ) > 0 ){
+							$tforms = `listTransforms $outCon[0]`;
+							if( size($tforms) >0 ){
+								$tforms = `listTransforms $tforms[0]`;				
+								if( size( $tforms ) > 0 ){
+									$out[1] = $tforms[0];
+								}
+							}
+						}
+						break;
+					}	
+				}
+			}
+		}
+	}
+	return $out;
+}
+
+
+proc setInitialHairSystem( string $context )
+{
+	global string $gHairCurveHairSys;
+	global string $gHairCurveGroup;
+	global string $gHairOutCurveGroup;
+//	string $nodelist = `artUserPaintCtx -q -paintNodeArray $context`;
+//	string $paintObjs[];
+//	tokenizeList( $nodelist, $paintObjs );
+	global string $gHairCurveHairSystems[];
+	
+	int $i;
+	string $hairSys = "";
+	string $paintObjs[] = `ls -sl -dag -leaf`;
+	$gHairCurveHairSystems = findHairSystemsOnSurfaces( $paintObjs );
+	for( $i = 0; $i < size( $gHairCurveHairSystems ); $i++ ){
+		$hairSys = $gHairCurveHairSystems[$i];
+		// attempt to preserve previous hair system
+		if( $hairSys == $gHairCurveHairSys ){
+			break;
+		} 
+	}
+	if( $gHairCurveHairSys != $hairSys ){
+		$gHairCurveStartIndex[0] = 0;
+		$gHairCurveGroup = "";
+		$gHairOutCurveGroup = "";
+	}
+	$gHairCurveHairSys = $hairSys;
+
+	float $startSimFrame = 1.0;
+	if( $hairSys == "" ){
+		// force paint mode to be create new
+		optionVar -sv hcPaintPaintMode (uiRes("m_hairCurvePaint.kCreateFollicles")) ;		
+	} else {
+		$startSimFrame = getAttr( $hairSys + ".startFrame" );
+	}
+	float $curFrame = `currentTime -q`;	
+	if( $curFrame > $startSimFrame ){
+		warning (uiRes("m_hairCurvePaint.kWarnMsg"));
+	}
+}
+
+proc selectHairPaintObjects()
+{
+	// We select all surfaces that are directly
+	// selected, or indirectly selected through
+	// the hair elements: curves, follicles, hairSystems, and pfxHairs 
+
+	string $surfaces[] =  `ls -sl -dag -type nurbsSurface -type mesh`;
+	int $numSurfaces = size( $surfaces );
+	string $hCurves[] = getSelectedHairCurves();
+	int $numHairCurves = size( $hCurves );
+	int $i, $j, $k;
+	string $hsys[] = `ls -sl -dag -type hairSystem`;
+	int $numHairSystems = size( $hsys );
+	string $pfxHair[] = `ls -sl -dag -type pfxHair`;
+	for( $i = 0; $i < size( $pfxHair ); $i++ ){
+		string $inputHairSystem = sourceNodeNameFromConnection( 
+						$pfxHair[$i] + ".renderHairs" );
+		for( $k = 0; $k < $numHairSystems; $k++ ){
+			if( $hsys[$k] == $inputHairSystem ){
+				break;
+			}
+		}
+		if( $k == $numHairSystems ){
+			$hsys[$numHairSystems] = $inputHairSystem;
+			$numHairSystems++;
+		}
+	}
+	for( $i = 0; $i < $numHairSystems; $i++ ){
+		string $hsysInput = ($hsys[$i] + ".inputHair");
+		int $numInputHairs = `getAttr -size $hsysInput`;
+		
+		for( $j = 0; $j < $numInputHairs; $j++ ){
+			string $inputHairCurve = sourceNodeNameFromConnection( 
+								$hsysInput +"[" + $j + "]" );
+		
+			if( $inputHairCurve != "" ){
+				for( $k = 0; $k < $numHairCurves; $k++ ){
+					if( $hCurves[$k] == $inputHairCurve ){
+						break;
+					}
+				}
+				if( $k == $numHairCurves ){
+					$hCurves[$numHairCurves] = $inputHairCurve;
+					$numHairCurves++;
+				}
+			}
+		}
+	}
+
+	// select the surfaces the hair curves are on
+	for( $i = 0; $i < $numHairCurves; $i++ ){
+		string $inputSurface = sourceNodeNameFromConnection( 
+									$hCurves[$i] + ".inputSurface" );
+		if( $inputSurface == "" ){
+			$inputSurface = sourceNodeNameFromConnection( 
+									$hCurves[$i] + ".inputMesh" );
+		}
+		if( $inputSurface != "" ){
+			int $match = false;
+			for( $j = 0; $j < $numSurfaces; $j++ ){
+				if( $inputSurface == $surfaces[$j] ){
+					$match = true;
+					break;
+				}
+			}
+			if( !$match ){
+				$surfaces[$numSurfaces] = $inputSurface;
+				$numSurfaces++;
+			}
+		}
+	} 	
+	if( $numSurfaces == 0 ){
+		warning (uiRes("m_hairCurvePaint.kPaintHairMsg"));
+		return; 
+	}
+	select -r $surfaces;
+	
+}
+
+
+// This procedure should be set as the "Tool Setup Cmd" in the 
+// Setup tab of the Maya Artisan Script Paint tool's tool settings
+// window. The tool context is supplied as an argument.
+//
+global proc hairCurvePaint( string $context )
+{
+	selectHairPaintObjects();
+	setOptionVars( false );
+	setInitialHairSystem($context);
+	// initialize all the other commands in this scriptable 
+	// paint tool context.
+	// 
+	artUserPaintCtx -e
+		-ic "initHairPaint"
+		-i1 "hairPaint.png"
+		-fc "finishHairPaint"
+		-svc "setHairPaintValue"
+		-gvc "getHairPaintValue"
+		-gsc ""
+		-cc ""
+		-tcc "cleanupHairPaint"
+		-gac ""
+		$context;
+
+
+    // create the dialog box to control various parameters
+    //
+    hairCurvePaintUI( $context );
+}
+
+
+// This is the "Tool Cleanup Cmd". It is called when the tool is
+// exited. In this case, the special dialog window that was created
+// is deleted
+//
+global proc cleanupHairPaint( string $context )
+{
+    if ( `window -ex HcPaintSettingsWindow` ) {
+        deleteUI HcPaintSettingsWindow;
+    }
+}
+
+
+// This is the "Initialize Cmd". This procedure is called once
+// for every selected surface when an intial click is received
+// on any surface. The argument is the name of the surface. This
+// procedure returns a string which indicates to the scriptable
+// tool how to behave for the duration of the stroke. 
+//
+global proc string initHairPaint( string $name )
+{
+	global string $hairCurveNamePrefix[];
+	global int $hairCurvePaintFreeSlot;
+	global int $hairCurvePaintSlots;
+	global string $gHairCurvePaintSurface;
+	global int $gHairCurvePaintMaxDensity;
+	global int $gHairCurvePaintUSkip;
+	global int $gHairCurvePaintVSkip;
+
+	int $slot;
+
+	$gHairCurvePaintSurface = $name;
+	hairCurvePaintCheckArray(); // make sure the paint system array exists
+
+	// find a free slot for this surface in the global arrays
+	//
+	for ( $slot = $hairCurvePaintFreeSlot; $slot < $hairCurvePaintSlots; $slot++ ) {
+		if ( $hairCurveNamePrefix[$slot] == "" ) {
+			break;
+		}
+	}  
+
+	if ( $slot == $hairCurvePaintSlots ) {
+		$hairCurvePaintSlots++;
+		$hairCurvePaintFreeSlot = $hairCurvePaintSlots;
+	}
+
+	if ( `nodeType $name` == "nurbsSurface" || `nodeType $name` == "mesh" ) 
+	{
+		// save the name of the parent of this shape as well
+		// as a prefix to use when creating the hairCurves
+		//
+		string $parent[] = `listRelatives -p $name`;
+		$hairCurveNamePrefix[$slot] = $parent[0] + "Follicle";
+	}
+
+
+	// Return an argument string which:
+	// - tells the tool what surface ID to use for this surface
+	// - indicates that values should be distributed on a 20x20
+	//   grid on the surface
+	// - indicate that the associated world space position
+	//   should also be passed to the "Set Value Cmd".
+	//
+	
+	if(!`optionVar -exists createHairMaxDensity`){
+		optionVar -intValue createHairMaxDensity 100;
+	}
+	$gHairCurvePaintMaxDensity = `optionVar -query createHairMaxDensity`;
+
+	int $uDensity = `optionVar -query hcPaintFollicleDensityU`;
+	if( $uDensity < 1 ){
+		$uDensity = 1;
+	}
+	$gHairCurvePaintUSkip = $gHairCurvePaintMaxDensity/$uDensity; 
+	int $vDensity = `optionVar -query hcPaintFollicleDensityV`;
+	if( $vDensity < 1 ){
+		$vDensity = 1;
+	}
+	$gHairCurvePaintVSkip = $gHairCurvePaintMaxDensity/$vDensity; 
+	if( $gHairCurvePaintUSkip < 1 ){
+		 $gHairCurvePaintUSkip = 1;
+	}
+	if( $gHairCurvePaintVSkip < 1 ){
+		 $gHairCurvePaintVSkip = 1;
+	}
+	return ( "-id " + $slot
+		   + " -grid " + $gHairCurvePaintMaxDensity 
+		         + " " + $gHairCurvePaintMaxDensity
+		   + " -uv surface"
+		   + " -position world");
+}
+
+// This is the "Finalize Cmd". This procedure is called at the
+// end of the stroke. It is passed the surface ID, that was
+// generated by the "Initialize Cmd".
+//
+global proc finishHairPaint( int $slot )
+{
+	global string $hairCurveNamePrefix[];
+	global int $hairCurvePaintFreeSlot;
+	global string $gHairCurveHairSys;
+/*
+	global string $gHairCurveHairSys;
+	
+	if( $gHairCurveHairSys != "" ){
+		setAttr ( $gHairCurveHairSys + ".nodeState") 0;
+	}
+*/
+
+	// clear out the slot that was used for this surface
+	//
+	$hairCurveNamePrefix[$slot] = "";
+	if ( $slot < $hairCurvePaintFreeSlot ) {
+		$hairCurvePaintFreeSlot = $slot;
+	}
+
+	if( $gHairCurveHairSys != "" ){
+		string $paintMode = getCurrentPaintMode();
+		if( $paintMode == (uiRes("m_hairCurvePaint.kCreateFollicles")) || $paintMode == (uiRes("m_hairCurvePaint.kCreatePassiveFollicles")) ){
+			displayHairCurves( "current", true );
+		}
+	}
+}
+
+proc float[] normalizeUV( float $u, float $v, string $nurbsSurf )
+{
+	float $out[];
+
+	$out[0] = $u;
+	$out[1] = $v;
+	if ( `nodeType $nurbsSurf` != "nurbsSurface" ){
+		return $out;
+	}
+
+	float	$minU = getAttr( $nurbsSurf+".minValueU" );
+	float	$minV = getAttr( $nurbsSurf+".minValueV" );
+	float	$rangeU = getAttr( $nurbsSurf+".maxValueU" ) - $minU;
+	float	$rangeV = getAttr( $nurbsSurf+".maxValueV" ) - $minV;
+	$out[0] = ($u - $minU)/ $rangeU;
+	$out[1] = ($v - $minV)/ $rangeV;
+
+	return( $out );	
+}
+
+proc string getStartHairCurve( string $follicle )
+{
+	string $out = "";
+	
+	string $start[] = `listConnections -sh 1 ($follicle + ".startPosition")`;
+	int $j;
+	for( $j = 0; $j < size( $start); $j++ ){
+		string $nType = `nodeType $start[$j]`;
+		if( $nType == "nurbsCurve"){
+			return $start[$j];
+		}
+	}
+	return "";
+}
+
+proc editFollicle( string $objname, float $val )
+{
+	global float $gHairCurveColor[];
+	string $follicleAttr = `optionVar -query hcPaintFollicleAttribute`;
+	if( $follicleAttr == (uiRes("m_hairCurvePaint.kClumpWidthMult")) ){
+		if( $val < 0.0 ){
+			$val = 0.0;
+		}
+		setAttr ($objname + ".clumpWidthMult") $val;
+	}else if( $follicleAttr == "Damp" ){
+		if( $val < 0.0 ){
+			$val = 0.0;
+		}
+		setAttr ($objname + ".damp") $val;
+	}else if( $follicleAttr == "Start Curve Attract" ){
+		if( $val < 0.0 ){
+			$val = 0.0;
+		}
+		setAttr ($objname + ".startCurveAttract") $val;
+	}else if( $follicleAttr == "Attraction Damp" ){
+		setAttr ($objname + ".attractionDamp") $val;
+	}else if( $follicleAttr == (uiRes("m_hairCurvePaint.kDensityMult")) ){
+		if( $val < 0.0 ){
+			$val = 0.0;
+		}
+		setAttr ($objname + ".densityMult") $val;
+	}else if( $follicleAttr == (uiRes("m_hairCurvePaint.kCurlMult")) ){
+		setAttr ($objname + ".curlMult") $val;
+	}else if( $follicleAttr == (uiRes("m_hairCurvePaint.kClumpTwistOffset")) ){
+		setAttr ($objname + ".clumpTwistOffset") $val;
+	}else if( $follicleAttr == (uiRes("m_hairCurvePaint.kColorBlend")) ){
+		setAttr ($objname + ".colorBlend") $val;
+		setAttr ($objname + ".color") -type "float3"
+			$gHairCurveColor[0] 
+			$gHairCurveColor[1] 
+			$gHairCurveColor[2];
+	}else if( $follicleAttr == (uiRes("m_hairCurvePaint.kBraid")) ){
+		if( $val > 0.5 ){
+			setAttr ($objname + ".braid") true;
+		} else {
+			setAttr ($objname + ".braid") false;
+		}
+	}else if( $follicleAttr == (uiRes("m_hairCurvePaint.kHairScale")) ){
+		setAttr ($objname + ".scale") -type "double3" $val $val $val;
+	}else if( $follicleAttr == (uiRes("m_hairCurvePaint.kInclination"))
+			|| $follicleAttr == (uiRes("m_hairCurvePaint.kRoll"))
+			|| $follicleAttr == (uiRes("m_hairCurvePaint.kPolar")) ) {
+		string $curve = getStartHairCurve( $objname );
+		if( $curve != "" ){
+			string $tforms[] = `listTransforms $curve`;
+			string $tform = $tforms[0];
+			if( $val > 1.0 ){
+				$val = 1.0;
+			} else if( $val < 0.0 ){
+				$val = 0.0;
+			}
+			$val = ($val -0.5) * 180.0;
+			if( $follicleAttr == (uiRes("m_hairCurvePaint.kInclination")) ){
+				setAttr ($tform + ".rotateX") $val ;
+			} else if( $follicleAttr == (uiRes("m_hairCurvePaint.kRoll")) ){
+				setAttr ($tform + ".rotateY") $val ;
+			} else if( $follicleAttr == (uiRes("m_hairCurvePaint.kPolar")) ){
+				setAttr ($tform + ".rotateZ") $val ;
+			}
+		}
+	}else if( $follicleAttr == (uiRes("m_hairCurvePaint.kSurfaceInset")) ){
+		string $curve = getStartHairCurve( $objname );
+		if( $curve != ""){
+			string $tforms[] = `listTransforms $curve`;
+			setAttr ($tforms[0] + ".translateZ") (-1.0 * $val);
+		}
+	}else if( $follicleAttr == (uiRes("m_hairCurvePaint.kStiffness")) ){
+		if( $val > 1.0 ){
+			$val = 1.0; // for stability
+		} else if( $val < 0.0 ){
+			$val = 0.0;
+		}
+		setAttr ($objname + ".stiffness") $val;
+	} else {
+		string $message = (uiRes("m_hairCurvePaint.kUnknownAttribute"));
+		string $displayMessage = `format -s $follicleAttr $message`;
+		warning( $displayMessage );
+	}
+}
+
+proc float editFollicleValue( string $objname )
+{
+	global string $gHairCurveHairSys;
+
+	string $follicleAttr = `optionVar -query hcPaintFollicleAttribute`;
+	if( $follicleAttr == (uiRes("m_hairCurvePaint.kClumpWidthMult")) ){
+		return( getAttr( $objname + ".clumpWidthMult") );
+	}else if( $follicleAttr == "Damp" ){
+		float $damp = getAttr( $objname + ".damp");
+		int $override = getAttr( $objname + ".overrideDynamics");
+		if( !$override ){
+			// We need to enable the override for damp changes
+			// on the follicle to have an effect. We initially set
+			// the damp value of the hairSystem damp, so there
+			// is a continuity of the relative change in effect.
+			//
+			setAttr ( $objname + ".overrideDynamics") true;
+			if( $gHairCurveHairSys != "" ){
+				$damp = getAttr( $gHairCurveHairSys + ".damp");
+				setAttr ( $objname + ".damp") $damp;
+			}
+		}
+		return( $damp );
+	}else if( $follicleAttr == "Start Curve Attract" ){
+		return( getAttr( $objname + ".startCurveAttract") );
+	}else if( $follicleAttr == "Attraction Damp" ){
+		return( getAttr( $objname + ".attractionDamp") );
+	}else if( $follicleAttr == (uiRes("m_hairCurvePaint.kDensityMult")) ){
+		return( getAttr( $objname + ".densityMult") );
+	}else if( $follicleAttr == (uiRes("m_hairCurvePaint.kCurlMult")) ){
+		return( getAttr( $objname + ".curlMult") );
+	}else if( $follicleAttr == (uiRes("m_hairCurvePaint.kClumpTwistOffset")) ){
+		return( getAttr( $objname + ".clumpTwistOffset") );
+	}else if( $follicleAttr == (uiRes("m_hairCurvePaint.kColorBlend")) ){
+		return( getAttr( $objname + ".colorBlend") );
+	}else if( $follicleAttr == (uiRes("m_hairCurvePaint.kBraid")) ){
+		return( (float)getAttr( $objname + ".braid") );
+	}else if( $follicleAttr == (uiRes("m_hairCurvePaint.kHairScale")) ){
+		return( getAttr( $objname + ".scaleX") );
+	}else if( $follicleAttr == (uiRes("m_hairCurvePaint.kInclination"))
+			|| $follicleAttr == (uiRes("m_hairCurvePaint.kRoll"))
+			|| $follicleAttr == (uiRes("m_hairCurvePaint.kPolar")) ) {
+		string $curve = getStartHairCurve( $objname );
+		if( $curve != "" ){
+			string $tforms[] = `listTransforms $curve`;
+			string $tform = $tforms[0];
+			float $val;
+			if( $follicleAttr == (uiRes("m_hairCurvePaint.kInclination")) ){
+				$val = getAttr ($tform + ".rotateX");
+			} else if( $follicleAttr == (uiRes("m_hairCurvePaint.kRoll")) ){
+				$val = getAttr ($tform + ".rotateY");
+			} else if( $follicleAttr == (uiRes("m_hairCurvePaint.kPolar")) ){
+				$val = getAttr ($tform + ".rotateZ");
+			}
+			$val = $val/180.0 + 0.5;
+			return( $val );
+		} else {
+			return( 0 );
+		}
+	}else if( $follicleAttr == (uiRes("m_hairCurvePaint.kSurfaceInset")) ){
+		string $curve = getStartHairCurve( $objname );
+		if( $curve != "" ){
+			string $tforms[] = `listTransforms $curve`;
+			float $val;
+			$val = getAttr ($tforms[0] + ".translateZ");
+			$val *= -1.0;
+			return( $val );
+		} else {
+			return( 0 );
+		}
+	}else if( $follicleAttr == (uiRes("m_hairCurvePaint.kStiffness")) ){
+
+		float $stiff = getAttr( $objname + ".stiffness");
+		int $override = getAttr( $objname + ".overrideDynamics");
+		if( !$override ){
+			// We need to enable the override for stiffness changes
+			// on the follicle to have an effect. We initially set
+			// the stiffness to the hairSystem stiffness, so there
+			// is a continuity of the relative change in effect.
+			setAttr ( $objname + ".overrideDynamics") true;
+			if( $gHairCurveHairSys != "" ){
+				$stiff = getAttr( $gHairCurveHairSys + ".stiffness");
+				setAttr ( $objname + ".stiffness") $stiff;
+			}
+		}
+		return( $stiff );
+	}
+	string $message = (uiRes("m_hairCurvePaint.kUnknownFollicleAttr"));
+	string $displayMsg = `format -s $follicleAttr $message`;
+	warning( $displayMsg );
+	return(0.0);
+}
+
+proc trimHair( string $objname, float $val )
+{
+	string $startCurve = getStartHairCurve( $objname );
+	if( $startCurve == "" ){
+		return;
+	}
+	int $segmentsPerHair = `optionVar -query hcPaintPointsPerHair`;
+	if( $segmentsPerHair > 0 ){
+		int $newCvs = $val * ((float)$segmentsPerHair + 0.1);
+		if( $newCvs < 2 ){
+			// limit hairs to have at least 2 cvs
+			$newCvs = 2;
+		} 
+		int $cvs = `getAttr -size ($startCurve + ".cp")`;
+		int $reduce = $cvs-$newCvs;
+		if( $reduce > 1 ){
+			delete ($startCurve + ".cv["+$newCvs+":"+($cvs-1)+"]");
+		} else if( $reduce == 1 ){
+			delete ($startCurve + ".cv["+($cvs-1)+"]");
+		}
+	}
+}
+
+proc float trimHairValue( string $objname )
+{
+	string $startCurve = getStartHairCurve( $objname );
+	if( $startCurve == "" ){
+		return 0;
+	}
+	int $segmentsPerHair = `optionVar -query hcPaintPointsPerHair`;
+	if( $segmentsPerHair > 0 ){
+		int $cvs = `getAttr -size ($startCurve + ".cp")`;
+		float $val = (float)$cvs/(float)$segmentsPerHair;
+		return( $val );
+	} else {
+		return 0;
+	}
+}
+
+proc extendHair( string $objname, float $val )
+{
+	string $startCurve = getStartHairCurve( $objname );
+	if( $startCurve == "" ){
+		return;
+	}
+	int $segmentsPerHair = `optionVar -query hcPaintPointsPerHair`;
+	if( $segmentsPerHair > 0 ){
+		int $newSegments = $val * ((float)$segmentsPerHair + 0.1);
+		if( $newSegments < 1 ){
+			$newSegments = 1;
+		} 
+		int $cvs = `getAttr -size ($startCurve + ".cp")`;
+		if( $cvs < 1 ){
+			string $warn = (uiRes("m_hairCurvePaint.kWarn")); 
+			string $msg  = `format -s $startCurve $warn`;
+			warning( $msg );
+			return;
+		}
+		if( $newSegments > $cvs ){
+			if( $cvs < 2 ){
+				// get new span length from create hair length attrs
+				float $hairLength = `optionVar -query hcPaintHairLength`;
+				$spanSize = $hairLength/(float)$segmentsPerHair;
+				float $pnt[] = getAttr ($startCurve + ".cv[0]");
+				int $i;
+				for( $i = 0 ; $i < $newSegments-$cvs; $i++) {
+					$pnt[2] += $spanSize;
+					curve -os -a -p $pnt[0] $pnt[1] $pnt[2] $startCurve;	
+				}
+			} else {
+				// get new span points from previous span
+				float $points[] = getAttr ($startCurve 
+						+ ".cv["+($cvs-2)+":"+($cvs-1)+"]"); 
+				float $pnt[3];
+				$pnt[0] = $points[3];
+				$pnt[1] = $points[4];
+				$pnt[2] = $points[5];
+				float $xd = $pnt[0] - $points[0];
+				float $yd = $pnt[1] - $points[1];
+				float $zd = $pnt[2] - $points[2];
+				int $i;
+				for( $i = 0 ; $i < $newSegments-$cvs; $i++) {
+					$pnt[0] += $xd;
+					$pnt[1] += $yd;
+					$pnt[2] += $zd;
+					curve -os -a -p $pnt[0] $pnt[1] $pnt[2] $startCurve;	
+				}
+			}
+		}
+	}
+}
+
+proc float extendHairValue( string $objname )
+{
+	return( trimHairValue($objname) );
+}
+
+	
+// This is the "Set Value Cmd". It is called everytime a value
+// on the surface is changed. A surface ID, a grid index
+// on the surface and the value associated with that grid index
+// is passed. There can be additional arguments depending on the
+// options generated by the return value of the "Initialize Cmd".
+// In this case the (x,y,z) surface position for this grid point
+// is also passed.
+// 
+global proc setHairPaintValue(
+	int $slot,
+	int $index,
+	float $val,
+	float $u,
+	float $v,
+	float $x,
+	float $y,
+	float $z
+)
+{
+	global string $hairCurveNamePrefix[];
+	global string $gHairCurveHairSys;
+	global string $gHairCurveHairSystems[];
+	global string $gHairCurvePaintSurface;
+	global int $gHairCurvePaintMaxDensity;
+	global int $gHairCurvePaintUSkip;
+	global int $gHairCurvePaintVSkip;
+	global int $gHairCurveStartIndex[];
+	global string $gHairCurveGroup;
+	global string $gHairOutCurveGroup;
+
+	if( $slot < 0 || $slot > (size( $hairCurveNamePrefix )-1) ){
+		warning (uiRes("m_hairCurvePaint.kOutOfRange"));
+		return;
+	}
+
+	if ( $hairCurveNamePrefix[$slot] == "" ) {
+		return;
+	}
+	// determine the name of the hairCurve associated with this
+	// grid location 
+	//
+	string $objname = $hairCurveNamePrefix[$slot] + $index;
+	string $paintMode = getCurrentPaintMode();
+
+	if ( `objExists $objname` ) {
+		// if the hairCurve already exists, use the value to
+		// adjust the size of the hairCurve. If the value is
+		// 0, the hairCurve is deleted
+		//
+		if( $paintMode == (uiRes("m_hairCurvePaint.kCreateFollicles")) || $paintMode == (uiRes("m_hairCurvePaint.kCreatePassiveFollicles")) ){
+			return;
+		} 
+		
+		if( $gHairCurveHairSys != "" && $gHairCurveHairSys != (uiRes("m_hairCurvePaint.kAllHairSystems")) ){
+			// test to see if this follicle has this hair system
+			string $con[] = `listConnections -shapes 1 ($objname + ".outHair")`;
+			if( size($con) < 1 || $con[0] != $gHairCurveHairSys ){
+				return; // this follicle belongs to another hair system
+			}
+		}
+
+		if( $paintMode == (uiRes("m_hairCurvePaint.kDeleteFollicles")) ){
+			$gHairCurveStartIndex[0] = 0;	
+			string $con[] = `listConnections -shapes true ($objname + ".outCurve")`;
+			if( size($con ) > 0 ){
+				string $parent[] = `listTransforms $con[0]`;	
+				disconnectAttr ($objname + ".outCurve") ($con[0] + ".create");
+				if( size( $parent ) > 0 ){
+					delete $parent[0];
+				} else {
+					delete $con[0];
+				}
+			}
+			delete $objname;
+		} else if( $paintMode == (uiRes("m_hairCurvePaint.kEditFollicleAttributes")) ){
+			editFollicle( $objname, $val );
+		} else if( $paintMode == (uiRes("m_hairCurvePaint.kTrimHairs")) ){
+			trimHair( $objname, $val );
+		} else if( $paintMode == (uiRes("m_hairCurvePaint.kExtendHairs")) ){
+			extendHair( $objname, $val );
+		} else {
+			string $warnMsg = (uiRes("m_hairCurvePaint.kUnknownHairMode"));
+			string $warnDisplay = `format -s $paintMode $warnMsg`;
+			warning( $warnDisplay );
+		}
+	} else if ( $val > 0 ) {
+		if( $paintMode != (uiRes("m_hairCurvePaint.kCreateFollicles")) && $paintMode != (uiRes("m_hairCurvePaint.kCreatePassiveFollicles"))){
+			return;
+		}
+		// the hairCurve doesn't exist
+		//
+		// Determine if we should create a new hair for this index
+		int $uCount = $index/$gHairCurvePaintMaxDensity;
+		int $vCount = $index-($uCount *$gHairCurvePaintMaxDensity);
+		if( ($uCount % $gHairCurvePaintUSkip) 
+		  || ($vCount % $gHairCurvePaintVSkip) ){
+			return;
+		}
+		string $sel[] = `ls -sl`;
+		int $paintOutput = `optionVar -query createHairOutput`;
+		int $doOut = $paintOutput > 1;
+		if($gHairCurveHairSys == ""){
+			$gHairCurveStartIndex[0] = 0;
+			$gHairCurveHairSys	 = `createNode hairSystem`;
+			string $nucleus = getActiveNucleusNode( false, true ); 
+			addActiveToNSystem( $gHairCurveHairSys, $nucleus);					
+			connectAttr ($nucleus + ".startFrame") ($gHairCurveHairSys + ".startFrame");
+
+			int $numHsys = size( $gHairCurveHairSystems );
+			$gHairCurveHairSystems[$numHsys] = $gHairCurveHairSys;
+			connectAttr time1.outTime ($gHairCurveHairSys + ".currentTime");
+			// setAttr ( $gHairCurveHairSys + ".nodeState") 2;
+			int $doPfxHair = $paintOutput == 1 || $paintOutput == 3;
+			if( $doPfxHair ){
+				string $pfxHair = `createNode pfxHair`;
+				setAttr ( $pfxHair + ".displayPercent") 100;
+				setAttr ( $pfxHair + ".drawAsMesh") false;
+
+				connectAttr ($gHairCurveHairSys + ".outputRenderHairs") ($pfxHair + ".renderHairs");
+				
+			}
+		}  else {
+			int $i;
+			// check if this is an existing hair system that is not yet on the active surfaces
+			int $numActiveHsys = size( $gHairCurveHairSystems );
+			for( $i = 0; $i < $numActiveHsys; $i++ ){
+				if( $gHairCurveHairSys == $gHairCurveHairSystems[$i] ){
+					break;
+				}
+			}
+			if( $i == $numActiveHsys ){
+				// We are creating follicles for this hair system for the first
+				// time for the active surfaces, so we add it to the list of 
+				// active hair systems.
+				$gHairCurveHairSystems[$numActiveHsys] = $gHairCurveHairSys;
+			}
+			// is not then we need to add it
+		 	if( $gHairCurveGroup == "" || ($doOut && ($gHairOutCurveGroup == "")) ){
+				string $hairGroups[] = getHairGroupNames( $gHairCurveHairSys, $gHairCurvePaintSurface );
+				$gHairCurveGroup = $hairGroups[0];
+				$gHairOutCurveGroup = $hairGroups[1];
+			}
+		}
+		if( $gHairCurveGroup == "" ){
+			string $tforms[] = `listTransforms $gHairCurveHairSys`;
+			if( size( $tforms ) > 0 ) {
+				$gHairCurveGroup = `group -em -name ($tforms[0] + "Follicles")`;
+			}
+		}
+		if( $doOut && $gHairOutCurveGroup == "" ){
+			string $tforms[] = `listTransforms $gHairCurveHairSys`;
+			if( size( $tforms ) > 0 ) {
+				$gHairOutCurveGroup = `group -em -name ($tforms[0] + "OutputCurves")`;
+			}
+		}
+
+			
+		int $doRest = 0;
+		float $numCvs = `optionVar -query hcPaintPointsPerHair`;
+		float $length = `optionVar -query hcPaintHairLength`;
+	// if(`optionVar -exists createHairCreateRestCurves`){
+	//		$doRest = `optionVar -query createHairCreateRestCurves`;
+	//	}
+		float  $uv[] = normalizeUV( $u, $v, $gHairCurvePaintSurface );
+		string $startCurve = "";
+		int $isPassive = ($paintMode == (uiRes("m_hairCurvePaint.kCreatePassiveFollicles")));
+		int $doStart = !($isPassive);
+		string $hname = createHairCurveNode($gHairCurveHairSys,
+				$gHairCurvePaintSurface, $uv[0], $uv[1], $numCvs, 
+				$doOut, $doStart, $doRest, $isPassive, $startCurve, $length,
+				$gHairCurveStartIndex,
+				$gHairCurveGroup,
+				$gHairOutCurveGroup, 1) ;
+
+		// create a hairCurve with the proper name, scale it by
+		// the passed value and parent the hairCurve to the same
+		// parent as the surface we are painting on
+		//
+		if( $hname != "" ){
+			$hname = `rename $hname $objname`;
+			if ( $hname != $objname ) {
+				string $error = (uiRes("m_hairCurvePaint.kErrMsg"));
+				string $errorDisplay = `format -s $objname -s $hname $error`;
+				catch (error ($errorDisplay));
+			}
+		}
+		select $sel; // preserve object selection
+	}
+}
+
+// This is the "Get Value Cmd". It is called everytime a value
+// on the surface is needed by the scriptable paint tool. A
+// surface ID and a grid index is passed in. This procedure should
+// return the value for this grid location on the specified surface.
+// 
+global proc float getHairPaintValue( int $slot, int $index )
+{
+	global string $hairCurveNamePrefix[];
+
+	if( $slot < 0 || $slot > (size( $hairCurveNamePrefix )-1) ){
+		warning (uiRes("m_hairCurvePaint.kWarnRange"));
+		return 0.0;
+	}
+
+	if ( $hairCurveNamePrefix[$slot] != "" ) {
+		// if this slot is valid, generate the name for the
+		// hairCurve at this grid index
+		//
+		string $objname = $hairCurveNamePrefix[$slot] + $index;
+
+		if ( `objExists $objname` ) {
+			string $paintMode = getCurrentPaintMode();
+			if( $paintMode == (uiRes("m_hairCurvePaint.kCreateFollicles")) || $paintMode == (uiRes("m_hairCurvePaint.kCreatePassiveFollicles")) ){
+				return 1.0;
+			} else if( $paintMode == (uiRes("m_hairCurvePaint.kDeleteFollicles")) ){
+				return 1.0;
+			} else if( $paintMode == (uiRes("m_hairCurvePaint.kEditFollicleAttributes")) ){
+				return( editFollicleValue( $objname ) );
+			} else if( $paintMode == (uiRes("m_hairCurvePaint.kTrimHairs")) ){
+				return( trimHairValue( $objname ) );
+			} else if( $paintMode == (uiRes("m_hairCurvePaint.kExtendHairs")) ){
+				return( extendHairValue( $objname ) );
+			} else {
+				string $warnMsg = (uiRes("m_hairCurvePaint.kUnknownHairPaintMode"));
+				string $warnDisplay = `format -s $paintMode $warnMsg`;
+				warning( $warnDisplay );
+				return 0.0;
+			}
+		} else {
+			// the hairCurve doesn't exist, therefore return 0 as
+			// the value for this grid location
+			//
+			return 0.0;
+		}
+	} else {
+		return 0.0;
+	}
+}

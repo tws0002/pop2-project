@@ -1,0 +1,138 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//<doc>
+//<name setNClothStartFromMesh>
+//<owner "Autodesk">
+//
+//<synopsis>
+//		setNClothStartFromMesh
+//
+//<returns>
+//		None.	
+//
+//<description>
+//	This sets the start shape for the selected nCloth to the selected mesh, which must match in topology.
+//
+//<flags>
+//		None.
+//
+//<examples>
+//  setNClothStartFromMesh;
+//</doc>
+
+
+global proc setNClothStartFromMesh()
+{
+	int $zeroVel = false;
+
+	string $nCloths[] = `ls -dag -sl -type nCloth`;
+	string $nCloth = "";
+	string $mesh = "";
+	string $selectWarn = (uiRes("m_setNClothStartFromMesh.kSelectTwoObjectWarning"));
+	if( size($nCloths) > 0 ){
+		if( size($nCloths) > 1 ){
+			warning( $selectWarn );
+			return;
+		}
+		$nCloth = $nCloths[0];
+		string $meshes[] = `ls -dag -ni -sl -type mesh`;
+		if( size( $meshes) != 1 ){
+			warning( $selectWarn );
+			return;
+		}
+		$mesh = $meshes[0];
+	} else {
+		// get nCloth through mesh selection
+		string $meshes[] = `ls -dag -ni -sl -type mesh`;
+		if( size( $meshes) != 2 ){
+			warning( $selectWarn );
+			return;
+		}
+		$nCloth = findTypeInHistory( $meshes[0], "nCloth", 1,1);	
+		if( $nCloth == "" ){
+			$nCloth = findTypeInHistory( $meshes[1], "nCloth", 1,1);	
+			if( $nCloth == "" ){
+				warning( $selectWarn );
+				return;
+			} else {
+				$mesh = $meshes[0];
+			}
+		} else {
+			string $test = 	findTypeInHistory( $meshes[1], "nCloth", 1,1);
+			if( $test == "" ){
+				$mesh = $meshes[1];
+			} else {
+				// two ncloths
+				warning( $selectWarn );
+				return;
+			}
+		}
+	}
+
+	string $inputs[] = `listConnections -sh 1 -type mesh ($nCloth + ".inputMesh")`; 
+	int $pEval[] = `polyEvaluate -v $inputs[0]`; 
+
+	int $numVerts = $pEval[0];
+	$pEval = `polyEvaluate -v $mesh`;
+	if( $numVerts != $pEval[0]){
+		string $fmt = (uiRes("m_setNClothStartFromMesh.kTopologyMismatch")); 
+		warning( `format -s $mesh -s $nCloth $fmt` ); 
+		return;
+	}
+	
+	
+	// The following mel code is very slow. It has been replaced with a Python call below that is
+	// more efficient at building the long string passed to the eval.
+	/* string $s = ("setAttr "+$nCloth+".startPositions -type vectorArray "+$numVerts);
+	int $i;
+	for( $i = 0; $i < $numVerts; $i++){
+		float $v[] = `xform -q -ws -t ($mesh + ".vtx["+$i+"]")`;
+		$s = ($s + " "+$v[0]+" "+$v[1]+" "+$v[2]);
+	}
+	*/
+
+	string $s = ("setAttr(\""+$nCloth+".startPositions\", \"-type\", \"vectorArray\", "+$numVerts);
+	global string $g_ClothStartMesh;
+	$g_ClothStartMesh = $mesh; 
+	python("import maya.cmds as cmds; import maya.mel as mel");
+	python("meshName = mel.eval ('global string  $g_ClothStartMesh; $temp=$g_ClothStartMesh;' ) ");
+	$s = $s +", "+ python("str(cmds.xform( meshName+'.vtx[ * ]', q=True, ws=True, t=True))[1:-1]")   +")"; 
+	
+	
+	eval $s;
+    if( !$zeroVel ){
+		float $vel[] = `getAttr ($nCloth + ".startVelocities")`;
+        if( size( $vel ) == 0 ){
+			$zeroVel = true;
+		}
+	}
+	if( $zeroVel ){
+		$s = ("setAttr "+$nCloth+".startVelocities -type vectorArray "+$numVerts);
+		string $zeros = " 0 0 0";
+		for( $i = 0; $i < $numVerts; $i++){
+			$s += $zeros;
+		}
+		eval $s;
+	}
+	getAttr ($nCloth + ".forceDynamics");
+	refresh -f;
+}

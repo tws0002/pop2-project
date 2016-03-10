@@ -1,0 +1,409 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+global proc string filterBifrostInput( string $input, string $desiredType )
+{
+	string $result = "";
+	string $itm;
+	string $relatives[] = `listRelatives -fullPath -s $input`;
+	string $containers[];
+
+	$relatives[ size($relatives) ] = $input;
+
+	for( $itm in $relatives ) {
+		string $myType = `nodeType $itm`;
+		if( $myType == $desiredType ) {
+			$result = $itm;
+			break;
+		}
+	}
+
+	// what if we selected the bifrostShape when we really wanted the container?
+	if( ($result == "") && ($desiredType == "bifrostContainer") ){
+		for( $itm in $relatives ) {
+			string $myType = `nodeType $itm`;
+			if( $myType == "bifrostShape" ) {
+				$containers = `listConnections -sh 1 ($itm+".object")`;
+				if((size($containers) > 0) && (nodeType($containers[0]) =="bifrostContainer")){
+					$result = $containers[0];
+					break;
+				}
+			}
+		}
+	}
+
+	return $result;
+}
+
+
+global proc string[] getBifrostInputs( string $type)
+{
+	string $result[];
+	// see if there are selected meshes and bifrost container
+	// TODO: expand to 1 container and N mesh
+	string $meshes[];
+	string $mesh = "";
+	string $shell = "";
+	string $selList[] = `ls -sl`;
+	string $item;
+
+	for( $item in $selList ) {
+		// We will get all the meshes and the first bifrosContainer in the list and skip the rest...
+		$mesh = filterBifrostInput( $item, $type );
+		if( size($mesh) > 0 ) {
+		    	// filter may be resturning name or dag path,  get shortest unique name
+			$meshes[ size($meshes) ] = `shortNameOf $mesh`;
+		} else if( size($shell) == 0 ) {
+			// We will get the first container/shell available in the selection list
+			$shell = filterBifrostInput( $item, "bifrostContainer" );
+		} 
+	}
+	string $yes = (uiRes("m_addBifrostCollider.kYes"));
+	string $no = (uiRes("m_addBifrostCollider.kNo"));
+
+	if( (size($meshes)> 0) && (size($shell) >  0)) {
+		$result[0] = $shell;
+		int $i;
+		float $warnIfThisWorldArea = 200000;
+		for( $i = 0; $i < size($meshes); $i++ ) {
+		    float $worldArea[];
+            string $response =$yes; 
+			if ( $type =="mesh" && !catch( $worldArea = `polyEvaluate -worldArea $meshes[$i]`) ){
+				if ($worldArea[0] > $warnIfThisWorldArea) // arbitrary large mesh size
+				{
+					string $msg = (uiRes("m_addBifrostCollider.kWarnIfThisWorldArea"));
+					warning( `format -s $meshes[$i] $msg` );
+                    
+    				$msg = (uiRes("m_addBifrostCollider.kDialogIfThisWorldArea"));
+                    $msg = `format -s $meshes[$i] $msg`; 
+                    $response = `confirmDialog -message $msg -button $yes -button $no -defaultButton $yes -cancelButton $no -dismissString $no`;
+				}
+			}
+            if ( $response == $yes )
+            {
+			    $result[$i+1] = $meshes[$i];
+            }
+		}
+	}
+	$result = `stringArrayRemoveDuplicates($result)`;
+	return $result;
+}
+
+
+global proc string[] addBifrostCollider( string $colliders )
+{
+	string $result[];
+	string $biNodes[] = getBifrostInputs("mesh");
+	if(size($biNodes) >= 2) {
+		int $i;
+		for( $i = 1; $i < size($biNodes); $i++ ){
+			addBifrostInput($biNodes[0], $biNodes[$i], $colliders );
+		}
+	} else {
+		error (uiRes("m_addBifrostCollider.kBifrostCannotAddCollider"));
+	}
+	return $result;
+}
+
+global proc string[] addBifrostAttribute( string $geom, string $attribute, string $type, int $defVal, int $cpv,  string $enumVal )
+{
+	string $result[];
+	if(!`attributeQuery -ex -node $geom $attribute`) {
+		if( $type == "double3" ) {
+			string $attributeValue = $attribute + "Value";
+			string $attributeDiffusion = $attribute + "Diffusion";
+			string $attributeDissipation = $attribute + "Dissipation";
+
+			addAttr -ln $attribute -at double3 $geom ;
+			setAttr -e-keyable true ($geom+"."+$attribute);
+			addAttr -ln $attributeValue -at double -dv $defVal -parent $attribute $geom;
+			setAttr -e-keyable true ($geom+"."+$attributeValue);
+			addAttr -ln $attributeDiffusion -at double -dv 0 -parent $attribute $geom;
+			setAttr -e-keyable true ($geom+"."+$attributeDiffusion);
+			addAttr -ln $attributeDissipation -at double -dv 0 -parent $attribute $geom;
+			setAttr -e-keyable true ($geom+"."+$attributeDissipation);
+
+			if( $cpv ) {
+				polyColorSet -create -clamped 0 -rpt RGB -colorSet $attribute $geom;
+			}
+		} else if( $type == "xyz" ) {
+			string $attributeX = $attribute + "X";
+			string $attributeY = $attribute + "Y";
+			string $attributeZ = $attribute + "Z";
+
+			addAttr -ln $attribute -at double3 $geom ;			
+			addAttr -ln $attributeX -at double -dv 0 -parent $attribute $geom;			
+			addAttr -ln $attributeY -at double -dv $defVal -parent $attribute $geom;			
+			addAttr -ln $attributeZ -at double -dv 0 -parent $attribute $geom;
+			
+			setAttr -e-keyable true ($geom+"."+$attribute);
+			setAttr -e-keyable true ($geom+"."+$attributeX);
+			setAttr -e-keyable true ($geom+"."+$attributeY);
+			setAttr -e-keyable true ($geom+"."+$attributeZ);
+
+			if( $cpv ) {
+				polyColorSet -create -clamped 0 -rpt RGB -colorSet $attribute $geom;
+			}
+		} else if( $type == "double" ) {
+			addAttr -ln $attribute -at double  -dv $defVal $geom ;
+			setAttr -e-keyable true ($geom+"."+$attribute);
+			if( $cpv ) {
+				polyColorSet -create -clamped 0 -rpt RGB -colorSet $attribute $geom;
+			}
+		} else if( $type == "bool" ) {
+			addAttr -ln $attribute -at bool -dv $defVal $geom ;
+			setAttr -e-keyable true ($geom+"."+$attribute);
+		} else if( $type == "string" ) {
+			addAttr -ln $attribute -dt "string" $geom;
+			setAttr -e-keyable true ($geom+"."+$attribute);
+		} else if( $type == "enum" ) {
+			addAttr -ln $attribute -at "enum" -en $enumVal $geom;
+			setAttr -e-keyable true ($geom+"."+$attribute);
+		}
+	}
+
+	return $result;
+}
+
+global proc addAndConnectBifrostAttribute( string $geom, string $attrNotifNode, string $attribute, string $type, int $defVal, int $cpv,  string $enumVal )
+{
+	addBifrostAttribute( $geom,			 $attribute, $type, $defVal, $cpv,  $enumVal );
+	addBifrostAttribute( $attrNotifNode, $attribute, $type, $defVal, false,  $enumVal );
+	connectAttr ($geom + "." + $attribute ) ($attrNotifNode + "." + $attribute );
+}
+
+global proc string bifrostGraphType( string $effect ) 
+{
+	string $fullGraphName =  `getAttr ( $effect + ".graph")`;
+	string $lowercaseName = tolower( $fullGraphName );
+
+	string $liquidMatch = match( "liquid", $lowercaseName );
+	if( size( $liquidMatch ) > 0 ) {
+		return $liquidMatch;
+	}
+
+	string $aeroMatch = match( "aero", $lowercaseName );
+	if( size( $aeroMatch ) > 0 ) {
+		return $aeroMatch;
+	}
+
+	string $badResult = "";
+	return $badResult;
+}
+
+global proc string[] addBifrostInput(string $effect, string $geom, string $role)
+{
+	global string $gBifrostAttributeEmitters;
+	global string $gBifrostAttributeColliders;
+	global string $gBifrostAttributeAccelerators;
+	global string $gBifrostAttributeKillplanes;
+	
+	string $result[];
+
+	if( hasBifrostInput( $effect, $geom, $role)) {
+		error (uiRes("m_addBifrostCollider.kAlreadyConnected"));
+		return $result;
+	}
+
+	string $quadSplitAttr = ($geom + ".quadSplit");
+	if( objExists($quadSplitAttr) && (0 != getAttr($quadSplitAttr)) ){
+		setAttr $quadSplitAttr 0; // This keeps deforming meshes with quads from triggering topology change checks that would zero mesh velocity
+	}
+
+	// get geom shape base name, let maya name clash resolution deal with it
+	string $names[];
+	tokenize $geom ":|" $names;
+	string $notPref = $names[size($names)-1];
+	string $attrNotifNode = `createNode -name ($notPref + "AttrNotif") bifrostAttrNotifier`; 
+
+	//
+	// NOTE: Oct 2013: Cheating with the UI so that some bifrost attributes are not pushed to bifrost and
+	// do not appear as paintable.  
+	// 
+	// The cheat: 
+	// a) Only the attributes with associated CPVs are pushed
+	// b) Below, set to False for CPV creation when the attribute is not supported yet.
+	// 
+	select -r $geom;
+	if( $role == $gBifrostAttributeEmitters ) {
+
+		string $graphType = bifrostGraphType( $effect );
+
+		if ( $graphType == "aero" ) {
+			// Aero
+			string $biAero = "bifrostAero";
+
+			addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biAero + "Enable",					"bool",		1,		false, "" );
+			addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biAero + "ContinuousEmission",		"bool",		1, 		false, "" );
+
+
+			addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biAero + "Thickness",				"double",	0,		false , "" );
+			addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biAero + "Mode",						"enum",		0,		false, "Solid:Shell" );
+
+			addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biAero + "StictionStrength",			"double",	0,		false , "" );
+			addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biAero + "StictionBandwidth",		"double",	0,		false , "" );
+
+			// addAndConnectBifrostAttribute and other functions have limitation to accept only integer as default value. So I cannot set
+ 			// value with fraction using these functions. Changing type of function argument is too risky now. Let set value to required manually
+			addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biAero + "Density",					"double",	0.0,		true , "" );
+			addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biAero + "Temperature",				"double",	233.0,		true , "" );
+			setAttr ($geom + "." + $biAero + "Density") 2.45;
+		}
+		else if ( $graphType == "liquid" )  {
+			// Liquid
+			string $biLiquid = "bifrostLiquid";
+
+			addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biLiquid + "Enable",					"bool",		1,		false, "" );
+			addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biLiquid + "ContinuousEmission",		"bool",		1, 		false, "" );
+
+			// Liquid Conversion
+			addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biLiquid + "Thickness",				"double",	0,		false , "" );
+			addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biLiquid + "Mode",					"enum",		0,		false, "Solid:Shell" );
+
+
+			// Liquid Physical Attributes
+			addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biLiquid + "Density",				"double",  1000,	true , "" );
+			addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biLiquid + "ExpansionRate",			"double",  0,		true , "" );
+
+			// Liquid Artistic Attributes
+			addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biLiquid + "StictionStrength",		"double",  0,		false , "" );
+			addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biLiquid + "StictionBandwidth",		"double",  0,		false , "" );
+		}
+		else {
+			error (uiRes("m_addBifrostCollider.kEmitterUnsupportedGraphType"));
+		}
+	
+	
+		addAndConnectBifrostAttribute( $geom, $attrNotifNode, "bifrostUVProjCon",		"string",      	0,	false, "" );
+
+	    string $uvsname = "bifrost" + $graphType + "uv";
+		setAttr ( $geom+ ".bifrostUVProjCon" ) -type "string" $uvsname;
+
+
+	} else if( $role == $gBifrostAttributeColliders ) {
+		string $biCollider = "bifrostCollider";
+		addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biCollider + "Enable",				"bool",  1,			false , "" );
+
+		// Collider Conversion
+		addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biCollider + "Thickness",			"double",	 1,		false , "" );
+		addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biCollider + "Mode",					"enum",		 0, 	false, "Solid:Shell" );
+
+	} else if( $role == $gBifrostAttributeAccelerators ) {
+
+		string $biAccelerator = "bifrostAccelerator";
+		addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biAccelerator + "Enable",			"bool",		 1,		false , "" );
+
+		// Accelerator Conversion
+		addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biAccelerator + "Mode",				"enum",		 0, 	false, "Solid:Shell" );
+
+		// Accelerator Geometry Influence
+		addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biAccelerator + "Influence",			"double",	 1,		true , "" );
+		addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biAccelerator + "InheritVelocity",	"double",	 1,		false , "" );
+		addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biAccelerator + "FalloffBandwidth",	"double",    1,		false , "" );
+		addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biAccelerator + "DirectionMagnitude","double",    10,    false , "" );
+		addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biAccelerator + "Direction",			"xyz",       1,		false , "" );
+
+		// Accelerator Boundary Layer
+		addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biAccelerator + "BoundaryLayerStrength",	"double",    0,	false , "" );
+		addAndConnectBifrostAttribute( $geom, $attrNotifNode, $biAccelerator + "BoundaryLayerBandwidth","double",    1,	false , "" );
+	}
+
+	//Add the attributes before the connections to let the script job mechanism works correctly. 
+	string $inputAttr = ($role + "");
+	int $nextIndex = getNextFreeMultiIndex(($effect + "." + $inputAttr), 0);
+
+	if( $role != $gBifrostAttributeKillplanes ){
+		connectAttr ($geom + ".worldMesh[0]" ) ($attrNotifNode + ".inMesh" );
+		connectAttr ($attrNotifNode + ".outMesh" )($effect + "." + $inputAttr + "[" + $nextIndex + "]") ;
+	}
+	else {
+		connectAttr ($geom + ".worldMatrix[0]" )($effect + "." + $inputAttr + "[" + $nextIndex + "]") ;
+	}
+	
+	return $result;
+}
+
+global proc string[] removeBifrostInput(string $effect, string $geom, string $role)
+{
+	
+	global string $gBifrostAttributeKillplanes;
+	string $attrName = ".worldMesh[0]"; 
+	
+	if( $role == $gBifrostAttributeKillplanes ){
+		$attrName = ".worldMatrix[0]";
+	}
+
+	string $bcs[] = `listConnections -p on ($geom + $attrName )`;
+
+	string $result[];
+	string $bc;
+	for ($bc in $bcs) {
+		string $inputAttr = ($role + "");
+		string $subs[];
+		tokenize $bc ".[" $subs;
+		if( $subs[1] == $inputAttr) {
+			disconnectAttr ($geom + $attrName) $bc;
+			removeMultiInstance -break true $bc;
+			return $result;
+		}
+		else if ($subs[1] == "inMesh"){
+		    delete $subs[0];
+			return $result;
+		}		
+	}
+	return $result;
+}
+
+global proc int hasBifrostInput(string $effect, string $geom, string $role)
+{
+	global string $gBifrostAttributeKillplanes;
+	
+	string $bcs[];
+	if( $role != $gBifrostAttributeKillplanes ){
+		$bcs = `listConnections -p on ($geom + ".worldMesh[0]" )`;
+	}
+	else{
+		$bcs = `listConnections -p on ($geom + ".worldMatrix[0]" )`;
+	}
+
+	string $bc;
+	for ($bc in $bcs) {
+		string $subs[];
+		tokenize $bc ".[" $subs;
+		// no notifier node
+		if( $subs[0] == $effect && $subs[1] == $role) {
+			return 1;
+		}
+		// there is notifier node present
+		if(nodeType($subs[0]) == "bifrostAttrNotifier") {
+			string $bncs[] = `listConnections -p on ($subs[0] + ".outMesh")`;
+			string $bnc;
+			for ($bnc in $bncs) {
+				string $nsubs[];
+				tokenize $bnc ".[" $nsubs;
+				if( $nsubs[0] == $effect && $nsubs[1] == $role) {
+					return 1;
+				}
+			}
+		}
+	}
+	return 0;
+}

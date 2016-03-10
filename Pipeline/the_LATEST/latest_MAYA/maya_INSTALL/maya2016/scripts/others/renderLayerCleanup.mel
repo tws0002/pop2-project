@@ -1,0 +1,111 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// This proc removes invalid adjustments 
+// on the renderLayer nodes.
+// When a render layer is deleted,
+// its adjustment counterpart on defaultRenderLayer
+// is not deleted, causing file to bloat.
+//
+// This proc detects invalid adjustments on the defaultRenderLayer
+// by walking through each adjustment
+// and counts the number of adjustment connection
+// that the attribute being adjusted has.
+//
+// The number should be at least 2 :
+//  defaultRenderLayer - to store the orginal value
+//	the other render layer(s) to store the adjust value
+// If there is only one such connection,
+// that adjustment is no longer valid,
+// and should be removed.
+// 
+// This proc is called during file save/export
+//
+
+proc removeInvalidAdjustments(string $adj, string $plug)
+{
+	string $node = "defaultRenderLayer";
+	
+	// list multi attrs
+	string $elements[] = `listAttr -multi -st $adj ($node + "." + $adj)` ;
+	
+	for($element in $elements)
+	{
+		int $removeThis = 0;
+		
+		string $attr = ($node + "." + $element);
+		
+		// compose the adjustment plug name
+		string $plgName = ($attr + "." + $plug);
+
+		// get the adjusted attribute 
+		string $adjAttr[] = `listConnections -p 1 $plgName`;
+		
+		if( size($adjAttr) > 0 )
+		{
+			// get list of render layers 
+			// that stores adjustment info of this attr
+			string $layers[] = `listConnections -type "renderLayer" $adjAttr[0]`;
+
+			if( size($layers) <=1 )
+			{
+				// there should be at least 2 render layers
+				// remove this
+				
+				$removeThis = 1;
+			}
+		}
+		else
+		{
+			// this adjustment plug
+			// is not connected to any attr
+			// remove this
+			
+			$removeThis = 1;
+		}
+		
+		// delete this adjustment
+		if( $removeThis )
+		{
+			removeMultiInstance -b true $attr ;
+		}
+	}
+}
+
+global proc renderLayerCleanup()
+{
+    // Remove the unused multis from the manager.
+    string $multiAttrs[] = `listAttr -multi renderLayerManager.renderLayerId`;
+    for ($multiAttr in $multiAttrs) {
+        string $multiPlug = "renderLayerManager."+$multiAttr;
+	    string $renderLayer[] = `listConnections $multiPlug`;
+        if (size($renderLayer) == 0) {
+            // There is nothing connected, remove the multi
+			removeMultiInstance -break true $multiPlug;
+        }
+    }
+	
+	// remove invalid adjustments
+	removeInvalidAdjustments("adjustments", "plg");
+	removeInvalidAdjustments("outAdjustments", "outPlug");
+	
+}

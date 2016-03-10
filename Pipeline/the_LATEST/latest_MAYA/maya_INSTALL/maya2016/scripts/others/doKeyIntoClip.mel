@@ -1,0 +1,158 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Feb, 2004
+//
+//	Procedure Name:
+//		doKeyIntoClip
+//
+//	Description:
+//		Set a keyframe at the current time into the specified clip.
+//      If no clip is specified, use the currently selected clip.
+//
+//	Input Arguments:
+//	$version: The version of this option box.  Used to know how to 
+//	interpret the $args array.
+//  
+//	$args
+//	Version 1
+//	[0]		$clip:  clip to operate upon
+//
+proc
+int getClipTrack(string $clipName)
+{
+	string $sch = getClipScheduler($clipName);
+	int $clipIndex = getClipIndex($clipName, $sch);
+
+	int $trackNum = `getAttr ($sch+".track["+$clipIndex+"]")`;
+	return $trackNum;
+}
+
+proc
+setClipTrack(string $clipName, int $trackNum)
+{
+	string $sch = getClipScheduler($clipName);
+	int $clipIndex = getClipIndex($clipName, $sch);
+
+	setAttr ($sch+".track["+$clipIndex+"]") $trackNum;
+}
+
+proc
+duplicateClipBeforeKeying(string $clipName, float $clipStart)
+//	
+// Duplicate the clip, delete the original instance and set the new
+// clip's name and track to that of the original
+//
+{
+	int $trackNum = getClipTrack($clipName);
+	string $newClip = `doDuplicateClipArgList 2 { "1" /* schedule clip */,
+										  "1" /* duplicate time warp */,
+										  "1" /* duplicate source */,
+										  $clipName} `;
+		
+	delete $clipName;
+	rename $newClip $clipName;
+	setAttr ($clipName+".startFrame") $clipStart;
+	setClipTrack($clipName,$trackNum);
+}
+
+proc
+keyIntoClip(string $clipName)
+{
+	// check whether the currentTime is within the range of the clip
+	//
+	float $currentTime = `currentTime -q`;
+	float $clipStart = `getAttr ($clipName+".startFrame")`;
+	float $clipSrcStart = `getAttr ($clipName+".sourceStart")`;
+	float $clipSrcEnd = `getAttr ($clipName+".sourceEnd")`;
+	float $clipScale = `getAttr ($clipName+".scale")`;
+	float $clipEnd = $clipStart + ($clipSrcEnd - $clipSrcStart) * $clipScale;
+
+	if ($currentTime < $clipStart ||
+		$currentTime > $clipEnd) {
+		string $errmsg = (uiRes("m_doKeyIntoClip.kTimeNotBetweenClip"));
+		error(`format -s $currentTime $errmsg`);
+	}
+
+	// If the clip's anim curves are used by other clips, then duplicate
+	// the clip before adding the key.
+	//
+	string $sourceClip = `clip -q -scn $clipName`;
+	string $otherInstances[] = `listConnections -type animClip ($sourceClip+".clip")`;
+	if (size($otherInstances) > 1)
+	{
+		duplicateClipBeforeKeying($clipName, $clipStart);
+	}
+
+	// set the keyframe
+	//
+	string $cmd = ("setKeyframe -clip "+$clipName);
+	evalEcho $cmd;
+}
+
+global proc
+doKeyIntoClip( int $versionNum, string $args[] )
+{
+	string $clipName = $args[0];
+
+	string $selClips[] = `ls -sl -type animClip`;
+	if (size($clipName) == 0) {
+		// look for the selected clip
+		//
+		if (size($selClips) == 0) {
+			error( (uiRes("m_doKeyIntoClip.kSelectTheClip")) );
+		} else if (size($selClips) > 1) {
+			error( (uiRes("m_doKeyIntoClip.kTooManyClipsSelected")) );			
+		} else {
+			$clipName = $selClips[0];
+		}
+	}
+
+	int $instancedClip = `getAttr ($clipName+".clipInstance")`;
+	if (0 == $instancedClip) {
+		error( (uiRes("m_doKeyIntoClip.kCannotKeyIntoSource")) );
+	}
+
+	if (size($selClips)) {
+		// deselect the clips temporarily so we don't key their
+		// clip attributes
+		//
+		select -tgl $selClips;
+	}
+
+	// disable dirty propagation on the character since otherwise
+	// we would mess up the values to be keyed when keyIntoClip
+	// needs to duplicate clips
+	//
+	string $character[] = `clip -q -ch $clipName`;
+	setAttr ($character[0]+".nodeState") 2;
+
+	catch(`keyIntoClip $clipName`);
+
+	// restore the original selection and nodeState
+	//
+	setAttr ($character[0]+".nodeState") 0;		
+	if (size($selClips)) {
+		select -tgl $selClips;
+	}
+}

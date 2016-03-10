@@ -1,0 +1,440 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  2002
+//
+// Description: Create a locator that floats on an ocean's
+// surface. The locator has added attributes for buoyancy dynamics.
+//	
+
+global proc oceanDynamicLocator(string $oceanShader, 
+					float $px, float $py, int $useSetAttr, int $createSphere,
+					string $floatObj, int $doRotation, int $doMotor, int $isPond)
+{
+	string $nType = nodeType( $oceanShader );
+	string $ptform;	// pond transform if we have a pond
+	if( $isPond ){
+		if( $nType != "fluidShape" ){
+			warning((uiRes("m_oceanDynamicLocator.kNeedFluidShape")));	
+			return;
+		}	
+		string $pondParent[] = `listRelatives -parent $oceanShader`;
+		$ptform = $pondParent[0];
+	} else {
+		if( $nType != "oceanShader" ){
+			warning((uiRes("m_oceanDynamicLocator.kNeedOceanShader")));	
+			return;
+		}	
+	}
+	string $result[] = `spaceLocator -p $px 0.0 $py`;
+	string $tform = $result[0];
+	$result = `listRelatives $tform`;
+	string $loc = $result[0]; // should be the shape
+
+	addAttr -s 1 -sn sf -ln startFrame -at long -dv 1 -smn 0 -smx 1000 $loc;
+	addAttr -s 1 -sn bu -ln buoyancy -dv 0.5 -min -1.0 -max 1.0 -smn 0.0 -smx 1.0 $loc;
+	addAttr -s 1 -sn wd -ln waterDamping -dv 0.2 -min 0.0 -max 1.0 -smn 0.0 -smx 1.0 $loc;
+	addAttr -s 1 -sn ad -ln airDamping   -dv 0.01 -min 0.0 -max 1.0 -smn 0.0 -smx 1.0 $loc;
+	addAttr -s 1 -sn oh -ln objectHeight   -dv 1.0 -min 0.0001 -max 10000.0 -smn 0.0001 -smx 10.0 $loc;
+	addAttr -s 1 -sn gv -ln gravity   -dv 9.8  -smn 0.0 -smx 20.0 $loc;
+	addAttr -s 1 -sn sc -ln sceneScale -dv 1.0  -smn 0.001 -smx 10.0 $loc;
+	if( $doRotation ){
+		if( $doMotor ){
+			addAttr -s 1 -sn stx -ln startX -dv 0  $loc;
+			addAttr -s 1 -sn sty -ln startY -dv 0  $loc;
+			addAttr -s 1 -sn stz -ln startZ -dv 0  $loc;
+
+			addAttr -s 1 -sn strx -ln startRotX -dv 0  $loc;
+			addAttr -s 1 -sn stry -ln startRotY -dv 0  $loc;
+			addAttr -s 1 -sn strz -ln startRotZ -dv 0  $loc;
+		} else {
+			addAttr -s 1 -sn sty -ln startY -dv 0  $loc;
+			addAttr -s 1 -sn strx -ln startRotX -dv 0  $loc;
+			addAttr -s 1 -sn strz -ln startRotZ -dv 0  $loc;
+		}
+
+	} else {
+		addAttr -s 1 -sn sty -ln startY -dv 0  $loc;
+	}
+
+	// calculation attributes
+	addAttr -s 1 -h true -sn wl -ln waterLevel -dv 0.0  $loc;
+	addAttr -s 1 -h true -sn vl -ln velocity -dv 0.0  $loc;
+	addAttr -s 1 -h true -sn lf -ln lastFrame -at long -dv -1000  $loc;
+
+	if( $doRotation ){
+		addAttr -s 1 -sn bl -ln boatLength -dv 2.0  -smn 0.001 -smx 30.0 $loc;
+		addAttr -s 1 -sn bw -ln boatWidth -dv 0.5  -smn 0.001 -smx 10.0 $loc;
+		addAttr -s 1 -sn rl -ln roll -dv 0.5  -min 0 -max 1.0 -smn 0.0 -smx 1.0 $loc;
+		addAttr -s 1 -sn pt -ln pitch -dv 0.5  -min 0 -max 1.0 -smn 0.0 -smx 1.0 $loc;
+		// calculation attributes
+		addAttr -s 1 -h true -sn rvx -ln rotVelX -dv 0.0  $loc;
+		addAttr -s 1 -h true -sn rvz -ln rotVelZ -dv 0.0  $loc;
+		setAttr ($tform + ".rotateOrder") 2;
+		setAttr ($loc + ".buoyancy") 0.6;
+		if( $doMotor ){
+			addAttr -s 1 -sn tl -ln throttle -dv 0.0 -min -100 -max 100 -smn -20.0 -smx 20.0 $loc;
+			addAttr -s 1 -sn rd -ln rudder -dv 0.0  -min -150 -max 150 -smn -90.0 -smx 90.0 $loc;
+			addAttr -s 1 -sn tp -ln throttlePitch -dv 20.0 -min -80 -max 80  -smn 0.0 -smx 30.0 $loc;
+			addAttr -s 1 -sn tr -ln turnRoll -dv 30.0  -min -90 -max 90 -smn 0.0 -smx 60.0 $loc;
+			addAttr -s 1 -h true -sn rvy -ln rotVelY -dv 0.0  $loc;
+			addAttr -s 1 -h true -sn vx -ln velocityX -dv 0.0  $loc;
+			addAttr -s 1 -h true -sn vz -ln velocityZ -dv 0.0  $loc;
+			setAttr ($loc + ".buoyancy") 0.7; 
+			setAttr ($loc + ".roll") 0.3; 
+			setAttr ($loc + ".pitch") 0.3; 
+		}
+	}
+
+
+	if( $createSphere ){
+		$result = `sphere -r 0.5`;
+		$floatObj = $result[0];
+	}
+	int $zIsLength = false;
+	if( $floatObj != ""){
+		string $transforms[]  = `ls -type transform $floatObj`;
+		if(size( $transforms) == 1) {
+			float $objX = getAttr($floatObj + ".tx");
+			float $objY = getAttr($floatObj + ".ty");
+			float $objZ = getAttr($floatObj + ".tz");
+			setAttr ($tform + ".tx") $objX;
+			setAttr ($tform + ".ty") $objY;
+			setAttr ($tform + ".tz") $objZ;
+			parent $floatObj $tform;
+			setAttr ($floatObj + ".tx") 0;
+			setAttr ($floatObj + ".ty") 0;
+			setAttr ($floatObj + ".tz") 0;
+			float $ymin = `getAttr ($floatObj + ".boundingBoxMinY")`;
+			float $ymax = `getAttr ($floatObj + ".boundingBoxMaxY")`;
+			float $height = `abs($ymax - $ymin)`;
+			if($height < .0001)
+				$height = .0001;
+			setAttr ($loc+".objectHeight") $height;
+			setAttr ($loc + ".startY") $objY;
+			if( $doRotation ){
+				float $xmin = `getAttr ($floatObj + ".boundingBoxMinX")`;
+				float $xmax = `getAttr ($floatObj + ".boundingBoxMaxX")`;
+				float $zmin = `getAttr ($floatObj + ".boundingBoxMinZ")`;
+				float $zmax = `getAttr ($floatObj + ".boundingBoxMaxZ")`;
+				float $xsize = ($xmax - $xmin);
+				float $zsize = ($zmax - $zmin);
+				if( $zsize > $xsize ){
+					$zIsLength = true;
+					setAttr ($loc+".boatLength") $zsize;
+					setAttr ($loc+".boatWidth") $xsize;
+				} else {
+					setAttr ($loc+".boatLength") $xsize;
+					setAttr ($loc+".boatWidth") $zsize;
+				}	
+				if( $doMotor ){
+					setAttr ($loc + ".startX") $objX;
+					setAttr ($loc + ".startZ") $objZ;
+				}
+			}	
+		}
+	} 
+
+	string $exp = ("int $lastFrame = "+ $loc +".lastFrame;\n"
+				+"int $startFrame = "+ $loc +".startFrame;\n"
+				+$loc+".lastFrame = frame;\n"
+				+"if( frame <= $startFrame ){\n" );
+	if( $useSetAttr ){
+		$exp +=	 ("    if( $lastFrame == frame ){\n"
+				+"        "+$loc+".startY = "+$tform+".ty;\n" );
+		if( $doRotation ){
+			if( $doMotor ){
+				$exp +=	(
+				 	"        "+$loc+".startX = "+$tform+".tx;\n" 
+					+"        "+$loc+".startZ = "+$tform+".tz;\n" 
+					+"        "+$loc+".startRotX = "+$tform+".rx;\n" 
+					+"        "+$loc+".startRotY = "+$tform+".ry;\n" 
+					+"        "+$loc+".startRotZ = "+$tform+".rz;\n" );
+			} else {
+				$exp +=	(
+				 	"        "+$loc+".startRotX = "+$tform+".rx;\n" 
+					+"        "+$loc+".startRotZ = "+$tform+".rz;\n" );
+			}
+		}
+		$exp +=	    ("    } else {\n");
+		if( $doRotation ){
+			if( $doMotor ){
+				$exp += ("        float $val = "+$loc+".startX;\n"
+						+"        setAttr "+$tform+".tx $val;\n"
+						+"        $val = "+$loc+".startY;\n"
+						+"        setAttr "+$tform+".ty $val;\n"
+						+"        $val = "+$loc+".startZ;\n"
+						+"        setAttr "+$tform+".tz $val;\n"
+						+"        $val = "+$loc+".startRotX;\n"
+						+"        setAttr "+$tform+".rx $val;\n"
+						+"        $val = "+$loc+".startRotY;\n"
+						+"        setAttr "+$tform+".ry $val;\n"
+						+"        $val = "+$loc+".startRotZ;\n"
+						+"        setAttr "+$tform+".rz $val;\n");
+			} else {
+				$exp += ("        float $val = "+$loc+".startY;\n"
+						+"        setAttr "+$tform+".ty $val;\n"
+						+"        $val = "+$loc+".startRotX;\n"
+						+"        setAttr "+$tform+".rx $val;\n"
+						+"        $val = "+$loc+".startRotZ;\n"
+						+"        setAttr "+$tform+".rz $val;\n");
+			}
+		} else {
+			$exp += ("        float $val = "+$loc+".startY;\n"
+					+"        setAttr "+$tform+".ty $val;\n");
+		}
+		$exp +=	    ("    }\n");
+	} else {
+		if( $doRotation ){
+			if( $doMotor ){
+				$exp += ("        "+$tform+".tx = "+$loc+".startX;\n"
+						+"        "+$tform+".ty = "+$loc+".startY;\n"
+						+"        "+$tform+".tz = "+$loc+".startZ;\n"
+						+"        "+$tform+".rx = "+$loc+".startRotX;\n"
+						+"        "+$tform+".ry = "+$loc+".startRotY;\n"
+						+"        "+$tform+".rz = "+$loc+".startRotZ;\n" );
+			} else {
+				$exp += ("        "+$tform+".ty = "+$loc+".startY;\n"
+						+"        "+$tform+".rx = "+$loc+".startRotX;\n"
+						+"        "+$tform+".rz = "+$loc+".startRotZ;\n" );
+			}
+		} else {
+			$exp += ("        "+$tform+".ty = "+$loc+".startY;\n");
+		}
+	}
+	$exp +=	    ("   "+$loc+".velocity = 0.0;\n"
+				+"   "+$loc+".waterLevel = 0.0;\n");
+	if( $doRotation ){
+		if( $doMotor ){
+			$exp +=	(
+				 "    "+$loc+".velocityX = 0.0;\n" 
+				 +"    "+$loc+".velocityZ = 0.0;\n" 
+				 +"    "+$loc+".rotVelX = 0.0;\n" 
+				 +"    "+$loc+".rotVelY = 0.0;\n" 
+				 +"    "+$loc+".rotVelZ = 0.0;\n" );
+		} else {
+			$exp +=	(
+				  "    "+$loc+".rotVelX = 0.0;\n" 
+				 +"    "+$loc+".rotVelZ = 0.0;\n" );
+		}
+	}
+
+
+	$exp +=	    ("} else if( frame > $lastFrame ){\n"
+				+"float $u = " + $tform + ".tx;\n"
+				+"float $v = " + $tform + ".tz;\n"
+				+"float $y = " + $tform + ".ty;\n"
+				+"float $gravity = " + $loc + ".gravity / "
+									 + $loc + ".sceneScale;\n"
+				+"float $dt = 0.006; //timestep value for 30 fps\n"
+				+"float $height = " + $loc + ".objectHeight;\n"
+				+"float $buoyancy = " + $loc + ".buoyancy;\n"
+				+"if( $buoyancy > 0.98 ){\n"
+				+"    $buoyancy = 0.98;\n"
+				+"}\n"
+				+"float $waterDamp = " + $loc + ".waterDamping;\n"
+				+"float $airDamp = " + $loc + ".airDamping;\n" );
+
+	if( $doRotation ){
+		$exp +=  (   "float $turn = " + $tform + ".ry;\n"
+					+"float $rx = " + $tform + ".rx;\n"
+					+"float $rz = " + $tform + ".rz;\n"
+					+"float $xoff = sin( deg_to_rad( $turn ));\n"
+					+"float $zoff = cos( deg_to_rad( $turn ));\n");
+		if( $zIsLength ){
+			$exp +=  (   "float $zwidth = " + $loc + ".boatWidth * 0.4;\n"
+						+"float $xwidth = " + $loc + ".boatLength * 0.4;\n"
+						+"float $rzgain = " + $loc + ".roll;\n"
+						+"float $rxgain = " + $loc + ".pitch;\n" );
+		} else {
+			$exp +=  (   "float $xwidth = " + $loc + ".boatWidth * 0.4;\n"
+						+"float $zwidth = " + $loc + ".boatLength * 0.4;\n"
+						+"float $rxgain = " + $loc + ".roll;\n"
+						+"float $rzgain = " + $loc + ".pitch;\n" );
+		}
+		if( $isPond ){
+			$exp +=	 (  "float $disp[4];\n"
+					   +"$disp[0] = `fluidValueAtPoint " + $oceanShader + " $u 0 $v density`;\n"
+					   +"$disp[1] = `fluidValueAtPoint " + $oceanShader 
+								+ " (($u + $xoff)*$xwidth) 0 (($v + $zoff) * $xwidth) density`;\n"
+					   +"$disp[2] = `fluidValueAtPoint " + $oceanShader 
+								+ " (($u - $xoff)*$xwidth) 0 (($v - $zoff) * $xwidth) density`;\n"
+					   +"$disp[3] = `fluidValueAtPoint " + $oceanShader 
+								+ " (($u - $zoff)*$zwidth) 0 (($v + $xoff) * $zwidth) density`;\n"
+					   +"$disp[4] = `fluidValueAtPoint " + $oceanShader 
+								+ " (($u + $zoff)*$zwidth) 0 (($v - $xoff) * $zwidth) density`;\n"
+						+"float $depth = " + $oceanShader + ".dimensionsD;\n"
+						+"float $dscale = " + $ptform + ".scaleZ;\n"
+						+"float $wHeight = ($disp[0] * 2.0 + $disp[1] + $disp[2] + $disp[3] + $disp[4])/6.0;\n"
+						+"$wHeight = $wHeight * $depth  * $dscale;\n" );
+		}else {
+			$exp +=	 (  "float $disp[] = `colorAtPoint -u $u -v $v "
+					   +"-u (($u + $xoff)*$xwidth) -v (($v + $zoff)*$xwidth) "
+					   +"-u (($u - $xoff)*$xwidth) -v (($v - $zoff)*$xwidth) "
+					   +"-u (($u - $zoff)*$zwidth) -v (($v + $xoff)*$zwidth) "
+					   +"-u (($u + $zoff)*$zwidth) -v (($v - $xoff)*$zwidth) "
+					   +$oceanShader+"`;\n"
+					   +"float $wHeight = ($disp[0] * 2.0 + $disp[1] + $disp[2] + $disp[3] + $disp[4])/6.0;\n" );
+		}
+		$exp +=	  (  "float $zdiff = ($disp[1] - $disp[2])/$xwidth;\n"					
+					+"float $xdiff = ($disp[3] - $disp[4])/$zwidth;\n"					
+					+"float $rotVelX = " + $loc + ".rotVelX;\n"
+					+"float $rotVelZ = " + $loc + ".rotVelZ;\n"
+					+"float $newXVel = $rxgain *(($zdiff * -40.0 - $rx) * $waterDamp "
+							+"+ $rotVelX * (1-$waterDamp));\n"
+					+"float $newZVel = $rzgain *(($xdiff * -40.0 - $rz) * $waterDamp "
+							+"+ $rotVelZ * (1-$waterDamp));\n"
+				    +$loc+".rotVelX = $newXVel;\n"
+				    +$loc+".rotVelZ = $newZVel;\n");
+
+	} else {
+		if( $isPond ){
+			$exp +=	  (  "float $depth = " + $oceanShader + ".dimensionsD;\n"
+						+"float $dscale = " + $ptform + ".scaleZ;\n"
+						+"float $wHeight = `fluidValueAtPoint " + $oceanShader + " $u 0 $v density`;\n"
+						+"$wHeight = $wHeight * $depth * $dscale;\n" );
+		} else {
+			$exp +=	 (   "float $disp[] = `colorAtPoint -u $u -v $v "+$oceanShader+"`;\n"
+					+"float $wHeight = $disp[0];\n");
+		}
+	}
+
+	$exp +=	    ("float $vel = " + $loc + ".velocity;\n"
+				+"float $waterVel = $wHeight - " + $loc + ".waterLevel;\n"
+				+ $loc + ".waterLevel = $wHeight;\n"
+				+"float $aboveWater = (($y + $height/2) - $wHeight)/$height;\n"
+				+"if( $aboveWater > 1.0 ){\n"
+				+"    $aboveWater = 1.0;\n"
+				+"    $waterVel = 0.0;\n"
+				+"} else if( $aboveWater < 0.0 ){\n"
+				+"    $aboveWater = 0.0;\n"
+				+"}\n"
+				+"float $underWater = 1.0 - $aboveWater;\n"
+				+"float $damp = $waterDamp * $underWater + $airDamp * $aboveWater;\n"
+				+"float $force = $gravity * $dt *($underWater/(1-$buoyancy) - 1.0);\n"
+				+"float $newVel = ($waterVel) * $damp + ($force+$vel)*(1-$damp);\n"
+				+$loc+".velocity = $newVel;\n");
+
+	if( $useSetAttr ){
+		$exp += ("setAttr "+$tform+".ty ( $y + $newVel );\n");
+	} else {
+		$exp +=	($tform+".ty = $y + $newVel;\n");
+	}
+	if( $doRotation && $doMotor ){
+		$exp +=	("float $throttle = "+$loc+".throttle;\n"
+				+"float $rudder = "+$loc+".rudder;\n"
+				+"float $rudder = "+$loc+".rudder;\n"
+				+"float $rvy = "+$loc+".rotVelY;\n"
+				+"float $vx = "+$loc+".velocityX;\n"
+				+"float $vz = "+$loc+".velocityZ;\n"
+				+"float $throttlePitch = "+$loc+".throttlePitch;\n"
+				+"float $turnRoll = "+$loc+".turnRoll/90.0;\n"
+				+"if( $underWater > 0.0001){\n"
+				+"    $force = $throttle * $dt;\n"
+				+"} else {\n"
+				+"    $force = 0.0;\n"
+				+"}\n"
+				+"if( $throttle < 0.0){\n"
+				+"    $turnRoll = -$turnRoll;\n"
+				+"}\n");
+		if( $zIsLength ){
+			$exp +=	("float $fx = $xoff * $force;\n"
+					 +"float $fz = $zoff * $force;\n"
+					 +"$newXVel -= $throttlePitch * $force;\n"
+					 +"$newZVel -= $turnRoll * $rvy;\n");
+		} else {
+			$exp +=	("float $fx = $zoff * $force;\n"
+					 +"float $fz = -$xoff * $force;\n"
+					 +"$newZVel += $throttlePitch * $force;\n"
+					 +"$newXVel -= $turnRoll * $rvy;\n");
+		}
+		$exp +=	( "float $newVelX = ($fx+$vx) * (1-$damp);\n"
+				 +"float $newVelZ = ($fz+$vz) * (1-$damp);\n"
+				 +"float $fry	  = $force * $rudder * 0.1;\n"
+				 +"float $rotVelY = ($fry + $rvy) * (1-$damp);\n"
+				 +$loc+".velocityX = $newVelX;\n"
+				 +$loc+".velocityZ = $newVelZ;\n"
+				 +$loc+".rotVelY = $rotVelY;\n"
+				 +"float $x = "+$tform+".tx;\n"
+				 +"float $z = "+$tform+".tz;\n");
+		if( $useSetAttr ){
+			$exp += ("setAttr "+$tform+".tx ( $x + $newVelX );\n"
+					+"setAttr "+$tform+".tz ( $z + $newVelZ );\n"
+					+"setAttr "+$tform+".ry ( $turn + $rotVelY );\n");
+		} else {
+			$exp +=	($tform+".tx = $x + $newVelX;\n"
+					+$tform+".tz = $z + $newVelZ;\n"
+					+$tform+".ry = $turn + $rotVelY;\n");
+		}
+	}
+	if( $doRotation ){
+		if( $useSetAttr ){
+			$exp += ("setAttr "+$tform+".rx ( $rx + $newXVel );\n"
+					+"setAttr "+$tform+".rz ( $rz + $newZVel );\n");
+		} else {
+			$exp +=	($tform+".rx = $rx + $newXVel;\n"
+					+$tform+".rz = $rz + $newZVel;\n");
+		}
+	}
+
+	if( $isPond ){
+//  We probably don't need the following to force evaluation or do we???
+		$exp +=	("float $dummy = " + $oceanShader + ".outTransparencyR;\n");
+	} else {
+		$exp +=	("float $dummy = " + $oceanShader + ".displacement;\n");
+	}
+	$exp += ("}\n");
+
+	string $expName = "";
+	$expName = `expression -ae 1 -s $exp`;
+	
+	string $helpString;
+	if($isPond) {
+		$helpString = ("This node uses expression " + $expName + " to simulate buoyancy effects."
+			+" Several attributes on this node (under Extra Attributes) serve as inputs for the expression."
+			+" The default buoyancy of 0.5 will float the object half in and half out of the water."
+			+" The height parameter should be set to the height of the floating object with the object"
+			+" center at the locator position. The bottom of the object will then"
+			+" sit on top of the water if the buoyancy is near 1.0 (like a beachball) "
+			+" and hover just below the water surface if the buoyancy is near zero."
+			+" It will sink when the buoyancy is less than zero."
+			+" Air damp and water damp model the"
+			+" effects of friction and viscosity of the water and air on the object's motion.");
+	} else {
+		$helpString = ("This node uses expression " + $expName + " to simulate buoyancy effects."
+			+" Several attributes on this node (under Extra Attributes) serve as inputs for the expression."
+			+" The default buoyancy of 0.5 will float the object half in and half out of the water."
+			+" The height parameter should be set to the height of the floating object with the object"
+			+" center at the locator position. The bottom of the object will then"
+			+" sit on top of the water if the buoyancy is near 1.0 (like a beachball) "
+			+" and hover just below the water surface if the buoyancy is near zero."
+			+" It will sink when the buoyancy is less than zero."
+			+" For natural motion relative to the water, set the Scene Scale on the locator to"
+			+" match the Scale on the ocean Shader, and leave the gravity at"
+			+" the default setting. Air damp and water damp model the"
+			+" effects of friction and viscosity of the water and air on the object's motion.");
+	}
+	addAttr -sn nts -ln notes -dt "string" $loc;
+	setAttr -type "string" ($loc + ".notes") $helpString;
+	select -r $tform;
+}

@@ -1,0 +1,831 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+source performVisualizeMetadataOptions.mel;
+
+global string $sMetadataBoolValueTrue = "true";
+global string $sMetadataBoolValueFalse = "false";
+//
+//  Procedure Name:
+//      applyMetadataInEditWindow
+//
+//  Description:
+//		Edit metadata on the selected components
+//		The value is what is set in the field in the
+//		dialog.
+//		
+//  Input Arguments:
+//      Currently selected components.
+//
+//  Return Value:
+//      None.
+//
+global proc applyMetadataInEditWindow(string $componentArguments) 
+{
+	string $allShapes[] = `ls -shapes`;
+	string $visibleStream[] = `showMetadata -query -listVisibleStreams $allShapes`;
+	int $visibleStreamNum = size($visibleStream);
+
+	if($visibleStreamNum <= 0)
+	{
+		return;
+	}
+	
+	string $currentStreamMember = getCurrentStreamMember();
+	string $tokens[] = stringToStringArray($currentStreamMember, ".");
+	string $currentStream = $tokens[0];
+	string $currentMemberName = $tokens[1];
+	
+	string $currentMemberType = $tokens[2];
+	string $currentMemberTypeTokens[] = extractMemberDataTypeAndQuantity($currentMemberType);
+	string $metadataType = $currentMemberTypeTokens[0];
+	
+	global string $metadataValueWidgets[];
+	int $j;
+	string $editMetadataCmd = "editMetadata -streamName \"" + $currentStream + "\"" + "-memberName \"" + $currentMemberName + "\"";
+	
+	switch( $metadataType )
+	{
+		case "bool":
+			global string $sMetadataBoolValueTrue;
+			global string $sMetadataBoolValueFalse;
+			for($j = 0; $j < size($metadataValueWidgets); $j++)
+			{				
+				string $boolStringValue = `textField -q -text $metadataValueWidgets[$j]`;
+				// update text field to validate the value
+				if($boolStringValue != $sMetadataBoolValueTrue && $boolStringValue != $sMetadataBoolValueFalse)
+				{
+					validateBoolWidgetInEditWindow($metadataValueWidgets[$j]);
+					$boolStringValue = `textField -q -text $metadataValueWidgets[$j]`;
+				}
+				if($boolStringValue == $sMetadataBoolValueTrue)
+					$editMetadataCmd = $editMetadataCmd + " -value 1";
+				else if($boolStringValue == $sMetadataBoolValueFalse) 
+					$editMetadataCmd = $editMetadataCmd + " -value 0";
+			}
+			break;
+		case "float":
+		case "double":
+			for($j = 0; $j < size($metadataValueWidgets); $j++)
+			{
+				$editMetadataCmd = $editMetadataCmd + " -value " + `floatField -q -value $metadataValueWidgets[$j]`;
+			}
+			break;
+		case "string":
+			for($j = 0; $j < size($metadataValueWidgets); $j++)
+			{
+				string $rawString = `textField -q -text $metadataValueWidgets[$j]`;
+				string $encodedString = `encodeString $rawString`;
+				$editMetadataCmd = $editMetadataCmd + " -stringValue \"" + $encodedString + "\"";
+			}
+			break;
+		case "int8":
+		case "int16":
+		case "int32":
+		case "int64":
+			for($j = 0; $j < size($metadataValueWidgets); $j++)
+			{
+				$editMetadataCmd = $editMetadataCmd + " -value " + `intField -q -value $metadataValueWidgets[$j]`;
+			}
+			break;
+	}
+
+	$editMetadataCmd = $editMetadataCmd + " " + $componentArguments;
+	eval $editMetadataCmd;
+}
+
+//
+//  Procedure Name:
+//      applyAndCloseMetadataEditWindow
+//
+//  Description:
+//		Edit metadata on the selected components
+//		The value is what is set in the field in the
+//		dialog. And then close the dialog.
+//		
+//  Input Arguments:
+//      Currently selected components.
+//
+//  Return Value:
+//      None.
+//
+global proc applyAndCloseMetadataEditWindow(string $componentArguments) {
+	applyMetadataInEditWindow($componentArguments);
+	deleteUI -window editMetadataWindow;
+}
+
+//
+//  Procedure Name:
+//      switchMetadataVisualization
+//
+//  Description:
+//		Update the metadata visualization when switch 
+//		the selected stream or member.
+//
+//  Input Arguments:
+//      Stream name, member name and member type to switch the visualization to.
+//
+//  Return Value:
+//      None.
+//
+global proc switchMetadataVisualization(string $streamName, string $memberNameAndType[])
+{
+	global string $noneString;
+
+	if($streamName == $noneString)
+	{
+		// Turn off the metadata visualization
+		string $allShapes[] = `ls -shapes`;
+		int $result = `showMetadata -off $allShapes`;
+	}
+	else
+	{
+		string $memberNameAndTypeString = buildMemberName($memberNameAndType[0], $memberNameAndType[1]);
+		string $streamMemberName = buildStreamMemberName($streamName, $memberNameAndTypeString);
+		string $cmd = "if (!`exists activateStreamMember`) {eval \"source performVisualizeMetadataOptions\";} activateStreamMember(\"" + $streamMemberName + "\")";
+		eval($cmd);
+	}
+}
+
+//
+//  Procedure Name:
+//      getCurrentSelectedStream
+//
+//  Description:
+//		Get currently selected stream in the Edit Metadata Window.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      Currently selected stream name.
+//
+global proc string getCurrentSelectedStream()
+{
+	global string $streamListWidgetInEditMetadataWindow;
+	string $menuItems[] = `optionMenuGrp -q -itemListLong $streamListWidgetInEditMetadataWindow`;
+	int  $selectedStreamIndex = `optionMenuGrp -q -select $streamListWidgetInEditMetadataWindow`;
+	string $streamName = `menuItem -q -label $menuItems[$selectedStreamIndex-1]`;
+	return $streamName;
+}
+
+//
+//  Procedure Name:
+//      getCurrentSelectedMemberAndType
+//
+//  Description:
+//		Get currently selected member and type in the Edit Metadata Window.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      Currently selected member and type.
+//
+global proc string[] getCurrentSelectedMemberAndType()
+{
+	global string $memberListWidgetInEditMetadataWindow;
+	
+	string $memberItems[] = `optionMenuGrp -q -itemListLong $memberListWidgetInEditMetadataWindow`;
+	int  $selectedMemberIndex = `optionMenuGrp -q -select $memberListWidgetInEditMetadataWindow`;
+	string $memberLabel = `menuItem -q -label $memberItems[$selectedMemberIndex-1]`;
+	string $memberNameAndType[] = stringToStringArray($memberLabel, ".");
+	return $memberNameAndType;
+}
+
+//
+//  Procedure Name:
+//      switchStreamInEditMetadataWindow
+//
+//  Description:
+//		Update the Edit Metadata Window when switch 
+//		the selected stream.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+global proc switchStreamInEditMetadataWindow()
+{
+	global string $streamListWidgetInEditMetadataWindow;
+	global string $memberListWidgetInEditMetadataWindow;
+	
+	if(`optionMenuGrp -query -exists $streamListWidgetInEditMetadataWindow` && `optionMenuGrp -query -exists $memberListWidgetInEditMetadataWindow`)
+	{
+		string $streamName = getCurrentSelectedStream();
+		
+		// clean old member list 
+		string $memberItems[] = `optionMenuGrp -q -itemListLong $memberListWidgetInEditMetadataWindow`;
+		if(size($memberItems) > 0)
+			deleteUI -menuItem $memberItems;
+		
+		// Create new member list
+		global string $noneString;
+		if($streamName == $noneString)
+		{
+			// The Stream is "None", make member list show "None" also.
+			string $memberListWidgetMenu = $memberListWidgetInEditMetadataWindow + "|OptionMenu";
+			menuItem -label $noneString -parent $memberListWidgetMenu;
+		}
+		else
+		{
+			string $allShapes[] = `ls -shapes`;
+			string $membersInStream[] = `showMetadata -q -stream $streamName -listMembers $allShapes`;
+			string $memberListWidgetMenu = $memberListWidgetInEditMetadataWindow + "|OptionMenu";
+			for($i = 0; $i < (size($membersInStream) / 2); $i++)
+			{
+				string $memberNameAndTypeItem = buildMemberName( $membersInStream[$i * 2], $membersInStream[$i * 2 + 1] );
+				menuItem -label $memberNameAndTypeItem -parent $memberListWidgetMenu;
+			}
+		}
+		
+		// Always select the first member as default when switch stream.
+		optionMenuGrp -e -select 1 $memberListWidgetInEditMetadataWindow;
+		
+		// Get the first member name and type which is currently selected.
+		string $memberNameAndType[] = getCurrentSelectedMemberAndType();
+		switchMetadataVisualization($streamName, $memberNameAndType);
+	}
+}
+
+//
+//  Procedure Name:
+//      switchMemberInEditMetadataWindow
+//
+//  Description:
+//		Enable/Disable visual method widget 
+//		according to data type of the selected member.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+global proc switchMemberInEditMetadataWindow()
+{
+	global string $streamListWidgetInEditMetadataWindow;
+	global string $memberListWidgetInEditMetadataWindow;
+	
+	if(`optionMenuGrp -query -exists $streamListWidgetInEditMetadataWindow` && `optionMenuGrp -query -exists $memberListWidgetInEditMetadataWindow`)
+	{
+		string $memberNameAndType[] = getCurrentSelectedMemberAndType();
+		
+		// Get the current selected stream name also to switch the metadata visualization
+		string $streamName = getCurrentSelectedStream();
+		switchMetadataVisualization($streamName, $memberNameAndType);
+	}	
+}
+
+//
+//  Procedure Name:
+//      editMetadataWindowLayout
+//
+//  Description:
+//		Fill in the widgets into the Edit Metadata Window.
+//		
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+global proc editMetadataWindowLayout()
+{
+	global string $streamListWidgetInEditMetadataWindow;
+	global string $memberListWidgetInEditMetadataWindow;
+	global string $mainFrameLayout;
+	global string $mainColumnLayout;
+	global string $allShapes[];
+	global string $allStreamList[];
+
+	global string $noneString;
+	$noneString = (uiRes("m_editMetadataWindow.kNoStreamOrMember"));
+	
+	// get the formLayout
+	string $dataFormLayout = `setParent -q`;
+	formLayout -e -width 400 -height 100 $dataFormLayout;
+	
+	$mainFrameLayout = `frameLayout -marginHeight 5 
+									-marginWidth 5 
+									-labelVisible false 
+									-collapse false`;
+		
+		$mainColumnLayout = `columnLayout -rowSpacing 2`;
+			
+		//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+		// Create the option menu for all streams
+		//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+		string $changeCmd = "switchStreamInEditMetadataWindow;";
+		$streamListWidgetInEditMetadataWindow = `optionMenuGrp -cc $changeCmd -label (uiRes("m_editMetadataWindow.kCurrentStream"))`;
+				
+		///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+		// Create the option menu for members of currently selected stream
+		///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+		$changeCmd = "switchMemberInEditMetadataWindow;";
+		$memberListWidgetInEditMetadataWindow = `optionMenuGrp -cc $changeCmd -label (uiRes("m_editMetadataWindow.kCurrentMember"))`;
+
+		setParent ..;
+	setParent ..;
+
+	string $buttonForm = `formLayout`;
+	int $buttonHeight = 26;
+	string $applyCloseButton = `button -recomputeSize 0 -height $buttonHeight -label (uiRes("m_editMetadataWindow.kMetadataEditorApplyCloseButton")) applyCloseButton`;
+	string $applyButton = `button -recomputeSize 0 -height $buttonHeight -label (uiRes("m_editMetadataWindow.kMetadataEditorApplyButton")) applyButton`;
+	string $closeButton = `button  -recomputeSize 0 -command ("deleteUI -window editMetadataWindow") -height $buttonHeight -label (uiRes("m_editMetadataWindow.kMetadataEditorCloseButton")) closeButton`;
+	setParent ..;
+	formLayout -edit
+		-numberOfDivisions 100
+
+		-attachForm     $applyCloseButton 	"top"    0
+		-attachForm     $applyCloseButton 	"left"	 0
+		-attachForm     $applyCloseButton 	"bottom" 0
+		-attachPosition $applyCloseButton 	"right"  2 33
+
+		-attachForm     $applyButton 		"top"    0
+		-attachControl  $applyButton 		"left"	 5 $applyCloseButton
+		-attachForm     $applyButton 		"bottom" 0
+		-attachPosition $applyButton 		"right"  2 66
+		
+		-attachForm     $closeButton        "top"    0
+		-attachControl  $closeButton        "left"   5 $applyButton
+		-attachForm     $closeButton        "bottom" 0
+		-attachForm     $closeButton        "right"  0
+		$buttonForm;
+
+	formLayout -edit
+		-attachForm    $mainFrameLayout 	"top"    5
+		-attachForm    $mainFrameLayout 	"left"   5
+		-attachControl $mainFrameLayout 	"bottom" 5 $buttonForm
+		-attachForm    $mainFrameLayout 	"right"  5
+
+		-attachNone    $buttonForm          "top"
+		-attachForm    $buttonForm          "left"   5
+		-attachForm    $buttonForm          "bottom" 5
+		-attachForm    $buttonForm          "right"  5
+		$dataFormLayout;
+}
+
+//
+//  Procedure Name:
+//      extractMemberDataTypeAndQuantity
+//
+//  Description:
+//		Extract member data type and data quantity.
+//		For example int32[4] will be extracted as int32 and 4.
+//  
+//	Input Arguments:
+//      Member's type.
+//
+//  Return Value:
+//      Data type and data quantity.
+//
+global proc string [] extractMemberDataTypeAndQuantity(string $memberType)
+{
+    string $memberTypeTokens[] = stringToStringArray($memberType, "[");
+	int $memberTypeTokensSize = size($memberTypeTokens);
+	string $memberDataType = $memberTypeTokens[0];
+	string $memberDataQuantity = "1";
+	if($memberTypeTokensSize>1)
+	{
+		$memberDataQuantity = $memberTypeTokens[1];
+		if (endsWith($memberDataQuantity, "]"))
+		{
+			int $stringSize = size($memberDataQuantity);
+			$memberDataQuantity = substring( $memberDataQuantity, 1, $stringSize-1);
+		}
+	}
+
+	return{$memberDataType, $memberDataQuantity};
+}
+
+
+//
+//  Procedure Name:
+//      validateBoolWidgetInEditWindow
+//
+//  Description:
+//		Validate boolean variable in the text field
+//
+//		The text in the boolean value widget is 
+//		"on" if the value is true or "off" if the value
+//		is false.
+//		User can enter the string "on" or "off" 
+//		to set the value to "true" or "false". 
+//		They can also enter a float 
+//		or int value instead. If the value is equal or 
+//		larger than 0.5, the boolean will be true, otherwise,
+//		the boolean will be false.
+//		The text field does not accept other characters
+//		If you enter an invalid string, such as "C04"
+//		the boolean will be set to "false".
+//  
+//  Input Arguments:
+//      boolWidget	- the bool widget which needs to be updated
+//
+//  Return Value:
+//      None
+//
+global proc validateBoolWidgetInEditWindow(string $boolWidget)
+{
+	global string $sMetadataBoolValueTrue;
+	global string $sMetadataBoolValueFalse;
+	
+	string $inputText = `textField -q -text $boolWidget`;
+	string $inputBoolValueOn = "on";
+	string $inputBoolValueOff = "off";
+	string $inputBoolValueYes = "yes";
+	string $inputBoolValueNo = "no";
+	if($inputText == $sMetadataBoolValueTrue || $inputText == $inputBoolValueOn || $inputText == $inputBoolValueYes) 
+	{
+		textField -e -text $sMetadataBoolValueTrue $boolWidget;
+	}
+	else if($inputText == $sMetadataBoolValueFalse || $inputText == $inputBoolValueOff || $inputText == $inputBoolValueNo) 
+	{
+		textField -e -text $sMetadataBoolValueFalse $boolWidget;
+	}
+	else
+	{
+		string $validFloatValue = `match "[0-9]+[.]*[0-9]*" $inputText`;
+		if($validFloatValue == $inputText)
+		{
+			float $floatValue = $validFloatValue;
+			float $maxValue = 1.0;
+			float $minValue = 0.0;
+			float $midValue = 0.5;
+			if($floatValue >= $midValue && $floatValue <= $maxValue)
+				textField -e -text $sMetadataBoolValueTrue $boolWidget;
+			else if($floatValue < $midValue && $floatValue >= $minValue)
+				textField -e -text $sMetadataBoolValueFalse $boolWidget;
+			else
+			{
+				warning (uiRes("m_editMetadataWindow.kEditMetadataBoolValueOutRange"));
+				textField -e -text $sMetadataBoolValueFalse $boolWidget;
+			}	
+		}
+		else
+		{
+			warning (uiRes("m_editMetadataWindow.kEditMetadataBoolValueInvalid"));
+			textField -e -text $sMetadataBoolValueFalse $boolWidget;
+		}
+	}
+}
+
+//
+//  Procedure Name:
+//      createValueWidget
+//
+//  Description:
+//		Generate widgets for "New Value" section according to
+//		the data type of the currently selected member.
+//  
+//  Input Arguments:
+//      Member's type.
+//
+//  Return Value:
+//      Data type and data quantity.
+//
+global proc createValueWidget(string $mainColumnLayout, string $currentMemberType)
+{
+	global string $noneString;
+	global string $metadataPlaceHolderValueWidget;
+	global string $metadataValueLayout;
+	
+	if(`intFieldGrp -query -exists $metadataPlaceHolderValueWidget`)
+	{
+		deleteUI -layout $metadataPlaceHolderValueWidget;
+	}
+	
+	if(`rowColumnLayout -query -exists $metadataValueLayout`)
+	{
+		deleteUI -layout $metadataValueLayout;
+	}
+	
+	if($currentMemberType == $noneString)
+	{
+		///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+		// Create a placeholder widget for "Value:" which is disabled when member is None, it is just used to let user know   
+		// they can assign value here when they have valid member selection, the widget will also be updated according to 
+		// member selection change later.
+		///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+		$metadataPlaceHolderValueWidget = `intFieldGrp -parent $mainColumnLayout
+					-numberOfFields 1 
+					-enable false 
+					-label (uiRes("m_editMetadataWindow.kNewValue"))`;
+	}
+	else
+	{
+		string $currentMemberTypeTokens[] = extractMemberDataTypeAndQuantity($currentMemberType);
+		string $metadataType = $currentMemberTypeTokens[0];
+		int $valueQuantity = (int)$currentMemberTypeTokens[1];
+		
+		int $maxColumnQuantity = 3;
+		int $rowQuantity = $valueQuantity / $maxColumnQuantity + 1;
+		int $lastRowColumnQuantity = $valueQuantity % $maxColumnQuantity;
+		int $firstRowColumnQuantity = $valueQuantity > $maxColumnQuantity ? $maxColumnQuantity : $valueQuantity;
+
+		$metadataValueLayout = `rowColumnLayout -parent $mainColumnLayout
+										-numberOfColumns ($firstRowColumnQuantity+1) 
+										-columnWidth 1 140 
+										-columnWidth 2 82 
+										-columnWidth 3 82 
+										-columnWidth 4 82 
+										-columnAttach 1 "right" 0 
+										-columnAttach 2 "left" 2
+										-columnAttach 3 "left" 2
+										-columnAttach 4 "left" 2
+										-rowSpacing 2 2`;
+										
+		int $i;
+		int $j;
+		int $columnQuantity;
+		string $labelWidget;
+		global string $metadataValueWidgets[];
+		$metadataValueWidgets = {};
+		for($i = 0; $i < $rowQuantity; $i++)
+		{
+			$labelWidget = `text -label (uiRes("m_editMetadataWindow.kEditMetadataTextFieldLabel"))`;
+			if($i != 0)
+			{
+				text -e -visible false $labelWidget;
+			}
+			
+			if($i == $rowQuantity - 1)
+				$columnQuantity = $lastRowColumnQuantity;
+			else 
+				$columnQuantity = $maxColumnQuantity;
+				
+			for($j = 0; $j < $columnQuantity; $j++)
+			{
+				switch( $metadataType )
+				{
+					case "bool":
+						global string $sMetadataBoolValueTrue;
+						global string $sMetadataBoolValueFalse;
+						string $metadataBoolWidget = `textField -width 80 -text $sMetadataBoolValueFalse`;
+						$metadataValueWidgets[size($metadataValueWidgets)] = $metadataBoolWidget;
+						string $boolWidgetChangeCmd = "validateBoolWidgetInEditWindow " + $metadataBoolWidget;
+						textField -e -changeCommand $boolWidgetChangeCmd $metadataBoolWidget;
+						break;
+					case "float":
+					case "double":
+						$metadataValueWidgets[size($metadataValueWidgets)] = `floatField -width 80`;
+						break;
+					case "string":
+						$metadataValueWidgets[size($metadataValueWidgets)] = `textField -width 80`;
+						break;
+					case "int8":
+					case "int16":
+					case "int32":
+					case "int64":
+						$metadataValueWidgets[size($metadataValueWidgets)] = `intField -width 80`;
+						break;
+				}
+			}
+		}
+	}
+}
+
+//  Procedure Name:
+//		resetEditMetadataWindow
+//
+//  Description:
+//		Set all widgets in the edit window
+//		to the default settings.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+global proc resetEditMetadataWindow()
+{
+	// reset current stream to get the stream 
+	// in the new scene
+	optionVar -sv metadataVisualCurrentStreamMember "";
+	updateEditMetadataWindow();
+}
+
+//  Procedure Name:
+//		updateEditMetadataWindow
+//
+//  Description:
+//		To update the edit metadata window.
+//		When no metadata is visualized, we select "None" for both 
+//		stream and member list.
+//		When do have metadat visualized, we select the visualized
+//		stream and member in both list.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+global proc updateEditMetadataWindow()
+{
+	global string $streamListWidgetInEditMetadataWindow;
+	global string $memberListWidgetInEditMetadataWindow;
+	global string $allShapes[];
+	global string $allStreamList[];
+	global string $noneString;
+	
+	// Skip updating if the widgets are closed
+	if(!`optionMenuGrp -query -exists $streamListWidgetInEditMetadataWindow` || !`optionMenuGrp -query -exists $memberListWidgetInEditMetadataWindow`)
+		return;
+	
+	// Clean old stream list 
+	string $streamItems[] = `optionMenuGrp -q -itemListLong $streamListWidgetInEditMetadataWindow`;
+	if(size($streamItems) > 0)
+		deleteUI -menuItem $streamItems;
+	
+	// Clean old member list 
+	string $memberItems[] = `optionMenuGrp -q -itemListLong $memberListWidgetInEditMetadataWindow`;
+	if(size($memberItems) > 0)
+		deleteUI -menuItem $memberItems;
+	
+	// Update menu items according to the scene
+	// Add "None" as the first menu item in stream list.
+	string $streamListWidgetMenu = $streamListWidgetInEditMetadataWindow + "|OptionMenu";
+	menuItem -label $noneString -parent $streamListWidgetMenu;
+	
+	// Create option menu items for all streams.
+	$allShapes = `ls -shapes`;
+	$allStreamList = `showMetadata -query -listAllStreams $allShapes`;
+	int $i;
+	for($i = 0; $i < size($allStreamList); $i++)
+	{
+		menuItem -label $allStreamList[$i] -parent $streamListWidgetMenu;
+	}
+	
+	// If there is no stream visualized, select None in the stream list.
+	// If there is stream visualized, select currently visualized stream and member.
+	int $selectedStreamIndex = 1;
+	int $selectedMemberIndex = 1;
+	
+	string $allShapes[] = `ls -shapes`;
+	string $visibleStream[] = `showMetadata -query -listVisibleStreams $allShapes`;
+	int $visibleStreamNum = size($visibleStream);
+	
+	string $currentStream;
+	string $currentMember;
+	string $currentMemberType; 
+	if($visibleStreamNum>0)
+	{
+		string $currentStreamMember = getCurrentStreamMember();
+		string $tokens[] = stringToStringArray($currentStreamMember, ".");
+		$currentStream = $tokens[0];
+		$currentMember = $tokens[1];
+		$currentMemberType = $tokens[2];
+		
+		int $currentStreamActivated = 0;
+		
+		int $i;
+		int $j;
+		string $membersInStream[];
+		for($i = 0; $i < size($allStreamList); $i++)
+		{
+			if($currentStream == $allStreamList[$i])
+			{
+				$membersInStream = `showMetadata -query -stream $allStreamList[$i] -listMembers $allShapes`;
+
+				for($j = 0; $j < (size($membersInStream)/2); $j++)
+				{
+					if(!$currentStreamActivated 
+						&& $currentMember == $membersInStream[$j*2]
+						&& $currentMemberType == $membersInStream[$j*2+1])
+					{
+						$selectedStreamIndex = ($i+2); //Need to add 2 because stream list always have the "None" option as the first one.
+						$selectedMemberIndex = ($j+1);
+						$currentStreamActivated = 1;
+						break;
+					}
+				}	
+			}	
+		
+			if($currentStreamActivated)
+				break;
+		}
+			
+		// Create the member list.
+		string $memberListWidgetMenu = $memberListWidgetInEditMetadataWindow + "|OptionMenu";
+		for($j = 0; $j < (size($membersInStream)/2); $j++)
+		{
+			string $memberName = buildMemberName($membersInStream[$j*2], $membersInStream[$j*2+1]);
+			menuItem -label $memberName -parent $memberListWidgetMenu;
+		}
+		
+		optionMenuGrp -edit -select $selectedStreamIndex $streamListWidgetInEditMetadataWindow;
+		optionMenuGrp -edit -select $selectedMemberIndex $memberListWidgetInEditMetadataWindow;
+	}
+	else
+	{		
+		// Add "None" as the first menu item in member list.
+		string $memberListWidgetMenu = $memberListWidgetInEditMetadataWindow + "|OptionMenu";
+		menuItem -label $noneString -parent $memberListWidgetMenu;
+		
+		optionMenuGrp -edit -select 1 $streamListWidgetInEditMetadataWindow;
+		optionMenuGrp -edit -select 1 $memberListWidgetInEditMetadataWindow;
+		
+		$currentMemberType = $noneString;
+	}
+	
+	// Update the value widget according to currently selected member data type.
+	global string $mainColumnLayout;
+	createValueWidget($mainColumnLayout, $currentMemberType);
+}
+
+//
+//  Procedure Name:
+//      updateApplyCommand
+//
+//  Description:
+//		Update the command of "Apply" button when selection changes.
+//  
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+global proc updateApplyCommand()
+{
+	// Update the apply and apply/close button command.
+	string $selectedObjects[] = `ls -selection -shortNames`;
+	string $componentArguments;
+	if(size($selectedObjects) > 0)
+	{
+		$componentArguments = stringArrayToString($selectedObjects, " ");
+	}
+	
+	string $applyAndCloseMetadataCmd = "applyAndCloseMetadataEditWindow(\"" + $componentArguments + "\")";
+	string $applyMetadataCmd = "applyMetadataInEditWindow(\"" + $componentArguments + "\")";
+	string $applyCloseButton = `button -e -command $applyAndCloseMetadataCmd applyCloseButton`;
+	string $applyButton = `button -e -command $applyMetadataCmd applyButton`;
+}
+
+//
+//  Procedure Name:
+//      createEditMetadataWindow
+//
+//  Description:
+//		Create a window to edit 
+//		metadata on the selected components
+//		
+//  Input Arguments:
+//      Current selected item.
+//
+//  Return Value:
+//      None.
+//
+global proc createEditMetadataWindow(string $item) {
+	// Create the Edit Metadata Window
+	if( `window -exists editMetadataWindow` ) {
+		deleteUI -window editMetadataWindow;
+	}
+
+	window -title (uiRes("m_editMetadataWindow.kMetadataEditor"))  
+		-menuBar true
+		-w 400
+		-s true 
+		editMetadataWindow;
+
+	formLayout metadataEditorForm;
+		
+	// Create the content of the Edit Metadata Window
+	editMetadataWindowLayout();
+	updateEditMetadataWindow();
+	updateApplyCommand();
+		
+	//	Create script jobs to keep the Edit Metadata Window up to date
+	//	when the selection changes
+	//
+	scriptJob 
+		-parent "editMetadataWindow"
+		-event "SelectionChanged"
+		"updateApplyCommand";
+
+	showWindow editMetadataWindow;
+}

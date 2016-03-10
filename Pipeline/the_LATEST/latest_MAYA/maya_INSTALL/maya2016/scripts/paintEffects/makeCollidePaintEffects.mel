@@ -1,0 +1,122 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+// makeCollidePaintEffects
+//
+// This makes selected meshes and nurbsSurfaces collide with selected strokes.
+// If only strokes are selected then all colliding objects for those strokes will be disconnected.
+// If a stroke already has collision objects then the selected objects will add to the list.
+// This command also turns on the surfaceCollide attribute on brushes attached to selected strokes.
+
+global proc makeCollidePaintEffects()
+{
+	int $i;
+	string $objs[] = `ls -sl -dag -type mesh -type nurbsSurface`;
+	int $numObjs = size($objs);
+	string $strokes[] = `ls -sl -dag -type stroke`;
+	int $numStrokes = size( $strokes );
+ 	if( $numStrokes < 1 ){
+		string $mess = (uiRes("m_makeCollidePaintEffects.kPfxNeedsStrokeSelection"));
+		warning $mess;
+		return;
+	}
+	int $clearCollisions = ($numObjs < 1);
+	if( $clearCollisions && $numStrokes == 2 ){
+		int $numCollideCon = `getAttr -size( $strokes[0] + ".collisionObject")`;
+		if( $numCollideCon ==  0 ){
+			// If only two strokes are selected and the first has no collide objects
+			// then make the first a collide object with the second
+			$objs[0] = $strokes[0];
+			string $tmp[];
+			$tmp[0] = $strokes[1];
+			$strokes = $tmp;
+			$numObjs = 1;
+			$numStrokes = 1;
+			$clearCollisions = false;
+		}
+	}
+	string $stroke;
+	for( $stroke in $strokes ){
+		int $numCollideCon = `getAttr -size( $stroke + ".collisionObject")`;
+
+		if( $clearCollisions ){
+			for( $i = 0; $i < $numCollideCon; $i++ ){
+				string $input = ($stroke+".collisionObject["+$i+"]");
+				string $con = `connectionInfo -sfd $input`;
+				if( size( $con ) >  0 ){
+					disconnectAttr $con $input;
+				}
+			}
+		} else {
+			string $strokeObjs[] = `listConnections -sh on ($stroke+".collisionObject")`;
+			int $numStrokeObjs = size( $strokeObjs );
+			string $colObj[];
+			int $numColObj = 0;
+			for( $i = 0; $i < $numObjs; $i ++ ){
+				// avoid duplicate collide objects
+				string $obj = $objs[$i];
+				int $foundObj = false;
+				for( $j = 0; $j < $numStrokeObjs; $j++ ){
+					if( $obj == $strokeObjs[$i] ){
+						$foundObj = true;
+					}
+				}
+				if( $foundObj ){
+					continue; // avoid duplicate
+				}
+				$colObj[$numColObj] = $obj;
+				$numColObj++;
+			}
+			int $freeIndex = 0;
+			
+			for( $i = 0; $i < $numColObj; $i++ ){
+				for( $j = $freeIndex; $j <= $numCollideCon; $j++ ){
+					string $input = ($stroke+".collisionObject["+$j+"]");
+					if( $j < $numCollideCon ){
+						string $con = `connectionInfo -sfd $input`;
+						if( size( $con ) > 0 ){
+							// already connected, keep looking
+							continue;
+						}
+					}
+				
+					$obj = $colObj[$i];
+					if( nodeType( $obj ) == "mesh" ){
+						connectAttr ($obj + ".worldMesh[0]") $input;
+					} else  if( nodeType( $obj ) == "stroke" ){
+						connectAttr ($obj + ".outMainMesh") $input;
+					} else {
+						connectAttr ($obj + ".worldSpace[0]") $input;
+					}
+					$freeIndex = $j + 1;
+					if( $numCollideCon < $freeIndex ){
+						$numCollideCon = $freeIndex;
+					}
+					break;
+				}
+			}
+			string $brushes[]= listConnections($stroke + ".brush");
+			if( size($brushes) >  0){
+				setAttr ($brushes[0] + ".surfaceCollide") true;
+			}
+		}
+	}
+}

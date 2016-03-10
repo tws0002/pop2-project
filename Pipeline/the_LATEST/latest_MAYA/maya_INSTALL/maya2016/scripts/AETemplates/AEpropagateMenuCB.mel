@@ -1,0 +1,153 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  27 Nov 1997
+//
+//  Description:
+//      This procedure controls the behaviour of
+//		the navigator buttons that appear at the
+//		top of the attribute editor
+//
+//  Input Arguments:
+//		$type = whether we're looking for forward or
+//				backward connections
+//		$menu = the popup menu control name
+//				("" if the button is hit with the LMB)
+//		$node = the name of the node
+//		
+//  Return Value:
+//      None
+//
+
+
+global proc AEpropagateMenuCB(string $type, string $menu, string $node)
+{
+
+	if ( $menu != "" ) {
+		setParent -m $menu;
+		popupMenu -e -deleteAllItems $menu;
+	}
+
+	// get a list of all the plugs in the desired direction
+	//
+	string $allPlugs[];
+	string $plugs[];
+	if ( $type == "-backward" ) {
+		// note: since we need to do an extra filtering step for
+		// backward connections, we use a temporary string array ($allPlugs)
+		//
+		$allPlugs = `listConnections -s false -d true -c true -p true $node`;
+	} else if ( $type == "-forward" ) {
+		$plugs = `listConnections -s true -d false -c true -p true $node`;
+	}
+
+	// loop through the plugs and filter out those that are connected
+	// to invalid attributes (only for backward connections)
+	//
+	int $i;
+	if ( size($plugs) == 0 && size($allPlugs) > 0 ) {
+
+		// get a list of attributes that we'll check for connections;
+		// these attributes must be:
+		//	visible
+		//	connectable
+		//	readOnly
+		//
+		string $attrs[] = `listAttr -visible -connectable -readOnly $node`;
+
+		for ( $i = 0; $i < size($allPlugs); $i += 2 ) {
+
+			// tokenize the indexed $allPlugs such that:
+			//	currentNodeBuffer[0] is the nodeName
+			//	currentNodeBuffer[1] is the attributeName
+			//	currentNodeBuffer[2] would be the multi index if defined
+			//
+			string $currentNodeBuffer[];
+			tokenize($allPlugs[$i], ".[]", $currentNodeBuffer);
+
+			// search for the attribute name in the attribute list;
+			// if we find it, add it to our list of valid plugs: $plugs
+			//
+			for ( $j = 0; $j < size($attrs); $j++ ) {
+				if ( $currentNodeBuffer[1] == $attrs[$j] ) {
+					// got a valid one
+					$plugs[size($plugs)] = $allPlugs[$i];
+					$plugs[size($plugs)] = $allPlugs[$i+1];
+					break; // from $j loop
+				}
+			}
+
+			// if we don't want a whole menu (i.e. just
+			// do a showEditor on the first item in the
+			// list) we can break from this loop if we've
+			// got at least one plug
+			//
+			if ( $menu == ""  && size($plugs) > 0 ) {
+				break; // from $i loop
+			}
+		}
+	}
+
+	// Remove unwanted nodes in pairs.
+	//
+	clear $allPlugs;
+	$allPlugs = AEfilterUnwantedNodes($plugs, true);
+	clear $plugs;
+	$plugs = filterBlackBoxNodes( $allPlugs, true );
+	
+	// now we have a list of valid plugs;
+	// depending on what we want to do with this list,
+	// we can now either build a pop-up menu, or
+	// simply show the first item in the list
+	// in the attribute editor
+	//
+	string $currentNodeBuffer[], $connectedNodeBuffer[];
+	if ( $menu == "" ) {
+		// show the attribute editor for the first connection
+		//
+		if ( size($plugs) > 0 ) {
+			tokenize($plugs[1], ".", $connectedNodeBuffer);
+			showEditorExact $connectedNodeBuffer[0];
+		}
+	} else {
+		// build the menuItems for the popup
+		//
+		for ( $i = 0; $i < size($plugs); $i += 2 ) {
+			tokenize($plugs[$i], ".", $currentNodeBuffer);
+			tokenize($plugs[$i+1], ".", $connectedNodeBuffer);
+			string $command = ("showEditorExact "+$connectedNodeBuffer[0]);
+			string $label = "";
+			switch ( $type ) {
+			  case "-backward":
+				$label = ($currentNodeBuffer[1]+" -> "+$plugs[$i+1]);
+				break;
+			  case "-forward":
+				$label = ($plugs[$i+1]+" -> "+$currentNodeBuffer[1]);
+				break;
+			  default:
+				break;
+			}
+			menuItem -l $label -c $command;
+		}
+	}
+}

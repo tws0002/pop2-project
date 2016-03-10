@@ -1,0 +1,101 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//textureEditorIsolateSelect.mel
+//
+//must be in view faces of selected images mode to see effects
+//
+// $mode =
+//			0: remove all visible for selected object
+//			1: add selected to visible set
+//			2: remove selected from visible set
+
+global proc textureEditorIsolateSelect(int $mode){
+	
+	// determine if textureEditorIsolateSelectSet exists
+	string $setExists[] = `ls textureEditorIsolateSelectSet`;
+	if (size($setExists) == 0)
+		sets -name "textureEditorIsolateSelectSet"
+			-facets true;
+	
+	// Begin changing the set
+	string $objects[] = `ls -sl`;
+	for ($object in $objects){
+		
+		//convert selection to faces
+		string $faces[] = `polyListComponentConversion 
+			-ff -fv -fe -fuv -fvf -tf $object`;
+		//if there are no faces then stop here and inform the user
+		if (size($faces) == 0){
+			error (uiRes("m_textureEditorIsolateSelect.kOnlyPolyMesh"));
+		}
+		
+		switch( $mode ){
+		case 0:
+			string $shape[] = `listRelatives -fullPath -parent -shapes $faces[0]`;
+			clear $faces;
+			$faces = `polyListComponentConversion -fv -fe -fuv -fvf -tf $shape[0]`;
+			sets -edit 
+				-remove textureEditorIsolateSelectSet $faces;
+			// this is the end for this case so return
+			return;
+			break;
+			
+		case 1:
+			sets -edit 
+				-addElement textureEditorIsolateSelectSet $faces;
+			break;
+			
+		case 2:
+			sets -edit 
+				-remove textureEditorIsolateSelectSet $faces;
+			break;
+		}
+		
+		string $parent[] = `listRelatives -fullPath -parent $object`;
+		
+		// Find out the groupId nodes connected to the mesh
+		string $meshGroupIdNode[] = `listConnections -type groupId
+			$parent[0]`;
+		string $setGroupIdNode[] = `listConnections -type groupId
+			textureEditorIsolateSelectSet`;
+		
+		// create an intersector to find the proper groupId
+		string $groupIdIntersector = `stringArrayIntersector`;
+		stringArrayIntersector -edit -intersect $meshGroupIdNode $groupIdIntersector;
+		stringArrayIntersector -edit -intersect $setGroupIdNode $groupIdIntersector;
+		string $groupIdNode[] = `stringArrayIntersector -query $groupIdIntersector`;
+
+		// Delete the intersector as we are now done with it
+		//
+		deleteUI $groupIdIntersector;
+		
+		if( size($groupIdNode) > 0 )
+		{
+			// Get the magic number from that node
+			int $groupId = `getAttr ($groupIdNode[0] +".groupId")`;
+
+			// Set that magic number to the meshShape
+			setAttr ($parent[0] + ".displayFacesWithGroupId") $groupId;
+		}
+	}
+}
+

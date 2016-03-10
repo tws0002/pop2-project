@@ -1,0 +1,558 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+// For development only
+proc int debugPrint( string $printThis )
+{
+	// print $printThis;
+	return 0;
+}
+
+proc int kickFluid()
+// Forces the fluid to load by switching the current time
+// This is a workaround to bug 161829. 
+{
+	int $currentTime = `currentTime -q`;
+	currentTime 3;
+	refresh;
+	currentTime 1;
+	refresh;
+	currentTime $currentTime;
+	return 0;
+}
+// Remove above 
+
+proc string applyFluidDiskCacheFile(
+	string $fluidShape,
+	string $diskCacheFile,
+	int $xResolution,
+	int $yResolution,
+	int $zResolution,
+	int $is2d,			// 1 means it's 2d, 0 means it's 3d
+	int $hasDensity, 
+	int $hasVelocity, 
+	int $hasTemperature, 
+	int $hasReaction,
+	int $hasColor,
+	int $hasTexture,
+	int $hasFalloff ) 
+//
+//	Description:
+//		Creates a disk cache node for the given fluid shape,
+//		or changes the existing cache node for the given fluid shape,
+//		to have the given $diskCachefile in the user's working dir.
+//
+//		Also copies the given diskCacheFile to the user's working dir.
+//
+//		Returns the name of the disk cache node that was created/modified.
+//
+//		Call like this:
+//			string $diskCacheNode = applyFluidDiskCacheFile( 
+//				"fluidShape1",
+//				"<fullpath>/data/faintCloud.ma_fluidShape.mcfi",
+//				40, 40, 1, 1, 		// resolution is 40x40x1, is2d=true
+//				1, 1, 0 0);			// has density and velocity, no temp or reaction
+//				
+//		Pre-conditions:
+//			$diskCacheFile already exists!!!
+//
+{
+	
+	debugPrint(" debug - applying fluid disk cache file\n");
+	string $diskCacheNode = "";
+	int  $diskCacheNodeWasCreated = 0;
+
+	if( !`exists saveFluidICCache` ) {
+		source "doSetFluidState.mel";
+	}
+
+	// Create or find the disk cache node to modify
+	//
+	int $whatToSave[] = { 1, 1, 1, 1, 1, 1, 1 };
+
+	if( `connectionInfo -id ($fluidShape + ".diskCacheIC")` == 0 ) {
+		debugPrint(" debug - creating new disk cache node for " + $fluidShape + "\n");
+		// Create a disk cache node for the fluid shape
+		$diskCacheNode = saveFluidICCache( $fluidShape, $whatToSave );
+		// Check that the node was created
+		if( size($diskCacheNode) == 0 ) {
+			// return and the calling routine will clean up
+			return "";
+		} else {
+			$diskCacheNodeWasCreated = 1;
+		}
+	} else {
+		debugPrint(" debug - existing disk cache node \n");
+		// Get the name of the existing disk cache node
+		string $src = `connectionInfo -sfd ($fluidShape + ".diskCacheIC")`;
+		string $buffer[];
+		tokenize($src, ".", $buffer);
+		$diskCacheNode = $buffer[0];
+	}
+	debugPrint(" debug - disk cache node is: " + $diskCacheNode + "\n");
+
+	// Get a unique file name for the cache file based
+	// on the user's working dir.
+	//
+	string $newFileName = uniqueCacheName( $fluidShape, ".mcfi" );
+	string $dir = `diskCache -q -tmp`;
+	int    $dirExists = (size( $dir ) > 0) && (`file -q -exists $dir`);
+
+	debugPrint(" debug - disk cache dir: " + $dir + "\n");
+	if( !$dirExists ) {
+		debugPrint(" debug - disk cache dir not found/specified, using \"data\" \n" );
+		verifyWorkspaceFileRule( "diskCache", "data" );
+		string $diskCacheDir = `workspace -fileRuleEntry "diskCache"`;
+
+		$dir = `workspace -q -rd` + $diskCacheDir;
+		if( !`file -q -exists $dir` ) {
+			debugPrint(" debug - disk cache dir does not exist, trying to create it\n");
+			// create the dir here
+			sysFile -makeDir $dir;
+		}
+	}
+
+	string $newDiskCacheFileName = $dir + "/" + $newFileName;
+
+	// Copy the given disk cache file to the user's working dir
+	//
+	string $copyCmd = ("cp " + $diskCacheFile + " " + $newDiskCacheFileName );
+	if( `about -nt` ) {
+		// For Windows, change this into a pathname with back slashes
+		$copyCmd = ("copy \"" + $diskCacheFile + "\" \"" + $newDiskCacheFileName + "\"" );
+		string $result = substituteAllString($copyCmd, "/", "\\");
+		$copyCmd = $result;
+	}
+
+	system( $copyCmd );
+	debugPrint(" debug - Copying: " + $copyCmd + "\n");
+
+	// If the new disk cache file was successfully created,
+	// change the disk cache node's .hiddenCacheName to be the 
+	// given filename.  (The .hiddenCacheName holds the location
+	// of the current state of the fluid.  On file->save this
+	// state will be copied over to the .cacheName attr and file
+	// in the user's data directory.)
+	//
+	if( `file -q -exists $newDiskCacheFileName` ) {
+		// Modify the permissions on the .mcfi file we just
+		// copied to the user's tmp directory...  The default
+		// presets we ship with might be read-only, but the
+		// copy we just created in the tmp dir had better be
+		// writable by the user, or else (s)he won't be able to
+		// do much with it!!
+		//
+		if( `about -nt` ) {
+			system( "attrib -r " + substituteAllString( $newDiskCacheFileName,
+														"/", 
+														"\\" ) );
+		} 
+		else {
+			system( "chmod u+w " + $newDiskCacheFileName );
+		}
+
+		debugPrint(" debug - set .hiddenCacheName: " + $newDiskCacheFileName + "\n");
+		string $nameValue;
+		if( $dirExists ) {
+			// The diskCache temp dir exists and is usable.  
+			// Use an attr value that's relative to the temp dir.
+			//
+			$nameValue = $newFileName;
+		} else {
+			// The temp dir wasn't available, so we have to 
+			// use a full path name for the attr value.
+			//
+			$nameValue = $newDiskCacheFileName;
+		}   
+
+		setAttr -type "string" ($diskCacheNode +".hiddenCacheName") $nameValue;
+	} else {
+		debugPrint(" debug - trouble copying disk cache file from " +
+			$diskCacheFile + " to " + $newDiskCacheFileName + "\n");
+		if( $diskCacheNodeWasCreated == 1 ) {
+			delete $diskCacheNode;
+		}
+		$diskCacheNode = "";
+		string $fmt = (uiRes("m_applyFluidDiskCache.kCouldNotCopyDiskCache"));
+		warning( `format -s $diskCacheFile -s $newDiskCacheFileName $fmt` );
+
+		// Return here and the calling routine will clean up
+		return $diskCacheNode;
+	}
+
+	// Check compatibility of the fluid shape and the data in the
+	// diskCacheFile.  It would be better to check BEFORE connecting
+	// these two, but that's not currently possible.
+	//
+	// Get the resolution from the fluid shape and fluid cache
+	//
+	int $compatible = 1;
+	int $fluidResW = `getAttr ($fluidShape + ".resolutionW ")`;
+	int $fluidResH = `getAttr ($fluidShape + ".resolutionH ")`;
+	int $fluidResD = `getAttr ($fluidShape + ".resolutionD ")`;
+	int $cacheRes[] = { $xResolution, $yResolution, $zResolution };
+	int $fluidIs2d = `getAttr ($fluidShape + ".is2d")`;
+	debugPrint(" debug - target resolution is " + 
+		 	$fluidResW  + "," + $fluidResH  + "," + $fluidResD  + "\n"  );
+
+	if( ($fluidResW == $cacheRes[0]) &&
+	 	($fluidResH == $cacheRes[1]) &&
+	 	($fluidResD == $cacheRes[2]) && 
+		($fluidIs2d == $is2d)	)  {
+
+		debugPrint(" debug - Resolution matches, nothing left to do \n");
+		// Resolution of the fluid shape and disk cache file
+		// matches exactly.  No conversion/resamplng is needed
+		//
+		$compatible = 1;
+
+	} else {
+
+		if( $fluidIs2d == $is2d ) {
+			// Resolution of the fluid shape doesn't match resolution
+			// of the disk cache file.  Some conversion is needed
+			//
+			debugPrint(" debug - Resolution doesnt match, need to resample\n");
+			$compatible = 2;
+		} else {
+
+			// Dimension is different.  Just give up here.
+			$compatible = 3;
+		}
+	}
+
+	if( ($compatible == 1) || ($compatible == 2) ) {
+		// If cache file defines any of the following, then change the 
+		// shape's matching method to be dynamic grid (or static grid?).
+		// Note that if fluid shape doesn't allow loading density, then
+		// don't change its method.
+		//
+		if( $hasDensity == 1 && `getAttr  ($fluidShape + ".loadDensity")`) {
+			string $makeGridCmd[];
+			if( !fluidsVerifyGrid( $fluidShape, "density", $makeGridCmd ) ) {
+				debugPrint(" debug - setting density method dynamic\n");
+				evalEcho $makeGridCmd[0];
+			}
+		}
+		if( $hasVelocity == 1 && `getAttr  ($fluidShape + ".loadVelocity")`) {
+			string $makeGridCmd[];
+			if( !fluidsVerifyGrid( $fluidShape, "velocity", $makeGridCmd ) ) {
+				debugPrint(" debug - setting velocity method dynamic\n");
+				evalEcho $makeGridCmd[0];
+			}
+		}
+		if( $hasTemperature == 1 && `getAttr  ($fluidShape + ".loadTemperature")`) {
+			string $makeGridCmd[];
+			if( !fluidsVerifyGrid( $fluidShape, "temperature", $makeGridCmd )) 
+			{
+				debugPrint(" debug - setting temperature method dynamic\n");
+				evalEcho $makeGridCmd[0];
+			}
+		}
+		if( $hasReaction == 1 && `getAttr  ($fluidShape + ".loadReaction")`) {
+			string $makeGridCmd[];
+			if( !fluidsVerifyGrid( $fluidShape, "fuel", $makeGridCmd ) ) {
+				debugPrint(" debug - setting fuel method dynamic\n");
+				evalEcho $makeGridCmd[0];
+			}
+		}
+		if( $hasColor == 1 && `getAttr  ($fluidShape + ".loadColor")`) {
+			string $makeGridCmd[];
+			if( !fluidsVerifyGrid( $fluidShape, "color", $makeGridCmd ) ) {
+				debugPrint(" debug - setting color method dynamic\n");
+				evalEcho $makeGridCmd[0];
+			}
+		}
+		if( $hasTexture == 1 && `getAttr  ($fluidShape + 
+										   ".loadTextureCoordinates")`) 
+		{
+			string $makeGridCmd[];
+			if( !fluidsVerifyGrid( $fluidShape, "textureCoordinates", 
+								   $makeGridCmd ) ) 
+			{
+				debugPrint(" debug - setting textureCoordinates method dynamic\n");
+				evalEcho $makeGridCmd[0];
+			}
+		}
+		if( $hasFalloff == 1 && `getAttr  ($fluidShape + ".loadFalloff")`) {
+			string $makeGridCmd[];
+			if( !fluidsVerifyGrid( $fluidShape, "falloff", $makeGridCmd ) ) {
+				debugPrint(" debug - setting falloff method static\n");
+				evalEcho $makeGridCmd[0];
+			}
+		}
+	}
+
+	// Load the fluid shape wth the disk cache node 
+	//
+	if( $compatible == 1 ) 
+	{
+		// This means that the diskCacheFile and fluid shape match in resolution
+		// and dimension.  No conversion/resampling needs to be done.
+		// Force the new fluid to load 
+		//
+		loadFluid -ic $fluidShape;
+
+		kickFluid();
+	} 
+	else if( $compatible == 2 ) 
+	{
+		// At this point, the fluid shape and disk cache node are connected,
+		// but they have different resolutions
+
+		// Convert the given disk cache resolution to match the fluid shape
+		// ie. different resolution
+		//
+		// 1.  resample fluid shape to match the disk cache
+		// 2.  load fluid
+		// 3.  resample fluid shape to original fluid resolution 
+		// 4.  save initial conditions to re-create the disk cache file
+		// get the resolution from the fluid cache
+
+		// resample the fluid to disk cache node's resolution and load it
+		// This is the only way to get the disk cache info out.
+		// Turn squareVoxels off so that it doesn't change the resolution spontaneously afterwards
+
+		setAttr ($fluidShape + ".squareVoxels") 0;
+		resampleFluid -rw $cacheRes[0] -rh $cacheRes[1] -rd $cacheRes[2] $fluidShape;
+		debugPrint(" debug - resample fluid to " + 
+		 	$cacheRes[0]  + "," + $cacheRes[1]  + "," + $cacheRes[2]  + "\n"  );
+
+ 		loadFluid -ic $fluidShape;
+		debugPrint(" debug - loading fluid \n");
+
+		kickFluid();
+
+		// Now properly force resampling of the fluid shape to
+		// the original desired fluid shape resolution
+		//
+		if( !`optionVar -query initialStatesResizeOnDrop` ) {
+			resampleFluid -rw $fluidResW -rh $fluidResH -rd $fluidResD $fluidShape;
+			debugPrint(" debug - resample fluid to " + 
+					   $fluidResW  + "," + $fluidResH  + "," + $fluidResD  + "\n"  );
+		}
+
+		// Save initial conditions, with new resolution.  This will
+		// replace any old IC cache.
+		//
+		debugPrint(" debug - saving fluid cache\n");
+		saveFluidICCache( $fluidShape, $whatToSave );
+		//select -r $fluidShape;
+		//$diskCacheNode = `performFluids 1 FluidSave 0`;
+
+	}
+	else 
+	{
+		// No hope of applying disk cache to this fluid
+		// UNDO whatever was created, incl. delete the temporary fluid
+		// cache, and restore the prevous one (if there was one)
+		//
+		if( $diskCacheNodeWasCreated == 1 ) {
+			delete $diskCacheNode;
+		}
+
+		// Delete the temporary fluid cache
+		//
+		sysFile -delete $newDiskCacheFileName;
+		debugPrint(" debug - Aborting: " + $newDiskCacheFileName + "\n");
+
+		// Restore the previous cache??
+
+		$diskCacheNode = "";
+	}
+
+	return $diskCacheNode;
+}
+
+proc string createFluidShapeForDiskCache( int $xResolution, 
+										  int $yResolution, 
+										  int $zResolution, 
+										  int $is2d )
+{
+	// Creates a fluid shape that matches the given
+	// disk cache in resolution
+	//
+	string $fluidResult = "";
+	if( $is2d ) {
+		$fluidResult = `performFluids 1 Create2DFluid 0`;
+	} else {
+		$fluidResult = `performFluids 1 Create3DFluid 0`;
+	}
+    string $selectionList[] = `ls -sl`;
+	if( size($selectionList) != 1 ) { 
+		return "";
+	}
+	$fluidResult = $selectionList[0];
+
+	// Get the fluid shape underneath
+	string $fluidSh[];
+	if( size($fluidResult) > 0 ) {
+		$fluidSh = `listRelatives -children $fluidResult`;	
+	}
+	if( size($fluidSh) == 0 ) {
+		delete $fluidResult;
+		return "";
+	}
+
+	// Set the attributes on the fluid shape to match the disk cache file
+	//
+	setAttr ($fluidSh[0] + ".resolutionW") $xResolution;
+	setAttr ($fluidSh[0] + ".resolutionH") $yResolution;
+	setAttr ($fluidSh[0] + ".resolutionD") $zResolution;
+	setAttr ($fluidSh[0] + ".is2d") $is2d;
+
+	return $fluidResult;
+}
+
+
+global proc string applyFluidDiskCache( 
+	string $diskCacheFile, 
+	int $createFluidShape,
+	int $xResolution,
+	int $yResolution,
+	int $zResolution,
+	int $is2d,				// 1 means it's 2d, 0 means it's 3d
+	int $hasDensity, 
+	int $hasVelocity, 
+	int $hasTemperature, 
+	int $hasReaction,
+	int $hasColor,
+	int $hasTexture,
+	int $hasFalloff ) 
+//
+//	Description:
+//		This proc does all the work to connect the given disk cache
+//		file to a fluid shape.  If $createFluidShape is 1, then
+//		a fluid shape is created based on the disk cache file.
+//		Otherwise, the disk cache file is appled to the first
+//		selected fluid shape and converted (in the case of
+//		different resolution) as necessary.
+//
+{
+
+	// Check if the given diskCacheFile exists.  A diskCache file
+	// string beginning with $MAYA_LOCATION should be expanded 
+	//
+	string $realCacheFile = substitute( "$MAYA_LOCATION", $diskCacheFile,
+										getenv( "MAYA_LOCATION" ) );
+
+	// Substitution occurred and now we have a real
+	// path to the cache file.
+	//
+	if( $realCacheFile != $diskCacheFile ) {
+		$diskCacheFile = $realCacheFile;
+	}
+
+	if( !`file -q -exists $diskCacheFile` ) {
+		string $fmt = (uiRes("m_applyFluidDiskCache.kCouldNotFindDiskCache"));
+		error( `format -s $diskCacheFile $fmt` );
+		return "";
+	}
+
+    string $selectionList[] = `ls -sl`;
+    int $numSelected = size($selectionList);
+	int $fluidShapeCreated = 0;
+	string $fluidShape;
+
+    // Make sure that we have a fluid selected
+    // or warn the user and fail
+
+	if( $createFluidShape == 0 ) {
+   		if ($numSelected == 0)
+   		{
+			string $warn;
+			if( $is2d == 1 ) {
+				$warn = (uiRes("m_applyFluidDiskCache.kNeed2DFluid"));
+			} else {
+				$warn = (uiRes("m_applyFluidDiskCache.kNeed3DFluid"));
+			}
+        	error($warn);
+        	return "";
+   		}
+	} else {
+		// Create a fluid shape based on the given disk cache file
+		// Reset the selection list.
+		//
+		$fluidResult = createFluidShapeForDiskCache( $xResolution, 
+													 $yResolution, 
+													 $zResolution, 
+													 $is2d );
+		if( $fluidResult == "" ) {
+        	error((uiRes("m_applyFluidDiskCache.kCantCreateShape")));
+        	return "";
+		}
+		$selectionList = `ls -sl`;
+		$fluidShapeCreated = 1;
+	}
+
+   	$fluidShape = getFluidShape($selectionList[0]);
+   	if (size($fluidShape) == 0)
+   	{
+       	error((uiRes("m_applyFluidDiskCache.kSelectFluid")));
+       	return "";
+   	}
+
+    debugPrint (" debug - apply: " + $diskCacheFile + " to fluid " + $fluidShape + "\n");
+
+	// Preliminary checks for whether the dimension matches.
+	// This is always true if we created the fluid above.
+	//
+	int $fluidIs2d = `getAttr ($fluidShape + ".is2d")`;
+	if( ($fluidIs2d == 1) && ($fluidIs2d != $is2d) ) {
+       	error((uiRes("m_applyFluidDiskCache.kCantApply3DTo2D")));
+       	return "";
+	}
+	if( ($fluidIs2d == 0) && ($fluidIs2d != $is2d) ) {
+       	error((uiRes("m_applyFluidDiskCache.kCantApply2DTo3D")));
+       	return "";
+	}
+
+	// Connect and convert the disk cache file as necessary
+	//
+	string $result = applyFluidDiskCacheFile( $fluidShape, $diskCacheFile,
+						$xResolution, $yResolution, $zResolution, $is2d,
+						$hasDensity, $hasVelocity, $hasTemperature, 
+					    $hasReaction, $hasColor, $hasTexture, $hasFalloff );
+	if( $result == "" ) {
+		if( $fluidShapeCreated == 1 ) {
+			delete $fluidShape;
+		}
+		string $fmt = (uiRes("m_applyFluidDiskCache.kCantApplyPreset"));
+        error(`format -s $diskCacheFile -s $fluidShape $fmt` );
+		return "";
+	}
+
+	// Select the fluid transform and the disk cache node
+	//
+	string $fluidTransform[] = `listRelatives -parent $fluidShape`;
+	if( size($fluidTransform) == 0 ) 
+	{
+		string $fmt = (uiRes("m_applyFluidDiskCache.kNoParentTransform"));
+       error(`format -s $fluidShape $fmt`);
+	  
+		return "";
+	}
+
+	select -r $fluidTransform[0] $result;
+
+	return ($fluidTransform[0] + " " + $result);
+}
+

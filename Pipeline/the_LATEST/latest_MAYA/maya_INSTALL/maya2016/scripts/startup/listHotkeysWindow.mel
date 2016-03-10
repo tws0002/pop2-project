@@ -1,0 +1,1097 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  20 December 1999
+//
+//  Description:
+//      This script implements the "List all Hotkeys" window.
+//
+//		The window is accessed from the Hotkey Editor window and its
+//		main purpose is to give users the ability to list all mapped
+//		and unmapped hotkeys, 
+//		
+//
+
+/*
+//
+//	These are the local and global procedures defined in this file.  As well
+//	as the unique names of the UI objects created.
+//
+// ----------------------------------------------------------------------
+//
+string[] isRunTimeCommandMapped(string $command)
+string getSpacing(string $str, int $maxLength)
+string padKeyString(string $key)
+updateKeyMappedLists()
+updateCategoryList()
+updateCategoryMappedLists()
+
+createKeyLayout(string $parent)
+createCategoryLayout(string $parent)
+createTabs(string $parent)
+createButtons(string $parent)
+
+listHotkeysWindowModifierChange()
+listHotkeysWindowIgnoreReleaseChange()
+listHotkeysWindowCategorySelect()
+listHotkeysWindowTabSelect()
+listHotkeysWindowClose()
+listHotkeysWindowSaveToFile()
+listHotkeysWindowWriteHotkeys(string $filename, string $type)
+listHotkeysWindow()
+
+ListHotkeysWindow
+ListHotkeysWindowTabs
+ListHotkeysWindowModifierRadioCollection
+ListHotkeysWindowNoModifiersRadioButton
+ListHotkeysWindowCtrlRadioButton
+ListHotkeysWindowAltRadioButton
+ListHotkeysWindowListAllRadioButton
+ListHotkeysWindowIgnoreReleaseCheckBox
+ListHotkeysWindowKeyMappedList
+ListHotkeysWindowKeyUnmappedList
+ListHotkeysWindowCategoryList
+ListHotkeysWindowCategoryMappedList
+ListHotkeysWindowCategoryUnmappedList
+*/
+
+proc string[] isRunTimeCommandMapped(string $runTimeCommand)
+//
+//	Description:
+//		Determine if the passed in runTimeCommand is mapped to a hotkey.
+//		If it is the hotkey information is returned in a string array.
+//		Otherwise, the returned array will have 0 elements.
+//							
+{
+	string $result[];
+	int $index, $numberOfNameCommands;
+	
+	$numberOfNameCommands = `assignCommand -query -numElements`;
+	for ($index = 1; $index <= $numberOfNameCommands; $index++) {
+		//
+		//	Is this nameCommand pointing to the target runTimeCommand?
+		//
+		if ($runTimeCommand == `assignCommand -query -command $index`) {
+			//
+			//	Yes, we have a match.
+			//
+			$result = `assignCommand -query -keyArray $index`;
+			if (0 < size($result)) {
+				break;
+			}
+		}
+	}
+
+	return $result;
+}
+
+proc string getSpacing(string $str, int $maxLength)
+//
+//	Description:
+//		Return a string of spaces. The number of spaces in the string will
+//		be equal to the $maxLength specified subtract the length of the
+//		passed in string.
+//
+{
+	string $result = "";
+	string $spaces = "                                                  ";
+
+	int $numberOfSpacesNeeded = $maxLength - size($str);
+	if(`about -mac`){
+		int $numTabs = $numberOfSpacesNeeded / 5;
+		int $remainder = $numberOfSpacesNeeded % 5;
+
+		if($numberOfSpacesNeeded == 0)
+			$result = "  \t\t";
+		else if($remainder > 0 && $numTabs == 3)
+			$result = "\t\t\t\t";
+		else if($numTabs == 2 && $remainder > 0)
+			$result ="   \t\t\t";
+		else if($numTabs == 2 && $remainder == 0)
+			$result ="  \t\t\t";
+		else if(($numTabs == 1) && $remainder > 0)
+			$result = "\t\t";
+		else if(($numTabs == 1) || $numTabs == 0)
+			$result ="\t";
+		else if(($numTabs == 3 && $remainder == 0) ||($numTabs == 2 && $remainder > 0) )
+			$result = "\t\t\t\t";
+	}else{
+	if (0 < $numberOfSpacesNeeded) {
+		$result = `substring $spaces 1 $numberOfSpacesNeeded`;
+	}
+	}
+
+	return $result;
+}
+
+proc string padKeyString(string $key)
+//
+//	Description:
+//		The keys that hotkeys can be assigned to vary in string length.
+//		For example, "a" vs. "Page_Up".
+//
+//		This function will return a string that is padded with the
+//		appropriate number spaces so that the string is equal in
+//		length to the longest key string.  Currently, the longest key
+//		string is "Page_Down".
+//
+{
+	string $result = $key;
+	if(`about -mac`){
+		string $longKey;
+		$longKey = ( (uiRes("m_listHotkeysWindow.kControl")) + " Page_Down" );
+		$result += getSpacing ($key, size($longKey));
+	}else{
+		$result += getSpacing ($key,size("Page_Down"));
+	}
+	return $result;
+}
+
+proc updateKeyMappedLists()
+//
+//	Description:
+//		Based on the state of the modifier buttons update the mapped and
+//		unmapped lists.
+//
+//		This procedure should be called whenever:
+//
+//		- The modifier state changes.
+//
+//		  or
+//
+//		- The user modifies the "Ignore Release" hotkeys checkbox.
+//
+{
+	waitCursor -state on;
+	
+	//	Get the state of the modifiers.
+	//
+	string $select = `radioCollection -query 
+		-select ListHotkeysWindowModifierRadioCollection`;
+	int $ctrl = false, $alt = false, $command = false, $listAll = false, $ignoreRelease;
+	
+	if ("ListHotkeysWindowNoModifiersRadioButton" == $select) {
+	} else if ("ListHotkeysWindowCtrlRadioButton" == $select) {
+		$ctrl = true;
+	} else if ("ListHotkeysWindowAltRadioButton" == $select) {
+		$alt = true;
+	} else if ("ListHotkeysWindowCommandRadioButton" == $select) {
+		$command = true;
+	} else {
+		$listAll = true;
+	}
+	
+	//	Should we ignore release hotkeys?
+	//
+	$ignoreRelease = `checkBox -query -value ListHotkeysWindowIgnoreReleaseCheckBox`;
+	
+	string $keys[] = getAllValidKeys(), $press, $release;
+	string $keyString, $mappedItems[], $unmappedItems[];
+	int $mappedIndex = 0, $unmappedIndex = 0;
+	
+	//
+	//Creating modifier strings with spaces 
+	//for display purpose
+	//
+	string $altKey     = (uiRes("m_listHotkeysWindow.kAltKey"));
+	string $ctrlKey    = (uiRes("m_listHotkeysWindow.kCtrlKey"));
+	string $cmdKey     = (uiRes("m_listHotkeysWindow.kCmdKey"));
+	string $optionKey  = (uiRes("m_listHotkeysWindow.kOptionKey"));
+	string $controlKey = (uiRes("m_listHotkeysWindow.kControlKey"));
+	string $commandKey = (uiRes("m_listHotkeysWindow.kCommandKey"));
+	string $keyPress   = (uiRes("m_listHotkeysWindow.kKeyPress"));
+	string $keyRelease = (uiRes("m_listHotkeysWindow.kKeyRelease"));
+	
+	string $pressed    = (uiRes("m_listHotkeysWindow.kPress"));
+	string $released   = (uiRes("m_listHotkeysWindow.kRelease")); 
+	
+	//	For each key, determine if it's mapped.
+	//
+	for ($key in $keys) {
+		if (!$listAll) {
+			$keyString = "";
+			if ($ctrl) {
+				$keyString += (`about -macOS` ? $controlKey : $ctrlKey );
+			}
+			if ($alt) {
+				$keyString += (`about -macOS` ? $optionKey : $altKey );
+			}
+			if ($command) {
+				$keyString += (`about -macOS` ? $commandKey : $cmdKey );
+			}
+			
+			$keyString += padKeyString($key);
+			
+			//	Get the press command.
+			//
+			$press = getHotkeyCommandNew ($key, $ctrl, $alt, $command, 1);
+			if ("" != $press) {
+				//
+				//	Add hotkey and command to mapped list.
+				//
+				$mappedItems[$mappedIndex++] = $keyString + " " + $keyPress ;
+				$mappedItems[$mappedIndex++] = $press;
+
+			} else {
+				//
+				//	Add hotkey to unmapped list.
+				//
+				$unmappedItems[$unmappedIndex++] = $keyString + " " + $pressed ;
+			}
+			
+			if (!$ignoreRelease) {
+				//
+				//	Get the release command.
+				//
+				$release = getHotkeyCommandNew ($key, $ctrl, $alt, $command, 0);
+				if ("" != $release) {
+					//
+					//	Add hotkey and command to mapped list.
+					//
+					$mappedItems[$mappedIndex++] = $keyString + " " + $keyRelease ;
+					$mappedItems[$mappedIndex++] = $release;
+
+				} else {
+					//
+					//	Add hotkey to unmapped list.
+					//
+					$unmappedItems[$unmappedIndex++] = $keyString + " " + $released ;
+				}
+			}
+
+		} else {
+			//
+			//	List everthing.
+			//
+
+			//	No modifiers.
+			//
+			//
+			//Spaces are added for formatting 
+			//when the modifiers are not selected
+			//
+			
+			string $ctrlSpace = (uiRes("m_listHotkeysWindow.kCtrlSpace"));	//  4 spaces 
+			string $controlSpace = (uiRes("m_listHotkeysWindow.kControlSpace"));	//  7 spaces 
+			string $altSpace = (uiRes("m_listHotkeysWindow.kAltSpace"));				//  3 spaces 
+			string $optionSpace = (uiRes("m_listHotkeysWindow.kOptionSpace"));		//  6 spaces 
+			string $ctrlaltSpace = (uiRes("m_listHotkeysWindow.kCtrlAltSpace"));	//  8 spaces (includes one blank space between ctrl and alt)
+			string $controloptionSpace = (uiRes("m_listHotkeysWindow.kControlOptionSpace"));	// 14 spaces (includes one blank space between control and option)
+			
+			$keyString = (`about -macOS` ? ($controloptionSpace + " ") : ($ctrlaltSpace + " ") );
+			$keyString += padKeyString($key);
+			$press = getHotkeyCommandNew ($key, false, false, false, 1);
+			if ("" != $press) {
+				//
+				//	Add hotkey and command to mapped list.
+				//
+				$mappedItems[$mappedIndex++] = $keyString + " " + $keyPress ;
+				$mappedItems[$mappedIndex++] = $press;
+
+			} else {
+				//
+				//	Add hotkey to unmapped list.
+				//
+				$unmappedItems[$unmappedIndex++] = $keyString + " " + $pressed ;
+			}
+			if (!$ignoreRelease) {
+				//
+				//	Get the release command.
+				//
+				$release = getHotkeyCommandNew ($key, false, false, false, 0);
+				if ("" != $release) {
+					//
+					//	Add hotkey and command to mapped list.
+					//
+					$mappedItems[$mappedIndex++] = $keyString + " " + $keyRelease ;
+					$mappedItems[$mappedIndex++] = $release;
+
+				} else {
+					//
+					//	Add hotkey to unmapped list.
+					//
+					$unmappedItems[$unmappedIndex++] = $keyString + " " + $released ;
+				}
+			}
+
+			//	Ctrl modifier.
+			//
+			$keyString = (`about -macOS` ? ( $controlKey + $optionSpace + " " ) : ( $ctrlKey + $altSpace + " " ) );
+			$keyString += padKeyString($key);
+			$press = getHotkeyCommandNew ($key, true, false, false, 1);
+			if ("" != $press) {
+				//
+				//	Add hotkey and command to mapped list.
+				//
+				$mappedItems[$mappedIndex++] = $keyString + " " + $keyPress ;
+				$mappedItems[$mappedIndex++] = $press;
+
+			} else {
+				//
+				//	Add hotkey to unmapped list.
+				//
+				$unmappedItems[$unmappedIndex++] = $keyString + " " + $pressed ;
+			}
+			if (!$ignoreRelease) {
+				//
+				//	Get the release command.
+				//
+				$release = getHotkeyCommandNew ($key, true, false, false, 0);
+				if ("" != $release) {
+					//
+					//	Add hotkey and command to mapped list.
+					//
+					$mappedItems[$mappedIndex++] = $keyString + " " +  $keyRelease ;
+					$mappedItems[$mappedIndex++] = $release;
+
+				} else {
+					//
+					//	Add hotkey to unmapped list.
+					//
+					$unmappedItems[$unmappedIndex++] = $keyString + " " + $released ;
+				}
+			}
+
+			//	Alt modifier.
+			//
+			$keyString = (`about -macOS` ? ( $controlSpace + " " + $optionKey ):( $ctrlSpace + " " + $altKey ) );
+			$keyString += padKeyString($key);
+			$press = getHotkeyCommandNew ($key, false, true, false, 1);
+			if ("" != $press) {
+				//
+				//	Add hotkey and command to mapped list.
+				//
+				$mappedItems[$mappedIndex++] = $keyString + " " + $keyPress ;
+				$mappedItems[$mappedIndex++] = $press;
+
+			} else {
+				//
+				//	Add hotkey to unmapped list.
+				//
+				$unmappedItems[$unmappedIndex++] = $keyString + " " + $pressed ;
+			}
+			if (!$ignoreRelease) {
+				//
+				//	Get the release command.
+				//
+				$release = getHotkeyCommandNew ($key, false, true, false, 0);
+				if ("" != $release) {
+					//
+					//	Add hotkey and command to mapped list.
+					//
+					$mappedItems[$mappedIndex++] = $keyString + " " + $keyRelease ;
+					$mappedItems[$mappedIndex++] = $release;
+
+				} else {
+					//
+					//	Add hotkey to unmapped list.
+					//
+					$unmappedItems[$unmappedIndex++] = $keyString + " " + $released ;
+				}
+			}
+
+			//	Ctrl and Alt modifiers.
+			//
+			$keyString = (`about -macOS` ? ( $controlKey+ $optionKey ) : ( $ctrlKey+ $altKey ) );
+			$keyString += padKeyString($key);
+			$press = getHotkeyCommandNew ($key, true, true, false, 1);
+			if ("" != $press) {
+				//
+				//	Add hotkey and command to mapped list.
+				//
+				$mappedItems[$mappedIndex++] = $keyString + " " + $keyPress ;
+				$mappedItems[$mappedIndex++] = $press;
+
+			} else {
+				//
+				//	Add hotkey to unmapped list.
+				//
+				$unmappedItems[$unmappedIndex++] = $keyString + " " + $pressed ;
+			}
+			if (!$ignoreRelease) {
+				//
+				//	Get the release command.
+				//
+				$release = getHotkeyCommandNew ($key, true, true, false, 0);
+				if ("" != $release) {
+					//
+					//	Add hotkey and command to mapped list.
+					//
+					$mappedItems[$mappedIndex++] = $keyString + " " + $keyRelease ;
+					$mappedItems[$mappedIndex++] = $release;
+
+				} else {
+					//
+					//	Add hotkey to unmapped list.
+					//
+					$unmappedItems[$unmappedIndex++] = $keyString + " " + $released ;
+				}
+			}
+		}
+	}
+	
+	//	Add new items.
+	//
+	string $text = "";
+	for ($mappedIndex = 0; $mappedIndex < size($mappedItems); $mappedIndex+=2) {
+		$text += $mappedItems[$mappedIndex] + " " + $mappedItems[$mappedIndex+1] + "\n";
+	}
+	scrollField -edit -text $text -insertionPosition 1 
+		ListHotkeysWindowKeyMappedList;
+	
+	$text = "";
+	for ($unmappedIndex = 0; $unmappedIndex < size($unmappedItems); $unmappedIndex++) {
+		$text += $unmappedItems[$unmappedIndex] + "\n";
+	}
+	scrollField -edit -text $text -insertionPosition 1 
+		ListHotkeysWindowKeyUnmappedList;
+
+	waitCursor -state off;
+}
+
+proc updateCategoryList()
+//
+//	Description:
+//		Determine all the possible runTimeCommand categories and fill in
+//		the category list.
+//
+{
+	string $categories[] = sort( `runTimeCommand -query -categoryArray` );
+	int $index, $numberOfCategories = size($categories);
+
+	for ($index = 0; $index < $numberOfCategories; $index++) {
+		textScrollList -edit -append $categories[$index] 
+			ListHotkeysWindowCategoryList;
+	}
+
+	//	Are there any runTimeCommands that don't have a category specified?
+	//
+	//	Eventually, there shouldn't be but until they all get one list them
+	//	in the "Uncategorized" category.
+	//
+	string $runTimeCommands[] = `runTimeCommand -query -commandArray`;
+	for ($index = 0; $index < size($runTimeCommands); $index++) {
+		if ("" == `runTimeCommand -query -category $runTimeCommands[$index]`) {
+			textScrollList -edit -append "Uncategorized" 
+				ListHotkeysWindowCategoryList;
+			break;
+		}
+	}
+	
+	if (0 < `textScrollList -query -numberOfItems ListHotkeysWindowCategoryList`) {
+		textScrollList -edit -selectIndexedItem 1 ListHotkeysWindowCategoryList;
+	}
+}
+
+proc updateCategoryMappedLists()
+// 
+//	Description:
+//		Based on the current selected category update the mapped and
+//		unmapped lists.
+//
+//		This procedure should be called whenever the current selected
+//		category changes.
+//
+{
+	waitCursor -state on;
+	
+	string $selectedCategory[], $category, $allCommands[], $commands[];
+	string $hotkey[], $mapped, $unmapped;
+	int $index, $commandIndex = 0;
+	
+	//	Determine the current selected category.
+	//
+	$selectedCategory = `textScrollList -query 
+		-selectItem ListHotkeysWindowCategoryList`;
+
+	if (1 == size($selectedCategory)) {
+		if ("Uncategorized" == $selectedCategory[0]) {
+			$selectedCategory[0] = "";			
+		}
+
+		//	Get all the runTimeCommands that belong to this category.
+		//
+		$runTimeCommands = `runTimeCommand -query -commandArray`;
+		for ($index = 0; $index < size($runTimeCommands); $index++) {
+			$category = `runTimeCommand -query -category $runTimeCommands[$index]`;
+			if ($selectedCategory[0] == $category) {
+				$commands[$commandIndex++] = $runTimeCommands[$index];
+			}
+		}
+	}
+	
+	if (0 < size($commands)) {
+		//
+		//	Add the command to the appropriate mapped or unmapped list.
+		//
+		for ($command in $commands) {
+			$hotkey = isRunTimeCommandMapped($command);
+			if (0 < size($hotkey)) {
+				
+				string $pressString = "";
+				string $displayMapped = "";
+				string $keyboardValue = "";
+				
+				if ("1" == $hotkey[2]) {
+					$displayMapped += (`about -macOS` ? (uiRes("m_listHotkeysWindow.kControlKey")) : (uiRes("m_listHotkeysWindow.kCtrlKey")) );
+				}
+				else
+					$displayMapped += (`about -macOS` ? ((uiRes("m_listHotkeysWindow.kControlSpace")) + " ") : ((uiRes("m_listHotkeysWindow.kCtrlSpace")) + " ") );
+
+				if ("1" == $hotkey[1]) {
+					$displayMapped += (`about -macOS` ? (uiRes("m_listHotkeysWindow.kOptionKey")) : (uiRes("m_listHotkeysWindow.kAltKey")) );
+				}
+				else
+					$displayMapped += (`about -macOS` ? ((uiRes("m_listHotkeysWindow.kOptionSpace"))+ " ") : ((uiRes("m_listHotkeysWindow.kAltSpace"))+ " ") );
+
+				// GwH: TODO: How is Page_UP handled here if Space is not?
+				if( $hotkey[0] == " " ) {
+					$keyboardValue += ( padKeyString( "Space" ) + " " );
+				}
+				else {
+					$keyboardValue += ( padKeyString($hotkey[0])+ " " );
+				}
+
+				if ("0" == $hotkey[3]) 
+					$pressString += (uiRes("m_listHotkeysWindow.kKeyPress"));
+				else
+					$pressString += (uiRes("m_listHotkeysWindow.kKeyRelease")); 
+				
+				$mapped += ( $displayMapped + $keyboardValue + $pressString + $command + "\n" );
+				
+			} else {
+				$unmapped += $command + "\n";
+			}
+		}
+		scrollField -edit -text $mapped -insertionPosition 1 
+			ListHotkeysWindowCategoryMappedList;
+		scrollField -edit -text $unmapped -insertionPosition 1 
+			ListHotkeysWindowCategoryUnmappedList;
+	}
+
+	waitCursor -state off;
+}
+
+proc createKeyLayout(string $parent)
+// 
+//	Description:
+//		Create the "List by Keys" UI.
+//
+//	Arguments:
+//		The parent argument is assumed to be a tabLayout.
+//
+{
+	setParent $parent;
+	
+	string $form = `formLayout`;
+	
+	//	A column layout for the modifer state controls.
+	//
+	string $column = `columnLayout`;
+		setParent ..;
+		
+	//	A pane layout for the mapped/unmapped lists.
+	//
+	string $panes = `paneLayout 
+		-configuration "vertical2"
+		-paneSize 1 70 100
+		-paneSize 2 30 100`;
+		
+	string $mapped = `frameLayout -label (uiRes("m_listHotkeysWindow.kKeyMapped")) -borderVisible false FRAME1`;
+		scrollField -editable false -height 400 
+			ListHotkeysWindowKeyMappedList;
+		setParent ..;
+	string $unmapped = `frameLayout -label (uiRes("m_listHotkeysWindow.kKeyUnmapped")) -borderVisible false FRAME2`;
+		scrollField -editable false ListHotkeysWindowKeyUnmappedList;
+		setParent ..;
+	
+	//	Create the modifier state controls.
+	//
+	string $control = (uiRes("m_listHotkeysWindow.kControl"));
+	string $ctrl    = (uiRes("m_listHotkeysWindow.kCtrl"));
+	string $option  = (uiRes("m_listHotkeysWindow.kOption"));
+	string $alt     = (uiRes("m_listHotkeysWindow.kAlt"));
+	
+	setParent $column;
+	radioCollection ListHotkeysWindowModifierRadioCollection;
+	radioButton -label (uiRes("m_listHotkeysWindow.kNoModifiers")) -select
+		-changeCommand ("listHotkeysWindowModifierChange")
+		ListHotkeysWindowNoModifiersRadioButton;
+	radioButton -label (`about -macOS` ? $control : $ctrl)
+		-changeCommand ("listHotkeysWindowModifierChange")
+		ListHotkeysWindowCtrlRadioButton;
+	radioButton -label (`about -macOS` ? $option : $alt)
+		-changeCommand ("listHotkeysWindowModifierChange")
+		ListHotkeysWindowAltRadioButton;
+	if (`about -macOS`) {
+		radioButton -label (uiRes("m_listHotkeysWindow.kCommmand"))
+			-changeCommand ("listHotkeysWindowModifierChange")
+			ListHotkeysWindowCommandRadioButton;
+	}
+	radioButton -label (uiRes("m_listHotkeysWindow.kListAll")) 
+		-changeCommand ("listHotkeysWindowModifierChange")
+		ListHotkeysWindowListAllRadioButton;
+	separator -height 10 -style "none";
+	checkBox -label (uiRes("m_listHotkeysWindow.kIgnoreRelease")) -value 1
+		-changeCommand ("listHotkeysWindowIgnoreReleaseChange")
+		ListHotkeysWindowIgnoreReleaseCheckBox;
+		
+	formLayout -edit
+		-attachForm    $column   "top"    20
+		-attachForm    $column   "left"   0
+		-attachForm    $column   "bottom" 0
+		-attachNone    $column   "right"
+
+		-attachForm    $panes    "top"    0
+		-attachControl $panes    "left"   5 $column
+		-attachForm    $panes    "bottom" 0
+		-attachForm    $panes    "right"  0
+		$form;
+}
+
+proc createCategoryLayout(string $parent)
+// 
+//	Description:
+//		Create the "List by Category" UI.
+//
+//	Arguments:
+//		The parent argument is assumed to be a tabLayout.
+//
+{
+	setParent $parent;
+	
+	//	A pane layout for all of the lists.
+	//
+	string $panes = `paneLayout 
+		-configuration "vertical3"
+		-paneSize 1 20 100
+		-paneSize 2 55 100
+		-paneSize 3 25 100`;
+	
+	//	The category list.
+	//
+	string $categories = `frameLayout -label (uiRes("m_listHotkeysWindow.kCategories")) -borderVisible false`;
+		textScrollList -selectCommand ("listHotkeysWindowCategorySelect")
+			ListHotkeysWindowCategoryList;
+		setParent ..;
+
+	//	The mapped list.
+	//
+	string $mapped = `frameLayout -label (uiRes("m_listHotkeysWindow.kMapped")) -borderVisible false`;
+		scrollField -editable false ListHotkeysWindowCategoryMappedList;
+		setParent ..;
+
+	//	The unmapped list.
+	//
+	string $unmapped = `frameLayout -label (uiRes("m_listHotkeysWindow.kUnmapped")) -borderVisible false`;
+		scrollField -editable false ListHotkeysWindowCategoryUnmappedList;
+		setParent ..;
+}
+
+proc createTabs(string $parent)
+// 
+//	Description:
+//		Create the Tab UI, ie. the List by Keys and List by Category.
+//
+//	Arguments:
+//		The parent argument is assumed to be a tabLayout.
+//
+{
+	createKeyLayout($parent);
+	createCategoryLayout($parent);
+}
+
+proc createButtons(string $parent)
+// 
+//	Description:
+//		Create the buttons that appear at the bottom of the window.
+//
+//	Arguments:
+//		The parent argument is assumed to be a formLayout.
+//
+{
+	setParent $parent;
+
+	string $close = `button -label (uiRes("m_listHotkeysWindow.kClose")) -command ("listHotkeysWindowClose")`;
+	string $saveToFile = `button -label (uiRes("m_listHotkeysWindow.kSave")) -command ("listHotkeysWindowSaveToFile")`;
+
+	formLayout -edit
+		-attachForm     $saveToFile "top"    5
+		-attachForm     $saveToFile "left"   5
+		-attachForm     $saveToFile "bottom" 5
+		-attachPosition $saveToFile "right"  2 50
+		-attachForm     $close      "top"    5
+		-attachPosition $close      "left"   2 50
+		-attachForm     $close      "bottom" 5   
+		-attachForm     $close      "right"  5
+		$parent;
+}
+
+global proc listHotkeysWindowModifierChange()
+// 
+//	Description:
+//		This procedure is called when the user changes a modifier state
+//		radio button.
+//
+//		Must update the mapped and unmapped lists.
+//
+{
+	updateKeyMappedLists();
+}
+
+global proc listHotkeysWindowIgnoreReleaseChange()
+// 
+//	Description:
+//		This procedure is called when the user changes the ignore release
+//		hotkeys check box.
+//
+//		Must update the mapped and unmapped lists.
+//
+{
+	updateKeyMappedLists();
+}
+
+global proc listHotkeysWindowCategorySelect()
+// 
+//	Description:
+//		This procedure is called when the user changes selects a category.
+//
+//		Must update the mapped and unmapped lists.
+//
+{
+	updateCategoryMappedLists();
+}
+
+global proc listHotkeysWindowTabSelect()
+// 
+//	Description:
+//		This procedure is called when the user changes a tab, ie. List by
+//		Keys vs. List by Category.
+//
+{
+	int $tabIndex = `tabLayout -query -selectTabIndex ListHotkeysWindowTabs`;
+	
+	if (1 == $tabIndex) {
+		//
+		//	Don't have to update the key lists.
+		//
+	} else {
+		//
+		//	May have to update the category lists if they haven't been
+		//	filled in for the first time.
+		//
+		if (0 == `textScrollList -query -numberOfItems 
+			ListHotkeysWindowCategoryList`) {
+			updateCategoryList();
+			updateCategoryMappedLists();
+		}
+	}
+}
+
+global proc listHotkeysWindowClose()
+// 
+//	Description:
+//		This procedure is called when the user presses the close button.
+//
+//		Delete the window.
+//
+{
+	deleteUI -window ListHotkeysWindow;
+}
+
+global proc listHotkeysWindowSaveToFile()
+// 
+//	Description:
+//		This procedure is called when the user presses 
+//		the "Save to File..." button.
+//
+//		Post a dialog to allow the user to select the file.
+//
+{
+	fileBrowser ("listHotkeysWindowWriteHotkeys", (uiRes("m_listHotkeysWindow.kSaveBrowserTitle")), "text", 1);
+}
+
+global proc int listHotkeysWindowWriteHotkeys(string $filename, string $type)
+// 
+//	Description:
+//		Write the mapped hotkeys to a file.
+//
+{
+	if (`about -evalVersion`) {
+		// Because fopen and fprint are disabled in PLE, this feature is not supported.
+		warning (uiRes("m_listHotkeysWindow.kWarn"));
+		return true;
+	}
+
+	waitCursor -state on;
+
+	//	If the file already exists then move it.
+	//
+	if (`file -query -exists $filename`) {
+		sysFile -rename ($filename + ".deleted") $filename;
+		sysFile -delete $filename;
+	}
+
+	//	Open the file.
+	//
+	int $fileId = fopen($filename);
+
+	string $category, $categories[];
+	string $keyString, $key, $keys[] = getAllValidKeys();
+	string $press, $release, $mapped[];
+	string $columnSpacing = "    ";
+	int    $mappedIndex = 0, $maxCategoryLength = 0;
+	int    $maxKeyLength = size("Page_Down");
+	
+	string $maxHotkeyLengthTest = "";
+	$maxHotkeyLengthTest = ( (uiRes("m_listHotkeysWindow.kCtrlKey")) + (uiRes("m_listHotkeysWindow.kAltKey")) + "Page_Down" + (uiRes("m_listHotkeysWindow.kRelease")) );
+	int    $maxHotkeyLength = size($maxHotkeyLengthTest);
+	
+	string $maxHotkeyLengthTestMac = "";
+	$maxHotkeyLengthTestMac = ((uiRes("m_listHotkeysWindow.kControlKey"))+ "Page_Down" );
+	if(`about -mac`)
+		$maxKeyLength = size( $maxHotkeyLengthTestMac );
+	
+	for ($key in $keys) {
+
+		//	No modifiers.
+		//
+		$keyString = ((uiRes("m_listHotkeysWindow.kCtrlAltSpace")) + " ");
+		$keyString += $key;
+		$keyString += getSpacing($key, $maxKeyLength);
+
+		$press = getHotkeyCommandNew ($key, false, false, false, 1);
+		if ("" != $press) {
+			//
+			//	Add hotkey and command to mapped list.
+			//
+			$mapped[$mappedIndex++] = $keyString + " " + (uiRes("m_listHotkeysWindow.kPress")) + "  " ;
+			$mapped[$mappedIndex++] = $press;
+		}
+
+		$release = getHotkeyCommandNew ($key, false, false, false, 0);
+		if ("" != $release) {
+			//
+			//	Add hotkey and command to mapped list.
+			//
+			$mapped[$mappedIndex++] = $keyString + " " + (uiRes("m_listHotkeysWindow.kRelease")) ;
+			$mapped[$mappedIndex++] = $press;
+		}
+
+		//	Ctrl modifier.
+		//
+		$keyString = (`about -macOS` ? ((uiRes("m_listHotkeysWindow.kControlKey"))+ (uiRes("m_listHotkeysWindow.kOptionSpace"))+ " ") : ((uiRes("m_listHotkeysWindow.kCtrlKey"))+ (uiRes("m_listHotkeysWindow.kAltSpace")) + " "));
+		$keyString += $key;
+		$keyString += getSpacing($key, $maxKeyLength);
+
+		$press = getHotkeyCommandNew ($key, true, false, false, 1);
+		if ("" != $press) {
+			//
+			//	Add hotkey and command to mapped list.
+			//
+			$mapped[$mappedIndex++] = $keyString + " " + (uiRes("m_listHotkeysWindow.kPress")) + "  ";
+			$mapped[$mappedIndex++] = $press;
+		}
+
+		$release = getHotkeyCommandNew ($key, true, false, false, 0);
+		if ("" != $release) {
+			//
+			//	Add hotkey and command to mapped list.
+			//
+			$mapped[$mappedIndex++] = $keyString + " " + (uiRes("m_listHotkeysWindow.kRelease"));
+			$mapped[$mappedIndex++] = $press;
+		}
+
+		//	Alt modifier.
+		//
+		$keyString = (`about -macOS` ? ((uiRes("m_listHotkeysWindow.kControlSpace"))+ " " + (uiRes("m_listHotkeysWindow.kOptionKey"))) : ((uiRes("m_listHotkeysWindow.kCtrlSpace")) + " " + (uiRes("m_listHotkeysWindow.kAltKey"))) );
+		$keyString += $key;
+		$keyString += getSpacing($key, $maxKeyLength);
+
+		$press = getHotkeyCommandNew ($key, false, true, false, 1);
+		if ("" != $press) {
+			//
+			//	Add hotkey and command to mapped list.
+			//
+			$mapped[$mappedIndex++] = $keyString + " " + (uiRes("m_listHotkeysWindow.kPress")) + "  " ;
+			$mapped[$mappedIndex++] = $press;
+		}
+
+		$release = getHotkeyCommandNew ($key, false, true, false, 0);
+		if ("" != $release) {
+			//
+			//	Add hotkey and command to mapped list.
+			//
+			$mapped[$mappedIndex++] = $keyString + " " + (uiRes("m_listHotkeysWindow.kRelease"));
+			$mapped[$mappedIndex++] = $press;
+		}
+
+		//	Ctrl and Alt modifiers.
+		//
+		$keyString = (`about -macOS` ? ((uiRes("m_listHotkeysWindow.kControlKey"))+(uiRes("m_listHotkeysWindow.kOptionKey")) ) : ( (uiRes("m_listHotkeysWindow.kCtrlKey"))+(uiRes("m_listHotkeysWindow.kAlt")) ) );
+		$keyString += $key;
+		$keyString += getSpacing($key, $maxKeyLength);
+
+		$press = getHotkeyCommandNew ($key, true, true, false, 1);
+		if ("" != $press) {
+			//
+			//	Add hotkey and command to mapped list.
+			//
+			$mapped[$mappedIndex++] = $keyString + " " + (uiRes("m_listHotkeysWindow.kPress")) + "  ";
+			$mapped[$mappedIndex++] = $press;
+		}
+
+		$release = getHotkeyCommandNew ($key, true, true, false, 0);
+		if ("" != $release) {
+			//
+			//	Add hotkey and command to mapped list.
+			//
+			$mapped[$mappedIndex++] = $keyString + " " + (uiRes("m_listHotkeysWindow.kRelease"));
+			$mapped[$mappedIndex++] = $press;
+		}
+	}
+
+	//	Get all the categories to determine the one with the longest name.
+	//
+	$categories = `runTimeCommand -query -categoryArray`;
+	$maxCategoryLength = 0;
+	for ($category in $categories) {
+		if (size($category) > $maxCategoryLength) {
+			$maxCategoryLength = size($category);
+		}
+	}
+
+	string $hotkeyTitle = (uiRes("m_listHotkeysWindow.kHotkey"));
+	string $categoryTitle = (uiRes("m_listHotkeysWindow.kPrintCategory"));
+	string $commandTitle = (uiRes("m_listHotkeysWindow.kCommand"));
+	string $spacing;
+
+	//	Write the mapped hotkeys.
+	//
+	fprint($fileId, $hotkeyTitle);
+	$spacing = getSpacing($hotkeyTitle, $maxHotkeyLength);
+	fprint($fileId, $spacing);
+	fprint($fileId, $columnSpacing);
+	fprint($fileId, $columnSpacing);
+
+	fprint($fileId, $categoryTitle);
+	$spacing = getSpacing($categoryTitle, $maxCategoryLength);
+	fprint($fileId, $spacing);
+	fprint($fileId, $columnSpacing);
+
+	fprint($fileId, $commandTitle);
+	fprint($fileId, "\n");
+
+	fprint($fileId, "======================================================================");
+	fprint($fileId, "====================\n");
+
+	for ($mappedIndex = 0; $mappedIndex < size($mapped); $mappedIndex+=2) {
+		
+		//	Write hotkey.
+		//
+		fprint($fileId, $mapped[$mappedIndex]);
+		$spacing = getSpacing($mapped[$mappedIndex], $maxHotkeyLength);
+		fprint($fileId, $spacing);
+		fprint($fileId, $columnSpacing);
+		fprint($fileId, $columnSpacing);
+
+		//	Write category.
+		//
+		$category = "";
+		if (`runTimeCommand -exists $mapped[$mappedIndex+1]`) {
+			$category = `runTimeCommand -query -category $mapped[$mappedIndex+1]`;
+		}
+		fprint($fileId, $category);
+		$spacing = getSpacing($category, $maxCategoryLength);
+		fprint($fileId, $spacing);
+		fprint($fileId, $columnSpacing);
+
+		//	Write command.
+		//
+		fprint($fileId, $mapped[$mappedIndex+1]);
+		fprint($fileId, "\n");
+	}
+
+	//	Close the file.
+	//
+	fclose($fileId);
+
+	waitCursor -state off;
+
+	return true;
+}
+
+global proc listHotkeysWindow()
+// 
+//	Description:
+//		Create the List Hotkeys window.
+//
+{
+	//	If the window already exists then just show it and return.
+	//
+	if (`window -exists ListHotkeysWindow`) {
+		showWindow ListHotkeysWindow;
+		return;
+	}
+
+	//	Otherwise, build the window.
+	//
+	string $listHotkeys = (uiRes("m_listHotkeysWindow.kWindowTitle")) ;
+	window -title $listHotkeys 
+		-iconName $listHotkeys
+		-width    750
+		-height   500 
+		ListHotkeysWindow;
+
+	string $form = `formLayout`;
+
+	string $tabs = `tabLayout -selectCommand ("listHotkeysWindowTabSelect")
+		-innerMarginWidth 5 -innerMarginHeight 5
+		ListHotkeysWindowTabs`;
+	setParent ..;
+	string $buttons = `formLayout`;
+	setParent ..;
+
+	createTabs($tabs);
+	createButtons($buttons);
+
+	tabLayout -edit
+		-tabLabelIndex 1 (uiRes("m_listHotkeysWindow.kListKeys"))
+		-tabLabelIndex 2 (uiRes("m_listHotkeysWindow.kListCategory"))
+		$tabs;
+		
+	formLayout -edit
+		-attachForm    $tabs    "top"    0
+		-attachForm    $tabs    "left"   0
+		-attachControl $tabs    "bottom" 0 $buttons
+		-attachForm    $tabs    "right"  0
+		-attachNone    $buttons "top"
+		-attachForm    $buttons "left"   0
+		-attachForm    $buttons "bottom" 0
+		-attachForm    $buttons "right"  0
+		$form;
+
+	updateKeyMappedLists();
+	
+	showWindow ListHotkeysWindow;
+}

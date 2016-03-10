@@ -1,0 +1,201 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  24 November 1998
+//
+//  Description:
+//      This script initializes the Attribute Editor.  
+//
+
+global proc showAttributeEditor(int $show)
+//
+//	Description:
+//
+//		*** Obsolete ***
+//
+//		*** Use runTimeCommand ToggleAttributeEditor instead ***
+//	
+//	Arguments:
+//		show - True if the Attribute Editor should be shown, false if the 
+//		       Attribute Editor should become hidden.
+//
+{
+	warning -showLineNumber true
+		("The procedure \"showAttributeEditor()\" is now obsolete. "
+		+ "Use the command \"ToggleAttributeEditor\" instead.");
+}
+
+global proc int attributeEditorVisibilityStateChange(
+	int    $newState,
+	string $layout)
+//
+//	Description:
+//		This procedure is called whenever the visibility state of the 
+//		Attribute Editor is changed.
+//
+//	Arguments:
+//		newState - The new visibile state of the Attribute Editor.
+//
+//		layout - The parent layout for the Attribute Editor.
+//
+//	Returns:
+//		true - If the change of state is to be allowed.
+//
+//		false - If the state change is rejected.
+//
+{
+	global string $gAttributeEditorForm;
+	global int    $gAutoUpdateAttrEdFlag;
+	global int    $gIgnoreAEUpdate;
+
+	string $children[], $attributeEditorForm;
+	int    $count = `layout -query -numberOfChildren $gAttributeEditorForm`;
+	int    $result = true;
+
+	// Keep polyCacheMonitor counter in sync
+	changeAEVisibility($newState);
+
+	if ($newState) {
+		//
+		//	Delete the Attribute Editor window if necessary.
+		//
+		if (`window -exists AEWindow`) {
+			deleteUI -window AEWindow;
+		}
+
+		if (0 == $count) {
+			//
+			//	Need to create the Attribute Editor controls.
+			//
+			$attributeEditorForm = `formLayout 
+				-parent $gAttributeEditorForm
+				`;
+			createAEWindowContents $attributeEditorForm "" auto;
+
+			//	Get the child of the formLayout, and perform the
+			//	appropriate attachments for the AE formLayout.
+			//
+			$children = `formLayout -query -childArray 
+				$attributeEditorForm`;
+
+			formLayout -edit
+				-attachForm $children[0] "top"    0
+				-attachForm $children[0] "left"   0
+				-attachForm $children[0] "bottom" 0
+				-attachForm $children[0] "right"  0
+				$attributeEditorForm;
+
+			//	Attach Attribute Editor to parent.
+			//
+			formLayout -edit
+				-attachForm $attributeEditorForm "top"    0
+				-attachForm $attributeEditorForm "left"   0
+				-attachForm $attributeEditorForm "bottom" 0
+				-attachForm $attributeEditorForm "right"  0
+				$gAttributeEditorForm;
+
+			//	Force a refresh with the lead object
+			//
+			string $selected[] = `ls -selection -tail 1`;
+			updateAE $selected[0];
+		}
+
+		// if the AE is in auto mode, update it.
+		//
+		if ($gAutoUpdateAttrEdFlag && !$gIgnoreAEUpdate) {
+			evalDeferred("autoUpdateAttrEd");
+		}
+		$result = true;
+
+	} else {
+		$result = true;
+	}
+
+	//	Defer these commands because this proc is called when the visibility
+	//	state is about to change. This proc must return true to accept 
+	//	the state change. After this proc returns then restore the
+	//	panel focus and update the pref menu.
+	//
+	evalDeferred("restoreLastPanelWithFocus();updatePrefsMenu();");
+
+	return $result;
+}
+
+{
+	source showEditor;
+
+	//	Declare referenced or returned variables
+	//
+	global string $gAttributeEditorForm;
+
+	//	Determine values of option variables
+
+	int $attributeEditorVisible = `optionVar -query isAttributeEditorVisible`;
+
+	//  Create a layout appropriate for the Attribute Editor.
+	//
+	string $attributeEditorForm = `formLayout -parent $gAttributeEditorForm`;
+
+	//	Create the contents of the Attribute Editor.
+	//
+	createAEWindowContents $attributeEditorForm "" auto;
+
+	//	Get the child of the formLayout, and perform the
+	//	appropriate attachments for the AE formLayout
+	//
+	string $children[] = `formLayout -query -childArray $attributeEditorForm`;
+
+	formLayout -edit
+		-attachForm $children[0] "top"    0
+		-attachForm $children[0] "left"   0
+		-attachForm $children[0] "bottom" 0
+		-attachForm $children[0] "right"  0
+		$attributeEditorForm;
+
+	//	Attach Attribute Editor to parent.
+	//
+	int $offset = 3;
+	if (`about -mac`) {
+		$offset = 3;
+	}
+	formLayout -edit
+		-attachForm $attributeEditorForm "top"    $offset  // to make the menus line up
+		-attachForm $attributeEditorForm "left"   0
+		-attachForm $attributeEditorForm "bottom" 0
+		-attachForm $attributeEditorForm "right"  0
+		$gAttributeEditorForm;
+
+	setUIComponentStateCallback(
+		"Attribute Editor", "attributeEditorVisibilityStateChange");
+
+	//	Set the callback to show/hide the Close button whenever
+	//	the Attribute Editor's floating state changes.
+	//
+	string $component = getUIComponentDockControl("Attribute Editor", false);
+	dockControl -edit -floatChangeCommand ("updateAEButtons " + $component) $component;
+
+	//	Set the visibility of the Attribute Editor.
+	//
+	setAttributeEditorVisible($attributeEditorVisible);
+}
+

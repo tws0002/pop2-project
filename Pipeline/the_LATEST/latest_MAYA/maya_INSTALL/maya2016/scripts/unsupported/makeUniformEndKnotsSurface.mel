@@ -1,0 +1,196 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+// Absolutely no warranty with this code
+//
+proc int getNurbsSurfaceKnots( 
+	string $srfName, float $uKnots[], float $vKnots[] )
+//
+//	Description :
+//
+{
+
+	// create info Node.
+	string $infoNode ;
+	if( catch( $infoNode = `createNode surfaceInfo` ) ) {
+		return 1; // failed
+	} 
+
+	// connect surface on to the info node.
+	string $outAttr = $srfName + ".local" ; 
+	string $inAttr = $infoNode + ".is" ;
+	connectAttr $outAttr $inAttr ;
+
+	// read the knots.
+	$uKnots = `getAttr ($infoNode + ".knotsU")`;	
+	$vKnots = `getAttr ($infoNode + ".knotsV")`;	
+
+	// delete surface info node.
+	delete $infoNode ;
+
+	// worked
+	return 0;
+}
+
+proc string makeMek(string $srf)
+{
+	string $cmd = "setAttr \".cc\" -type \"nurbsSurface\"\n";
+
+	// degree
+	int $degreeU = eval("getAttr " + $srf + ".degreeU");
+	int $degreeV = eval("getAttr " + $srf + ".degreeV");
+
+	$cmd += " " + $degreeU + " " + $degreeV;
+
+	// form
+	int $formU = eval("getAttr " + $srf + ".formU");
+	int $formV = eval("getAttr " + $srf + ".formV");
+
+	$cmd += " " + $formU + " " + $formV;
+
+	// rational flag. Value doesnt matter, since only
+	// matching knots
+	$cmd += " no\n";
+
+	// get knots from existing surface
+	float $uKnots[];
+	float $vKnots[];
+	if(getNurbsSurfaceKnots($srf, $uKnots, $vKnots)) {
+		return 1; // failed
+	}
+
+	int $nspansU = eval("getAttr " + $srf + ".spansU");
+	int $nspansV = eval("getAttr " + $srf + ".spansV");
+	int $numKnotsU = $nspansU + 2*$degreeU-1;
+	int $numKnotsV = $nspansV + 2*$degreeV-1;
+
+
+	$cmd += " " + $numKnotsU;
+
+	// set knots in U
+	if(2 == $formU) {
+		for($i=0; $i<$numKnotsU; $i++) $cmd += " " + $uKnots[$i];
+	} else {
+		int $startUknot = $degreeU-1;
+		int $endUknot = $numKnotsU-$degreeU;
+		float $startDiff = $uKnots[$startUknot+1] - $uKnots[$startUknot];
+		float $endDiff = $uKnots[$endUknot] - $uKnots[$endUknot-1];
+
+		for($i=0; $i<$startUknot; $i++) $cmd += " " + ($uKnots[$startUknot] - $startDiff*($startUknot-$i));
+		for($i=$startUknot; $i<=$endUknot; $i++) $cmd += " " + $uKnots[$i];
+		for($i=$endUknot+1; $i<$numKnotsU; $i++) $cmd += " " + ($uKnots[$endUknot] + $endDiff*($i-$endUknot));
+	}
+	$cmd += "\n";
+	$cmd += " " + $numKnotsV;
+
+
+	// set knots in V
+	if(2 == $formV) {
+		for($i=0; $i<$numKnotsV; $i++) $cmd += " " + $vKnots[$i];
+	} else {
+		int $startVknot = $degreeV-1;
+		int $endVknot = $numKnotsV-$degreeV;
+		float $startDiff = $vKnots[$startVknot+1] - $vKnots[$startVknot];
+		float $endDiff = $vKnots[$endVknot] - $vKnots[$endVknot-1];
+
+		for($i=0; $i<$startVknot; $i++) $cmd += " " + ($vKnots[$startVknot] - $startDiff*($startVknot-$i));
+		for($i=$startVknot; $i<=$endVknot; $i++) $cmd += " " + $vKnots[$i];
+		for($i=$endVknot+1; $i<$numKnotsV; $i++) $cmd += " " + ($vKnots[$endVknot] + $endDiff*($i-$endVknot));
+	}
+
+	$cmd += "\n\n";
+
+	// CVs - just set zero values since they are not used
+	int $numCVsAlongU=  $nspansU + $degreeU;
+	int $numCVsAlongV = $nspansV + $degreeV;
+	int $numCVs = $numCVsAlongU * $numCVsAlongV;
+	$cmd += $numCVs + "\n";
+	for($i=0; $i<$numCVs; $i++) {
+		float $cv[] = eval("getAttr " + $srf + ".cp[" + $i + "]");
+		$cmd += $cv[0] + " " + $cv[1] + " " + $cv[2] + "\n";
+	}
+	$cmd += ";";
+
+	return $cmd;
+} 
+
+global proc int makeUniformEndKnotsSurface()
+{
+	// Get the select list.
+	string $selList[] = `ls -sl`;
+
+	// Run filter to select only the NURBS surfaces
+	global int $gSelectNurbsSurfacesBit ;
+
+	string $srfList[] = `filterExpand -ex true 
+		-sm $gSelectNurbsSurfacesBit`;
+	int $len = size($srfList) ;
+	if( $len == 0 ) {
+		print (uiRes("m_makeUniformEndKnotsSurface.kNoSurfacesSelected")) ;
+		return 1;
+	}
+
+	// build list of new surfaces
+	string $newSurfaces = "";
+	
+	// Work on the last item if more than one NURBS surface in list.
+	for($srfNum = 0; $srfNum < $len; $srfNum++) {
+		string $srf = $srfList[$srfNum];
+
+		print (`format -s $srf (uiRes("m_makeUniformEndKnotsSurface.kDoingSurface"))` );
+
+		// duplicate and delete history
+		string $ret[] = eval("duplicate " + $srf);
+		string $newSrf = $ret[0];
+		eval("delete -ch " + $newSrf);
+
+		// delete history on original surface...
+		eval("delete -ch " + $srf);
+
+		// make new surface have nonMEK (but changed shape)
+        string $cmd = makeMek($newSrf);
+		select $newSrf;
+		if(catch(eval($cmd))) {
+			print ((uiRes("m_makeUniformEndKnotsSurface.kFailedRebuildAsNonMek")) );
+			return 1;
+		}
+
+		// now make original surface match new knots
+		if(catch(eval("rebuildSurface -ch 0 -rpo 1 -rt 2 -kr 1 -kcp 0 -kc 0 -tol 0.01 -fr 1 -dir 2 " + $srf + " " + $newSrf))) {
+			print ((uiRes("m_makeUniformEndKnotsSurface.kErrorRebuildingSurface")) );
+			return 1;
+		}
+
+		// delete history on rebuilt surface...
+		eval("delete -ch " + $srf);
+
+		// ... then delete duplicated surface
+		delete $newSrf;
+
+		// add new surface to list of new surfaces
+		$newSurfaces += " " + $srf;
+    }
+
+	// select all new surfaces
+	eval("select -r " + $newSurfaces);
+
+	return 0;
+}

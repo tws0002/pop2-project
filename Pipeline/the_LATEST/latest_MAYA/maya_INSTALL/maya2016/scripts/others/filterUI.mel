@@ -1,0 +1,6524 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  24 November 1998
+//
+//	Description:
+//		This file contains the procedures that support filtering.  All 
+//		views (for example, the outliner editor, and hypergraph) will have
+//		the same UI for filtering objects and/or attributes.
+//
+//		Note that while the examples of views listed above are editors it 
+//		is important not to limit the Filter UI to just editors.  It should
+//		remain general enough to handle other types of "views" of the scene,
+//		perhaps even a model view.
+//
+//		The filter UI consists of a menu and edit field.  The user selects 
+//		object and attribute filters from the menu and specifies a regular
+//		expression name filter with the edit field.
+//
+//		The filter menu may be attached to a menu bar, popup menu or both.
+//		In the case where a view has a filter menu attached to both a menu
+//		bar and a popup menu then the filter UI will ensure that the state
+//		of both menus is always in sync for that view.
+//
+//		The Filter menu current has the following menu items.
+//
+//		   Objects            >
+//		   Attributes         >
+//		------------------------
+//		[] Invert Shown
+//		   Show All
+//		------------------------
+//		   Show Selected Type(s)
+//		   Select Attributes...
+//		   Create Entry...
+//		   Delete Entry...
+//
+//		As displayed above, the "Invert Shown" item is a check box, and the
+//		"Objects" and "Attributes" are sub menus.
+//
+//		Show Selected Type(s) - Takes the current selection (which may contain
+//			objects or attributes) and applies a filter to the view that
+//			will only show objects and/or attributes that have the same type
+//			as those selected.
+//
+//			This will replace any object or attribute filter attached to the
+//			view.
+//
+//			It will not replace any regular expression field entered in the
+//			filter field.
+//
+//		Select Attributes - Pops up a window allowing an alternative way
+//			to interactively set up name-based filters.
+//
+//		Invert Shown - If checked then the current combination of object,
+//			attribute, and regular expression filter will be inverted.
+//
+//		Show All - Remove all the filters attached to the view.
+//
+//		Create Entry - Show a window that allows the user to save the current
+//			object and/or attribute selection filter applied to the view.
+//			Saved object filters are appended to the "Objects" sub menu,
+//			and saved attribute filters are appended to the "Attributes"
+//			sub menu.
+//
+//		Delete Entry - Show a window that allows the user to delete saved
+//			object or attribute filters.  The deleted filters will no longer
+//			appear in the corresponding sub menu.
+//
+//		Objects - A sub menu containing default and saved object 
+//			filters.  Each object filter is represented by a check box menu
+//			item.  This allows multiple object filters to be applied to a
+//			view.  The object filters selected will work in conjunction with
+//			the curent object selection filter, if there is one.
+//
+//		Attributes - A sub menu containing default and saved 
+//			attribute filters.  Each attribute filter is represented by a 
+//			check box menu item.  This allows multiple attribute filters to
+//			be applied to a view.  The attribute filters selected will work
+//			in conjunction with the current attribute selection filter, if
+//			there is one.
+//
+//		Each view may also have an "implicit" filter associated with it.
+//		This allows a view to be "task oriented".  For example, if a view is
+//		only interested in displaying lights then it doesn't need to show
+//		any other objects except for lights.  The view would create a "show
+//		only lights filter" and set it as the implicit filter for the view.
+//
+//		In the above light example it would also not make sense to show any 
+//		filters in the "Object Filters" sub menu unless they were related to 
+//		lights.  The view has the ability to specify the types of filters
+//		that relate to the view's task.  The filter UI will ensure that
+//		only related filters are listed in the "Objects" sub menu.
+//
+//	How To
+//	======
+//	1. Set up the filter UI.
+//
+//		To create a filter menu and regular expression field:
+//
+//		filterUICreateMenu($nameOfView, $parentOfFilterMenu)
+//		filterUICreateField($nameOfView, $parentLayoutOfField)
+//
+//		$nameOfView - The name of the view.  For example, in the case of an 
+//			outliner editor this would be the result of the 'outlinerEditor' 
+//			command.
+//
+//		$parentOfFilterMenu - The parent for the menu item.  This may be
+//			the full ui path name to a window, menu bar layout, or popup menu.
+//
+//		$parentLayoutOfField - The parent layout for the filter UI regular
+//			expression field.  This may be any valid control layout.
+//
+//	2. Clean up the filter UI.
+//
+//		Whenever your view (and it's menu and/or controls) is deleted 
+//		inform the filter UI by calling:
+//
+//		filterUIRemoveView($nameView)
+//
+//		Individual procedures are also available if necessary, they are:
+//
+//		filterUIClearMenu($view)
+//		filterUIClearPopupMenu($view)
+//		filterUIClearField($view)
+//		filterUIClearFilterStatusControl($view)
+//
+//	3. Attach an implicit filter for task oriented views.
+//
+//		Create the filter and call:
+//
+//		filterUISetImplicitFilter($nameOfView, $nameOfImplicitFilter)
+//
+//	4. Specify filters related to a task oriented view.
+//
+//		Create a procedure that returns a string array of filter names.
+//		Attach this procedure to the filter UI with a call to:
+//
+//		filterUISetRelatedFiltersProcedure($nameOfView, $procName)
+//
+
+/*
+//
+//	Globals:
+//	========
+//
+//	The following is a list of global variables used to implement the
+//	filter UI.
+//
+//	*** These variables should not be accessed outside of this script file. ***
+//
+global string $gFilterUIViewList[];
+global string $gFilterUIMenuList[];
+global string $gFilterUIPopupMenuList[];
+global string $gFilterUIFieldList[];
+global string $gFilterUIFilterStatusControlList[];
+global string $gFilterUIObjectSelectionFilterList[];
+global string $gFilterUIAttributeSelectionFilterList[];
+global string $gFilterUIImplicitFilterList[];
+global string $gFilterUIRelatedFiltersProcedureList[];
+global string $gFilterUIRelatedAttrFiltersProcedureList[];
+global string $gFilterUIDefaultObjectFilterList[];
+global string $gFilterUIDefaultAttributeFilterList[];
+global string $gFilterUICustomObjectFilterList[];
+global string $gFilterUICustomAttributeFilterList[];
+
+global string $gFilterUIPluginCustomObjectFilterList[];
+global string $gFilterUIPluginCustomObjectFilterTypeList[];
+global string $gFilterUIPluginCustomObjectFilterTextList[];
+global string $gFilterUIPluginCustomObjectFilterNameList[];
+global int	   $gFilterUIPluginCustomObjectFilterRegCountList[];
+global string $gFilterUIPluginCustomObjectFilterInsertBelowList[];
+//
+//	Filter UI Interface:
+//	====================
+//
+//	The following are the procedures available to you the script writer
+//	for associating filter UI to your view.
+//
+string    filterUICreateMenu                    (string $view, string $parent)
+string    filterUICreateField                   (string $view, string $parent)
+int       filterUIAttachField                   (string $view, 
+                                                 string $textField)
+int       filterUIAttachFilterStatusControl     (string $view, 
+                                                 string $statusControl)
+
+int       filterUISetImplicitFilter             (string $view, string $filter)
+int       filterUISetImplicitFilterNoApply      (string $view, string $filter)
+int       filterUISetRelatedFiltersProcedure    (string $view, string $procName)
+int       filterUISetRelatedAttrFiltersProcedure    (string $view, string $procName)
+int       filterUIRefreshView						(string $view)
+
+int       filterUIRemoveView                    ($view)
+
+int       filterUIClearMenu                     (string $view)
+int       filterUIClearPopupMenu                (string $view)
+int       filterUIClearField                    (string $view)
+int       filterUIClearFilterStatusControl      (string $view)
+
+int       filterUIUpdateDefaultFilters          ()
+int       filterUIUpdateCustomFilters           ()
+
+string [] filterUIGetCustomFilters              ()
+
+void      filterUIRestoreSavedSettings			(string $view, string $menu)
+void      filterUIRestoreAllSavedSettings		()
+
+void      filterUISetDefaultOptions             (string $view, string $menu, string $options[])
+
+string    filterUIGetObjectMenu                 (string $menu)
+string    filterUIGetMenu                       ($view)
+string    filterUIGetPopupMenu                  ($view)
+
+//
+//	Procedures Local Filter UI:
+//	===========================
+//
+//	The following procedures are used by the filter UI only and should not
+//	be called outside of this script file.
+//
+
+string [] filterUIGetObjectFilters              ()
+string [] filterUIGetAttributeFilters           ()
+string [] filterUIGetDefaultObjectFilters       ()
+string [] filterUIGetDefaultAttributeFilters    ()
+string [] filterUIGetCustomObjectFilters        ()
+string [] filterUIGetCustomAttributeFilters     ()
+
+string    filterUIVerifyMenuItemExists          (string $menuItem)
+string    filterUIVerifyFilterExists            (string $filter)
+
+string    filterUIGetFilterSelectionMenuItem    (string $menu)
+string    filterUIGetSelectAttributesMenuItem   (string $menu)
+string    filterUIGetInvertFilterMenuItem       (string $menu)
+string    filterUIGetClearFilterMenuItem        (string $menu)
+string    filterUIGetSaveFilterMenuItem         (string $menu)
+string    filterUIGetDeleteFilterMenuItem       (string $menu)
+string    filterUIGetAttributeMenu              (string $menu)
+
+string    filterUIGetField                      ($view)
+string    filterUIGetFilterStatusControl        ($view)
+
+string    filterUIGetImplicitFilter             (string $view)
+string    filterUIGetRelatedFiltersProcedure    (string $view)
+string    filterUIGetRelatedAttrFiltersProcedure(string $view)
+
+string    filterUIGetFilterFromMenuItem         (string $menuItem)
+
+int       filterUISetMenu                       (string $view, string $menu)
+int       filterUISetPopupMenu                  (string $view, string $popupMenu)
+int       filterUISetField                      (string $view, string $field)
+int       filterUISetFilterStatusControl        (string $view, string $control)
+
+string    filterUIGetObjectSelectionFilter      ($view)
+int       filterUISetObjectSelectionFilter      ($view, $filter)
+string    filterUIGetAttributeSelectionFilter   ($view)
+int       filterUISetAttributeSelectionFilter   ($view, $filter)
+
+string    filterUIGetUnionOfFilters             ($filters[])
+string    filterUIGetIntersectionOfFilters      ($filters[])
+
+string [] filterUIExpandFilter                  (string $filter,
+                                                 string $filterList[])
+
+string [] filterUIAreFiltersRelated             (string $view,
+                                                 string $filters[])
+
+int       filterUICreateObjectFilterMenuItems   (string $view,
+                                                 string $menu)
+int       filterUICreateAttributeFilterMenuItems(string $view,
+                                                 string $menu)
+int       filterUIAddObjectFilterMenuItem       (string $currentView,
+                                                 string $newFilter)
+int       filterUIAddAttributeFilterMenuItem    (string $currentView,
+                                                 string $newFilter)
+
+int       filterUIFilterNameIsValid             (string $name)
+
+int       filterUIApplyFilter                   ($view, 
+                                                 $objectFilter,
+											     $attributeFilter)
+
+int       filterUIHandleObjectFilterMenuItem    (string $view,
+                                                 string $menu,
+                                                 string $menuItem,
+                                                 string $selectedFilter)
+
+int       filterUIHandleAttributeFilterMenuItem (string $view,
+                                                 string $menu,
+                                                 string $menuItem,
+                                                 string $selectedFilter)
+
+int       filterUIShowFilterMenu                (string $view, string $menu)
+int       filterUIShowObjectFilterMenu          (string $view, 
+	                                             string $objectFilterMenu)	
+int       filterUIShowAttributeFilterMenu       (string $view, 
+                                                 string $attributeFilterMenu)	
+
+int       filterUIHandleField                   (string $view,
+	                                             string $textField)
+										   
+int       filterUIFilterSelection               (string $view,
+                                                 string $saveFilterMenuItem)
+		  filterUIUpdateFilterSelection			(string $view,
+												 string $objects[], string $attributes[])
+		  filterUISelectAttributes				(string $view)
+		  filterUISelectAttributesCheckbox		(string $attr, int $state, string $view)
+int       filterUIInvertFilter                  (string $view, string $menuItem)
+int       filterUIClearFilter                   (string $view)
+int       filterUIClearNonMenuFilter            (string $view)
+int       filterUIShowSaveFilterWindow          (string $view,
+                                                 string $saveFilterMenuItem)
+int       filterUIShowDeleteFilterWindow        (string $deleteFilterMenuItem)
+
+int       filterUIUpdateSaveFilterWindow        (string $saveButton,
+                                                 string $objectSaveCheckBox,
+                                                 string $objectNameField,
+                                                 string $attributeSaveCheckBox,
+                                                 string $attributeNameField)
+int       filterUIUpdateDeleteFilterWindow      (string $deleteButton,
+                                                 string $filterTabs,
+                                                 string $objectFilterList,
+                                                 string $attributeFilterList)
+
+int       filterUISaveFilter                    (string $view,
+                                                 string $window,
+                                                 string $saveFilterButton,
+                                                 string $objectSaveCheckBox,
+                                                 string $objectNameField,
+                                                 string $attributeSaveCheckBox,
+                                                 string $attributeNameField)
+int       filterUIDeleteFilter                  (string $filterTabs,
+                                                 string $objectFilterList,
+                                                 string $attributeFilterList)
+
+string    filterUIGetOptionVarName              (string $view)
+
+//
+//	Debug Procedures For Filter UI:
+//	===============================
+//
+//	These procedures are meant to be used by this script file only.
+//
+
+int       filterUIDebugCreateWindow             ()
+int       filterUIDebugTrace                    (string $message) 
+int       filterUIDebugPrintViewInfo            (string $view);
+int       filterUIDebugPrintFilterInfo          (string $filter)
+int       filterUIDebugPrintFilters             ()
+int       filterUIDebugClearViewInfo            ()
+
+*/
+
+global string $gHyperShadeSelectedBinList[] = {};
+
+global proc string [] filterUIDuplicateFilter(string $filter) 
+//
+//  Description:
+//		Duplicate the specified filter.  If the filter is custom or
+//		builtin it must be set to be "other" before being copied.  This
+//		is so that the duplicate does not have the same classification,
+//		and so that the copy will not be writeable, in which case we couldn't
+//		set its attributes properly.
+//
+{
+	string   $class;
+	string   $duplicates [];
+	string   $type;
+	
+	$type = `itemFilterType -query -type $filter`;
+
+	int $needToDuplicate = 0;
+	if ("renderFilter" == $type) {
+		$needToDuplicate = `itemFilterRender -exists $filter`;
+	} else if ("attributeFilter" == $type) {
+		$needToDuplicate = `itemFilterAttr -exists $filter`;
+	} else if ("itemFilter" == $type) {
+		$needToDuplicate = `itemFilter -exists $filter`;
+	}
+
+	if( $needToDuplicate ) {
+		$duplicates = `duplicate -upstreamNodes $filter`;
+	}
+
+	return $duplicates;
+}
+
+//////////////////////////////////////////////////////////////////////
+//
+//
+//
+//	Filter UI debugging tools.
+//
+//
+//
+//////////////////////////////////////////////////////////////////////
+
+proc int filterUIDebugTrace(string $message) 
+//
+//	Description:
+//		Output a filter UI debug message.
+//
+{
+	int $result = 0;
+	
+	if ("" != $message
+		&& `checkBox -exists FilterUIDebugTraceCheckBox`
+		&& `checkBox -query -value FilterUIDebugTraceCheckBox`) {
+		if (`scrollField -exists FilterUIDebugOutputField`) {
+			scrollField -edit 
+				-insertionPosition 0 -insertText $message 
+				FilterUIDebugOutputField;
+		}
+	}
+	
+	return $result;
+}
+
+proc int filterUIDebugCreateWindow()
+//
+//	Description:
+//		Create a convenient debug window for testing the filter UI
+//		scripts and code.
+//
+{
+	int $result = 0;
+	
+	if (`window -exists FilterUIDebugWindow`) {
+		showWindow FilterUIDebugWindow;
+	} else {
+		window FilterUIDebugWindow;
+		$paneLayout = `paneLayout -configuration "horizontal2"`;
+		string $form = `columnLayout`;
+		rowLayout -numberOfColumns 4;
+		string $clearButton = `button -label (uiRes("m_filterUI.kClearOutput"))`;
+		string $printViewInfoButton = `button -label (uiRes("m_filterUI.kPrintViewInfo"))`;
+		string $printFiltersButton = `button -label (uiRes("m_filterUI.kPrintFilters"))`;
+		string $printFilterStatsButton = `button -label (uiRes("m_filterUI.kPrintFilterStats"))`;
+		setParent ..;
+		checkBox -value 1 FilterUIDebugTraceCheckBox;
+		setParent ..;
+		string $outputField = `scrollField 
+			-editable false 
+			FilterUIDebugOutputField`;
+			
+		paneLayout -edit -paneSize 1 100 15 $paneLayout;
+		
+		showWindow FilterUIDebugWindow;
+
+		button -edit
+			-command ("scrollField -edit -clear " + $outputField)
+			$clearButton;
+			
+		button -edit
+			-command ("filterUIDebugPrintViewInfo \"\"")
+			$printViewInfoButton;
+			
+		button -edit
+			-command ("filterUIDebugPrintFilters")
+			$printFiltersButton;
+			
+		button -edit
+			-command ("filterUIDebugPrintFilterStats")
+			$printFilterStatsButton;
+	}
+
+	return $result;
+}
+
+proc int filterUIDebugPrintViewInfo(string $view)
+//
+//	Description:
+//		Print out the object names of the menu, popup menu and field 
+//		associated with the specified view.
+//
+//		If no view is given then print out the information for all views.
+//
+//	Arguments:
+//		view - A view.  An empty string argument is valid, in this case
+//		       information for all views will be printed.
+//
+{
+	if (!`window -exists FilterUIDebugWindow`) {
+		return 0;
+	}
+	
+	global string $gFilterUIViewList[];
+	global string $gFilterUIMenuList[];
+	global string $gFilterUIPopupMenuList[];
+	global string $gFilterUIFieldList[];
+	global string $gFilterUIFilterStatusControlList[];
+	global string $gFilterUIObjectSelectionFilterList[];
+	global string $gFilterUIAttributeSelectionFilterList[];
+	global string $gFilterUIImplicitFilterList[];
+	global string $gFilterUIRelatedFiltersProcedureList[];
+	global string $gFilterUIRelatedAttrFiltersProcedureList[];	
+
+	int    $result = 0;
+	int    $index, $numberOfViews = size($gFilterUIViewList);
+	string $msg;
+	
+	if ("" != $view) {
+		int $exists = 0;
+		for ($index = 0; $index < $numberOfViews; $index++) {
+			if ($view == $gFilterUIViewList[$index]) {
+				$exists = 1;
+				break;
+			}
+		}
+		if ($exists) {
+			$msg = "\nView:                 " + $gFilterUIViewList[$index] 
+				+ "\nMenu:                 " + $gFilterUIMenuList[$index]
+				+ "\nPopupMenu:            " + $gFilterUIPopupMenuList[$index]
+				+ "\nField:                " + $gFilterUIFieldList[$index]
+				+ "\nStatus:               " + $gFilterUIFilterStatusControlList[$index]
+				+ "\nObject Selection:     " 
+				+ $gFilterUIObjectSelectionFilterList[$index]
+				+ "\nAttribute Selection:  " 
+				+ $gFilterUIAttributeSelectionFilterList[$index]
+				+ "\nImplicit Filter:      " 
+				+ $gFilterUIImplicitFilterList[$index]
+				+ "\nRelated Filters Proc: " 
+				+ $gFilterUIRelatedFiltersProcedureList[$index]
+				+ "\nRelated Attr Filters Proc: " 
+				+ $gFilterUIRelatedAttrFiltersProcedureList[$index]
+				+ "\n";
+			filterUIDebugTrace($msg);
+		} else {
+			$msg = "\nView '" + $view + "' does not exist.\n";
+			filterUIDebugTrace($msg);
+		}
+
+	} else {
+		if (0 == $numberOfViews) {
+			filterUIDebugTrace("\nThere are no views.\n");
+		} else {
+			for ($index = 0; $index < $numberOfViews; $index++) {
+				$msg = "\nView:                 " + $gFilterUIViewList[$index] 
+					+ "\nMenu:                 " + $gFilterUIMenuList[$index]
+					+ "\nPopupMenu:            " 
+					+ $gFilterUIPopupMenuList[$index]
+					+ "\nField:                " + $gFilterUIFieldList[$index]
+					+ "\nStatus:               " + $gFilterUIFilterStatusControlList[$index]
+					+ "\nObject Selection:     " 
+					+ $gFilterUIObjectSelectionFilterList[$index]
+					+ "\nAttribute Selection:  " 
+					+ $gFilterUIAttributeSelectionFilterList[$index]
+					+ "\nImplicit Filter:      " 
+					+ $gFilterUIImplicitFilterList[$index]
+					+ "\nRelated Filters Proc: " 
+					+ $gFilterUIRelatedFiltersProcedureList[$index]
+					+ "\nRelated Attr Filters Proc: " 
+					+ $gFilterUIRelatedAttrFiltersProcedureList[$index]
+					+ "\n";
+				filterUIDebugTrace($msg);
+			}
+		}
+	}
+	
+	return $result;
+}
+
+proc int filterUIDebugPrintFilterInfo(string $filter)
+//
+//	Description:
+//		Print out all the available object and attribute filters.
+//
+{
+	if (!`window -exists FilterUIDebugWindow`) {
+		return 0;
+	}
+
+	int $result = 0;
+	
+	global int $level = -1;
+	
+	$level++;
+	
+	string $indent = "";
+	if (1 == $level) $indent = "    ";
+	else if (2 == $level) $indent = "        ";
+	else if (3 == $level) $indent = "            ";
+	else if (4 == $level) $indent = "                ";
+	else if (5 == $level) $indent = "                    ";
+	
+	
+	if ("" != $filter && "0" != $filter) {
+		//
+		//	Determine the type of the filter.
+		//
+		string $filterType = `itemFilterType -query -type $filter`;
+		filterUIDebugTrace ("\nfilter = " + $filter + ", itemFilterType = " 
+			+ $filterType + "\n");
+		
+		string $invertState = "";
+		string $text, $regExp, $script;
+		
+		if (`itemFilter -exists $filter`) {
+			if (`itemFilter -query -negate $filter`) {
+				$invertState = "inverted ";
+			}
+			filterUIDebugTrace ($indent + "Filter " + $filter + " is an " 
+				+ $invertState + "itemFilter\n");
+			
+			$text = `itemFilter -query -text $filter`;
+			if ("" != $text) {
+				filterUIDebugTrace ($indent + "Text is " + $text + "\n");
+			}
+			
+			//	Regular expression filter.
+			//
+			$regExp = `itemFilter -query -byName $filter`;
+			if ("" != $regExp) {
+				filterUIDebugTrace ($indent + "Regular expression is " + $regExp + "\n");
+			}
+			
+			//	Type filter.
+			//
+			string $type, $types[] = `itemFilter -query -byType $filter`;
+			if (0 < size($types)) {
+				filterUIDebugTrace ($indent + "Types are:  ");
+				for ($type in $types) {
+					filterUIDebugTrace ($type + " ");
+				}
+				filterUIDebugTrace ("\n");
+			}
+			
+			//	Script filter.
+			//
+			$script = `itemFilter -query -byScript $filter`;
+			if ("" != $script) {
+				filterUIDebugTrace ($indent + "Script is " + $script + "\n");
+			}
+			
+			//	Union.
+			//
+			string $member, $union[] = `itemFilter -query -union $filter`;
+			if (0 < size($union)) {
+				filterUIDebugTrace ($indent + "Union members are:  ");
+				for ($member in $union) {
+					filterUIDebugTrace ($member + " ");
+				}
+				filterUIDebugTrace ("\n");
+				for ($member in $union) {
+					filterUIDebugPrintFilterInfo($member);
+				}
+			}
+			
+			//	Intersection.
+			//
+			string $intersection[] = `itemFilter -query -intersect $filter`;
+			if (0 < size($intersection)) {
+				filterUIDebugTrace ($indent + "Intersection members are:  ");
+				for ($member in $intersection) {
+					filterUIDebugTrace ($member + " ");
+				}
+				filterUIDebugTrace ("\n");
+				for ($member in $intersection) {
+					filterUIDebugPrintFilterInfo($member);
+				}
+			}
+			
+		} else if (`itemFilterAttr -exists $filter`) {
+			if (`itemFilterAttr -query -negate $filter`) {
+				$invertState = "inverted ";
+			}
+			filterUIDebugTrace ($indent + "Filter " + $filter + " is an " 
+				+ $invertState + "itemFilter\n");
+			
+			$text = `itemFilterAttr -query -text $filter`;
+			if ("" != $text) {
+				filterUIDebugTrace ($indent + "Text is " + $text + "\n");
+			}
+			
+			$regExp = `itemFilterAttr -query -byName $filter`;
+			if ("" != $regExp) {
+				filterUIDebugTrace ($indent + "Regular expression is " + $regExp + "\n");
+			}
+			
+			int $value;
+			
+			$value = `itemFilterAttr -query -hidden $filter`;
+			if ($value) {
+				filterUIDebugTrace ($indent + "Hidden\n");
+			}
+
+			$value = `itemFilterAttr -query -writable $filter`;
+			if ($value) {
+				filterUIDebugTrace ($indent + "Writable\n");
+			}
+
+			$value = `itemFilterAttr -query -readable $filter`;
+			if ($value) {
+				filterUIDebugTrace ($indent + "Readable\n");
+			}
+
+			$value = `itemFilterAttr -query -keyable $filter`;
+			if ($value) {
+				filterUIDebugTrace ($indent + "Keyable\n");
+			}
+
+			$value = `itemFilterAttr -query -scaleRotateTranslate $filter`;
+			if ($value) {
+				filterUIDebugTrace ($indent + "Scale Rotate Translate\n");
+			}
+
+			$value = `itemFilterAttr -query -hasExpression $filter`;
+			if ($value) {
+				filterUIDebugTrace ($indent + "Has Expression\n");
+			}
+
+			$value = `itemFilterAttr -query -hasCurve $filter`;
+			if ($value) {
+				filterUIDebugTrace ($indent + "Has Curve\n");
+			}
+
+			$value = `itemFilterAttr -query -dynamic $filter`;
+			if ($value) {
+				filterUIDebugTrace ($indent + "Dynamic\n");
+			}
+
+			$script = `itemFilterAttr -query -byScript $filter`;
+			if ("" != $script) {
+				filterUIDebugTrace ($indent + "Script is " + $script + "\n");
+			}
+
+		} else if (`itemFilterRender -exists $filter`) {
+			filterUIDebugTrace ($indent + "Filter " + $filter + " is a renderFilter\n");
+		} else {
+			filterUIDebugTrace ($indent + "Filter " + $filter + " is not a filter\n");
+		}
+	}
+	
+	$level--;
+	
+	return $result;
+}
+
+proc int filterUIDebugPrintFilters()
+//
+//	Description:
+//		Print out all the available object and attribute filters.
+//
+{
+	if (!`window -exists FilterUIDebugWindow`) {
+		return 0;
+	}
+
+	global string $gFilterUIDefaultObjectFilterList[];
+	global string $gFilterUIDefaultAttributeFilterList[];
+	global string $gFilterUICustomObjectFilterList[];
+	global string $gFilterUICustomAttributeFilterList[];
+
+	int    $result = 0;
+	string $item;
+	
+	filterUIDebugTrace ("\nObject Filters\n");
+	filterUIDebugTrace ("--------------\n");
+	filterUIDebugTrace ("Default:\n");
+	for ($item in $gFilterUIDefaultObjectFilterList) {
+		if (`itemFilter -exists $item`) {
+			if ("itemFilter" == `itemFilterType -query -type $item`) {
+				filterUIDebugTrace ("  " + $item 
+					+ " " + `itemFilter -query -text $item` + "\n");
+			} else {
+				filterUIDebugTrace ("  '" + $item + "' is not an object filter\n");
+			}
+		} else {
+			filterUIDebugTrace ("  '" + $item + "' is not a filter\n");
+		}
+	}
+	filterUIDebugTrace ("Custom:\n");
+	for ($item in $gFilterUICustomObjectFilterList) {
+		if (`itemFilter -exists $item`) {
+			if ("itemFilter" == `itemFilterType -query -type $item`) {
+				filterUIDebugTrace ("  " + $item 
+					+ " " + `itemFilter -query -text $item` + "\n");
+			} else {
+				filterUIDebugTrace ("  '" + $item + "' is not an object filter\n");
+			}
+		} else {
+			filterUIDebugTrace ("  '" + $item + "' is not a filter\n");
+		}
+	}
+	
+	filterUIDebugTrace ("\nAttribute Filters\n");
+	filterUIDebugTrace ("-----------------\n");
+	filterUIDebugTrace ("Default:\n");
+	for ($item in $gFilterUIDefaultAttributeFilterList) {
+		if (`itemFilterAttr -exists $item`) {
+			if ("attributeFilter" == `itemFilterType -query -type $item`) {
+				filterUIDebugTrace ("  " + $item 
+					+ " " + `itemFilterAttr -query -text $item` + "\n");
+			} else {
+				filterUIDebugTrace ("  '" + $item + "' is not an attribute filter\n");
+			}
+		} else {
+			filterUIDebugTrace ("  '" + $item + "' is not a filter\n");
+		}
+	}
+	filterUIDebugTrace ("Custom:\n");
+	for ($item in $gFilterUICustomAttributeFilterList) {
+		if (`itemFilterAttr -exists $item`) {
+			if ("attributeFilter" == `itemFilterType -query -type $item`) {
+				filterUIDebugTrace ("  " + $item 
+					+ " " + `itemFilterAttr -query -text $item` + "\n");
+			} else {
+				filterUIDebugTrace ("  '" + $item + "' is not an attribute filter\n");
+			}
+		} else {
+			filterUIDebugTrace ("  '" + $item + "' is not a filter\n");
+		}
+	}
+
+	filterUIDebugTrace ("\n");
+	
+	return $result;
+}
+
+proc int filterUIDebugPrintFilterStats()
+//
+//	Description:
+//		Print some filter status information, eg. number of filters and
+//		their types.
+//
+{
+	if (!`window -exists FilterUIDebugWindow`) {
+		return 0;
+	}
+
+	global int $gLastObjectFilterCount;
+	global int $gLastAttrFilterCount;
+	global int $gLastRenderFilterCount;
+	global int $gLastUnknownFilterCount;
+	
+	int    $result = 0;
+		
+	string $filters[], $unknownFilters[];
+	string $objectFilters[], $attrFilters[], $renderFilters[];
+	string $filter, $type;
+
+	int    $objectFilterCount  = 0;
+	int    $attrFilterCount    = 0;
+	int    $renderFilterCount  = 0;
+	int    $unknownFilterCount = 0;
+	
+//	int    $numberOfObjectAndAttrFilters = size($objectAndAttrFilters);
+//	int    $numberOfRenderFilters = size($renderFilters);
+
+	$filters = `ls -type objectFilter`;
+	for ($filter in $filters) {
+		$type = `itemFilterType -query -type $filter`;
+
+		if ("renderFilter" == $type) {
+			if (`itemFilterRender -exists $filter`) {
+				$renderFilters[$renderFilterCount++] = $filter;
+			}
+
+		} else if ("attributeFilter" == $type) {
+			if (`itemFilterAttr -exists $filter`) {
+				$attrFilters[$attrFilterCount++] = $filter;
+			}
+
+		} else if ("itemFilter" == $type) {
+			if (`itemFilter -exists $filter`) {
+				$objectFilters[$objectFilterCount++] = $filter;
+			}
+
+		} else {
+			$unknownFilters[$unknownFilterCount++] = $filter;
+		}
+	}
+	
+	filterUIDebugTrace ("Filter summary:\n" 
+		+ "  " + $objectFilterCount  + " (" 
+		+ ($objectFilterCount - $gLastObjectFilterCount) 
+		+ ") object filters\n"
+		+ "  " + $attrFilterCount    + " (" 
+		+ ($attrFilterCount - $gLastAttrFilterCount) 
+		+ ") attribute filters\n"
+		+ "  " + $renderFilterCount  + " (" 
+		+ ($renderFilterCount - $gLastRenderFilterCount) 
+		+ ") render filters\n"
+		+ "  " + $unknownFilterCount + " (" 
+		+ ($unknownFilterCount - $gLastUnknownFilterCount) 
+		+ ") unknown filters\n"
+		+ "  " + ($objectFilterCount + $attrFilterCount +
+		          $renderFilterCount + $unknownFilterCount) + " total\n"
+		);
+	
+	$gLastObjectFilterCount  = $objectFilterCount;
+	$gLastAttrFilterCount    = $attrFilterCount;
+	$gLastRenderFilterCount  = $renderFilterCount;
+	$gLastUnknownFilterCount = $unknownFilterCount;
+
+	return $result;
+}
+
+proc int filterUIDebugClearViewInfo()
+//
+//	Description:
+//		Reset all the filter UI arrays.
+//
+{
+	if (!`window -exists FilterUIDebugWindow`) {
+		return 0;
+	}
+
+	global string $gFilterUIViewList[];
+	global string $gFilterUIMenuList[];
+	global string $gFilterUIPopupMenuList[];
+	global string $gFilterUIFieldList[];
+	global string $gFilterUIFilterStatusControlList[];
+	global string $gFilterUIObjectSelectionFilterList[];
+	global string $gFilterUIAttributeSelectionFilterList[];
+	global string $gFilterUIImplicitFilterList[];
+	global string $gFilterUIRelatedFiltersProcedureList[];
+	global string $gFilterUIRelatedAttrFiltersProcedureList[];	
+	
+	int $result = 0;
+	
+	clear ($gFilterUIViewList);
+	clear ($gFilterUIMenuList);
+	clear ($gFilterUIPopupMenuList);
+	clear ($gFilterUIFieldList);
+	clear ($gFilterUIFilterStatusControlList);
+	clear ($gFilterUIObjectSelectionFilterList);
+	clear ($gFilterUIAttributeSelectionFilterList);
+	clear ($gFilterUIImplicitFilterList);
+	clear ($gFilterUIRelatedFiltersProcedureList);
+	clear ($gFilterUIRelatedAttrFiltersProcedureList);	
+	
+	return $result;
+}
+
+proc string [] filterUIGetObjectFilters()
+//
+//	Description:
+//		Return the list of object filters.
+//
+{
+	global string $gFilterUIDefaultObjectFilterList[];
+	global string $gFilterUICustomObjectFilterList[];
+	return AWAppendStringsToStringArray(
+		$gFilterUICustomObjectFilterList,
+		$gFilterUIDefaultObjectFilterList);
+}
+
+proc string [] filterUIGetAttributeFilters()
+//
+//	Description:
+//		Return the list of attribute filters.
+//
+{
+	global string $gFilterUIDefaultAttributeFilterList[];
+	global string $gFilterUICustomAttributeFilterList[];
+	return AWAppendStringsToStringArray(
+		$gFilterUICustomAttributeFilterList,
+		$gFilterUIDefaultAttributeFilterList);
+}
+
+proc string [] filterUIGetDefaultObjectFilters()
+//
+//	Description:
+//		Return the list of default object filters.
+//
+{
+	global string $gFilterUIDefaultObjectFilterList[];
+	return $gFilterUIDefaultObjectFilterList;
+}
+
+proc string [] filterUIGetDefaultAttributeFilters()
+//
+//	Description:
+//		Return the list of default attribute filters.
+//
+{
+	global string $gFilterUIDefaultAttributeFilterList[];
+	return $gFilterUIDefaultAttributeFilterList;
+}
+
+proc string [] filterUIGetCustomObjectFilters()
+//
+//	Description:
+//		Return the list of custom object filters.
+//
+{
+	global string $gFilterUICustomObjectFilterList[];
+	return $gFilterUICustomObjectFilterList;
+}
+
+proc string [] filterUIGetCustomAttributeFilters()
+//
+//	Description:
+//		Return the list of custom attribute filters.
+//
+{
+	global string $gFilterUICustomAttributeFilterList[];
+	return $gFilterUICustomAttributeFilterList;
+}
+
+proc string filterUIVerifyMenuItemExists(string $menuItem)
+//
+//	Description:
+//		Verify that the menu item name argument refers to an existing
+//		menu item object.
+//
+//	Arguments:
+//		menuItem - The name of a menu item object.
+//
+//	Returns:
+//		An empty string if the menu item does not exist.  If the menu item
+//		does exist then the return value is identical to the menu item
+//		argument.
+// 
+{
+	string $result = "";
+	if (`menuItem -exists $menuItem`) {
+		$result = $menuItem;
+	}
+	return $result;
+}
+
+proc string filterUIVerifyFilterExists(string $filter)
+//
+//	Description:
+//		Verify that the filter name argument refers to an existing
+//		filter object.
+//
+//	Arguments:
+//		filter - The name of a filter object.
+//
+//	Returns:
+//		An empty string if the filter does not exist.  If the filter
+//		does exist then the return value is identical to the filter
+//		argument.
+// 
+{
+	string $result = "";
+
+	if ("" != $filter && 
+			(`itemFilterRender -exists $filter`
+			|| `itemFilterAttr -exists $filter`
+			|| `itemFilter -exists $filter`)) {
+		$result = $filter;
+	}
+	return $result;
+}
+
+//
+//	Description:
+//		All of the following convenience procedures simply return the full
+//		ui path names for the filter menu items.
+//
+//		These procedures should be used when it is necessary to access the
+//		individual menu items.  For example, if you need the menu item
+//		name to perform a 'menuItem -edit' operation.
+//
+//	Arguments:
+//		menu - The filter menu.
+//
+//	Returns:
+//		The corresponding menu item name if it exists.  An empty string is
+//		returned if the menu item does not exist.
+//
+//	Notes:
+//		The names of the menu items are set when the menu items are created
+//		in the filterUICreateMenu() procedure.
+//
+proc string filterUIGetFilterSelectionMenuItem(string $menu)
+{
+	return filterUIVerifyMenuItemExists(
+		$menu + "|FilterUIFilterSelectionMenuItem");
+}
+proc string filterUIGetSelectAttributesMenuItem(string $menu)
+{
+	return filterUIVerifyMenuItemExists(
+		$menu + "|FilterUISelectAttributesMenuItem");
+}
+proc string filterUIGetInvertFilterMenuItem(string $menu)
+{
+	return filterUIVerifyMenuItemExists(
+		$menu + "|FilterUIInvertFilterMenuItem");
+}
+proc string filterUIGetClearFilterMenuItem(string $menu)
+{
+	return filterUIVerifyMenuItemExists(
+		$menu + "|FilterUIClearFilterMenuItem");
+}
+proc string filterUIGetSaveFilterMenuItem(string $menu)
+{
+	return filterUIVerifyMenuItemExists(
+		$menu + "|FilterUISaveFilterMenuItem");
+}
+proc string filterUIGetDeleteFilterMenuItem(string $menu)
+{
+	return filterUIVerifyMenuItemExists(
+		$menu + "|FilterUIDeleteFilterMenuItem");
+}
+global proc string filterUIGetObjectMenu(string $menu)
+{
+	return filterUIVerifyMenuItemExists(
+		$menu + "|FilterUIObjectFilterSubMenu");
+}
+proc string filterUIGetAttributeMenu(string $menu)
+{
+	return filterUIVerifyMenuItemExists(
+		$menu + "|FilterUIAttributeFilterSubMenu");
+}
+
+global proc string filterUIGetMenu(string $view)
+//
+//	Description:
+//		Return the filter menu for a particular view.  The menu returned is
+//		the menu attached to the view's menu bar (as opposed to the one 
+//		attached to the view's popup menu).
+//
+//	Arguments:
+//		view - The view.
+//
+//	Returns:
+//		The full ui path name to the filter menu.  An empty string is returned
+//		if the view does not have a filter menu attached to the view's menu
+//		bar.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIMenuList[];
+	
+	string $menu = "";
+	int    $index;
+	
+	for ($index = 0; $index < size($gFilterUIViewList); $index++) {
+		if ($view == $gFilterUIViewList[$index]) {
+			$menu = $gFilterUIMenuList[$index];
+			if (!`menu -exists $menu`) $menu = "";
+			break;
+		}
+	}
+	
+	return $menu;
+}
+
+global proc string filterUIGetPopupMenu(string $view)
+//
+//	Description:
+//		Return the filter menu for a particular view.  The menu returned is
+//		the menu attached to the view's popup menu (as opposed to the one 
+//		attached to the view's menu bar).
+//
+//	Arguments:
+//		view - The view.
+//
+//	Returns:
+//		The full ui path name to the filter menu.  An empty string is returned
+//		if the view does not have a filter menu attached to the view's popup
+//		menu.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIPopupMenuList[];
+	
+	string $popupMenu = "";
+	int    $index;
+	
+	for ($index = 0; $index < size($gFilterUIViewList); $index++) {
+		if ($view == $gFilterUIViewList[$index]) {
+			$popupMenu = $gFilterUIPopupMenuList[$index];
+			if (!`menu -exists $popupMenu`) $popupMenu = "";
+			break;
+		}
+	}
+	
+	return $popupMenu;
+}
+
+proc string filterUIGetField(string $view)
+//
+//	Description:
+//		Return the regular expression filter field for a particular view.  
+//
+//	Arguments:
+//		view - The view.
+//
+//	Returns:
+//		The full UI path name to the filter field.  An empty string is 
+//		returned if the view does not have a filter field.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIFieldList[];
+	
+	string $field = "";
+	int    $index;
+	
+	for ($index = 0; $index < size($gFilterUIViewList); $index++) {
+		if ($view == $gFilterUIViewList[$index]) {
+			$field = $gFilterUIFieldList[$index];
+			if (!`textField -exists $field`) $field = "";
+			break;
+		}
+	}
+	
+	return $field;
+}
+
+proc string filterUIGetFilterStatusControl(string $view)
+//
+//	Description:
+//		Return the filter status control for a particular view.  
+//
+//	Arguments:
+//		view - The view.
+//
+//	Returns:
+//		The full UI path name to the filter status control.  An empty string 
+//		is returned if the view does not have a filter status control.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIFilterStatusControlList[];
+	
+	string $control = "";
+	int    $index;
+	
+	for ($index = 0; $index < size($gFilterUIViewList); $index++) {
+		if ($view == $gFilterUIViewList[$index]) {
+			$control = $gFilterUIFilterStatusControlList[$index];
+			if (!`iconTextButton -exists $control`) $control = "";
+			break;
+		}
+	}
+	
+	return $control;
+}
+
+proc string filterUIGetImplicitFilter(string $view)
+//
+//	Description:
+//		Return a view's implicit filter.
+//
+//	Arguments:
+//		view - The view.
+//
+//	Returns:
+//		The name of the view's implicit filter, or a NULL string.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIImplicitFilterList[];
+	
+	string $filter = "";
+	int    $index;
+	
+	for ($index = 0; $index < size($gFilterUIViewList); $index++) {
+		if ($view == $gFilterUIViewList[$index]) {
+			$filter = filterUIVerifyFilterExists(
+				$gFilterUIImplicitFilterList[$index]);
+			break;
+		}
+	}
+	
+	return $filter;
+}
+
+proc string filterUIGetRelatedFiltersProcedure(string $view)
+//
+//	Description:
+//		Return a view's related filter procedure.  
+//
+//	Arguments:
+//		view - The view.
+//
+//	Returns:
+//		The name of the view's related filter procedure, or a NULL string.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIRelatedFiltersProcedureList[];
+	
+	string $proc = "";
+	int    $index;
+	
+	for ($index = 0; $index < size($gFilterUIViewList); $index++) {
+		if ($view == $gFilterUIViewList[$index]) {
+			$proc = $gFilterUIRelatedFiltersProcedureList[$index];
+			break;
+		}
+	}
+	
+	return $proc;
+}
+
+proc string filterUIGetRelatedAttrFiltersProcedure(string $view)
+//
+//	Description:
+//		Return a view's related attribute filter procedure.  
+//
+//	Arguments:
+//		view - The view.
+//
+//	Returns:
+//		The name of the view's related attrFilter procedure, or a NULL string.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIRelatedAttrFiltersProcedureList[];
+	
+	string $proc = "";
+	int    $index;
+	
+	for ($index = 0; $index < size($gFilterUIViewList); $index++) {
+		if ($view == $gFilterUIViewList[$index]) {
+			$proc = $gFilterUIRelatedAttrFiltersProcedureList[$index];
+			break;
+		}
+	}
+	
+	return $proc;
+}
+
+proc string filterUIGetFilterFromMenuItem(string $menuItem)
+//
+//	Description:
+//		Return the filter associated with a filter menu item.
+//
+//	Arguments:
+//		menuItem - The menu item.
+//
+//	Returns:
+//		The name of the filter associated with the menu item.
+//
+//	Notes:
+//		This procedure is dependent on the procedure signatures of the
+//		command attached to the menu item.  The procedures are called 
+//		'filterUIHandleObjectFilterMenuItem' and 
+//		'filterUIHandleAttributeFilterMenuItem'.  Both are assumed to have 
+//		the filter name as its last argument.
+//
+{
+	string $filter = "";
+
+	if ("" != $menuItem) {
+		//
+		//	Expecting 5 tokens.  The first is the procedure name, the rest 
+		//	are arguments.
+		//
+		int    $kExpectedNumberOfTokens = 5;
+
+		string $tokens [];
+		if (`menuItem -query -isCheckBox $menuItem`) {
+			string $command = `menuItem -query -command $menuItem`;
+			int    $numberOfTokens = tokenize($command, $tokens);
+
+			if ($kExpectedNumberOfTokens == $numberOfTokens) {
+				$filter = $tokens[$kExpectedNumberOfTokens - 1];
+			} else {
+			}
+		}
+	}
+			
+	return $filter;
+}
+
+proc int filterUISetMenu(string $view, string $menu)
+//
+//	Description:
+//		Save a filter menu associated with a view.
+//
+//	Arguments:
+//		view - The view.
+//		menu - The menu.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIMenuList[];
+	
+	int $result = 0;
+	int $viewExists = 0;
+	int $numberOfViews = size($gFilterUIViewList);
+	int $index;
+	
+	//
+	//	Search the list to see if the view already exists.
+	//
+	for ($index = 0; $index < $numberOfViews; $index++) {
+		if ($view == $gFilterUIViewList[$index]) {
+			//
+			//	View exists.  Store the menu.
+			//
+			$viewExists = 1;
+			$gFilterUIMenuList[$index] = $menu;
+			$result = 1;
+			break;
+		}
+	}
+	
+	if (!$viewExists) {
+		//
+		//	View doesn't exist yet so add it and its corresponding menu.
+		//
+		$gFilterUIViewList[$numberOfViews] = $view;
+		$gFilterUIMenuList[$numberOfViews] = $menu;
+		$result = 1;
+	}
+		
+	return $result;
+}
+
+proc int filterUISetPopupMenu(string $view, string $popupMenu)
+//
+//	Description:
+//		Save a filter popup menu associated with a view.
+//
+//	Arguments:
+//		view - The view.
+//		menu - The popup menu.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIPopupMenuList[];
+	
+	int $result = 0;
+	int $viewExists = 0;
+	int $numberOfViews = size($gFilterUIViewList);
+	int $index;
+	
+	//
+	//	Search the list to see if the view already exists.
+	//
+	for ($index = 0; $index < $numberOfViews; $index++) {
+		if ($view == $gFilterUIViewList[$index]) {
+			//
+			//	View exists.  Store the popup menu.
+			//
+			$viewExists = 1;
+			$gFilterUIPopupMenuList[$index] = $popupMenu;
+			$result = 1;
+			break;
+		}
+	}
+	
+	if (!$viewExists) {
+		//
+		//	View doesn't exist yet so add it and its corresponding popup menu.
+		//
+		$gFilterUIViewList[$numberOfViews] = $view;
+		$gFilterUIPopupMenuList[$numberOfViews] = $popupMenu;
+		$result = 1;
+	}
+		
+	return $result;
+}
+
+proc int filterUISetField(string $view, string $field)
+//
+//	Description:
+//		Save a filter regular expression field associated with a view.
+//
+//	Arguments:
+//		view - The view.
+//		field - The field.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIFieldList[];
+	
+	int $result = 0;
+	int $viewExists = 0;
+	int $numberOfViews = size($gFilterUIViewList);
+	int $index;
+	
+	//
+	//	Search the list to see if the view already exists.
+	//
+	for ($index = 0; $index < $numberOfViews; $index++) {
+		if ($view == $gFilterUIViewList[$index]) {
+			//
+			//	View exists.  Store the field.
+			//
+			$viewExists = 1;
+			$gFilterUIFieldList[$index] = $field;
+			$result = 1;
+			break;
+		}
+	}
+	
+	if (!$viewExists) {
+		//
+		//	View doesn't exist yet so add it and its corresponding field.
+		//
+		$gFilterUIViewList[$numberOfViews] = $view;
+		$gFilterUIFieldList[$numberOfViews] = $field;
+		$result = 1;
+	}
+		
+	return $result;
+}
+
+proc int filterUISetFilterStatusControl(string $view, string $statusControl)
+//
+//	Description:
+//		Save a filter status control associated with a view.
+//
+//	Arguments:
+//		view          - The view.
+//		statusControl - The filter status control.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIFilterStatusControlList[];
+	
+	int $result = 0;
+	int $viewExists = 0;
+	int $numberOfViews = size($gFilterUIViewList);
+	int $index;
+	
+	//
+	//	Search the list to see if the view already exists.
+	//
+	for ($index = 0; $index < $numberOfViews; $index++) {
+		if ($view == $gFilterUIViewList[$index]) {
+			//
+			//	View exists.  Store the field.
+			//
+			$viewExists = 1;
+			$gFilterUIFilterStatusControlList[$index] = $statusControl;
+			$result = 1;
+			break;
+		}
+	}
+	
+	if (!$viewExists) {
+		//
+		//	View doesn't exist yet so add it and its corresponding control.
+		//
+		$gFilterUIViewList[$numberOfViews] = $view;
+		$gFilterUIFilterStatusControlList[$numberOfViews] = $statusControl;
+		$result = 1;
+	}
+		
+	return $result;
+}
+
+proc string filterUIGetObjectSelectionFilter(string $view)
+//
+//	Description:
+//		Return the current object selection filter.
+//
+//	Arguments:
+//		view - The view.
+//
+//	Returns:
+//		The current object selection filter if there is one, an empty string
+//		otherwise.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIObjectSelectionFilterList[];
+	
+	string $result = "";
+	
+	int $index, $numberOfViews = size($gFilterUIViewList);
+	for ($index = 0; $index < $numberOfViews; $index++) {
+		if ($view == $gFilterUIViewList[$index]) {
+			$result = $gFilterUIObjectSelectionFilterList[$index];
+		}
+	}
+	
+	return $result;
+}
+
+proc int filterUISetObjectSelectionFilter(string $view, string $filter)
+//
+//	Description:
+//		Set the current object selection filter.
+//
+//	Arguments:
+//		view   - The view.
+//		filter - The object selection filter.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIObjectSelectionFilterList[];
+	
+	int $result = 1;
+	
+	int $index, $numberOfViews = size($gFilterUIViewList);
+	for ($index = 0; $index < $numberOfViews; $index++) {
+		if ($view == $gFilterUIViewList[$index]) {
+			$gFilterUIObjectSelectionFilterList[$index] = $filter;
+		}
+	}
+	
+	return $result;
+}
+
+proc string filterUIGetAttributeSelectionFilter(string $view)
+//
+//	Description:
+//		Return the current attribute selection filter.
+//
+//	Arguments:
+//		view - The view.
+//
+//	Returns:
+//		The current attribute selection filter if there is one, an empty 
+//		string otherwise.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIAttributeSelectionFilterList[];
+	
+	string $result = "";
+	
+	int $index, $numberOfViews = size($gFilterUIViewList);
+	for ($index = 0; $index < $numberOfViews; $index++) {
+		if ($view == $gFilterUIViewList[$index]) {
+			$result = $gFilterUIAttributeSelectionFilterList[$index];
+		}
+	}
+	
+	return $result;
+}
+
+proc int filterUISetAttributeSelectionFilter(string $view, string $filter)
+//
+//	Description:
+//		Set the current attribute selection filter.
+//
+//	Arguments:
+//		view   - The view.
+//		filter - The attribute selection filter.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIAttributeSelectionFilterList[];
+	
+	int $result = 1;
+	
+	int $index, $numberOfViews = size($gFilterUIViewList);
+	for ($index = 0; $index < $numberOfViews; $index++) {
+		if ($view == $gFilterUIViewList[$index]) {
+			$gFilterUIAttributeSelectionFilterList[$index] = $filter;
+		}
+	}
+	
+	return $result;
+}
+
+proc string filterUIGetUnionOfFilters(string $filters[])
+//
+//	Description:
+//		Create and return one filter that is the equivalent to the union 
+//		of all the argument filters.
+//
+//	Arguments:
+//		filters - An array of filter objects.
+//
+//	Returns:
+//		The name of a filter that is equivalent to the union of all
+//		the argument filters.
+//
+//	Notes:
+//		It is possible to optimize the union operation if more than one
+//		of the filter array items is an item filter that is filtering by
+//		object type.  This is due to the fact that the 'itemFilter -byType' 
+//		flag is multi-use.
+//
+{
+	string $result = "";
+	string $filter, $temp1, $temp2;
+	string $objectTypeFilter = "", $objectTypeFilters[];
+	string $type, $types[], $tempTypes[];
+	int    $index, $numberOfFilters = size($filters);
+	int    $objectTypeFilterCount = 0;
+	int    $isAttributeFilter = 0;
+	
+	filterUIDebugTrace (">> Start union of " + $numberOfFilters + " filters >>\n");
+//
+//	Begin optimization for item filters that are filtering by type.
+//
+/*	
+	for ($filter in $filters) {
+		if (`itemFilter -exists $filter`) {
+			$tempTypes = `itemFilter -query -byType $filter`;
+			if (0 < size($tempTypes)) {
+				$objectTypeFilters[$objectTypeFilterCount++] = $filter;
+				$types = AWAppendStringsToStringArray($tempTypes, $types);
+			}
+		}
+	}
+	
+	//	If there is more than one item filter that is filtering by type 
+	//	then combine them into just one filter.
+	//
+	if (1 < $objectTypeFilterCount) {
+		//
+		//	Remove the object type filters from the argument filter list.
+		//
+		$filters = stringArrayRemove($objectTypeFilters, $filters);
+		//
+		//	Remove any duplicate filter types.
+		//
+		$types = AWRemoveDuplicateStringsFromStringArray($types);
+		//
+		//	Create just one object filter and include all the object types.
+		//
+		$objectTypeFilter = `itemFilter -byType $types[0]`;
+		for ($index = 1; $index < size($types); $index++) {
+			itemFilter -edit -byType $types[$index];
+		}
+		//
+		//	Add the single object type filter back into the argument filter
+		//	list and then proceed to make the union of all the remaining
+		//	filters.
+		//
+		$filters[size($filters)] = $objectTypeFilter;
+	}
+*/	
+	//	Determine if the union filter should use the 'itemFilterAttr' command
+	//	or just the 'itemFilter' command.  It's important to union attribute
+	//	filters with the 'itemFilterAttr' command so that we can determine
+	//	later the filter's appropriate type.  Fixes bug #111325.
+	//
+	if (2 <= $numberOfFilters) {
+		$type = `itemFilterType -query -type $filters[0]`;
+		if ("attributeFilter" == $type) {
+			$isAttributeFilter = 1;
+		} else {
+			$isAttributeFilter = 0;
+		}
+	}
+	
+	if (0 == $numberOfFilters) {
+		//
+		//	Not much to do in this case.
+		//
+		
+	} else if (1 == $numberOfFilters) {
+		string $duplicate[] = `filterUIDuplicateFilter $filters[0]`;
+		$result = $duplicate[0];
+
+	} else if (2 == $numberOfFilters) {
+		if ($isAttributeFilter) {
+			$result = `itemFilterAttr -union $filters[0] $filters[1]`; 
+		} else {
+			$result = `itemFilter -union $filters[0] $filters[1]`; 
+		}
+
+	} else {
+		if ($isAttributeFilter) {
+			$result = `itemFilterAttr -union $filters[0] $filters[1]`; 
+		} else {
+			$result = `itemFilter -union $filters[0] $filters[1]`;
+		}
+		for ($index = 2; $index < $numberOfFilters; $index++) {
+			$temp1 = $filters[$index];
+			$temp2 = $result;
+			if ($isAttributeFilter) {
+				$result = `itemFilterAttr -union $temp1 $temp2`;
+			} else {
+				$result = `itemFilter -union $temp1 $temp2`;
+			}
+			delete $temp2;
+		}
+	}
+	
+	filterUIDebugTrace ("<< End union by returning '" + $result + "' <<\n");
+	return $result;
+}
+
+proc string filterUIGetIntersectionOfFilters(string $filters[])
+//
+//	Description:
+//		Return one filter that is the equivalent to the intersection of
+//		all the argument filters.
+//
+//	Arguments:
+//		filters - An array of filter objects.
+//
+//	Returns:
+//		The name of a filter that is equivalent to the intersection of all
+//		the argument filters.
+//
+{
+	string $result = "";
+	string $filter, $temp1, $temp2;
+	int    $index, $numberOfFilters = size($filters);
+	
+	filterUIDebugTrace (">> Start intersection of " + $numberOfFilters + " filters >>\n");
+	if (0 == $numberOfFilters) {
+		//
+		//	Not much to do in this case.
+		//
+		$result = "";
+		
+	} else if (1 == $numberOfFilters) {
+		string $duplicate[] = `filterUIDuplicateFilter $filters[0]`;
+// Begin debug
+//		string $dup;
+//		filterUIDebugTrace ("Duplicates are: ");
+//		for ($dup in $duplicate) {
+//			filterUIDebugTrace ($dup + " ");
+//		}
+//		filterUIDebugTrace ("\n");
+// End debug
+		$result = $duplicate[0];
+
+	} else if (2 == $numberOfFilters) {
+		$result = `itemFilter -intersect $filters[0] $filters[1]`; 
+
+	} else {
+		$result = `itemFilter -intersect $filters[0] $filters[1]`;
+		for ($index = 2; $index < $numberOfFilters; $index++) {
+			$temp1 = $filters[$index];
+			$temp2 = $result;
+			$result = `itemFilter -intersect $temp1 $temp2`;
+			delete $temp2;
+		}
+	}
+	
+	filterUIDebugTrace ("<< End intersection by returning '" + $result + "' <<\n");
+	return $result;
+}
+
+proc string [] filterUIExpandFilter(string $filter, string $filterList[])
+//
+//	Description:
+//		Return a list of filters that make up a filter network consisting
+//		of unions and intersections.
+//
+//		This procedure is recursive.  It calls itself each time it comes
+//		across a union or intersection of filters.
+//
+//	Arguments:
+//		filter     - The filter to be expanded.
+//
+//		filterList - Be sure to pass an empty list, ie. {}, when explicitly 
+//		             calling this procedure.  When the procedure is recursed 
+//		             this argument will contain the accumulated list of 
+//		             filters in the network.
+//
+//	Returns:
+//		The list of filters that make up the argument filter.
+//
+{
+	if ("" != $filter) {
+	
+		string $type = `itemFilterType -query -type $filter`;
+		string $member, $union[], $intersection[];
+		int    $isValidFilter = 0;
+
+		if ("attributeFilter" == $type && `itemFilterAttr -exists $filter`) {
+			$union = `itemFilterAttr -query -union $filter`;
+			$intersection = `itemFilterAttr -query -intersect $filter`;
+			$isValidFilter = 1;
+
+		} else if ("itemFilter" == $type && `itemFilter -exists $filter`) {
+			$union = `itemFilter -query -union $filter`;
+			$intersection = `itemFilter -query -intersect $filter`;
+			$isValidFilter = 1;
+		}
+
+		if (0 < size($intersection)) {
+			for ($member in $intersection) {
+				filterUIExpandFilter($member, $filterList);
+			}
+
+		} else if (0 < size($union)) {
+			for ($member in $union) {
+				filterUIExpandFilter($member, $filterList);
+			}
+
+		} else {
+			if ($isValidFilter) {
+				$filterList = AWAppendStringsToStringArray(
+					{$filter}, $filterList);
+			}
+		}
+	}
+	
+	return $filterList;
+}
+
+proc string [] filterUIAreFiltersRelated(string $view, string $filters[])
+//
+//	Description:
+//		Return a subset of the argument filter list that corresponds to
+//		all filters that are "related" to the view's current task.
+//
+//		A view may be task oriented and it is useful to only list filters
+//		that are related to that task in the filter menus.
+//
+//		This procedure will compare the argument list of filters against a
+//		view's "related" filter list and return a list of those related 
+//		filters.
+//
+//	Arguments:
+//		view    - The view.
+//		filters - A list of filters to compare to a view's related list.
+//
+//	Returns:
+//		A list of filters that contains all the argument filters that are
+//		related to the view.
+//
+{
+	string $result[];
+	
+	string $relatedProcedure = filterUIGetRelatedFiltersProcedure($view);
+	int    $resultCount = 0;
+	
+	if ("" == $relatedProcedure) {
+		//
+		//	There is no related filters procedure, so everything is related.
+		//
+		$result = AWAppendStringsToStringArray($filters, $result);
+
+	} else {
+		string $taskCategory, $taskCategories[] = `eval ($relatedProcedure)`;
+		string $category, $categories[];
+		int    $skipToNextFilter;
+
+		if (0 < size ($taskCategories)) {
+			for ($filter in $filters) {
+				$skipToNextFilter = 0;
+				if (`itemFilter -exists $filter`) {
+					$categories = `itemFilter -query -category $filter`;
+				} else if (`itemFilterRender -exists $filter`) {
+					$categories = `itemFilterRender -query -category $filter`;
+				} else {
+					clear ($categories);
+				}
+
+				if( size($categories) == 0 )
+				{
+					$categories = { "" };
+				}
+
+				if (0 < size ($categories)) {
+					for ($category in $categories) {
+						for ($taskCategory in $taskCategories) {
+							if ($category == $taskCategory) {
+								$result[$resultCount++] = $filter;
+								$skipToNextFilter = 1;
+								break;
+							}
+						}
+						if ($skipToNextFilter) break;
+					}
+				}
+			}
+			
+		} else {
+			//
+			//	Show all the filters.
+			//
+			$result = AWAppendStringsToStringArray($filters, $result);
+		}
+	}	
+
+		return $result;
+}
+
+proc string filterUIGetFilterText(string $filter)
+//
+//	Description:
+//		Return the value of the filter's -text flag.
+//
+//	Arguments:
+//		filter - A filter.
+//
+//	Returns:
+//		The value of the filter's -text flag.  This may be an empty string.
+//
+{
+	string $result, $type;
+
+	// Avoid the risk of querying a non existing itemFilterType.
+	if(   `itemFilterRender -exists $filter`
+		||`itemFilterAttr -exists $filter`
+		||`itemFilter -exists $filter`)
+	{
+		$type = `itemFilterType -query -type $filter`;
+
+		if ("renderFilter" == $type 
+			&& `itemFilterRender -exists $filter`) {
+			$result = `itemFilterRender -query -text $filter`;
+			
+		} else if ("attributeFilter" == $type 
+			&& `itemFilterAttr -exists $filter`) {
+			$result = `itemFilterAttr -query -text $filter`;
+
+		} else if ("itemFilter" == $type 
+			&& `itemFilter -exists $filter`) {
+			$result = `itemFilter -query -text $filter`;
+		}
+	}
+
+	return $result;
+}
+
+proc int filterUICreateObjectFilterMenuItems(string $view, string $menu)
+//
+//	Description:
+//		Create the object filter menu items.
+//
+//	Arguments:
+//		view - The view.
+//
+//		menu - The object filter menu.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{	
+	global string $gFilterUIPluginCustomObjectFilterList[];
+	global string $gFilterUIPluginCustomObjectFilterInsertBelowList[];
+
+	int    $result = 1;
+	string $filter, $filterName, $menuItem;
+	string $defaultFilters[] = filterUIGetDefaultObjectFilters();
+	string $customFilters[] = filterUIGetCustomObjectFilters();
+
+	int $i;
+	for ($i = 0; $i < size($gFilterUIPluginCustomObjectFilterInsertBelowList); $i++) {
+		int $insertIdx = stringArrayFind($gFilterUIPluginCustomObjectFilterInsertBelowList[$i], 0 , $defaultFilters);
+		
+		// if there is no filter named insertBelow, the new filter will be the last position of the menu.
+		if ($insertIdx == -1)
+			$insertIdx = size($defaultFilters);
+		else
+			$insertIdx++;
+
+		stringArrayInsertAtIndex($insertIdx, $defaultFilters, $gFilterUIPluginCustomObjectFilterList[$i]);
+	}
+
+	$defaultFilters = filterUIAreFiltersRelated($view, $defaultFilters);
+	$customFilters = filterUIAreFiltersRelated($view, $customFilters);
+
+	setParent -menu $menu;
+
+	//	Create the "Clear Below" menu item.
+	//
+	$menuItem = `menuItem -label (uiRes("m_filterUI.kClearBelow"))
+		-annotation (uiRes("m_filterUI.kClearBelowAnnot"))`;
+	menuItem -edit 
+		-command ("filterUIHandleSelectAllObjectFilters " + $view
+			+ " \"" + $menu + "\" \"" + $menuItem + "\" 0")
+		$menuItem;
+
+	//	Create the check box menu items for the default filters.
+	//
+	if (size($defaultFilters) > 0) {
+		menuItem -divider true;
+	}
+	for ($filter in $defaultFilters) {
+		$filterName = filterUIGetFilterText($filter);
+		$menuItem = `menuItem -checkBox false -label $filterName`;
+		menuItem -edit
+			-command ("filterUIHandleObjectFilterMenuItem " + $view 
+				+ " \"" + $menu + "\" \"" + $menuItem + "\" " + $filter)
+			$menuItem;
+	}
+
+	//	Create the check box menu items for the custom filters.
+	//
+	if (size($customFilters) > 0) {
+		menuItem -divider true;
+//		menuItem -subMenu 1 -l "Custom";
+	}
+	for ($filter in $customFilters) {
+		$filterName = filterUIGetFilterText($filter);
+
+		$menuItem = `menuItem -checkBox false -label $filterName`;
+		menuItem -edit
+			-command ("filterUIHandleObjectFilterMenuItem " + $view 
+				+ " \"" + $menu + "\" \"" + $menuItem + "\" " + $filter)
+			$menuItem;
+	}
+
+	//	Check if this view has two filter menus (attached to a menu
+	//	bar and a popup menu).  If the other one is already created
+	//	ensure the state of the menu items in that menu is reflected 
+	//	in this menu.
+	//
+	string $popupMenu = filterUIGetPopupMenu($view);
+	string $menuBarMenu = filterUIGetMenu($view);
+
+	if ("" != $menuBarMenu && "" != $popupMenu) {
+
+		string $objectMenu1 = filterUIGetObjectMenu($menuBarMenu);
+		string $objectMenu2 = filterUIGetObjectMenu($popupMenu);
+		string $srcItems[], $dstItems[];
+		int    $numberOfItems;
+
+		string $srcP, $dstP;
+
+		if ($menu == $objectMenu1) {
+			$numberOfItems = `menu -query -numberOfItems $objectMenu1`;
+			$srcItems = `menu -query -itemArray $objectMenu2`;
+			$dstItems = `menu -query -itemArray $objectMenu1`;
+
+			$srcP = ($objectMenu2 + "|");
+			$dstP = ($objectMenu1 + "|");
+		} else {
+			$numberOfItems = `menu -query -numberOfItems $objectMenu2`;
+			$srcItems = `menu -query -itemArray $objectMenu1`;
+			$dstItems = `menu -query -itemArray $objectMenu2`;
+
+			$srcP = ($objectMenu1 + "|");
+			$dstP = ($objectMenu2 + "|");
+		}
+
+		if (0 < size ($srcItems)) {
+			for ($index = 0; $index < $numberOfItems; $index++) {
+				string $srcM = ($srcP + $srcItems[$index]),
+						$dstM = ($dstP + $dstItems[$index]);
+
+				if (`menuItem -query -isCheckBox $srcM` &&
+					`menuItem -query -isCheckBox $dstM`) {
+					menuItem -edit -checkBox `menuItem -query -checkBox $srcM` $dstM;
+				}
+			}
+		}
+	}
+
+	return $result;
+}
+
+proc int filterUICreateAttributeFilterMenuItems(string $view, string $menu)
+//
+//	Description:
+//		Create the attribute filter menu items.
+//
+//	Arguments:
+//		view - The view.
+//
+//		menu - The attribute filter menu.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	int    $result = 1;
+	string $filter, $filterName, $menuItem;
+	string $defaultFilters[] = filterUIGetDefaultAttributeFilters();
+	string $customFilters[] = filterUIGetCustomAttributeFilters();
+	
+	setParent -menu $menu;
+
+	//	Create the "Clear Below" menu item.
+	//
+	$menuItem = `menuItem -label (uiRes("m_filterUI.kClearAttrBelow"))
+		-annotation (uiRes("m_filterUI.kClearAttrBelowAnnot"))`;
+	menuItem -edit 
+		-command ("filterUIHandleSelectAllAttributeFilters " + $view
+			+ " \"" + $menu + "\" \"" + $menuItem + "\" 0")
+		$menuItem;
+	menuItem -divider true;
+
+	string $relatedFilter = `filterUIGetRelatedAttrFiltersProcedure($view)`;
+	
+	//	Create the check box menu items for the default filters.
+	//
+	for ($filter in $defaultFilters) {
+		$filterName = filterUIGetFilterText($filter);
+		if ("" != $relatedFilter) {
+			string $cmd = ($relatedFilter+"(\""+$filter+"\")");
+			int $keep = `eval $cmd`;
+			if (! $keep) {
+				continue;
+			}
+		}
+
+		if( $filterName == "Driven by Expression" ) {
+			$menuItem = `menuItem -checkBox false -label $filterName
+			-annotation (uiRes("m_filterUI.kDrivenByExprAnnot"))`;
+		} else {
+			$menuItem = `menuItem -checkBox false -label $filterName`;
+		}
+		menuItem -edit
+			-command ("filterUIHandleAttributeFilterMenuItem " + $view 
+				+ " \"" + $menu + "\" \"" + $menuItem + "\" " + $filter)
+			$menuItem;
+	}
+
+	menuItem -divider true;
+
+	//	Create the check box menu items for the custom filters.
+	//
+	for ($filter in $customFilters) {
+		$filterName = filterUIGetFilterText($filter);
+		$menuItem = `menuItem -checkBox false -label $filterName`;
+		menuItem -edit
+			-command ("filterUIHandleAttributeFilterMenuItem " + $view 
+				+ " \"" + $menu + "\" \"" + $menuItem + "\" " + $filter)
+			$menuItem;
+	}
+
+	//	Check if this view has two filter menus (attached to a menu
+	//	bar and a popup menu).  If the other one is already created
+	//	ensure the state of the menu items in that menu is reflected 
+	//	in this menu.
+	//
+	string $popupMenu = filterUIGetPopupMenu($view);
+	string $menuBarMenu = filterUIGetMenu($view);
+
+	if ("" != $menuBarMenu && "" != $popupMenu) {
+
+		string $attributeMenu1 = filterUIGetAttributeMenu($menuBarMenu);
+		string $attributeMenu2 = filterUIGetAttributeMenu($popupMenu);
+		string $srcItems[], $dstItems[];
+		int    $numberOfItems;
+
+		string $srcP, $dstP;
+
+		if ($menu == $attributeMenu1) {
+			$numberOfItems = `menu -query -numberOfItems $attributeMenu1`;
+			$srcItems = `menu -query -itemArray $attributeMenu2`;
+			$dstItems = `menu -query -itemArray $attributeMenu1`;
+
+			$srcP = ($attributeMenu2 + "|");
+			$dstP = ($attributeMenu1 + "|");
+		} else {
+			$numberOfItems = `menu -query -numberOfItems $attributeMenu2`;
+			$srcItems = `menu -query -itemArray $attributeMenu1`;
+			$dstItems = `menu -query -itemArray $attributeMenu2`;
+
+			$srcP = ($attributeMenu1 + "|");
+			$dstP = ($attributeMenu2 + "|");
+		}
+
+		if (0 < size ($srcItems)) {
+			for ($index = 0; $index < $numberOfItems; $index++) {
+				string $srcM = ($srcP + $srcItems[$index]),
+						$dstM = ($dstP + $dstItems[$index]);
+
+				if (`menuItem -query -isCheckBox $srcM` &&
+					`menuItem -query -isCheckBox $dstM`) {
+					menuItem -edit -checkBox `menuItem -query -checkBox $srcM` $dstM;
+				}
+			}
+		}
+	}
+
+	return $result;
+}
+
+proc int filterUIAddObjectFilterMenuItem(
+	string $currentView, 
+	string $newFilter)
+//
+//	Description:
+//		For each view add an object filter menu item corresponding to the 
+//		new filter argument.
+//
+//		Note that the menu item is only added if the filter is related to the 
+//		view's task.
+//
+//		The menu item check box is set 'on' for the current view, 'off' for
+//		all the other views.
+//
+//	Arguments:
+//		view      - The current view.
+//		newFilter - The new filter.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	global string $gFilterUIViewList[];
+
+	int    $result = 1;
+	int    $isFilterActive, $menuCount;
+	string $view, $menu, $menus[], $menuItem, $menuItems[], $objectMenu;
+	string $filterName = filterUIGetFilterText($newFilter);
+	string $relatedFilters[];
+	
+	for ($view in $gFilterUIViewList) {
+		
+		//	Only add the menu item if the filter is related to the view's
+		//	task.
+		//
+		$relatedFilters = filterUIAreFiltersRelated($view, { $newFilter });
+		if ("" != $relatedFilters[0]) {
+			$newFilter = $relatedFilters[0];
+			//
+			//	The filter is active for the current view so make sure the
+			//	menu item's check box value reflects this.
+			//
+			if ($view == $currentView) {
+				$isFilterActive = 1;
+			} else {
+				$isFilterActive = 0;
+			}
+
+			//
+			//	Get the filter menus.
+			//
+			clear ($menus);
+			$menuCount = 0;
+			$menu = filterUIGetMenu($view);
+			if ("" != $menu) {
+				$menus[$menuCount++] = $menu;
+			}
+			$menu = filterUIGetPopupMenu($view);
+			if ("" != $menu) {
+				$menus[$menuCount++] = $menu;
+			}
+			
+			//
+			//	Add the new item to each object filter menu.
+			//
+			for ($menu in $menus) {
+				$objectMenu = filterUIGetObjectMenu($menu);
+				if ("" != $objectMenu) {
+					if (0 == `menu -query -numberOfItems $objectMenu`) {
+						//
+						//	Menu items haven't been created yet.  Create them
+						//	and make sure to active the recently added filter
+						//	menu item if necessary.
+						//
+						filterUICreateObjectFilterMenuItems($view, $objectMenu);
+						$menuItems = `menu -query -itemArray $objectMenu`;
+						for ($menuItem in $menuItems) {
+							if ($newFilter 
+								== filterUIGetFilterFromMenuItem($menuItem)) {
+								menuItem -edit 
+									-checkBox $isFilterActive $menuItem;
+							}
+						}
+
+					} else {
+						$menuItem = `menuItem -parent $objectMenu 
+							-checkBox $isFilterActive -label $filterName`;
+						menuItem -edit
+							-command ("filterUIHandleObjectFilterMenuItem " 
+								+ $view + " \"" + $menu + "\" \"" + $menuItem + "\" " 
+								+ $newFilter)
+							$menuItem;
+					}
+				}
+			}
+		}
+	}
+	
+	return $result;
+}
+
+proc int filterUIAddAttributeFilterMenuItem(
+	string $currentView, 
+	string $newFilter)
+//
+//	Description:
+//		For each view add an attribute filter menu item corresponding to the 
+//		new filter argument.
+//
+//		The menu item check box is set 'on' for the current view, 'off' for
+//		all the other views.
+//
+//	Arguments:
+//		view      - The current view.
+//		newFilter - The new filter.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	global string $gFilterUIViewList[];
+
+	int    $result = 1;
+	int    $isFilterActive, $menuCount;
+	string $view, $menu, $menus[], $menuItem, $menuItems[], $attributeMenu;
+	string $filterName = filterUIGetFilterText($newFilter);
+	
+	for ($view in $gFilterUIViewList) {
+		//
+		//	The filter is active for the current view so make sure the
+		//	menu item's check box value reflects this.
+		//
+		if ($view == $currentView) {
+			$isFilterActive = 1;
+		} else {
+			$isFilterActive = 0;
+		}
+
+		//
+		//	Get the filter menus.
+		//
+		clear ($menus);
+		$menuCount = 0;
+		$menu = filterUIGetMenu($view);
+		if ("" != $menu) {
+			$menus[$menuCount++] = $menu;
+		}
+		$menu = filterUIGetPopupMenu($view);
+		if ("" != $menu) {
+			$menus[$menuCount++] = $menu;
+		}
+
+		//
+		//	Add the new item to each object filter menu.
+		//
+		for ($menu in $menus) {
+			$attributeMenu = filterUIGetAttributeMenu($menu);
+			if ("" != $attributeMenu) {
+				if (0 == `menu -query -numberOfItems $attributeMenu`) {
+					//
+					//	Menu items haven't been created yet.  Create them
+					//	and make sure to active the recently added filter
+					//	menu item if necessary.
+					//
+					filterUICreateAttributeFilterMenuItems(
+						$view, $attributeMenu);
+					$menuItems = `menu -query -itemArray $attributeMenu`;
+					for ($menuItem in $menuItems) {
+						if ($newFilter 
+							== filterUIGetFilterFromMenuItem($menuItem)) {
+							menuItem -edit 
+								-checkBox $isFilterActive $menuItem;
+						}
+					}
+
+				} else {
+					$menuItem = `menuItem -parent $attributeMenu 
+						-checkBox $isFilterActive -label $filterName`;
+					menuItem -edit
+						-command ("filterUIHandleAttributeFilterMenuItem " 
+							+ $view + " \"" + $menu + "\" \"" + $menuItem + "\" " 
+							+ $newFilter)
+						$menuItem;
+				}
+			}
+		}
+	}
+	
+	return $result;
+}
+
+proc int filterUIFilterNameIsValid(string $name)
+//
+//	Description:
+//		Verify the specified name is a valid name for a filter.
+//
+//		Currently, this is only testing to ensure the name is not an empty
+//		string.
+//
+//	Arguments:
+//		name - The name.
+//
+//	Returns:
+//		1 - If the name is valid.
+//		0 - If the name is not valid.
+//
+{
+	int $result = 0;
+	
+	if ("" != $name && 0 < size($name)) {
+		$result = 1;
+	}
+	
+	return $result;	
+}
+
+proc int filterUIUpdateFilterStatus(string $view, int $status)
+//
+//	Description:
+//		Update the status control for the given view.
+//
+//	Arguments:
+//		view   - The view.
+//
+//		status - The filter status for the given view.  The current filter
+//		         states are:
+//		         0 - No filters are active on the view.
+//		         1 - A filter is active.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	int    $result = 1;
+	string $statusControl = filterUIGetFilterStatusControl($view);
+	string $currentIcon, $newIcon;
+	
+	if (0 == $status) {
+		$newIcon = "filtersOff.png";
+	} else if (1 == $status) {
+		$newIcon = "filtersOn.png";
+	}
+	
+	if ("" != $statusControl) {
+		$currentIcon = `iconTextButton -query -i1 $statusControl`;
+		if ($newIcon != $currentIcon) {
+			iconTextButton -edit -i1 $newIcon $statusControl;
+		}
+	}
+	
+	return $result;
+}
+
+proc int isHyperShadeView(
+	string $view)
+//
+//	Description:
+//
+//		Determines whether a view is a HyperShade or not.  These
+//		editors require special handling for filtering.
+//
+{
+	if( `hyperGraph -q -ex $view` )
+	{
+		if( `hyperGraph -query -graphType $view` == "HyperShade" )
+		{
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
+proc string filterUIGetOptionVarName( string $view )
+//
+//	Description:
+//		Get the option var name corresponding to a view's saved settings
+//	Arguments:
+//		The view
+//
+//	Returns:
+//		The name, or an empty string on failure
+//
+{
+    string $prefix = "";
+    if (`editor -exists $view`) {
+        string $panel = `editor -q -panel $view`;
+        if ($panel != "") {
+            $prefix = ("filterUISettings-" + `panel -q -label $panel`);
+        } else {
+			$prefix = ("filterUISettings-" + $view);
+		}
+    } else if (`channelBox -exists $view`) {
+        string $buffer[];
+        int $n = `tokenize $view "|" $buffer`;
+        if ($n > 0) {
+            $prefix = $buffer[$n-1];
+            $prefix = ("filterUISettings-" + $prefix);
+        }
+    }
+	return $prefix;
+}
+
+proc updateFilterPref(string $menuItem, string $view)
+//
+//  Description:
+//    Update the filter preference for a given view
+//
+//  Arguments:
+//    menuItem - save new state
+//    view - the current view
+{
+    string $optionVarNamesKey = `filterUIGetOptionVarName $view`;
+    
+    int    $state = `menuItem -query -checkBox $menuItem`;
+    string $filter = filterUIGetFilterFromMenuItem($menuItem);
+    string $filterName = `filterUIGetFilterText $filter`;
+
+    string $narray[];
+    if ("" != $optionVarNamesKey) {
+        if( `optionVar -ex $optionVarNamesKey` ) {
+            $narray = `optionVar -q $optionVarNamesKey`;
+        }
+    }
+
+    if ( `stringArrayContains $filterName $narray` ) {
+        if (0 == $state) {
+            $narray = `stringArrayRemoveExact {$filterName} $narray`;
+        }
+    } else {
+        if (1 == $state) {
+            $narray = `stringArrayCatenate $narray { $filterName }`;
+        }
+    }
+    if ("" != $optionVarNamesKey) {
+        optionVar -clearArray $optionVarNamesKey;
+        int $len = size( $narray );
+        for( $i = 0; $i < $len; $i++ ){
+            optionVar -sva $optionVarNamesKey $narray[$i];
+        }
+    }
+}
+
+proc int filterUIApplyFilter(
+	string $view,
+	string $objectFilter,
+	string $attributeFilter,
+    int $frameGraph)
+//
+//	Description:
+//		Apply the given filters to the specified view.  If either of the filter
+//		arguments are NULL then the corresponding filter will be determined
+//		by the state of the filter menus.
+//
+//		Note that a particular view may have any combination of the following
+//		filters active:
+//
+//		- An object selection filter.
+//		- An attribute selection filter.
+//		- Object filters specified in the object filter menu.
+//		- Attribute filters specified in the attribute filter menu.
+//		- An "implicit" filter.
+//		- A regular expression filter for object names.
+//      - A binMembership filter.
+//
+//	Arguments:
+//		view            - The view.
+//
+//		objectFilter    - The object filter to apply.  If NULL is specified
+//		                  then the object filter will be determined based 
+//		                  on the state of the object filter menu.
+//
+//		attributeFilter - The attribute filter to apply.  If NULL is specified
+//		                  then the attribute filter will be determined based 
+//		                  on the state of the attribute filter menu.
+//      
+//      frameGraph      - This parameter specifies after we apply the 
+//                        filter, if we want to frame the graph in the
+//                        view.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	filterUIDebugTrace ("\nBEGIN: Apply Filter '" + $objectFilter + "', '" + $attributeFilter + "'\n");
+	filterUIDebugPrintFilterStats();
+	filterUIDebugTrace ("-------------------\n");
+	int $result = 0;
+
+	//
+	//	Get the object and attribute filter menus.
+	//
+	//	Note that a view may have filter menu attached to a menu bar 
+	//	or a popup menu or both or neither.  Furthermore, any filter
+	//	menu that the view does have may not be created yet.  If
+	//	the view has two filter menus that either will do to determine
+	//	the filter because their states will be identical.
+	//
+	string $objectFilterMenu, $attributeFilterMenu;
+	string $tempObjectMenu, $tempAttributeMenu;
+	
+	//	See if there is a popup menu containing the filter menu.
+	//
+	string $menu = "", $popupMenu = filterUIGetPopupMenu($view);
+
+	if ("" != $popupMenu) {
+		//
+		//	Temporarily point to the object and attribute filter menus
+		//	here.  Still need to verify that the menus are populated 
+		//	with menu items.
+		//
+		$tempObjectMenu = filterUIGetObjectMenu($popupMenu);
+		$tempAttributeMenu = filterUIGetAttributeMenu($popupMenu);
+	}
+	
+	//	If an object filter argument is not supplied then we need to 
+	//	determine the object filter based on the object filter menu
+	//	items.  The first step towards determining this is obtaining
+	//	the appropriate object filter menu.
+	//
+	if ("" == $objectFilter) {
+		//
+		//	If the object filter in the popup menu has items in it then use it.
+		//	Otherwise, get the object filter menu from the filter menu
+		//	attached to the menu bar.
+		//
+		if ("" != $tempObjectMenu &&
+			0 < `menu -query -numberOfItems $tempObjectMenu`) {
+			$objectFilterMenu = $tempObjectMenu;
+		} else {
+			//
+			//	Get filter menu attached to the menu bar.
+			//
+			$menu = filterUIGetMenu($view);
+			if ("" != $menu) {
+				$tempObjectMenu = filterUIGetObjectMenu($menu);
+				if ("" != $tempObjectMenu &&
+					0 < `menu -query -numberOfItems $tempObjectMenu`) {
+					$objectFilterMenu = $tempObjectMenu;
+				}
+			}
+		}
+	} else {
+	}
+	
+	//	If an attribute filter argument is not supplied then we need to 
+	//	determine the attribute filter based on the attribute filter menu
+	//	items.  The first step towards determining this is obtaining
+	//	the appropriate attribute filter menu.
+	//
+	if ("" == $attributeFilter) {
+		//
+		//	If the attribute filter in the popup menu has items in it then 
+		//	use it.  Otherwise, get the attribute filter menu from the filter 
+		//	menu attached to the menu bar.
+		//
+		if ("" != $tempAttributeMenu &&
+			0 < `menu -query -numberOfItems $tempAttributeMenu`) {
+			$attributeFilterMenu = $tempAttributeMenu;
+		} else {
+			//
+			//	Get filter menu attached to the menu bar.
+			//
+			$menu = filterUIGetMenu($view);
+			if ("" != $menu) {
+				$tempAttributeMenu = filterUIGetAttributeMenu($menu);
+				if ("" != $tempAttributeMenu &&
+					0 < `menu -query -numberOfItems $tempAttributeMenu`) {
+					$attributeFilterMenu = $tempAttributeMenu;
+				}
+			}
+		}
+	} else {
+		//	Don't actually use the given attribute selection filter, 
+		//	duplicate instead so that we can safely delete it when the 
+		//	editor is finished with it while maintaining the original 
+		//  in the custom attribute filter list.
+		//
+		string $duplicate[] = `filterUIDuplicateFilter $attributeFilter`;
+		$attributeFilter = $duplicate[0];
+	}
+	
+	//
+	//	Get binMembership filter.
+	//
+	string $binMembershipFilter;
+    string $masterBinName = (uiRes("m_hyperShadeBinsUI.kMasterBin"));
+    global string $gHyperShadeSelectedBinList[];
+	if( !isHyperShadeView($view) )
+    {
+        // It is not a hyper shade view, do not apply any bin filter.
+        //
+		$binMembershipFilter = "";
+    }
+    else if (size($gHyperShadeSelectedBinList) == 0)
+    {
+		$binMembershipFilter = "";
+	}
+    else
+    {
+        string $bin;
+        for ( $bin in $gHyperShadeSelectedBinList)
+        {
+            // If the masterBin is selected, then use no filter.
+            //
+            if ( $bin == $masterBinName )
+            {
+                if ($binMembershipFilter != "")
+                {
+                    // Delete the binMembershipFilter we already built.
+                    //
+                    delete $binMembershipFilter;
+                }
+                // Use no filter.
+                //
+                $binMembershipFilter = "";
+                break;
+            }   
+
+            // Form the filter using all the bins selected.
+            // 
+            if ($binMembershipFilter == "")
+            {
+                // Create the binMembership filter.
+                //
+		        $binMembershipFilter = `itemFilter -byBin $bin`;
+                continue;
+            }
+            // Add more binMemberships to the binMembershipFilter.
+            //
+		    itemFilter -edit -byBin $bin $binMembershipFilter;
+            
+        }
+    }
+
+	//
+	//	Get regular expression filter.
+	//
+	string $regExpFilter;
+	string $field = filterUIGetField($view);
+	if ("" != $field) {
+		string $regExp = `textField -query -text $field`;
+		if ("" == $regExp || "*" == $regExp) {
+			$regExpFilter = "";
+		} else {
+			$regExpFilter = `itemFilter -byName $regExp`;
+		}
+	} else {
+		$regExpFilter = "";
+	}
+	
+	//
+	//	Get object filter.
+	//
+	string $filter, $selectionFilter;
+	
+	if ("" != $objectFilterMenu) {
+		string $item, $items[] = `menu -query -itemArray $objectFilterMenu`;
+		int    $numberOfItems = size($items);
+
+		string $objectFilters[];
+		int    $objectFilterIndex = 0;
+		
+		//	Get the object selection filter, if there is one.
+		//
+		string $objectSelectionFilter = filterUIGetObjectSelectionFilter($view);
+		if ("" != $objectSelectionFilter) {
+			$objectFilters[$objectFilterIndex++] = $objectSelectionFilter;
+		}
+		
+		//	Get the selected object filters from the object filter menu.
+		//
+		for ($item in $items) {
+			if (`menuItem -query -isCheckBox $item` && 
+				`menuItem -query -checkBox $item`) {
+				$objectFilters[$objectFilterIndex++]
+					= filterUIGetFilterFromMenuItem($item);
+			}
+		}
+
+		//	Get the union of all these object filters.
+		//
+		$objectFilter = filterUIGetUnionOfFilters($objectFilters);
+
+	} else {
+		if	("" == $objectFilter) {
+			//
+			//	Catch the case where both the given object filter argument is
+			//	NULL and the object filter menu is NULL.  This happens when
+			//	the user hasn't accessed the object filter menu yet and has
+			//	followed up a "filter on selection" with a regular expression
+			//	filter.
+			//	
+			//	In this case be sure to get the object selection filter.
+			//
+			$objectFilter = filterUIGetObjectSelectionFilter($view);
+			if ("" != $objectFilter) {
+				string $duplicate[] = `filterUIDuplicateFilter $objectFilter`;
+				$objectFilter = $duplicate[0];
+			}
+		} 
+	}
+	
+	//
+	//	Get attribute filter.
+	//
+	if ("" != $attributeFilterMenu) {
+		string $item, $items[] = `menu -query -itemArray $attributeFilterMenu`;
+		int    $numberOfItems = size($items);
+
+		string $attributeFilters[];
+		int    $attributeFilterIndex = 0;
+		
+		//	Get the attribute selection filter, if there is one.
+		//
+		string $attributeSelectionFilter
+			= filterUIGetAttributeSelectionFilter($view);
+		if ("" != $attributeSelectionFilter) {
+			$attributeFilters[$attributeFilterIndex++] 
+				= $attributeSelectionFilter;
+		}
+		
+		//	Get the selected attribute filters from the attribute filter menu.
+		//
+		for ($item in $items) {
+			string $mi = ($attributeFilterMenu + "|" + $item);
+
+			if (`menuItem -query -isCheckBox $mi` && 
+				`menuItem -query -checkBox $mi`) {
+				$attributeFilters[$attributeFilterIndex++]
+					= filterUIGetFilterFromMenuItem($mi);
+			}
+		}
+		
+		//	Get the union of all these attribute filters.
+		//
+		$attributeFilter = filterUIGetUnionOfFilters($attributeFilters);
+
+	} else {
+		if	("" == $attributeFilter) {
+			//
+			//	Catch the case where both the given attribute filter argument is
+			//	NULL and the attribute filter menu is NULL.  This happens when
+			//	the user hasn't accessed the attribute filter menu yet and has
+			//	followed up a "filter on selection" with a regular expression
+			//	filter.
+			//	
+			//	In this case be sure to get the attribute selection filter.
+			//
+			$attributeFilter = filterUIGetAttributeSelectionFilter($view);
+			if ("" != $attributeFilter) {
+				string $duplicate[] = `filterUIDuplicateFilter $attributeFilter`;
+				$attributeFilter = $duplicate[0];
+			}
+		} 
+	}
+
+	//
+	//	Determine if the filter should be inverted.
+	//
+	string $invertFilterMenuItem = "";
+	int    $invert = 0;
+	
+	if ("" != $popupMenu) {
+		$invertFilterMenuItem = filterUIGetInvertFilterMenuItem($popupMenu);
+	} else if ("" != $menu) {
+		$invertFilterMenuItem = filterUIGetInvertFilterMenuItem($menu);
+	} else {
+		//
+		//	This case should really never happen since the view should
+		//	have a popup menu or a menu bar menu, or both.
+		//
+	}
+
+	if ("" != $invertFilterMenuItem &&
+		`menuItem -query -isCheckBox $invertFilterMenuItem`) {
+		$invert = `menuItem -query -checkBox $invertFilterMenuItem`;
+	}
+	
+	//	Invert the object and regular expression filters if necessary.
+	//
+	//	Note that inverting the current filter does not apply to the
+	//	implicit filter.
+	//
+	if ($invert) {
+		if ("" != $regExpFilter) {
+			itemFilter -edit -negate $invert $regExpFilter;
+		}
+		if ("" != $objectFilter) {
+			itemFilter -edit -negate $invert $objectFilter;
+		}
+		if ("" != $binMembershipFilter) {
+			itemFilter -edit -negate $invert $binMembershipFilter;
+		}
+	}
+	
+	//
+	//	Now apply filter to view.
+	//
+	if (`editor -exists $view`) {
+		string $intersectionFilters[];
+		string $implicitFilter = filterUIGetImplicitFilter($view);
+		int    $index = 0;
+
+		//
+		//	What is the current filter?
+		//
+
+		string $currentFilter = "";
+        string $currentNodeSet[] = {};
+		if( isHyperShadeView($view) )
+		{
+			string $collectionUI = hypershadeCollectionUIName( $view );
+			$currentFilter = collectionUIAdvancedFilter( $collectionUI );
+           
+			// Bugs 215233 & 215756: After opening HS, deleting a tab
+			// or opening a new file results in deletion of an "advancedFilter"
+			// without deletion of its reference in the look-up table. (An advanced
+			// filter is the intersection of multiple filters.) This fix checks
+			// if the filter referenced to in the look-up table actually exists.
+			// If it doesn't, currentFilter is set to null (as if the reference
+			// doesn't exist). The reference's column in the look-up table will be
+			// flagged for deletion in the "collectionUISetAdvancedFilter" call,
+			// so there is so no need to do it now.
+			// 
+			if( $currentFilter != "" && $currentFilter != "0"
+			    && !`objExists $currentFilter` ){
+				$currentFilter = "";
+			}
+			
+            // Before the current filter is deleted, make a list of 
+            // nodes which is displayed in this hyper shade view.
+            //
+            if ($currentFilter != "" && $currentFilter != "0")
+            {	
+                $currentNodeSet = eval("sort `lsThroughFilter -na "+ $currentFilter+"`");
+            }
+		}
+		else
+		{
+			$currentFilter = `editor -query -filter $view`;
+		}
+
+		if ("" != $currentFilter && "0" != $currentFilter
+			&& `itemFilter -exists $currentFilter`) {
+			filterUIDebugTrace ("Deleting editor's current filter '" + $currentFilter + "'\n");
+            delete $currentFilter;
+		}
+
+		int $filterStatus = 0;
+		
+		if ("" != $implicitFilter) {
+			$intersectionFilters[$index++] = $implicitFilter;
+		}
+		if ("" != $regExpFilter) {
+			$filterStatus = 1;
+			$intersectionFilters[$index++] = $regExpFilter;
+		}
+		if ("" != $objectFilter) {
+			$filterStatus = 1;
+			$intersectionFilters[$index++] = $objectFilter;
+		}
+		if ("" != $binMembershipFilter) {
+			$intersectionFilters[$index++] = $binMembershipFilter;
+		}
+
+		string $editorFilter = filterUIGetIntersectionOfFilters(
+			$intersectionFilters);
+		
+		//	Clean up by deleting the regular expression filter and object
+		//	filter since they are no longer needed because any information
+		//	contained with in them will have been copied into the 
+		//	intersection filter.
+		//
+		if ("" != $regExpFilter) delete $regExpFilter;
+		if ("" != $objectFilter 
+			&& $objectFilter != filterUIGetObjectSelectionFilter($view)
+			&& `itemFilter -exists $objectFilter`) {
+			delete $objectFilter;
+		}
+		if ("" != $binMembershipFilter) delete $binMembershipFilter;
+		
+		//
+		//	If the view is an outliner editor then apply the attribute
+		//	filter.
+		//
+		if (`outlinerEditor -exists $view`) {
+			//
+			//	What is the current attribute filter?
+			//
+			string $currentAttributeFilter = `outlinerEditor -query 
+				-attrFilter $view`;
+			if ("" != $currentAttributeFilter &&
+				"0" != $currentAttributeFilter &&
+				$currentAttributeFilter 
+					!= filterUIGetAttributeSelectionFilter($view)
+				&& `itemFilter -exists $currentAttributeFilter`) {
+				filterUIDebugTrace ("Deleting outliner editor's current attribute filter '" + $currentAttributeFilter + "'\n");
+				delete $currentAttributeFilter;
+			}
+			
+			if ("" == $attributeFilter) {
+				//
+				//	Currently, can't set a null filter to clear it.  Need
+				//	to set filter to "0" to remove it.
+				//
+				$attributeFilter = "0";
+			} else {
+				$filterStatus = 1;
+				if ($invert) {
+					if (`itemFilterAttr -exists $attributeFilter`) {
+						itemFilterAttr -edit -negate $invert $attributeFilter;
+					}
+				}
+			}
+
+			filterUIDebugTrace ("Executing:  outlinerEditor -edit -attrFilter "
+				+ $attributeFilter + " " + $view + "\n");
+			outlinerEditor -edit -attrFilter $attributeFilter $view;
+		}
+
+		
+		//	Can't set a NULL filter, but to clear the filter you can set
+		//	it to "0".
+		//
+		if ("" == $editorFilter) {
+			$editorFilter = "0";
+		}
+		
+		filterUIDebugTrace ("Executing:  editor -edit -filter "
+			+ $editorFilter + " " + $view + "\n");
+
+		//	Need slightly different code for HyperShade editors,
+		//	as they do not support the "editor -edit -filter"
+		//	workflow.  Instead, we must call collectionUISetAdvancedFilter()
+		//	to assign the filter to such an editor.
+		//
+		if( isHyperShadeView($view) )
+		{
+			string $collectionUI = hypershadeCollectionUIName( $view );
+			collectionUISetAdvancedFilter( $collectionUI, $editorFilter , $frameGraph, $currentNodeSet);
+		}
+		else
+		{
+			editor -edit -filter $editorFilter $view;
+		}
+		
+		filterUIUpdateFilterStatus($view, $filterStatus);
+	} else if (`channelBox -exists $view`) {
+		//
+		//	What is the current attribute filter?
+		//
+		int $filterStatus = 0;		
+		string $currentAttributeFilter = `channelBox -query 
+			-attrFilter $view`;
+		if ("" != $currentAttributeFilter &&
+			"0" != $currentAttributeFilter &&
+			$currentAttributeFilter 
+			!= filterUIGetAttributeSelectionFilter($view)
+			&& `itemFilter -exists $currentAttributeFilter`) {
+			filterUIDebugTrace ("Deleting channel box's current attribute filter '" + $currentAttributeFilter + "'\n");
+			delete $currentAttributeFilter;
+		}
+		
+		if ("" == $attributeFilter) {
+			//
+			//	Currently, can't set a null filter to clear it.  Need
+			//	to set filter to "0" to remove it.
+			//
+			$attributeFilter = "0";
+		} else {
+			$filterStatus = 1;
+			if ($invert) {
+				if (`itemFilterAttr -exists $attributeFilter`) {
+					itemFilterAttr -edit -negate $invert $attributeFilter;
+				}
+			}
+		}
+		
+		filterUIDebugTrace ("Executing:  channelBox -edit -attrFilter "
+							+ $attributeFilter + " " + $view + "\n");
+		channelBox -edit -attrFilter $attributeFilter $view;
+		filterUIUpdateFilterStatus($view, $filterStatus);
+	}
+	
+	else if( `treeView -exists $view` )
+	{		
+		string $items[] = `treeView -q -children "" $view`;
+		
+		string $objectFilter = $regExpFilter;
+		
+		string $visibleItems[];
+		
+		if( ("" != $objectFilter) && (size( $items ) > 0) ) 
+		{						
+			string $cmd = "lsThroughFilter";
+			
+			for( $item in $items )
+			{
+				$cmd = $cmd +" -item "+$item;
+			}
+			
+			$cmd += " "+$objectFilter;
+			
+			$visibleItems = `eval $cmd`;
+		}
+		else
+		{
+			$visibleItems = $items;
+		}
+		
+		// Setting the visibility based on the presence of each object in $visibleItems;
+		// Warning: The following algorithm assume that the applied filter did not modified the items order
+		// Warning2: applying a filter which change the order would not affect the real order because we are not changing the treeView content
+		//			 we are just setting the visibility flag
+
+		int $visibleItemIndex = 0;
+		
+		for( $item in $items )
+		{
+			$visible = 0;
+			
+			if( $visibleItemIndex < size( $visibleItems ) )
+			{			
+				if( $item == $visibleItems[$visibleItemIndex]  )
+				{			
+					$visible =1;
+					$visibleItemIndex++;
+				}
+			}
+
+			treeView -e -iv $item $visible $view;
+		}				
+	}
+
+
+	// If the Select Attributes window is open, update it.
+	//	
+	if ( `window -ex filterUISelectAttributesWindow` == true ) {
+		filterUIUpdateSelectAttributesCheckboxes( $view );
+	}
+	
+	filterUIDebugTrace ("-------------------\n");
+	filterUIDebugPrintFilterStats();
+	filterUIDebugTrace ("END: Apply Filter\n");
+	return $result;
+}
+
+global proc int filterUIHandleObjectFilterMenuItem(
+	string $view,
+	string $objectMenu,
+	string $menuItem,
+	string $selectedFilter)
+//
+//	Description:
+//		This procedure is called when an object filter is selected from
+//		the object filter menu.
+//
+//	Arguments:
+//		view           - The view.
+//
+//		objectMenu     - The object filter menu.
+//
+//		menuItem       - The object filter menu item that was selected.
+//
+//		selectedFilter - The filter associated with the selected menu item.
+//
+//	Notes:
+//		The procedure 'filterUIGetFilterFromMenuItem' is dependent on the
+//		signature of this procedure.  If you change this procedure's name
+//		or arguments you must update 'filterUIGetFilterFromMenuItem`
+//		accordingly.
+//
+{
+	//	If the view has two filter menus, one attached the a visible menu bar
+	//	and one attached to a popup menu then make sure they are kept in sync.
+	//
+	string $popupMenu = filterUIGetPopupMenu($view);
+	string $menu = filterUIGetMenu($view);
+	string $otherMenu = "";
+	
+	if ("" != $popupMenu && "" != $menu) {
+
+		if ($objectMenu == filterUIGetObjectMenu($popupMenu)) {
+			//
+			//	User selected item from menu attached to popup menu.  Need 
+			//	to reflect change in object filter menu attached to the 
+			//	menu bar.
+			//
+			$otherMenu = filterUIGetObjectMenu($menu);
+
+		} else {
+			//
+			//	User selected item from menu attached to menu bar.  Need 
+			//	to reflect change in object filter menu attached to the 
+			//	popup menu.
+			//
+			$otherMenu = filterUIGetObjectMenu($popupMenu);
+		}
+
+		//	Find the menu item and update its state.
+		//
+		int    $state = `menuItem -query -checkBox $menuItem`;
+		string $filter = filterUIGetFilterFromMenuItem($menuItem);
+
+		string $item, $items[] = `menu -query -itemArray $otherMenu`;
+		for ($item in $items) {
+			if ($filter == filterUIGetFilterFromMenuItem($item)) {
+				menuItem -edit -checkBox $state $item;
+				break;
+			}
+		}
+	}
+    updateFilterPref($menuItem, $view);
+	return filterUIApplyFilter($view, "", "", true);
+}
+
+global proc int filterUIHandleAttributeFilterMenuItem(
+	string $view,
+	string $attributeMenu,
+	string $menuItem,
+	string $selectedFilter)
+//
+//	Description:
+//		This procedure is called when an attribute filter is selected from
+//		the attribute filter menu.
+//
+//	Arguments:
+//		view           - The view.
+//
+//		attributeMenu  - The attribute filter menu.
+//
+//		menuItem       - The attribute filter menu item that was selected.
+//
+//		selectedFilter - The filter associated with the selected menu item.
+//
+//	Notes:
+//		The procedure 'filterUIGetFilterFromMenuItem' is dependent on the
+//		signature of this procedure.  If you change this procedure's
+//		arguments you must update 'filterUIGetFilterFromMenuItem`
+//		accordingly.
+//
+{
+	//	If the view has two filter menus, one attached the a visible menu bar
+	//	and one attached to a popup menu then make sure they are kept in sync.
+	//
+	string $popupMenu = filterUIGetPopupMenu($view);
+	string $menu = filterUIGetMenu($view);
+	string $otherMenu = "";
+	
+	if ("" != $popupMenu && "" != $menu) {
+
+		if ($attributeMenu == filterUIGetAttributeMenu($popupMenu)) {
+			//
+			//	User selected item from menu attached to popup menu.  Need 
+			//	to reflect change in attribute filter menu attached to the 
+			//	menu bar.
+			//
+			$otherMenu = filterUIGetAttributeMenu($menu);
+
+		} else {
+			//
+			//	User selected item from menu attached to menu bar.  Need 
+			//	to reflect change in attribute filter menu attached to the 
+			//	popup menu.
+			//
+			$otherMenu = filterUIGetAttributeMenu($popupMenu);
+		}
+
+		int    $state = `menuItem -query -checkBox $menuItem`;
+		string $filter = filterUIGetFilterFromMenuItem($menuItem);
+		string $item, $items[] = `menu -query -itemArray $otherMenu`;
+		for ($item in $items) {
+			if ($filter == filterUIGetFilterFromMenuItem($item)) {
+				menuItem -edit -checkBox $state $item;
+				break;
+			}
+		}
+	}
+    updateFilterPref($menuItem, $view);	
+	return filterUIApplyFilter($view, "", "", true);
+}
+
+global proc int filterUIHandleSelectAllObjectFilters(
+	string $view,
+	string $objectMenu,
+	string $menuItem,
+	int    $select)
+//
+//	Description:
+//		This procedure is called when the "All" or "Clear Below" menu item is 
+//		selected from the "Objects" filter menu.
+//
+//		Select or deselect all the items in the menu.
+//
+//	Arguments:
+//		view       - The view.
+//
+//		objectMenu - The object filter menu.
+//
+//		menuItem   - The object filter menu item that was selected.
+//
+//		select     - Select or deselect the all the items in the menu.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	int $result = 1;
+	
+	//	Get the object filter menus.
+	//
+	string $menu = filterUIGetMenu($view);
+	string $popupMenu = filterUIGetPopupMenu($view);
+	string $filterMenu, $filterMenus[];
+	int    $index = 0;
+	if ("" != $menu) {
+		$filterMenu = filterUIGetObjectMenu($menu);
+		if ("" != $filterMenu) {
+			$filterMenus[$index++] = $filterMenu;
+		}
+	}
+	if ("" != $popupMenu) {
+		$filterMenu = filterUIGetObjectMenu($popupMenu);
+		if ("" != $filterMenu) {
+			$filterMenus[$index++] = $filterMenu;
+		}
+	}
+	
+	//	Loop through each object filter menu and update all check box 
+	//	menu items.
+	//
+	string $menuItem, $menuItems[];
+	string $menuCmd;
+	for ($filterMenu in $filterMenus) {
+		$menuItems = `menu -query -itemArray $filterMenu`;
+		for ($menuItem in $menuItems) {
+			if (`menuItem -query -isCheckBox $menuItem`) {
+				menuItem -edit -checkBox $select $menuItem;
+				$menuCmd = `menuItem -query -command $menuItem`;
+                if ( catch( `eval $menuCmd` ) ) {
+					warning( (uiRes("m_filterUI.kObjectFilterMenuCmd")) + $menuCmd );
+				}
+			}
+		}
+	}
+	
+	$result = filterUIApplyFilter($view, "", "", true);
+
+	return $result;
+}
+
+global proc int filterUIHandleSelectAllAttributeFilters(
+	string $view,
+	string $attributeMenu,
+	string $menuItem,
+	int    $select)
+//
+//	Description:
+//		This procedure is called when the "All" or "Clear Below" menu item is 
+//		selected from the "Attributes" filter menu.
+//
+//		Select or deselect all the items in the menu.
+//
+//	Arguments:
+//		view          - The view.
+//
+//		attributeMenu - The attribute filter menu.
+//
+//		menuItem      - The attribute filter menu item that was selected.
+//
+//		select        - Select or deselect the all the items in the menu.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	int $result = 1;
+	
+	//	Get the attribute filter menus.
+	//
+	string $menu = filterUIGetMenu($view);
+	string $popupMenu = filterUIGetPopupMenu($view);
+	string $filterMenu, $filterMenus[];
+	int    $index = 0;
+	if ("" != $menu) {
+		$filterMenu = filterUIGetAttributeMenu($menu);
+		if ("" != $filterMenu) {
+			$filterMenus[$index++] = $filterMenu;
+		}
+	}
+	if ("" != $popupMenu) {
+		$filterMenu = filterUIGetAttributeMenu($popupMenu);
+		if ("" != $filterMenu) {
+			$filterMenus[$index++] = $filterMenu;
+		}
+	}
+	
+	//	Loop through each attribute filter menu and update all check box 
+	//	menu items.
+	//
+	string $menuItem, $menuItems[];
+	for ($filterMenu in $filterMenus) {
+		$menuItems = `menu -query -itemArray $filterMenu`;
+		for ($menuItem in $menuItems) {
+			if (`menuItem -query -isCheckBox $menuItem`) {
+				menuItem -edit -checkBox $select $menuItem;
+                eval `menuItem -query -command $menuItem`;
+			}
+		}
+	}
+
+	$result = filterUIApplyFilter($view, "", "", true);
+	
+	return $result;
+}
+
+global proc int filterUIShowFilterMenu(string $view, string $menu)
+//
+//	Description:
+//		This procedure is called when the filter menu is about to be 
+//		shown.
+//
+//		Update the enable state of the filter menu items.
+//
+//	Arguments:
+//		view - The view.
+//
+//		menu - The filter menu.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	int    $result = 1;
+	int    $enable;
+	string $menuItem;
+	
+	//	Enable the "Delete Filter..." menu item if there are custom filters
+	//	to be deleted.
+	//
+	int    $customFilterCount = 0;
+	string $customFilters[] = filterUIGetCustomObjectFilters();
+	$customFilterCount = size ($customFilters);
+	$customFilters = filterUIGetCustomAttributeFilters();
+	$customFilterCount += size ($customFilters);
+	$menuItem = filterUIGetDeleteFilterMenuItem($menu);
+	if ("" != $menuItem) {
+		menuItem -edit -enable $customFilterCount $menuItem;
+	}
+		
+	if (`editor -exists $view`) {
+		//
+		//	Determine whether the "Show Selected Type(s)" menu item should be 
+		//	enabled.  If there is a selection then enable it, otherwise 
+		//	disable it.
+		//
+		//	Get the editor's selection connection.  If the editor doesn't
+		//	have one then check the active list.
+		//
+		string $selectionConnection, $selectionList[];
+		$selectionConnection = `editor -query -selectionConnection $view`;
+		
+		if ("" == $selectionConnection) {
+			//
+			//	Editor does not have a selection connection, assume it is
+			//	using the active list.
+			//
+			$selectionConnection = "activeList";
+		}
+		$selectionList = `selectionConnection 
+			-query -object $selectionConnection`;
+
+		//	Get the menu item and set its enable state.
+		//
+		$menuItem = filterUIGetFilterSelectionMenuItem($menu);
+		if ("" != $menuItem) {
+			menuItem -edit -enable `size($selectionList)` $menuItem;
+		}
+		
+		//
+		//	Determine whether the "Invert Shown" menu item should be
+		//	enabled.  If there is a filter active on the view then it 
+		//	is enabled, otherwise it is disabled.
+		//
+
+		string $filter = "";
+		if( isHyperShadeView($view) )
+		{
+			string $collectionUI = hypershadeCollectionUIName( $view );
+			$filter = collectionUIAdvancedFilter( $collectionUI );
+		}
+		else
+		{
+			$filter = `editor -query -filter $view`;
+		}
+		
+		$enable = 0;
+		if ("" != $filter && "0" != $filter) {
+			$enable = 1;
+		} else {
+			if (`outlinerEditor -exists $view`) {
+				$filter = `outlinerEditor -query -attrFilter $view`;
+				if ("" != $filter && "0" != $filter) {
+					$enable = 1;
+				}
+			}
+		}
+		//
+		//	Get the menu item and set its enable state.
+		//
+		$menuItem = filterUIGetInvertFilterMenuItem($menu);
+		if ("" != $menuItem) {
+			menuItem -edit -enable $enable $menuItem;
+		}
+
+		//
+		//	Determine whether the "Attributes" sub menu item should be
+		//	enabled.  If view is currently listing attributes then enable
+		//	the "Attributes" sub menu, disable it otherwise.
+		//
+		$enable = 0;
+		if (`outlinerEditor -exists $view`
+			&& `outlinerEditor -query -showAttributes $view`) {
+			$enable = 1;
+		}
+		//
+		//	Get the menu item and set its enable state.
+		//
+		$menuItem = filterUIGetAttributeMenu($menu);
+		if ("" != $menuItem) {
+			menuItem -edit -enable $enable $menuItem;
+		}
+		
+		//
+		//	Determine whether the "Select Attributes..." menu item should be 
+		//	enabled.  If there are objects in the editor's main list, enable it,
+		//  else disable it.
+		//	If the editor is not showing attributes, disable it regardless. (Bug #325453)
+		//
+		if ( $enable ) {
+			//
+			//	Get the editor's selection connection.  If the editor doesn't
+			//	have one then check the active list.
+			//
+			$selectionConnection = `editor -query -mainListConnection $view`;
+			
+			if ("" == $selectionConnection) {
+				//
+				//	Editor does not have a selection connection, assume it is
+				//	using the active list.
+				//
+				$selectionConnection = "activeList";
+			}
+			$selectionList = `selectionConnection 
+				-query -object $selectionConnection`;
+			
+			int $listSize = `size($selectionList)`;	
+			$enable = ( $listSize > 0 );
+		}
+
+		//	Get the menu item and set its enable state.
+		//
+		$menuItem = filterUIGetSelectAttributesMenuItem($menu);
+		if ("" != $menuItem) {
+			menuItem -edit -enable $enable $menuItem;
+		}
+	} else if (`channelBox -exists $view`) {
+		//
+		//	Determine whether the "Show Selected Type(s)" menu item should be 
+		//	enabled.  If there is a selection then enable it, otherwise 
+		//	disable it.
+		//
+		string $channelAttrs[] = `selectedChannelBoxAttributes`;
+
+		//	Get the menu item and set it's enable state.
+		//
+		$menuItem = filterUIGetFilterSelectionMenuItem($menu);
+		if ("" != $menuItem) {
+			menuItem -edit -enable `size($channelAttrs)` $menuItem;
+		}
+		
+		//
+		//	Determine whether the "Invert Shown" menu item should be
+		//	enabled.  If there is a filter active on the view then it 
+		//	is enabled, otherwise it is disabled.
+		//
+		string $filter = `channelBox -query -attrFilter $view`;
+		$enable = 0;
+		if ("" != $filter && "0" != $filter) {
+			$enable = 1;
+		}
+		//
+		//	Get the menu item and set it's enable state.
+		//
+		$menuItem = filterUIGetInvertFilterMenuItem($menu);
+		if ("" != $menuItem) {
+			menuItem -edit -enable $enable $menuItem;
+		}
+
+		//  We always show the attributes menu in the channel box.
+		//
+		$menuItem = filterUIGetAttributeMenu($menu);
+		if ("" != $menuItem) {
+			menuItem -edit -enable 1 $menuItem;
+		}
+
+		//	Determine whether the "Select Attributes..." menu item should be 
+		//	enabled.  If there are objects in the editor's main list, enable it,
+		//  else disable it.
+		//
+		$selectionList = `channelBox -q -mainObjectList $view`;
+		int $listSize = `size($selectionList)`;	
+		$enable = ( $listSize > 0 );
+
+		//	Get the menu item and set its enable state.
+		//
+		$menuItem = filterUIGetSelectAttributesMenuItem($menu);
+		if ("" != $menuItem) {
+			menuItem -edit -enable $enable $menuItem;
+		}
+	}
+
+	//
+	//  Set the state of the Auxiliar Nodes checkbox.
+	//
+	setParent -m $menu;
+	if (`menuItem -exists showAuxNodesItem`) {
+		menuItem -e -checkBox `optionVar -q "minorNodeTypesDisplay"` showAuxNodesItem;
+	}
+	
+	return $result;
+}
+
+global proc int filterUIShowObjectFilterMenu(string $view, string $menu)
+//
+//	Description:
+//		This procedure is called when the menu of object filters is 
+//		about to be shown.  It may be necessary to create the menu items 
+//		at this time.
+//
+//	Arguments:
+//		view - The view.
+//
+//		menu - The object filter menu.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	int $result = 1;
+	
+	if (0 == `menu -query -numberOfItems $menu`) {
+		$result = filterUICreateObjectFilterMenuItems($view, $menu);
+        filterUIRestoreSavedSettings($view, $menu);
+	}
+	
+	return $result;
+}
+
+global proc int filterUIShowAttributeFilterMenu(string $view, string $menu)
+//
+//	Description:
+//		This procedure is called when the menu of attribute filters is 
+//		about to be shown.  It may be necessary to create the menu items 
+//		at this time.
+//
+//	Arguments:
+//		view - The view.
+//
+//		menu - The attribute filter menu.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	int $result = 1;
+	
+	if (0 == `menu -query -numberOfItems $menu`) {
+		$result = filterUICreateAttributeFilterMenuItems($view, $menu);
+		filterUIRestoreSavedSettings($view, $menu);
+	}
+	
+	return $result;
+}
+
+global proc int filterUIHandleField(
+	string $view,
+	string $textField)
+//
+//	Description:
+//		This procedure is called when the user changes the value of the
+//		filter field.
+//
+//	Arguments:
+//		view      - The view.
+//
+//		textField - The filter regular expression field.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	int $result = 0;
+	
+	//	Apply the regular expression filter.
+	//
+	$result = filterUIApplyFilter($view, "", "", true);
+	
+	return $result;
+}
+
+global proc int filterUIFilterSelection(
+	string $view,
+	string $saveFilterMenuItem)
+//
+//	Description:
+//		This procedure is called when the user selects the "Filter Selection"
+//		item from the filter menu.
+//
+//		Determine the current selection and apply a filter that will show
+//		all objects that match the type of the selected objects.
+//
+//		If the view is capable of displaying attributes in a meaningful way,
+//		for example the Outliner, then determine the selected attributes 
+//		and apply an attribute filter that will show these attributes.
+//
+//		Enable the "Save Filter" menu item.
+//
+//	Arguments:
+//		view               - The view.
+//
+//		saveFilterMenuItem - The "Save Filter" menu item.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	int $result = 1;
+	int    $objectIndex = 0, $attributeIndex = 0;
+	
+	//	Check to see what is selected, ie. object(s) or attribute(s)
+	//	or both.
+
+	string $objects[], $attributes[];
+	if (`editor -exists $view`) {
+		string $selectionConnection, $selectionList[], $selectionItem;
+		$selectionConnection = `editor -query -selectionConnection $view`;
+		
+		if ("" == $selectionConnection) {
+			//
+			//	Editor does not have a selection connection, assume it is
+			//	using the active list.
+			//
+			$selectionConnection = "activeList";
+		}
+		$selectionList = `selectionConnection 
+			-query -object $selectionConnection`;
+		
+		string $tokens[];
+		string $child, $children[];
+		int    $numberOfTokens;
+
+		for ($selectionItem in $selectionList) {
+			//
+			//	Parse the selection item to determine if it's an object
+			//	or an attribute.  Note that an attribute will be of the
+			//	form "object.attribute" so just test for the presence of
+			//	a ".".
+			//
+			$numberOfTokens = tokenize($selectionItem, ".", $tokens);
+
+			if (1 == $numberOfTokens) {
+				//
+				//	Object selected.
+				//
+				if ("transform" == objectType($selectionItem)) {
+					//
+					//	Ignore transforms and get the object(s) underneath
+					//	it instead.
+					//
+					$children = `listRelatives -shapes $selectionItem`;
+					if (0 < size($children)) {
+						for ($child in $children) {
+							$objects[$objectIndex++] = objectType($child); 
+						}
+					}
+				} else {
+					$objects[$objectIndex++] = objectType($selectionItem);
+				}
+			} else {
+				//
+				//	Attribute selected.  We do something special for characters
+				//  and clips since selection connections for characters and clips
+				//  relate to the driven attribute, not the attribute on the character.
+				//
+				if ("character" == nodeType($selectionItem)) {
+					$tmpAttr = $tokens[1];
+					clear $tokens;
+					$numberOfTokens = tokenize($tmpAttr, "_", $tokens);
+					if (1 == $numberOfTokens) {
+						$tokens[1] = $tmpAttr;
+					}
+					$attributes[$attributeIndex++] = $tokens[1];					
+				} else if ("clipLibrary" == nodeType($selectionItem) &&
+						   $numberOfTokens > 2) {
+					string $buffer[];
+					string $characterMember = characterMemberForClipChannel($selectionItem);
+					$numberOfTokens = tokenize($characterMember,".", $buffer);
+					if (2 == $numberOfTokens) {
+						$tokens[1] = $buffer[1];
+					}
+					$attributes[$attributeIndex++] = $tokens[1];					
+				} else {
+					//
+					//	The attribute is the second token.
+					//
+					$attributes[$attributeIndex++] = $tokens[1];
+				}
+			}
+		}
+		
+		filterUIUpdateFilterSelection( $view, $objects, $attributes );
+	} else if (`channelBox -exists $view`) {
+		string $plugs[] = `selectedChannelBoxPlugs`;
+		for ($plug in $plugs) {
+			string $longName[] = `listAttr $plug`;
+			$attributes[$attributeIndex++] = $longName[0];
+		}
+	}
+		
+	return $result;
+}
+
+global proc filterUIUpdateFilterSelection( 
+	string $view,
+	string $objects[], string $attributes[] )
+//
+//	Description:
+//		This used to be part of filterUIFilterSelection; now it is shared
+//		by filterUISelectAttributes.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIObjectSelectionFilterList[];
+	global string $gFilterUIAttributeSelectionFilterList[];
+
+	string $objectFilter, $attributeFilter;
+	
+	if ( size( $objects ) > 0 ) {
+		$objects = AWRemoveDuplicateStringsFromStringArray($objects);
+		
+		$objectFilter = `itemFilter -byType $objects[0]`;
+		int $objectIndex;
+		for ($objectIndex = 1; $objectIndex < size($objects); 
+			 $objectIndex++) {
+			itemFilter -edit -byType $objects[$objectIndex] $objectFilter;
+		}
+	}
+	if ( size( $attributes ) > 0 ) {
+		string $tempFilters[];
+		int    $numberOfAttributes = 0;
+		
+		$attributes = AWRemoveDuplicateStringsFromStringArray($attributes);
+		$numberOfAttributes = size($attributes);
+		
+		//	Create filters for each selected attribute.
+		//
+		int $attributeIndex;
+		for ($attributeIndex = 0; 
+			 $attributeIndex < $numberOfAttributes;
+			 $attributeIndex++) {
+			$tempFilters[$attributeIndex]
+				= `itemFilterAttr -byName $attributes[$attributeIndex]`;
+		}
+		
+		//	Create a union of all the selected attribute filters.
+		//
+		$attributeFilter = filterUIGetUnionOfFilters($tempFilters);
+		
+		//	Delete all the temporary filters.
+		//
+		for ($attributeIndex = 0; 
+			 $attributeIndex < $numberOfAttributes;
+			 $attributeIndex++) {
+			filterUIDebugTrace ("Deleting temporary attribute filter '" + $tempFilters[$attributeIndex] + "'\n");
+			delete $tempFilters[$attributeIndex];
+		}
+	}
+	
+	if ("" != $objectFilter || "" != $attributeFilter) {
+		//
+		//	Save a reference to the selection filters.
+		//
+		int $index, $numberOfViews = size($gFilterUIViewList);
+		for ($index = 0; $index < $numberOfViews; $index++) {
+			if ($view == $gFilterUIViewList[$index]) {
+				//
+				//	Delete the previous filters.
+				//
+				if ("" != $gFilterUIObjectSelectionFilterList[$index]) {
+					delete $gFilterUIObjectSelectionFilterList[$index];
+				}
+				if ("" != $gFilterUIAttributeSelectionFilterList[$index]) {
+					delete $gFilterUIAttributeSelectionFilterList[$index];
+				}
+				
+				//
+				//	Now save the new filters.
+				//
+				$gFilterUIObjectSelectionFilterList[$index]
+					= $objectFilter;
+				$gFilterUIAttributeSelectionFilterList[$index]
+					= $attributeFilter;
+				
+				break;
+			}
+		}
+		
+		//
+		//	Note that an object selection filter replaces any current
+		//	object filter so get the object filter menus and make sure
+		//	all the item check boxes are turned off.
+		//
+		//	Same goes for the attribute filters.
+		// 
+		$index = 0;
+		string $filterMenu, $filterMenus[];
+		string $menu = filterUIGetMenu($view);
+		string $popupMenu = filterUIGetPopupMenu($view);
+		if ("" != $menu) {
+			$filterMenu = filterUIGetObjectMenu($menu);
+			if ("" != $filterMenu && "" != $objectFilter) {
+				$filterMenus[$index++] = $filterMenu;
+			}
+			$filterMenu = filterUIGetAttributeMenu($menu);
+			if ("" != $filterMenu && "" != $attributeFilter) {
+				$filterMenus[$index++] = $filterMenu;
+			}
+		}
+		if ("" != $popupMenu) {
+			$filterMenu = filterUIGetObjectMenu($popupMenu);
+			if ("" != $filterMenu && "" != $objectFilter) {
+				$filterMenus[$index++] = $filterMenu;
+			}
+			$filterMenu = filterUIGetAttributeMenu($popupMenu);
+			if ("" != $filterMenu && "" != $attributeFilter) {
+				$filterMenus[$index++] = $filterMenu;
+			}
+		}
+		
+		//	Loop through object and/or attribute filter menus and turn off
+		//	all check box menu items.
+		//
+		string $menuItem, $menuItems[];
+		for ($filterMenu in $filterMenus) {
+			$menuItems = `menu -query -itemArray $filterMenu`;
+			for ($menuItem in $menuItems) {
+				if (`menuItem -query -isCheckBox $menuItem` &&
+					`menuItem -query -checkBox $menuItem`) {
+					menuItem -edit -checkBox false $menuItem;
+				}
+			}
+		}
+		
+		//
+		//	Now apply the filters.
+		//
+		filterUIApplyFilter($view, $objectFilter, $attributeFilter, true);
+		
+		//	Since there is now an active selection filter (object,
+		//	attribute, or both) the "Save Filter" menu item should become
+		//	enabled.
+		//
+		string $menu;
+		$menu = filterUIGetMenu($view);
+		string $saveFilterMenuItem;
+		if ("" != $menu) {
+			$saveFilterMenuItem = filterUIGetSaveFilterMenuItem($menu);
+			menuItem -edit -enable 1 $saveFilterMenuItem;
+		}
+		$menu = filterUIGetPopupMenu($view);
+		if ("" != $menu) {
+			$saveFilterMenuItem = filterUIGetSaveFilterMenuItem($menu);
+			menuItem -edit -enable 1 $saveFilterMenuItem;
+		}
+	}
+}
+
+proc createFilterUISelectAttributesCheckbox( string $attr, string $label, string $view )
+//
+//	Description:
+//		Local procedure called by filterUISelectAttributes to create an attribute checkbox.
+//		Stores the checkbox in a global list for later updates.
+//
+//	Arguments:
+//		attr				- The attribute name.
+//		label				- The checkbox label.
+//		view               	- The view.
+//
+{
+	global string $gFilterUISelectedAttributes[];
+	global string $gFilterUISelectAttributesCheckboxes[];
+	int $state = `stringArrayContains $attr $gFilterUISelectedAttributes`;
+	string $box = `checkBox -l $label -v $state -ann $attr
+			 				-onc ("filterUISelectAttributesCheckbox " + $attr + " 1 " + $view)
+			 				-ofc ("filterUISelectAttributesCheckbox " + $attr + " 0 " + $view)`;
+	$gFilterUISelectAttributesCheckboxes[ size($gFilterUISelectAttributesCheckboxes) ] = $box;
+}
+
+proc populateFilterUISelectedAttributes( string $view )
+//
+//	Description:
+//		Local procedure to initialise the Selected Attributes list with
+//		the current attribute filter information.
+//
+//	Arguments:
+//		view               	- The view.
+//
+{
+	global string $gFilterUISelectedAttributes[];
+
+	$gFilterUISelectedAttributes = {};
+	string $attrSelectionFilter;
+	if ( `outlinerEditor -exists $view` ) {
+		$attrSelectionFilter = `outlinerEditor -query -attrFilter $view`;
+	}
+	else if ( `channelBox -exists $view` ) {
+		$attrSelectionFilter = `channelBox -query -attrFilter $view`;
+	}
+	if ( "" != $attrSelectionFilter && "0" != $attrSelectionFilter ) {
+		string $filter, $filters[];
+		$filters = filterUIExpandFilter( $attrSelectionFilter, {} );
+		for ( $filter in $filters ) {
+			string $name = `itemFilterAttr -query -byName $filter`;
+			$gFilterUISelectedAttributes[ size($gFilterUISelectedAttributes) ] = $name;
+		}
+	}
+	$gFilterUISelectedAttributes = AWRemoveDuplicateStringsFromStringArray( $gFilterUISelectedAttributes );
+}
+
+global proc filterUIUpdateSelectAttributesCheckboxes( string $view )
+//
+//	Description:
+//		Update the state of the Selected Attributes window's checkboxes
+//		to reflect the attribute filter currently in effect.
+//
+//	Arguments:
+//		view               	- The view.
+//
+{
+	global string $gFilterUISelectedAttributes[];
+	global string $gFilterUISelectAttributesCheckboxes[];
+
+	// populate the list of selected attributes from any existing filter
+	populateFilterUISelectedAttributes( $view );
+
+	string $box;
+	for ( $box in $gFilterUISelectAttributesCheckboxes ) {
+		if ( !`checkBox -ex $box` ) {
+			continue;
+		}
+		string $attr = `checkBox -q -ann $box`;
+		int $state = `stringArrayContains $attr $gFilterUISelectedAttributes`;
+		checkBox -e -v $state $box;
+	}
+}
+	
+global proc filterUISelectAttributes(string $view)
+//
+//	Description:
+//		This procedure is called when the user selects the "Select Attributes..."
+//		item from the filter menu.
+//
+//		A window is opened that contains checkboxes for the standard
+//		translate/rotate/scale attributes, plus any other animated attributes
+// 		on the objects in the editor's main list.
+//
+//		The user can then use these checkboxes to set up attribute name-based
+//		filters, which are treated exactly as if they had been created by
+//		selecting attributes and using the "Filter Selection" menu item - meaning
+//		the user can save the preset with the "Create Entry..." menu item.
+//
+//	Arguments:
+//		view               - The view.
+//
+{
+	global string $gFilterUISelectedAttributes[];
+	global string $gFilterUISelectAttributesCheckboxes[];
+
+	// delete the window if it already exists
+	if ( `window -ex filterUISelectAttributesWindow` == true ) {
+		deleteUI filterUISelectAttributesWindow;
+		$gFilterUISelectAttributesCheckboxes = {};
+	}
+
+	// populate the list of selected attributes from any existing filter
+	populateFilterUISelectedAttributes( $view );
+	
+	// create the window
+	window -title (uiRes("m_filterUI.kSelectAttributesTitle")) -mxb true -mnb true -s true filterUISelectAttributesWindow;
+
+	// create the controls	
+	string $form = `formLayout`;
+		
+	// TRS checkboxes
+	string $trs = `columnLayout`;
+			rowLayout -nc 4 -cw4 70 30 30 30;
+				text -l "";
+				text -l "X";
+				text -l "Y";
+				text -l "Z";
+			setParent ..;
+			rowLayout -nc 4 -cw4 70 30 30 30;
+				text -l (uiRes("m_filterUI.kTranslate"));
+				createFilterUISelectAttributesCheckbox( "translateX", "", $view );
+				createFilterUISelectAttributesCheckbox( "translateY", "", $view );
+				createFilterUISelectAttributesCheckbox( "translateZ", "", $view );
+			setParent ..;
+			rowLayout -nc 4 -cw4 70 30 30 30;
+				text -l (uiRes("m_filterUI.kRotate"));
+				createFilterUISelectAttributesCheckbox( "rotateX", "", $view );
+				createFilterUISelectAttributesCheckbox( "rotateY", "", $view );
+				createFilterUISelectAttributesCheckbox( "rotateZ", "", $view );
+			setParent ..;
+			rowLayout -nc 4 -cw4 70 30 30 30;
+				text -l (uiRes("m_filterUI.kScale"));
+				createFilterUISelectAttributesCheckbox( "scaleX", "", $view );
+				createFilterUISelectAttributesCheckbox( "scaleY", "", $view );
+				createFilterUISelectAttributesCheckbox( "scaleZ", "", $view );
+			setParent ..;
+		setParent ..;
+	
+	// scroll layout for other attributes
+	string $scroll = `scrollLayout -childResizable true`;
+		columnLayout;
+
+			// don't add attributes handled above
+			string $done[] = { "translateX", "translateY", "translateZ", 
+							   "rotateX", "rotateY", "rotateZ", 
+							   "scaleX", "scaleY", "scaleZ" };
+
+			// loop over the objects in the editor's main list
+			string $objects[];
+			if ( `editor -exists $view` )
+			{
+				string $conn = `editor -query -mainListConnection $view`;
+				if ( "" == $conn )
+				{
+					// editor does not have a selection connection - assume it is using the active list
+					$conn = "activeList";
+				}
+				$objects = `selectionConnection -q -object $conn`;
+			}
+			else if ( `channelBox -exists $view` )
+			{
+				$objects = `channelBox -q -mainObjectList $view`;
+			}
+			for ( $object in $objects )
+			{
+				// loop over the object's attributes
+				string $attrs[] = `listAttr -m -c $object`;
+				for ( $attr in $attrs )
+				{
+					// we're only interested in attributes with an upstream connection
+					// which are in some sense therefore animated
+					string $name = $object + "." + $attr;
+					int $id;
+					catchQuiet( $id = `connectionInfo -id $name` );
+					if ( $id )
+					{
+						// use the leaf attribute name
+						string $leafs[] = `listAttr -lf $name`;
+						string $leaf = $leafs[0];
+						// strip any remaining index
+						string $tokens[];
+						tokenize $leaf "[" $tokens;
+						$attr = $tokens[0];
+						// only add each attribute name once
+						if ( `stringArrayContains $attr $done` )
+							continue;
+						$done[ size($done) ] = $attr;
+						// use the 'nice' UI name for the checkbox
+						string $niceName = "";
+						catchQuiet( $niceName = `attributeQuery -niceName -node $object $attr` );
+						if ( size($niceName) > 0 )
+						{
+							createFilterUISelectAttributesCheckbox( $attr, $niceName, $view );
+						}
+					}
+				}
+			}
+		setParent ..;
+	setParent ..;
+	
+	// lay out the form
+	formLayout -e
+		-af $trs "top" 0
+		-af $trs "left" 10
+		-af $trs "right" 0
+		-ac $scroll "top" 10 $trs
+		-af $scroll "bottom" 0
+		-af $scroll "left" 10
+		-af $scroll "right" 0
+		$form;
+	
+	// finally show the window
+	showWindow filterUISelectAttributesWindow;
+}
+
+global proc filterUISelectAttributesCheckbox(string $attr, int $state, string $view)
+//
+//	Description:
+//		This procedure is called from the checkboxes created by filterUISelectAttributes.
+//
+//		The list of filtered attributes is updated according to the new state of the checkbox,
+//		then filterUIUpdateFilterSelection is called to update the filter from the attribute list.
+//
+//		If the list is empty, instead calls filterUIClearFilter to clear the filter.
+//
+//	Arguments:
+//		attr				- The attribute name to add or remove from the list.
+//		state				- The checkbox state - 1 for 'add to list', 0 for 'remove from list'
+//		view                - The view.
+//
+{
+	global string $gFilterUISelectedAttributes[];
+
+	string $attributes[];
+	$attributes[0] = $attr;
+	
+	if ( $state ) {
+		$gFilterUISelectedAttributes = AWAppendStringsToStringArray( $attributes, $gFilterUISelectedAttributes );
+	} else {
+		$gFilterUISelectedAttributes = stringArrayRemove( $attributes, $gFilterUISelectedAttributes );
+	}
+	
+	$gFilterUISelectedAttributes = AWRemoveDuplicateStringsFromStringArray( $gFilterUISelectedAttributes );
+	
+	if ( size($gFilterUISelectedAttributes) > 0 ) {
+		string $objects[] = {};
+		filterUIUpdateFilterSelection( $view, $objects, $gFilterUISelectedAttributes );
+	} else {
+		filterUIClearFilter $view;
+	}	
+}
+
+global proc int filterUIInvertFilter(string $view, string $menuItem)
+//
+//	Description:
+//		This procedure is called when the user selects the "Invert Filter"
+//		item from the filter menu.
+//
+//		Invert the current filter and apply it to the view.
+//
+//	Arguments:
+//		view     - The view.
+//
+//		menuItem - The "Invert Filter" menu item.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	int $result = 0;
+	
+	//
+	//	Update the state of the invert filter menu item in the other menu
+	//	(if there is one).
+	//
+	string $menu = filterUIGetMenu($view);
+	string $popupMenu = filterUIGetPopupMenu($view);
+	if ("" != $menu && "" != $popupMenu) {
+		//
+		//	Assume that the invert filter item from the menu bar menu was
+		//	selected.  If that is not the case, then simply swap the src
+		//	and dst menu items.  Then copy the state of the src menu item
+		//	to the dst menu item.
+		//
+		string $srcMenuItem = filterUIGetInvertFilterMenuItem($menu);
+		string $dstMenuItem = filterUIGetInvertFilterMenuItem($popupMenu);
+		
+		if ($menuItem == $dstMenuItem) {
+			$menuItem = $dstMenuItem;
+			$dstMenuItem = $srcMenuItem;
+			$srcMenuItem = $menuItem;
+		}
+		menuItem -edit 
+			-checkBox `menuItem -query -checkBox $srcMenuItem`
+			$dstMenuItem;
+	}
+	
+	$result = filterUIApplyFilter($view, "", "", true);
+	
+	return $result;
+}
+
+global proc int filterUIClearNonMenuFilter(string $view)
+{
+	//  Clear the value of the regular expression filter field.
+	//
+	string $field = filterUIGetField($view);
+	if ("" != $field) {
+		textField -edit -text "" $field;
+	}
+
+	//	Clear the object and attribute selection filters.
+	//
+	//	NOTE:  Should i be getting references to the previous selection
+	//	filters so that they can be deleted?
+	//
+	string $oldObjectSelectionFilter, $oldAttributeSelectionFilter;
+	$oldObjectSelectionFilter = filterUIGetObjectSelectionFilter($view);
+	$oldAttributeSelectionFilter = filterUIGetAttributeSelectionFilter($view);
+	filterUISetObjectSelectionFilter($view, "");
+	filterUISetAttributeSelectionFilter($view, "");
+	string $menu = filterUIGetMenu($view);	
+	string $popupMenu = filterUIGetPopupMenu($view);
+
+	//	Disable the "Save Filter" menu item(s) since there is no longer an
+	//	active selection filter.
+	//
+	string $saveFilterMenuItem;
+	if ("" != $menu) {
+		$saveFilterMenuItem = filterUIGetSaveFilterMenuItem($menu);
+		menuItem -edit -enable 0 $saveFilterMenuItem;
+	}
+	if ("" != $popupMenu) {
+		$saveFilterMenuItem = filterUIGetSaveFilterMenuItem($popupMenu);
+		menuItem -edit -enable 0 $saveFilterMenuItem;
+	}
+	
+	if ("" != $oldObjectSelectionFilter &&
+		`itemFilter -exists $oldObjectSelectionFilter`) {
+		delete $oldObjectSelectionFilter;
+	}
+	if ("" != $oldAttributeSelectionFilter &&
+		`itemFilter -exists $oldAttributeSelectionFilter`) {
+		delete $oldAttributeSelectionFilter;
+	}
+
+	return 1;
+}
+
+global proc int filterUIClearFilter(string $view)
+//
+//	Description:
+//		Clear the filter applied to the view.  This includes any and all
+//		object filters, attribute filters and regular expression filter.
+//		However, it does not clear the implicit filter if one is attached.
+//
+//	Arguments:
+//		view - The view.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	int $result = 0;
+		
+	//	Turn off all object and attribute filters.
+	//
+	//	First, get the object and attribute filter menus from the menu 
+	//	bar menu and the popup menu.
+	//
+	string $menu = filterUIGetMenu($view);
+	string $popupMenu = filterUIGetPopupMenu($view);
+	string $filterMenu, $filterMenus[];
+	int    $index = 0;
+	
+	//	If the menu exists then retrieve its object and attribute filter
+	//	menu.
+	//
+	if ("" != $menu) {
+		$filterMenu = filterUIGetObjectMenu($menu);
+		if ("" != $filterMenu) {
+			$filterMenus[$index++] = $filterMenu;
+		}
+		$filterMenu = filterUIGetAttributeMenu($menu);
+		if ("" != $filterMenu) {
+			$filterMenus[$index++] = $filterMenu;
+		}
+	}
+	if ("" != $popupMenu) {
+		$filterMenu = filterUIGetObjectMenu($popupMenu);
+		if ("" != $filterMenu) {
+			$filterMenus[$index++] = $filterMenu;
+		}
+		$filterMenu = filterUIGetAttributeMenu($popupMenu);
+		if ("" != $filterMenu) {
+			$filterMenus[$index++] = $filterMenu;
+		}
+	}
+	
+	//	Loop through each object and attribute filter menu and turn off all
+	//	check box menu items.
+	//
+	string $menuItem, $menuItems[];
+	for ($filterMenu in $filterMenus) {
+		$menuItems = `menu -query -itemArray $filterMenu`;
+		for ($menuItem in $menuItems) {
+			if (`menuItem -query -isCheckBox $menuItem` &&
+				`menuItem -query -checkBox $menuItem`) {
+				menuItem -edit -checkBox 0 $menuItem;
+			}
+		}
+	}
+	
+	//	Clear the value of the regular expression filter field.
+	//
+	string $field = filterUIGetField($view);
+	if ("" != $field) {
+		textField -edit -text "" $field;
+	}
+	
+	//	Clear the object and attribute selection filters.
+	//
+	//	NOTE:  Should i be getting references to the previous selection
+	//	filters so that they can be deleted?
+	//
+	string $oldObjectSelectionFilter, $oldAttributeSelectionFilter;
+	$oldObjectSelectionFilter = filterUIGetObjectSelectionFilter($view);
+	$oldAttributeSelectionFilter = filterUIGetAttributeSelectionFilter($view);
+	filterUISetObjectSelectionFilter($view, "");
+	filterUISetAttributeSelectionFilter($view, "");
+	
+	//	Disable the "Save Filter" menu item(s) since there is no longer an
+	//	active selection filter.
+	//
+	string $saveFilterMenuItem;
+	if ("" != $menu) {
+		$saveFilterMenuItem = filterUIGetSaveFilterMenuItem($menu);
+		menuItem -edit -enable 0 $saveFilterMenuItem;
+	}
+	if ("" != $popupMenu) {
+		$saveFilterMenuItem = filterUIGetSaveFilterMenuItem($popupMenu);
+		menuItem -edit -enable 0 $saveFilterMenuItem;
+	}
+	
+	$result = filterUIApplyFilter($view, "", "", true);
+	
+	if ("" != $oldObjectSelectionFilter &&
+		`itemFilter -exists $oldObjectSelectionFilter`) {
+		delete $oldObjectSelectionFilter;
+	}
+	if ("" != $oldAttributeSelectionFilter &&
+		`itemFilter -exists $oldAttributeSelectionFilter`) {
+		delete $oldAttributeSelectionFilter;
+	}
+	
+	// If the Select Attributes window is open, update it.
+	//	
+	if ( `window -ex filterUISelectAttributesWindow` == true ) {
+		filterUIUpdateSelectAttributesCheckboxes( $view );
+	}
+
+	return $result;
+}
+
+global proc int filterUIShowSaveFilterWindow(
+	string $view,
+	string $saveFilterMenuItem)
+//
+//	Description:
+//		This procedure is called when the user selects the "Save Filter..."
+//		item from the filter menu.
+//
+//		Create a window that prompts the user for a name to save the object
+//		and/or attribute filter under.
+//
+//		Note that the object filter information is saved separately from the
+//		attibute filter information.
+//
+//		Note also that the regular expression value is not saved nor is the
+//		state of the object and attribute filter menus.
+//
+//		Disable the "Save Filter..." menu item.
+//
+//	Arguments:
+//		view               - The view.
+//
+//		saveFilterMenuItem - The "Save Filter..." menu item.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	int $result = 1;
+	
+	if (`window -exists SaveFilterWindow`) {
+		deleteUI -window SaveFilterWindow;
+	}
+	
+	//	Note that the size of the window is dependent on whether there
+	//	is an object filter, attribute filter, or both to be saved.
+	//
+	//	The following removes the size preference for the window but retains
+	//	the position preference.
+	//
+	int $position[], $setPosition = 0;
+	if (`windowPref -exists SaveFilterWindow`) {
+		$position = `windowPref -query -topLeftCorner SaveFilterWindow`;
+		windowPref -remove SaveFilterWindow;
+		$setPosition = 1;
+	}
+
+	//	Create the window and top level controls.
+	//
+	string $window = `window -title (uiRes("m_filterUI.kCreateEntryTitle")) SaveFilterWindow`;
+	if ($setPosition) {
+		window -edit -topLeftCorner $position[0] $position[1] $window;
+	}
+	string $form = `formLayout`;
+	string $column = `columnLayout -adjustableColumn true 
+		-columnOffset "both" 10 -rowSpacing 10`;
+	string $objectNameField = "NULL";
+	string $objectSaveCheckBox = "NULL";
+	string $attributeNameField = "NULL";
+	string $attributeSaveCheckBox = "NULL";
+	string $objectSelectionFilter = filterUIGetObjectSelectionFilter($view);
+	string $attrSelectionFilter = filterUIGetAttributeSelectionFilter($view);
+
+	string $entryName = (uiRes("m_filterUI.kEntryName"));
+	if ("" != $objectSelectionFilter) {
+		//
+		//	Create controls for saving an object filter.
+		//	
+		setParent $column;
+		
+		string $types[];
+		int    $index;
+		$types = `itemFilter -query -byType $objectSelectionFilter`;
+		
+		frameLayout -label (uiRes("m_filterUI.kObjectsTitle")) 
+			;
+		columnLayout -adjustableColumn true -columnAlign "left"
+			-columnOffset "both" 10 -rowSpacing 5;
+		text -label (uiRes("m_filterUI.kSaveEntryObjects"));
+
+		columnLayout -adjustableColumn true -columnAlign "left" 
+			-columnOffset "left" 20;
+		//
+		//	List all the object types that are selected.
+		//
+		for ($index = 0; $index < size($types); $index++) {
+			text -label $types[$index];
+		}
+		
+		setParent ..;
+		
+		rowLayout -numberOfColumns 2 
+			-columnWidth2 100 220 -columnAttach2 "left" "both";
+		$objectSaveCheckBox = `checkBox -value 1 -label $entryName`;
+		$objectNameField = `textField`;
+		setParent ..;
+		separator -style "none";
+	}
+
+	if ("" != $attrSelectionFilter) {
+		//
+		//	Create controls for saving an attribute filter.
+		//	
+		setParent $column;
+		
+		frameLayout -label (uiRes("m_filterUI.kAttributesTitle")) 
+			;
+		columnLayout -adjustableColumn true -columnAlign "left"
+			-columnOffset "both" 10 -rowSpacing 5;
+		text -label (uiRes("m_filterUI.kSaveEntry"));
+
+		columnLayout -adjustableColumn true -columnAlign "left" 
+			-columnOffset "left" 20;
+
+		//
+		//	List all the attributes that are selected.
+		//
+		string $filter, $filters[];
+		$filters = filterUIExpandFilter($attrSelectionFilter, {});
+		for ($filter in $filters) {
+			text -label `itemFilterAttr -query -byName $filter`;
+		}
+		setParent ..;
+		
+		rowLayout -numberOfColumns 2 
+			-columnWidth2 100 220 -columnAttach2 "left" "both";
+		$attributeSaveCheckBox = `checkBox -value 1 -label $entryName`;
+		$attributeNameField = `textField`;
+		
+		setParent ..;
+		separator -style "none";
+	}
+	
+	setParent $form;
+	
+	string $saveButton = `button -label (uiRes("m_filterUI.kSave"))`;
+	string $cancelButton = `button -label (uiRes("m_filterUI.kCancel"))`;
+
+	//	Set up the attachments.
+	//
+	formLayout -edit
+		-attachForm     $column       top    5
+		-attachForm     $column       left   0
+		-attachControl  $column       bottom 5 $saveButton
+		-attachForm     $column       right  0
+		-attachNone     $saveButton   top
+		-attachForm     $saveButton   left   5
+		-attachForm     $saveButton   bottom 5
+		-attachPosition $saveButton   right  2 50
+		-attachNone     $cancelButton top
+		-attachPosition $cancelButton left   2 50
+		-attachForm     $cancelButton bottom 5
+		-attachForm     $cancelButton right  5
+		$form;
+
+	//	Add callbacks to the save check boxes and name fields so that 
+	//	the "Save" button can be enabled/disabled depending on whether 
+	//	a name is specified and valid.
+	//
+	string $updateCommand = ("filterUIUpdateSaveFilterWindow " + $saveButton
+			+ " " + $objectSaveCheckBox
+			+ " " + $objectNameField
+			+ " " + $attributeSaveCheckBox
+			+ " " + $attributeNameField);
+			
+	if ("" != $objectSelectionFilter) {
+		checkBox -edit -changeCommand $updateCommand $objectSaveCheckBox;
+		textField -edit -changeCommand $updateCommand $objectNameField;
+	}
+	if ("" != $attrSelectionFilter) {
+		checkBox -edit -changeCommand $updateCommand $attributeSaveCheckBox;
+		textField -edit -changeCommand $updateCommand $attributeNameField;
+	}
+	
+	button -edit
+		-command ("filterUISaveFilter " + $view
+			+ " " + $window
+			+ " " + $saveButton
+			+ " " + $objectSaveCheckBox
+			+ " " + $objectNameField
+			+ " " + $attributeSaveCheckBox
+			+ " " + $attributeNameField)
+		$saveButton;
+
+	button -edit
+		-command ("deleteUI " + $window)
+		$cancelButton;
+
+	showWindow $window;
+	
+	return $result;
+}
+
+global proc int filterUIShowDeleteFilterWindow(string $deleteFilterMenuItem)
+//
+//	Description:
+//		This procedure is called when the user selects the "Delete Filter..."
+//		item from the filter menu.
+//
+//		Create a window that allows the user to select the object and
+//		attribute filters to delete.
+//
+//	Arguments:
+//		deleteFilterMenuItem - The "Delete Filter..." menu item.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	if (`window -exists DeleteFilterWindow`) {
+		deleteUI -window DeleteFilterWindow;
+	}
+
+	//	Create a tab layout with a text scroll list in each tab.
+	//	The two text scroll lists will display the object and attribute
+	//	filters that the user may delete.
+	//
+	//	Note that the "Delete" button only deletes the filters visible
+	//	in the current tab.  The "Delete" button does not dismiss the
+	//	window so the user may switch to the other tab and continue
+	//	deleting.
+	//
+	int    $result = 1;
+
+	string $window = `window -title (uiRes("m_filterUI.kDeleteEntryTitle")) -width 220 DeleteFilterWindow`;
+	string $form = `formLayout`;
+	string $filterTabs = `tabLayout`;
+	int    $minimumNumberOfRows = 8;
+
+	string $objectFilterForm = `formLayout`;
+	string $objectFilterList = `textScrollList 
+		-allowMultiSelection true
+		-numberOfRows $minimumNumberOfRows`;
+	setParent ..;
+
+	string $attributeFilterForm = `formLayout`;
+	string $attributeFilterList = `textScrollList 
+		-allowMultiSelection true
+		-numberOfRows $minimumNumberOfRows`;
+	setParent ..;
+
+	formLayout -edit
+		-attachForm $objectFilterList top    0
+		-attachForm $objectFilterList left   0
+		-attachForm $objectFilterList bottom 0
+		-attachForm $objectFilterList right  0
+		$objectFilterForm;
+
+	formLayout -edit
+		-attachForm $attributeFilterList top    0
+		-attachForm $attributeFilterList left   0
+		-attachForm $attributeFilterList bottom 0
+		-attachForm $attributeFilterList right  0
+		$attributeFilterForm;
+
+	setParent ..;
+	string $deleteButton = `button -label (uiRes("m_filterUI.kDelete")) -enable 0`;
+	string $closeButton = `button -label (uiRes("m_filterUI.kClose"))`;
+
+	formLayout -edit
+		-attachForm     $filterTabs   top    0
+		-attachForm     $filterTabs   left   0
+		-attachControl  $filterTabs   bottom 5 $deleteButton
+		-attachForm     $filterTabs   right  0
+		-attachNone     $deleteButton top
+		-attachForm     $deleteButton left   5
+		-attachForm     $deleteButton bottom 5
+		-attachPosition $deleteButton right  2 50
+		-attachNone     $closeButton  top
+		-attachPosition $closeButton  left   2 50
+		-attachForm     $closeButton  bottom 5
+		-attachForm     $closeButton  right  5
+		$form;
+
+	//	Fill the object filter list with the names of all the 
+	//	object filters.
+	//
+	string $filter, $filters[] = filterUIGetCustomObjectFilters();
+	for ($filter in $filters) {
+		textScrollList -edit 
+			-append `filterUIGetFilterText($filter)`
+			$objectFilterList;
+	}
+
+	//	Fill the attribute filter list with the names of all the
+	//	attribute filters.
+	//
+	$filters = filterUIGetCustomAttributeFilters();
+	for ($filter in $filters) {
+		if (`itemFilter -exists $filter`) {
+			textScrollList -edit 
+				-append `filterUIGetFilterText($filter)`
+				$attributeFilterList;
+		} else {
+			filterUIDebugTrace ("Attr filter '" + $filter + "' does not exist.\n");
+		}
+	}
+	
+	//	Add callbacks to the buttons.
+	//
+	button -edit
+		-command ("filterUIDeleteFilter " + $filterTabs
+			+ " " + $objectFilterList
+			+ " " + $attributeFilterList)
+		$deleteButton;
+
+	button -edit
+		-command ("deleteUI " + $window)
+		$closeButton;
+
+	//	Set the tab labels.
+	//
+	tabLayout -edit
+		-tabLabelIndex 1 (uiRes("m_filterUI.kObjectsTab"))
+		-tabLabelIndex 2 (uiRes("m_filterUI.kAttributesTab"))
+		$filterTabs;
+
+	//	Add callbacks to filter tabs and filter lists so that the "Delete" 
+	//	button can be enabled/disabled depending on whether a filter is
+	//	selected or not.
+	//
+	string $updateCommand = ("filterUIUpdateDeleteFilterWindow " 
+			+ " " + $deleteButton + " " + $filterTabs
+			+ " " + $objectFilterList + " " + $attributeFilterList);
+	textScrollList -edit -selectCommand $updateCommand $objectFilterList;
+	textScrollList -edit -selectCommand $updateCommand $attributeFilterList;
+	tabLayout -edit -selectCommand $updateCommand $filterTabs;
+
+	showWindow $window;
+	
+	return $result;
+}
+
+global proc int filterUIUpdateSaveFilterWindow(
+	string $saveButton,
+	string $objectSaveCheckBox,
+	string $objectNameField,
+	string $attributeSaveCheckBox,
+	string $attributeNameField)
+//
+//	Description:
+//		This procedure is called as the user interacts with the 
+//		"Save Filter..." window.
+//
+//		The enable state of the "Save" button is updated to reflect the
+//		validity of the name fields.
+//
+//	Arguments:
+//		saveButton            - The "Save" button.
+//
+//		objectSaveCheckBox    - The save object filter check box.
+//
+//		objectNameField       - The object filter name field.
+//
+//		attributeSaveCheckBox - The save attribute filter check box.
+//
+//		attributeNameField    - The attribute filter name field.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	int    $result = 1;
+	int    $enableSaveFilterButton = 0;
+	int    $objectNameOkay = 0, $attributeNameOkay = 0;
+	string $name;
+	
+	if ("NULL" != $objectSaveCheckBox) {
+		//
+		//	Is the save check box for the object filter on?
+		//
+		if (`checkBox -query -value $objectSaveCheckBox`) {
+			textField -edit -enable 1 $objectNameField;
+			
+			//	Verify the object name.
+			//
+			$name = `textField -query -text $objectNameField`;
+			if (`filterUIFilterNameIsValid($name)`) {
+				$objectNameOkay = 1;
+			} else {
+				$objectNameOkay = 0;
+			}
+		} else {
+			textField -edit -enable 0 $objectNameField;
+			$objectNameOkay = 1;
+		}
+	} else {
+		$objectNameOkay = 1;
+	}
+	
+	if ("NULL" != $attributeSaveCheckBox) {
+		//
+		//	Is the save check box for the attribute filter on?
+		//
+		if (`checkBox -query -value $attributeSaveCheckBox`) {
+			textField -edit -enable 1 $attributeNameField;
+			
+			//	Verify the attribute name.
+			//
+			$name = `textField -query -text $attributeNameField`;
+			if (`filterUIFilterNameIsValid($name)`) {
+				$attributeNameOkay = 1;
+			} else {
+				$attributeNameOkay = 0;
+			}
+		} else {
+			textField -edit -enable 0 $attributeNameField;
+			$attributeNameOkay = 1;
+		}
+	} else {
+		$attributeNameOkay = 1;
+	}
+	
+	//	Enable the "Save" button if appropriate.
+	//
+//	if ($objectNameOkay && $attributeNameOkay) {
+//		$enableSaveFilterButton = 1;
+//	} else {
+//		$enableSaveFilterButton = 0;
+//	}
+//	button -edit -enable $enableSaveFilterButton $saveButton;
+	
+	return $result;
+}
+
+global proc int filterUIUpdateDeleteFilterWindow(
+	string $deleteButton,
+	string $filterTabs,
+	string $objectFilterList,
+	string $attributeFilterList)
+//
+//	Description:
+//		This procedure is called as the user interacts with the 
+//		"Delete Filter..." window.
+//
+//		The enable state of the "Delete" button is updated to reflect
+//		whether the user has selected any items to be deleted.
+//
+//	Arguments:
+//		deleteButton        - The "Delete" button.
+//
+//		filterTabs          - The tab layout containing the filter lists.
+//
+//		objectFilterList    - The object filter list.
+//
+//		attributeFilterList - The attribute filter list.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	int $result = 1;
+	
+	int $enable = 0;
+	int $numberOfSelectedItems = 0;
+
+	//	Determine if the visible list has any items selected.
+	//
+	if (1 == `tabLayout -query -selectTabIndex $filterTabs`) {
+		$numberOfSelectedItems = `textScrollList -query 
+			-numberOfSelectedItems $objectFilterList`;
+	} else {
+		$numberOfSelectedItems = `textScrollList -query 
+			-numberOfSelectedItems $attributeFilterList`;
+	}
+
+	//	Enable the button if the user has at least one item selected.
+	//
+	if (0 < $numberOfSelectedItems) {
+		$enable = 1;
+	}
+	button -edit -enable $enable $deleteButton;
+	
+	return $result;
+}
+
+global proc int filterUISaveFilter(
+	string $view,
+	string $window,
+	string $saveButton,
+	string $objectSaveCheckBox,
+	string $objectNameField,
+	string $attributeSaveCheckBox,
+	string $attributeNameField)
+//
+//	Description:
+//		Save the current selection filter.  Get the names of the object
+//		and/or attribute filter from the "Save Filter" window and add the
+//		filters to the corresponding global list of filters.
+//
+//		Also add a corresponding menu item to all of the view's filter
+//		menu.
+//
+//		If a filter name is not valid then show the user an error dialog 
+//		and disable the "Save" button.
+//	
+//	Arguments:
+//		view                  - The view.
+//
+//		window                - The "Save Filter..." window.
+//
+//		saveButton            - The "Save" button.
+//
+//		objectSaveCheckBox    - The save object filter check box.
+//
+//		objectNameField       - The object filter name field.
+//
+//		attributeSaveCheckBox - The save attribute filter check box.
+//
+//		attributeNameField    - The attribute filter name field.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	global string $gFilterUICustomObjectFilterList[];
+	global string $gFilterUICustomAttributeFilterList[];
+
+	int    $result = 0;
+
+	string $newFilter, $filterName;
+	int    $filterCount;
+	
+	//	Save the object filter.
+	//
+	if ("NULL" != $objectNameField && "NULL" != $objectSaveCheckBox
+		&& `checkBox -query -value $objectSaveCheckBox`) {
+		//
+		//	Get the name for the filter.
+		//
+		$filterName = `textField -query -text $objectNameField`;
+		
+		//	Show the user an error dialog if the name is not valid.
+		//
+		if (!`filterUIFilterNameIsValid($filterName)`) {
+			confirmDialog -parent $window 
+				-message (uiRes("m_filterUI.kInvalidObject"));
+			return $result;
+		}
+		
+		//	Get the object selection filter and apply the name to it.
+		//
+		$newFilter = filterUIGetObjectSelectionFilter($view);
+		itemFilter -edit -text $filterName $newFilter;
+		
+		//	Determine if the view is task oriented.  If so, then apply the
+		//	task categories for the view to this new filter.
+		//
+		string $proc = filterUIGetRelatedFiltersProcedure($view);
+		if ("" != $proc) {
+			string $category, $categories[] = `eval ($proc)`;
+			if (0 < size ($categories)) {
+				for ($category in $categories) {
+					itemFilter -edit -category $category $newFilter;
+				}
+			}
+		}
+
+		//
+		//  Mark the filter as a custom filter.
+		//
+		itemFilter -e -cls "user" $newFilter;
+		
+		//
+		//	Add the object filter to the global list.
+		//
+		$gFilterUICustomObjectFilterList = AWAppendStringsToStringArray(
+			{$newFilter}, $gFilterUICustomObjectFilterList);
+		
+		//
+		// Add a scriptJob for when the node are deleted through scripting.
+		// This way we will porperly update the global list and and the filterUI menu.
+		//
+		scriptJob -nodeDeleted $newFilter ("filterUIOnDeleteCB "+$newFilter);
+		
+		//	Clear the object selection filter.
+		//
+		filterUISetObjectSelectionFilter($view, "");
+		
+		//	Add a new check box menu item to each view's object menu(s).
+		//
+		$result = filterUIAddObjectFilterMenuItem($view, $newFilter);
+	}
+
+	//	Save the attribute filter.
+	//
+	if ("NULL" != $attributeNameField && "NULL" != $attributeSaveCheckBox
+		&& `checkBox -query -value $attributeSaveCheckBox`) {
+		//
+		//	Get the name for the filter.
+		//
+		$filterName = `textField -query -text $attributeNameField`;
+		
+		//	Show the user an error dialog if the name is not valid.
+		//
+		if (!`filterUIFilterNameIsValid($filterName)`) {
+			confirmDialog -parent $window
+				-message (uiRes("m_filterUI.kInvalidAttribute"));
+			return $result;
+		}
+		
+		//	Get the attribute selection filter and apply the name to it.
+		//
+		$newFilter = filterUIGetAttributeSelectionFilter($view);
+		itemFilterAttr -edit -text $filterName $newFilter;
+
+		//
+		//  Mark the filter as a custom filter.
+		//
+		itemFilterAttr -e -cls "user" $newFilter;
+
+		//
+		//	Add the attribute filter to the global list.
+		//
+		$gFilterUICustomAttributeFilterList = AWAppendStringsToStringArray(
+			{$newFilter}, $gFilterUICustomAttributeFilterList);
+		
+		//
+		// Add a scriptJob for when the node are deleted through scripting.
+		// This way we will porperly update the global list and and the filterUI menu.
+		//
+		scriptJob -nodeDeleted $newFilter ("filterUIOnDeleteCB "+$newFilter);
+		
+		//	Clear the attribute selection filter.
+		//
+		filterUISetAttributeSelectionFilter($view, "");
+
+		//	Add a new check box menu item to each view's attribute menu(s).
+		//
+		$result = filterUIAddAttributeFilterMenuItem($view, $newFilter);
+	}
+
+	//	Disable the "Save Filter" menu item(s).
+	//
+	string $menu, $saveFilterMenuItem;
+	$menu = filterUIGetMenu($view);
+	if ("" != $menu) {
+		$saveFilterMenuItem = filterUIGetSaveFilterMenuItem($menu);
+		menuItem -edit -enable 0 $saveFilterMenuItem;
+	}
+	$menu = filterUIGetPopupMenu($view);
+	if ("" != $menu) {
+		$saveFilterMenuItem = filterUIGetSaveFilterMenuItem($menu);
+		menuItem -edit -enable 0 $saveFilterMenuItem;
+	}
+
+	deleteUI -window $window;
+
+	//
+	//  Save filters to user prefs file.
+	//
+	savePrefObjects;
+	
+	return $result;
+}
+
+global proc filterUIDeleteFilterMenu()
+{
+	global string $gFilterUIViewList[];
+	string $menu, $popupMenu, $menus[];
+	string $objectFilterMenu;
+	int    $menuCount = 0;
+
+	for ($view in $gFilterUIViewList) {
+		//
+		//	Get the menus for the view.	
+		//
+		$menu = filterUIGetMenu($view);
+		$popupMenu = filterUIGetPopupMenu($view);
+			
+		if ("" != $menu) {
+			$menus[$menuCount++] = $menu;
+		}
+		if ("" != $popupMenu) {
+			$menus[$menuCount++] = $popupMenu;
+		}
+			
+		for ($menu in $menus) {
+			//
+			//	Get the object filter menu.	
+			//
+			$objectFilterMenu = filterUIGetObjectMenu($menu);
+				
+			//
+			//	Now delete all item of the menu.
+			//
+			if ("" != $objectFilterMenu) {
+				menu -e -deleteAllItems $objectFilterMenu;
+			}
+		}
+	}
+}
+
+
+global proc int filterUIDeleteFilter(
+	string $filterTabs,
+	string $objectFilterList,
+	string $attributeFilterList)
+//
+//	Description:
+//		Delete the filters selected by the user in the "Delete Filter"
+//		window.  Remove the object or attribute filters from the
+//		corresponding global list of filters.
+//	
+//		Also remove the corresponding menu item from all of the view's filter
+//		menu.
+//
+//	Arguments:
+//		filterTabs          - The tab layout containing the filter lists.
+//
+//		objectFilterList    - The object filter list.
+//
+//		attributeFilterList - The attribute filter list.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUICustomObjectFilterList[];
+	global string $gFilterUICustomAttributeFilterList[];
+
+	int    $result = 1;
+	int    $deleteIndex = 0;
+	int    $selectedTab = `tabLayout -query -selectTabIndex $filterTabs`;
+	int    $viewUsingDeletedFilter;
+	int    $menuCount = 0;
+	string $listItem, $listItems[];
+	string $deleteItem, $deleteItems[];
+	string $filter, $filterName;
+	string $view;
+	string $menu, $popupMenu, $menus[], $menuItem, $menuItems[];
+	string $objectFilterMenu, $attributeFilterMenu;
+
+	if (1 == $selectedTab) {
+		//
+		//	Get the names of the object filters the user selected to delete.
+		//
+		$listItems = `textScrollList -query -selectItem $objectFilterList`;
+		
+		//	For each object filter determine if its name matches the list
+		//	of filters the user wants to delete.
+		//
+		for ($item in $gFilterUICustomObjectFilterList) {
+			$filterName = filterUIGetFilterText($item);
+			for ($listItem in $listItems) {
+				if ($listItem == $filterName) {
+					$deleteItems[$deleteIndex++] = $item;
+					textScrollList -edit 
+						-removeItem $listItem $objectFilterList;
+				}
+			}
+		}
+
+		//
+		//	Remove the object filters.
+		//
+		$gFilterUICustomObjectFilterList = stringArrayRemove(
+			$deleteItems, $gFilterUICustomObjectFilterList);
+
+		//	Delete the menu item that corresponds to each deleted filter.
+		//	Also, determine if any of the views were using one or more of
+		//	the deleted filters.
+		//
+		//	If a view was using a deleted filter then completely clear 
+		//	the filtering on that view.
+		//
+		for ($view in $gFilterUIViewList) {
+			$viewUsingDeletedFilter = 0;
+			//
+			//	Get the menus for the view.	
+			//
+			$menu = filterUIGetMenu($view);
+			$popupMenu = filterUIGetPopupMenu($view);
+			
+			if ("" != $menu) {
+				$menus[$menuCount++] = $menu;
+			}
+			if ("" != $popupMenu) {
+				$menus[$menuCount++] = $popupMenu;
+			}
+			
+			for ($menu in $menus) {
+				//
+				//	Get the object filter menu.	
+				//
+				$objectFilterMenu = filterUIGetObjectMenu($menu);
+				
+				//
+				//	Now step through each menu item.
+				//
+				if ("" != $objectFilterMenu) {
+					$menuItems = `menu -query -itemArray $objectFilterMenu`;
+					for ($menuItem in $menuItems) {
+						//
+						//	Get the filter associated with this active
+						//	menu item.
+						//
+						$filter = filterUIGetFilterFromMenuItem($menuItem);
+						
+						//
+						//	Compare filter with ones that were just deleted.	
+						//
+						for ($deleteItem in $deleteItems) {
+							if ($filter == $deleteItem) {
+								//
+								//	Is the deleted filter currently active?
+								//
+								if (`menuItem -query -isCheckBox $menuItem` &&
+									`menuItem -query -checkBox $menuItem`) {
+									$viewUsingDeletedFilter = 1;
+								}
+								
+								//	Delete the menu item.
+								//
+								deleteUI -menuItem $menuItem;
+							}
+						}
+					}
+				}
+			}
+			
+			//	Clear the filtering on any view that was using a deleted
+			//	filter.
+			//
+			if ($viewUsingDeletedFilter) {
+				filterUIClearFilter($view);
+			}
+		}
+			
+	} else {
+		//
+		//	Get the names of the attribute filters the user selected to delete.
+		//
+		$listItems = `textScrollList -query -selectItem $attributeFilterList`;
+		
+		//	For each attribute filter determine if its name matches the list 
+		//	of filters the user wants to delete.
+		//
+		for ($item in $gFilterUICustomAttributeFilterList) {
+			$filterName = filterUIGetFilterText($item);
+			for ($listItem in $listItems) {
+				if ($listItem == $filterName) {
+					$deleteItems[$deleteIndex++] = $item;
+					textScrollList -edit 
+						-removeItem $listItem $attributeFilterList;
+				}
+			}
+		}
+
+		//
+		//	Remove the attribute filters.
+		//
+		$gFilterUICustomAttributeFilterList = stringArrayRemove(
+			$deleteItems, $gFilterUICustomAttributeFilterList);
+
+
+		//	Delete the menu item that corresponds to each deleted filter.
+		//	Also, determine if any of the views were using one or more of
+		//	the deleted filters.
+		//
+		//	If a view was using a deleted filter then completely clear 
+		//	the filtering on that view.
+		//
+		for ($view in $gFilterUIViewList) {
+			$viewUsingDeletedFilter = 0;
+			//
+			//	Get the menus for the view.	
+			//
+			$menu = filterUIGetMenu($view);
+			$popupMenu = filterUIGetPopupMenu($view);
+			
+			if ("" != $menu) {
+				$menus[$menuCount++] = $menu;
+			}
+			if ("" != $popupMenu) {
+				$menus[$menuCount++] = $popupMenu;
+			}
+			
+			for ($menu in $menus) {
+				//
+				//	Get the attribute filter menu.	
+				//
+				$attributeFilterMenu = filterUIGetAttributeMenu($menu);
+				
+				//
+				//	Now step through each menu item.
+				//
+				//	Note that not all views have attribute filter menus.
+				//
+				if ("" != $attributeFilterMenu) {
+					$menuItems = `menu -query -itemArray $attributeFilterMenu`;
+					for ($menuItem in $menuItems) {
+						//
+						//	Get the filter associated with this active
+						//	menu item.
+						//
+						$filter = filterUIGetFilterFromMenuItem($menuItem);
+
+						//
+						//	Compare filter with ones that were just deleted.	
+						//
+						for ($deleteItem in $deleteItems) {
+							if ($filter == $deleteItem) {
+								//
+								//	Is the deleted filter currently active?
+								//
+								if (`menuItem -query -isCheckBox $menuItem` &&
+									`menuItem -query -checkBox $menuItem`) {
+									$viewUsingDeletedFilter = 1;
+								}
+
+								//	Delete the menu item.
+								//
+								deleteUI -menuItem $menuItem;
+							}
+						}
+					}
+				}
+			}
+			
+			//	Clear the filtering on any view that was using a deleted
+			//	filter.
+			//
+			if ($viewUsingDeletedFilter) {
+				filterUIClearFilter($view);
+			}
+		}
+	}
+
+	//
+	//  Save filters to user prefs file.
+	//
+	savePrefObjects;
+
+	return $result;
+}
+
+global proc int filterUIOnDeleteCB(string $filterToDelete)
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUICustomObjectFilterList[];
+	global string $gFilterUICustomAttributeFilterList[];
+	
+	int    $result = 1;
+	int    $deleteIndex = 0;
+	int    $viewUsingDeletedFilter;
+	int    $menuCount = 0;
+	string $filter;
+	string $view;
+	string $menu, $popupMenu, $menus[], $menuItem, $menuItems[], $objMenuItems[], $attrMenuItems[];
+	string $objectFilterMenu, $attributeFilterMenu;
+	
+	$gFilterUICustomObjectFilterList = stringArrayRemove({$filterToDelete}, $gFilterUICustomObjectFilterList);
+	$gFilterUICustomAttributeFilterList = stringArrayRemove({$filterToDelete}, $gFilterUICustomAttributeFilterList);
+
+	//	Delete the menu item that corresponds to each deleted filter.
+	//	Also, determine if any of the views were using one or more of
+	//	the deleted filters.
+	// 
+	//	If a view was using a deleted filter then completely clear 
+	//	the filtering on that view.
+	//
+	for ($view in $gFilterUIViewList) 
+	{
+		$viewUsingDeletedFilter = 0;
+		//
+		//	Get the menus for the view.	
+		//
+		$menu = filterUIGetMenu($view);
+		$popupMenu = filterUIGetPopupMenu($view);
+
+		if ("" != $menu) {
+			$menus[$menuCount++] = $menu;
+		}
+		if ("" != $popupMenu) {
+			$menus[$menuCount++] = $popupMenu;
+		}
+
+		for ($menu in $menus) 
+		{
+			//
+			//	Get the filter menus.	
+			//
+			$objectFilterMenu = filterUIGetObjectMenu($menu);
+			$attributeFilterMenu = filterUIGetAttributeMenu($menu);
+			
+			//
+			//	Now step through each menu item.
+			//
+			int $hasObjFilter = "" != $objectFilterMenu;
+			int $hasAttrFilter = "" != $attributeFilterMenu;
+			if ($hasObjFilter || $hasAttrFilter ) {
+				if($hasObjFilter){
+					$objMenuItems =  `menu -query -itemArray $objectFilterMenu`;
+				}
+				if($hasAttrFilter){
+					$attrMenuItems = `menu -query -itemArray $attributeFilterMenu`;
+				}
+				$menuItems = AWAppendStringsToStringArray($objMenuItems, $attrMenuItems);
+				for ($menuItem in $menuItems) 
+				{
+					//
+					//	Get the filter associated with this active
+					//	menu item.
+					//
+					$filter = filterUIGetFilterFromMenuItem($menuItem);
+					
+					//
+					//	Compare filter with ones that were just deleted.	
+					//
+					if ($filter == $filterToDelete) {
+						//
+						//	Is the deleted filter currently active?
+						//
+						if (`menuItem -query -isCheckBox $menuItem` && `menuItem -query -checkBox $menuItem`) 
+						{
+							$viewUsingDeletedFilter = 1;
+						}
+						
+						//	Delete the menu item.
+						//
+						deleteUI -menuItem $menuItem;
+					}
+				}
+			}
+		}
+
+		//	Clear the filtering on any view that was using a deleted
+		//	filter.
+		//
+		if ($viewUsingDeletedFilter) 
+		{
+			filterUIClearFilter($view);
+		}
+	}
+	
+	savePrefObjects;
+	
+	return $result;
+}
+
+global proc string filterUICreateMenu( string $view, string $parent )
+//
+//	Description:
+//
+//		See filterUICreateMenuSub().
+//
+{
+	return filterUICreateMenuSub( $view, $parent, 1, 0 );
+}
+
+global proc string filterUICreateMenuSub(string $view, string $parent,
+										 int $subMenu,
+										 int $attributesMenuOnly )
+//
+//	Description:
+//		Create filter menu for a view.
+//
+//		A view may have the filter menu attached to a visible menu bar or
+//		to a popup menu or both.
+//
+//	Arguments:
+//		view        - The view associated with the filter menu.
+//
+//		parent      - The parent menu for the filter menu.  The parent can be
+//		              a menu bar or a sub menu item.
+//
+//		subMenu		- Should the menu be created under a "Show" menu item,
+//					  or directly as a menu.
+//
+//		attributesMenuOnly - show the attributes menu and not the objects menu 
+//
+//	Returns:
+//		Name of the created filter menu.
+//
+{
+	//
+	//	Verify arguments.
+	//
+	if ("" == $view || "" == $parent) {
+		return "";
+	}
+	
+	//
+	//	Save the current parent before changing it.
+	//
+	string $previousParent;
+
+	//
+	//	Create the filter menu and its items.
+	//
+	int $inPopupMenu = 0;
+	if (`popupMenu -exists $parent`) {
+		$previousParent = `setParent -q -menu`;
+		setParent -menu $parent;
+		$inPopupMenu = 1;
+	} else if (`window -exists $parent`) {
+		$previousParent = `setParent -q`;
+		setParent $parent;
+	} else if (`menuBarLayout -exists $parent`) {
+		$previousParent = `setParent -q`;
+		setParent $parent;
+	}
+
+	string $menu;
+	if( $subMenu )
+	{
+		string $showLabel = (uiRes("m_filterUI.kShow"));
+		if ($inPopupMenu) {
+			$menu = `menuItem -subMenu true -label $showLabel`;
+		} else {
+			$menu = `menu -tearOff true -label $showLabel`;
+		}
+	}
+	else
+	{
+		$menu = $parent;
+	}
+
+	//
+	//	Create the object filter menu.
+	//
+    string $objectFilterMenu = "";
+	if (! $attributesMenuOnly) {
+		$objectFilterMenu 
+			= `menuItem -label (uiRes("m_filterUI.kObjects")) -subMenu true
+			FilterUIObjectFilterSubMenu`;
+		menuItem -edit
+			-postMenuCommand ("filterUIShowObjectFilterMenu " + $view 
+							  + " \"" + $objectFilterMenu + "\"")
+			$objectFilterMenu;
+		setParent -menu ..;
+	}
+	
+	//
+	//	Create the attribute filter menu.
+	//
+	//	Note:  Only include the attribute filter menu if it makes sense for
+	//	the specified view to filter on attributes.
+	//
+    string $attributeFilterMenu = "";
+	if (`outlinerEditor -exists $view` ||
+		$attributesMenuOnly) {
+		$attributeFilterMenu 
+			= `menuItem -label (uiRes("m_filterUI.kAttributes")) -subMenu true
+			FilterUIAttributeFilterSubMenu`;
+		menuItem -edit
+			-postMenuCommand ("filterUIShowAttributeFilterMenu " + $view 
+				+ " FilterUIAttributeFilterSubMenu")
+			$attributeFilterMenu;
+		setParent -menu ..;
+	}
+
+	menuItem -divider true;
+
+	string $invertFilterMenuItem = `menuItem -label (uiRes("m_filterUI.kInvertShown")) 
+		-annotation (uiRes("m_filterUI.kInvertShownAnnot"))
+		-checkBox 0
+		FilterUIInvertFilterMenuItem`;
+	string $clearFilterMenuItem = `menuItem -label (uiRes("m_filterUI.kShowAll"))
+		-annotation (uiRes("m_filterUI.kShowAllAnnot"))
+		FilterUIClearFilterMenuItem`;
+
+	menuItem -divider true;
+
+	string $filterSelectionMenuItem
+		= `menuItem -label (uiRes("m_filterUI.kShowSelected"))
+		-annotation (uiRes("m_filterUI.kShowSelectedAnnot"))
+		FilterUIFilterSelectionMenuItem`;
+
+	string $selectAttributesMenuItem
+		= `menuItem -label (uiRes("m_filterUI.kSelectAttributes"))
+		-annotation (uiRes("m_filterUI.kSelectAttributesAnnot"))
+		FilterUISelectAttributesMenuItem`;
+
+	string $saveFilterMenuItem = `menuItem -label (uiRes("m_filterUI.kCreateEntry"))
+		-annotation (uiRes("m_filterUI.kCreateEntryAnnot"))
+		-enable false
+		FilterUISaveFilterMenuItem`;
+
+	string $deleteFilterMenuItem = `menuItem -label (uiRes("m_filterUI.kDeleteEntry"))
+		-annotation (uiRes("m_filterUI.kDeleteEntryAnnot"))
+		FilterUIDeleteFilterMenuItem`;
+
+	if (! $attributesMenuOnly) {
+		menuItem -divider true;
+		
+		menuItem -label (uiRes("m_filterUI.kShowAuxNodes"))
+			-checkBox `optionVar -q "minorNodeTypesDisplay"`
+			-command "showMinorNodes #1;"
+			-annotation (uiRes("m_filterUI.kShowAuxNodesAnnot"))
+			showAuxNodesItem;
+		
+		menuItem -label (uiRes("m_filterUI.kAuxNodes"))
+			-command "minorNodesWindow"
+			-annotation (uiRes("m_filterUI.kAuxNodesAnnot"));
+	}
+	
+	//
+	//	Add callbacks.
+	//
+	menu -edit
+		-postMenuCommand ("filterUIShowFilterMenu " + $view + " \"" + $menu + "\"")
+		$menu;
+	
+	menuItem -edit
+		-command ("filterUIFilterSelection " + $view 
+			+ " \"" + $saveFilterMenuItem + "\"")
+		$filterSelectionMenuItem;
+
+	menuItem -edit
+		-command ("filterUISelectAttributes " + $view)
+		$selectAttributesMenuItem;
+
+	menuItem -edit
+		-command ("filterUIInvertFilter " + $view 
+			+ " \"" + $invertFilterMenuItem + "\"")
+		$invertFilterMenuItem;
+
+	menuItem -edit
+		-command ("filterUIClearFilter " + $view)	
+		$clearFilterMenuItem;
+
+	menuItem -edit 
+		-command ("filterUIShowSaveFilterWindow " + $view 
+			+ " \"" + $saveFilterMenuItem + "\"")
+		$saveFilterMenuItem;
+	menuItem -edit 
+		-command ("filterUIShowDeleteFilterWindow \"" + $deleteFilterMenuItem + "\"")
+		$deleteFilterMenuItem;
+
+	//
+	//	Keep a reference to the view and corresponding filter menu.
+	//
+	if ($inPopupMenu) {
+		filterUISetPopupMenu($view, $menu);
+	} else {
+		filterUISetMenu($view, $menu);
+	}
+
+    // Create the menus now so that saved filter settings are applied 
+    // immediately.
+    if ("" != $objectFilterMenu) {
+        filterUIShowObjectFilterMenu($view, $objectFilterMenu);
+    }
+    if ("" != $attributeFilterMenu) {
+        filterUIShowAttributeFilterMenu($view, $attributeFilterMenu);
+    }
+
+	//
+	//	Restore the previous parent if changed.
+	//
+	if (`popupMenu -exists $parent`) {
+		setParent -menu $previousParent;
+	} else if (`window -exists $parent`) {
+		setParent $previousParent;
+	} else if (`menuBarLayout -exists $parent`) {
+		setParent $previousParent;
+	}
+    
+	return $menu;
+}
+
+global proc string filterUICreateField(string $view, string $parent)
+//
+//	Description:
+//		Create filter field controls for a view.
+//
+//	Arguments:
+//		view    - The view associated with the filter field controls.
+//
+//		parent  - The parent control layout for the filter field.
+//
+//	Returns:
+//		Name of the created filter field.
+//
+{
+	//
+	//	Verify arguments.
+	//
+	if ("" == $view || "" == $parent) {
+		return "";
+	}
+
+	//
+	//	Create the filter controls.
+	//
+	setParent $parent;
+	string $form = `formLayout`;
+	string $textField = `textField -width 180`;
+	string $picture = `iconTextButton -w 24 -h 24`;
+	if (`about -mac`)
+	{	// force a form attachment for the text field
+		formLayout -edit
+			-attachForm    $picture   top    1
+			-attachForm    $picture   left   0
+			-attachNone    $picture   bottom
+			-attachNone    $picture   right
+			-attachForm    $textField top    0
+			-attachControl $textField left   0 $picture
+			-attachForm    $textField right  0
+			-attachForm    $textField bottom 0
+			$form;
+	}
+	else
+	{
+		formLayout -edit
+			-attachForm    $picture   top    1
+			-attachForm    $picture   left   0
+			-attachNone    $picture   bottom
+			-attachNone    $picture   right
+			-attachForm    $textField top    0
+			-attachControl $textField left   0 $picture
+			-attachNone    $textField bottom
+			-attachForm    $textField right  0
+			$form;
+	}		
+	filterUIAttachField($view, $textField);
+	filterUIAttachFilterStatusControl($view, $picture);
+
+	setParent $parent;
+	
+	return $form;
+}
+
+global proc int filterUIAttachField(string $view, string $textField)
+//
+//	Description:
+//		Attach a filter field control to a view.  Use this procedure
+//		if you have created your own text field and want to attach
+//		it to the filter UI.
+//
+//	Arguments:
+//		view      - The view associated with the filter field.
+//
+//		textField - The filter field.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	int $result = 1;
+	
+	//
+	//	Add callbacks and annotation.
+	//
+	string $annotation = (uiRes("m_filterUI.kTextFilterAnnot"));
+	textField -edit
+		-annotation $annotation
+		-changeCommand ("filterUIHandleField " + $view + " \"" + $textField + "\"")
+		$textField;
+
+	//
+	//	Keep a reference to the view and corresponding filter field.
+	//
+	filterUISetField($view, $textField);
+	
+	return $result;
+}
+
+global proc int filterUIAttachFilterStatusControl(
+	string $view, 
+	string $statusControl)
+//
+//	Description:
+//		Attach a filter status control to a view.  Use this procedure
+//		if you have created your own status control and want to attach it
+//		to the filter UI.
+//
+//	Arguments:
+//		view          - The view associated with the filter field.
+//
+//		statusControl - The filter status control.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	int $result = 1;
+
+	int $iconsize = 26;
+	
+	//	Set the annotation and initial image of the filter status control.
+	//
+	string $annotation = (uiRes("m_filterUI.kShowOnOffAnnot"));
+	iconTextButton -edit 
+		-w $iconsize -h $iconsize
+		-annotation $annotation
+		-i1 "filtersOff.png"
+		-c ("filterUIClearFilter "+$view)
+		$statusControl;
+
+	//
+	//	Keep a reference to the view and corresponding filter status control.
+	//
+	filterUISetFilterStatusControl($view, $statusControl);
+	
+	return $result;
+}
+
+global proc int filterUIRefreshView(string $view)
+//
+//	Description:
+//		Reapply the current filter to a view. This need to be done when the view dows some of its own filtering.
+//
+//	Arguments:
+//		view   - The view.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	int $result = 0;
+	
+	$result = filterUIApplyFilter($view, "", "", true);
+	
+	return $result;
+}
+
+
+
+global proc int filterUISetImplicitFilter(string $view, string $filter)
+//
+//	Description:
+//		Set the implicit filter for a view.  This filter will always be
+//		applied to the view.
+//
+//	Arguments:
+//		view   - The view.
+//
+//		filter - The implicit filter.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIImplicitFilterList[];
+
+	int $result = 0;
+	
+	int $index, $numberOfViews = size($gFilterUIViewList);
+	for ($index = 0; $index < $numberOfViews; $index++) {
+		if ($view == $gFilterUIViewList[$index]) {
+			$gFilterUIImplicitFilterList[$index] = $filter;
+		}
+	}
+	
+	$result = filterUIApplyFilter($view, "", "", true);
+	
+	return $result;
+}
+
+//
+//	Description:
+//		Same as filterUISetImplicitFilter, but does not apply the filter to the view.
+//
+//	Arguments:
+//		view   - The view.
+//
+//		filter - The implicit filter.
+//	Returns: 1
+//
+global proc int filterUISetImplicitFilterNoApply(string $view, string $filter)
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIImplicitFilterList[];
+
+	int $index, $numberOfViews = size($gFilterUIViewList);
+	for ($index = 0; $index < $numberOfViews; $index++) {
+		if ($view == $gFilterUIViewList[$index]) {
+			$gFilterUIImplicitFilterList[$index] = $filter;
+		}
+	}
+    return 1;
+}
+
+global proc int filterUISetRelatedFiltersProcedure(
+	string $view, 
+	string $procName)
+//
+//	Description:
+//		Set the related filters procedure.  The related filters procedure
+//		returns the filters that the view wants shown in the object filter
+//		menu.
+//
+//		The purpose of this method is to allow a task oriented view to
+//		only show filters that are meaningful for the task in the object
+//		filter menu.
+//
+//	Arguments:
+//		view     - The view.
+//
+//		procName - The procedure name.  The procecedure must be of the form:
+//
+//			global proc string [] yourProcedureName()
+//
+//			The string array returned from this procedure must contain
+//			filter category labels.  Each filter will be queried for its
+//			-cat|category flags and compared against the returned category
+//			labels.  If there is a match then the filter will be shown in
+//			the filter menu. 
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIRelatedFiltersProcedureList[];
+
+	int $result = 1;
+	
+	int $index, $numberOfViews = size($gFilterUIViewList);
+	for ($index = 0; $index < $numberOfViews; $index++) {
+		if ($view == $gFilterUIViewList[$index]) {
+			$gFilterUIRelatedFiltersProcedureList[$index] = $procName;
+			
+			//	Remove all the items in the object filter menus so that it
+			//	is rebuilt next time it is shown.  When it is rebuilt it will
+			//	only contain the filters that are related to the current task.
+			//
+			string $filterMenu;
+			string $menu = filterUIGetMenu($view);
+			string $popupMenu = filterUIGetPopupMenu($view);
+			if ("" != $menu) {
+				$filterMenu = filterUIGetObjectMenu($menu);
+				if ("" != $filterMenu && 
+					0 < `menu -query -numberOfItems $filterMenu`) {
+					menu -edit -deleteAllItems $filterMenu;
+				}
+			}
+			if ("" != $popupMenu) {
+				$filterMenu = filterUIGetObjectMenu($popupMenu);
+				if ("" != $filterMenu && 
+					0 < `menu -query -numberOfItems $filterMenu`) {
+					menu -edit -deleteAllItems $filterMenu;
+				}
+			}
+		}
+	}
+	
+	return $result;
+}
+
+global proc int filterUISetRelatedAttrFiltersProcedure(
+	string $view, 
+	string $procName)
+//
+//	Description:
+//		Set the related attribute filters procedure.  The related filters
+//	    procedure returns the filters that the view wants shown in the object
+//		filter menu.
+//
+//		The purpose of this method is to allow a task oriented view to
+//		only show filters that are meaningful for the task in the attribute
+//		filter menu.
+//
+//	Arguments:
+//		view     - The view.
+//
+//		procName - The procedure name.  The procecedure must be of the form:
+//
+//			global proc string [] yourProcedureName()
+//
+//			The string array returned from this procedure must contain
+//			filter category labels.  Each filter will be queried for its
+//			-cat|category flags and compared against the returned category
+//			labels.  If there is a match then the filter will be shown in
+//			the filter menu.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIRelatedAttrFiltersProcedureList[];
+
+	int $result = 1;
+	
+	int $index, $numberOfViews = size($gFilterUIViewList);
+	for ($index = 0; $index < $numberOfViews; $index++) {
+		if ($view == $gFilterUIViewList[$index]) {
+			$gFilterUIRelatedAttrFiltersProcedureList[$index] = $procName;
+			
+			//	Remove all the items in the attribute filter menus so that it
+			//	is rebuilt next time it is shown.  When it is rebuilt it will
+			//	only contain the filters that are related to the current task.
+			//
+			string $filterMenu;
+			string $menu = filterUIGetMenu($view);
+			string $popupMenu = filterUIGetPopupMenu($view);
+			if ("" != $menu) {
+				$filterMenu = filterUIGetAttributeMenu($menu);
+				if ("" != $filterMenu && 
+					0 < `menu -query -numberOfItems $filterMenu`) {
+					menu -edit -deleteAllItems $filterMenu;
+				}
+			}
+			if ("" != $popupMenu) {
+				$filterMenu = filterUIGetAttributeMenu($popupMenu);
+				if ("" != $filterMenu && 
+					0 < `menu -query -numberOfItems $filterMenu`) {
+					menu -edit -deleteAllItems $filterMenu;
+				}
+			}
+		}
+	}
+	
+	return $result;
+}
+
+global proc filterUIRestoreSavedSettings( string $view, string $menu )
+//
+//	Description:
+//		Restore saved filter settings from preferences for a view
+//		and update the view.
+//	Arguments:
+//		The view
+//      The menu
+//
+//	Returns:
+//		None
+//
+{
+	if ("" == $view) {
+		return;
+	}
+	// Retrieve the saved settings for this view
+	string $savedNames[];
+    string $optionVarKey = `filterUIGetOptionVarName $view`;
+    int $failed = true;
+    if ("" != $optionVarKey) {
+        if (`optionVar -exists $optionVarKey` ) {
+            $savedNames = `optionVar -q $optionVarKey`;
+            $failed = false;
+        }
+    }
+    if ($failed) {
+        return;
+    }
+	
+	string $menuItem, $menuItems[];
+    $menuItems = `menu -query -itemArray $menu`;
+		for ($menuItem in $menuItems) {
+			if (`menuItem -query -isCheckBox $menuItem`) 
+			{
+				string $filter = `filterUIGetFilterFromMenuItem $menuItem`;
+				string $filterName = `filterUIGetFilterText $filter`;
+            int $val = `stringArrayContains $filterName $savedNames`;
+				menuItem -edit -checkBox $val $menuItem;
+			}
+		}
+
+	// Apply the filters to the view
+	filterUIApplyFilter($view, "", "", true);
+}
+
+global proc filterUIRestoreAllSavedSettings()
+//
+//	Description:
+//		Restore saved filter settings from preferences for all views.
+//
+//	Arguments:
+//		None
+//
+//	Returns:
+//		None
+//
+{
+	global string $gFilterUIViewList[];
+	string $view;
+	for ($view in $gFilterUIViewList)
+	{
+		string $menu = filterUIGetMenu($view);
+		string $popupMenu = filterUIGetPopupMenu($view);
+		string $filterMenu, $filterMenus[];
+		int    $index = 0;
+
+		//	If the menu exists then retrieve its object and attribute filter
+		//	menu.
+		//
+		if ("" != $menu) {
+			$filterMenu = filterUIGetObjectMenu($menu);
+			if ("" != $filterMenu) {
+				$filterMenus[$index++] = $filterMenu;
+			}
+			$filterMenu = filterUIGetAttributeMenu($menu);
+			if ("" != $filterMenu) {
+				$filterMenus[$index++] = $filterMenu;
+			}
+		}
+		if ("" != $popupMenu) {
+			$filterMenu = filterUIGetObjectMenu($popupMenu);
+			if ("" != $filterMenu) {
+				$filterMenus[$index++] = $filterMenu;
+			}
+			$filterMenu = filterUIGetAttributeMenu($popupMenu);
+			if ("" != $filterMenu) {
+				$filterMenus[$index++] = $filterMenu;
+			}
+		}
+        //	Loop through each object and attribute filter menu and
+		//  restore the saved values
+		string $menuItem, $menuItems[];
+
+		for ($filterMenu in $filterMenus) {
+            filterUIRestoreSavedSettings($view, $filterMenu);
+		}
+	}
+}
+
+global proc filterUISetDefaultOptions(string $view, string $menu, string $options[])
+{
+	string $optionVarKey = `filterUIGetOptionVarName $view`;
+	
+    int $failed = true;
+	if ("" != $optionVarKey && !`optionVar -exists $optionVarKey` && size($options) > 0) {
+		optionVar -sv $optionVarKey "";
+		int $i;
+		for ($i = 0; $i<size($options); $i++) {
+			optionVar -sva $optionVarKey $options[$i];
+		}
+		$failed = false;
+	}
+	
+    if ($failed) {
+        return;
+    }
+	
+	filterUIRestoreSavedSettings($view, $menu);
+}
+
+global proc int filterUIRemoveView(string $view)
+//
+//	Description:
+//		Disassociate a view from the filter UI.  Call this method whenever 
+//		the view is deleted.
+//
+//	Arguments:
+//		view - The view.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	int $result = 1;
+	
+	filterUIClearMenu                  ($view);
+	filterUIClearPopupMenu             ($view);
+	filterUIClearField                 ($view);
+	filterUIClearFilterStatusControl   ($view);
+	filterUISetImplicitFilter          ($view, "");
+	filterUISetRelatedFiltersProcedure ($view, "");
+	filterUISetRelatedAttrFiltersProcedure ($view, "");	
+	
+	return $result;
+}
+
+global proc int filterUIClearMenu(string $view)
+//
+//	Description:
+//		Disassociate a view's menu from the filter UI.
+//
+//	Arguments:
+//		view - The view.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIMenuList[];
+	
+	int $result = 0, $index;
+	
+	//
+	//	Search the list to see if the view already exists.
+	//
+	for ($index = 0; $index < size($gFilterUIViewList); $index++) {
+		if ($view == $gFilterUIViewList[$index]) {
+			//
+			//	View exists.  Clear the menu entry.
+			//
+			$gFilterUIMenuList[$index] = "";
+			$result = 1;
+			break;
+		}
+	}
+
+	return $result;
+}
+
+global proc int filterUIClearPopupMenu(string $view)
+//
+//	Description:
+//		Disassociate a view's popup menu from the filter UI.
+//
+//	Arguments:
+//		view - The view.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIPopupMenuList[];
+	
+	int $result = 0, $index;
+	
+	//
+	//	Search the list to see if the view already exists.
+	//
+	for ($index = 0; $index < size($gFilterUIViewList); $index++) {
+		if ($view == $gFilterUIViewList[$index]) {
+			//
+			//	View exists.  Clear the popup menu entry.
+			//
+			$gFilterUIPopupMenuList[$index] = "";
+			$result = 1;
+			break;
+		}
+	}
+
+	return $result;
+}
+
+global proc int filterUIClearField(string $view)
+//
+//	Description:
+//		Disassociate a view's regular expression field from the filter UI.
+//
+//	Arguments:
+//		view - The view.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIFieldList[];
+	
+	int $result = 0, $index;
+	
+	//
+	//	Search the list to see if the view already exists.
+	//
+	for ($index = 0; $index < size($gFilterUIViewList); $index++) {
+		if ($view == $gFilterUIViewList[$index]) {
+			//
+			//	View exists.  Clear the field entry.
+			//
+			$gFilterUIFieldList[$index] = "";
+			$result = 1;
+			break;
+		}
+	}
+
+	return $result;
+}
+
+global proc int filterUIClearFilterStatusControl(string $view)
+//
+//	Description:
+//		Disassociate a view's filter status control from the filter UI.
+//
+//	Arguments:
+//		view - The view.
+//
+//	Returns:
+//		1 - Success.
+//		0 - Failure.
+//
+{
+	global string $gFilterUIViewList[];
+	global string $gFilterUIFilterStatusControlList[];
+	
+	int $result = 0, $index;
+	
+	//
+	//	Search the list to see if the view already exists.
+	//
+	for ($index = 0; $index < size($gFilterUIViewList); $index++) {
+		if ($view == $gFilterUIViewList[$index]) {
+			//
+			//	View exists.  Clear the filter status control entry.
+			//
+			$gFilterUIFilterStatusControlList[$index] = "";
+			$result = 1;
+			break;
+		}
+	}
+
+	return $result;
+}
+
+global proc string [] filterUIGetCustomFilters()
+//
+//	Description:
+//		Return a string array containing the names of all the custom 
+//		object and attribute filters.
+//
+{
+	global string $gFilterUICustomObjectFilterList[];
+	global string $gFilterUICustomAttributeFilterList[];
+
+	return AWAppendStringsToStringArray(
+		$gFilterUICustomAttributeFilterList, 
+		$gFilterUICustomObjectFilterList);
+}
+
+// Description:  This procedure is called when we need to refresh
+//  the pane's front tab if the front tab is a scene tab. 
+//
+global proc refreshHyperShadePaneFrontTab(
+    string $tabLayout, int $frameGraph)
+{
+    string $tabSectionsShown =
+        `optionVar -query hyperShadePanelTabSectionsShown`;
+
+    if (($tabLayout == "firstPaneTabs" || $tabLayout == "") &&
+        $tabSectionsShown != "showBottomTabsOnly" )
+    {
+        string $view = hyperShadePaneSceneTabsCurrentView("firstPaneTabs");
+        if ($view != "")
+        {
+            filterUIApplyFilter($view, "","", $frameGraph);
+        }
+    }
+
+    if (($tabLayout == "secondPaneTabs" || $tabLayout == "") &&
+        $tabSectionsShown != "showTopTabsOnly")
+    {
+        string $view = hyperShadePaneSceneTabsCurrentView("secondPaneTabs");
+        if ($view != "")
+        {
+            filterUIApplyFilter($view, "","", $frameGraph);
+        }
+    }
+}
+

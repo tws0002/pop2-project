@@ -1,0 +1,630 @@
+// Copyright (C) 1997-2013 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+/**
+ * @file xgmGuideCheckTool.mel
+ *
+ * @brief The tool to identify any guides that may cause potentical problems
+ * in XGen, such as 0-length, duplicates, or guides that share base
+ * point.
+ *
+ * <b>CONFIDENTIAL INFORMATION: This software is the confidential and
+ * proprietary information of Walt Disney Animation Studios ("WDAS").
+ * This software may not be used, disclosed, reproduced or distributed
+ * for any purpose without prior written authorization and license
+ * from WDAS. Reproduction of any section of this software must include
+ * this legend and all copyright notices.
+ * Copyright Disney Enterprises, Inc. All rights reserved.</b>
+ *
+ * @author Ying Liu
+ * @author Thomas V Thompson II
+ *
+ * @version Created 05/08/07
+ */
+
+
+global string $xgmGuideCheckMultiEntries[] = {};
+global int $xgmGuideCheckNumMultiEntries = 0;
+
+
+/**
+ * Clear the guide check result from previous check.
+ */
+proc xgmGuideCheckClearResultUI()
+{
+    string $resultLayouts[] = { "xgmGuideCheckZeroLengthList", 
+                                "xgmGuideCheckIdenticalList", 
+                                "xgmGuideCheckSameBaseList" };
+
+    for ( $layout in $resultLayouts ) {
+        if ( `columnLayout -exists $layout` ) {
+
+            // Clear the list from previous test
+            string $childArray[] = `columnLayout -q -childArray $layout`;
+            for ( $child in $childArray ) 
+                deleteUI $child;
+
+            frameLayout -edit -collapse false ( $layout + "Frame" );
+        }
+    }
+}
+
+
+/**
+ * The common frame layout for the result guides.
+ *
+ * @param parent    Parent of the new result layout
+ * @param widget    The layout name where the guide entries will be added to
+ * @param label     Lable for the new frame.
+ * @param buttons   Whether to create buttons for the UI.
+ */
+proc xgmGuideCheckResultCommonUI( string $parent, string $widget, 
+                                  string $label, int $buttons )
+{
+    frameLayout -l $label -cll true -cl false -parent $parent
+        -mh 5 -mw 5 -bv true
+        ( $widget + "Frame" );
+    {
+        columnLayout -adj on -columnWidth 340 -columnOffset left 5;
+        {
+            // The result entries will be filled in here later
+            columnLayout -adj on -columnOffset left 10 $widget;
+            {
+                setParent ..;
+            }
+
+            // Add buttons if requested
+            if ( $buttons ) {
+                rowLayout -nc 3 -adj 1 -cw 2 95 -cw 3 110;
+                {
+                    text -l "";
+
+                    button -label (uiRes("m_xgmGuideCheckTool.kSelect1")) -w 80 -align "center"
+                        -ann (uiRes("m_xgmGuideCheckTool.kSelectAnn1"))
+                        -c ( "xgmGuideCheckSelectGuides " + $widget );
+
+                    button -label (uiRes("m_xgmGuideCheckTool.kDelete1")) -w 80 -align "center"
+                        -ann (uiRes("m_xgmGuideCheckTool.kDeleteAnn1"))
+                        -c ( "xgmGuideCheckDeleteGuides " + $widget );
+
+                    setParent ..;
+                }
+            }
+
+            setParent ..;
+        }
+
+        setParent ..;
+    }
+}
+
+
+/**
+ * Add a checkbox group with the given name for the specified guide.
+ *
+ * @param parent    Parent layout the entry will be added to
+ * @param guide     The guide name to add checkbox entry for
+ * @param select    Value for the Select checkbox
+ * @param delete    Value for the Delete checkbox
+ * @param ann       Annoation for the guide entries
+ */
+proc xgmGuideCheckResultAddEntry( string $parent, string $guide, 
+                                  int $select, int $delete, string $ann )
+{
+    string $name = $parent + "_" + $guide;    
+    checkBoxGrp -label $guide -ncb 2 -adj 1 -la2 (uiRes("m_xgmGuideCheckTool.kSelect2")) 
+    		       	      	     	    	 (uiRes("m_xgmGuideCheckTool.kDelete2"))
+        -cw3 200 95 95 -columnAlign 1 "left"
+        -va2 $select $delete -parent $parent
+        -onCommand1 ( "select -add " + $guide )
+        -offCommand1 ( "select -deselect " + $guide )
+        -ann ( $ann + (uiRes("m_xgmGuideCheckTool.kSelectAnn2")) ) $name;
+
+    if ( $select )
+        select -add $guide;
+}
+
+/**
+ * Function to call to add UI for guides that are 0-length.
+ *
+ * A checkbox group will be added for each guide. 
+ * 
+ * Frames and column layouts will be added to represent hierarchy.
+ *
+ * @param parentWidget  Parent of the guide entries i.e. parent column layout
+ * @param desc          Description the guides belong to
+ * @param guides        Array of guides to add entries for
+ * @param select        Whether the guides should be selected
+ * @param delete        Whether the guides should be checked for deletion.
+ * @param ann           Annoation for the guide entries
+ */
+proc xgmGuideCheckAddToResultUI( string $parentWidget, string $desc, 
+                                 string $guides[], int $select, int $delete,
+                                 string $ann )
+{    
+    // Add a frame for each description
+    string $descLayout = $parentWidget + "_" + $desc;
+
+    xgmGuideCheckResultCommonUI( $parentWidget, $descLayout, $desc, 1 );
+
+    frameLayout -edit -collapse false ( $descLayout + "Frame" );
+    frameLayout -edit -collapse false ( $parentWidget + "Frame" );
+
+    // Add all the result guides into the result UI list
+    for ( $guide in $guides ) {
+        xgmGuideCheckResultAddEntry( $descLayout, $guide, 
+                                     $select, $delete, $ann );
+    }
+}
+
+
+/**
+ * The function to add UI for a guide group ( i.e. Same Base, Identical ).
+ * 
+ * A checkbox group will be added for each guide. By default, all guides will 
+ * be selected, and guides in the otherGuides will be checked for deletion.
+ *
+ * Frames will be added to represent hierarchy.
+ *
+ * @param parent        Parent of the group entry (column layout in this case)
+ * @param groupName     UI name for the group entry
+ * @param groupLabel    Frame label for the group
+ * @param ann           Annoation for the guide etnries in the group
+ * @param guide         First guide in the group
+ * @param otherGuides   Other curves in the group which will be marked as
+ *                      both Selected and Delete
+ */
+proc xgmGuideCheckResultAddGroupEntry( string $parent, string $groupName, 
+                                       string $groupLabel, string $ann, 
+                                       string $desc, 
+                                       string $guide, string $otherGuides[] )
+{   
+    string $descLayout = $parent + "_" + $desc;
+
+    // Add a frame for each description if it does not exist
+    if ( !`columnLayout -exists $descLayout` )
+        xgmGuideCheckResultCommonUI( $parent, $descLayout, $desc, 0 );
+
+    // Add a frame for each group
+    xgmGuideCheckResultCommonUI( $descLayout, $groupName, $groupLabel, 1 );
+   
+    // Expand the frames when new etries are added in
+    frameLayout -edit -collapse false ( $groupName + "Frame" );
+    frameLayout -edit -collapse false ( $descLayout + "Frame" );
+
+    // Add one guide to the list
+    xgmGuideCheckResultAddEntry( $groupName, $guide, 1, 0, $ann );
+
+    // Add other guides in the group to the list
+    for ( $other in $otherGuides ) {
+        xgmGuideCheckResultAddEntry( $groupName, $other, 1, 1, $ann );
+    }
+}
+
+
+/**
+ * Wrapper function for the 0-Length Guides result frame.
+ */
+proc xgmGuideCheckZeroLengthFrame()
+{
+    // 0-length check frame
+    xgmGuideCheckResultCommonUI( "xgmGuideCheckToolUI", 
+                                 "xgmGuideCheckZeroLengthList", 
+                                 (uiRes("m_xgmGuideCheckTool.kZeroLengthGuides")), 0 );
+}
+
+
+/**
+ * Wrapper function for the Identical Guides result frame.
+ */
+proc xgmGuideCheckIdenticalGuidesFrame()
+{
+    // Identical guides frame
+    xgmGuideCheckResultCommonUI( "xgmGuideCheckToolUI", 
+                                 "xgmGuideCheckIdenticalList", 
+                                 (uiRes("m_xgmGuideCheckTool.kIdenticalGuides")), 0 );
+}
+
+
+/**
+ * Wrapper function for the Same Base Guides result frame.
+ */
+proc xgmGuideCheckSameBaseGuidesFrame()
+{
+    // Frame for guides that share the same base point
+    xgmGuideCheckResultCommonUI( "xgmGuideCheckToolUI", 
+                                 "xgmGuideCheckSameBaseList", 
+                                 (uiRes("m_xgmGuideCheckTool.kSameBaseGuides")), 0 );
+}
+
+/**
+ * UI for the result frames where the guides will be written to
+ */
+proc xgmGuideCheckResultFrames( )
+{
+    xgmGuideCheckZeroLengthFrame();
+
+    xgmGuideCheckIdenticalGuidesFrame();
+
+    xgmGuideCheckSameBaseGuidesFrame();
+}
+
+/**
+ * UI for the Guide Check Tool.
+ * 
+ * @param parent    The parent of the UI
+ */
+global proc xgmGuideCheckTool( string $parent )
+{
+    columnLayout -adj on -parent $parent -columnOffset both 5 
+        xgmGuideCheckToolUI; 
+    {
+        // Description
+        radioButtonGrp -l (uiRes("m_xgmGuideCheckTool.kDescription")) -nrb 2 
+		       -l1 (uiRes("m_xgmGuideCheckTool.kAll")) 
+		       -l2 (uiRes("m_xgmGuideCheckTool.kCurrent"))
+            -cw3 90 100 100 -cat 1 "right" 1 -cat 2 "left" 20 -sl 1
+            -ann (uiRes("m_xgmGuideCheckTool.kSelectAnn3"))
+            xgmGuideCheckDescription;
+
+        button -label (uiRes("m_xgmGuideCheckTool.kRunCheck")) -w 130 -c "xgmGuideCheckToolRunCheckCB"
+            -ann (uiRes("m_xgmGuideCheckTool.kRunCheckAnn"));
+
+        xgmGuideCheckResultFrames();
+
+        setParent ..;
+    } 
+}
+
+
+/**
+ * Callback function when Run Check button is clicked.
+ */
+global proc xgmGuideCheckToolRunCheckCB()
+{
+    select -clear;
+    xgmGuideCheckClearResultUI();
+
+    string $descriptions[] = {};
+    int $selected = `radioButtonGrp -q -select xgmGuideCheckDescription`;
+
+    // Check all descriptions or current only
+    if ( $selected == 1 ) {
+        string $palettes[];
+        clear $palettes;
+        catchQuiet ( $palettes = python("xg.palettes()") );
+        for ( $pal in $palettes ) {
+            string $descs[];
+            clear $descs;
+            catchQuiet ( $descs = python("xg.descriptions(\""+$pal+"\")") );
+            $descriptions = stringArrayCatenate( $descriptions, $descs );
+        }
+    } else if ( $selected == 2 ) {
+        $descriptions[0] = python("xgui.currentDescription()");
+        if ( $descriptions[0] == "" ) {
+            warning ( (uiRes("m_xgmGuideCheckTool.kCurrentDescriptionIsNotSetAbortCheck")) );
+            return;
+        }
+    }
+
+    // Run guide check on every description specified from GUI.
+    float $tolerance = `tolerance -q -l`;
+    for ( $desc in $descriptions ) {
+        string $zeroLengths[], $allIdenticals[];
+        xgmGuideCheck( $desc, $tolerance, 1,  
+                       $zeroLengths, $allIdenticals );
+    }
+}
+
+
+/**
+ * Check if there exists any spline guide that has 0-length, 
+ * overlapping cvs, or is identical with other guide. Such guides
+ * will cause potential problems in a description. This method will identify
+ * the problemtic guides. 
+ *
+ * Results will be displayed in Maya's Script Editor or in Guide Check Tool UI
+ * if run interactively.
+ *
+ * @param desc          Description of interest
+ * @param tolerance     Floating point tolerance for equality or 
+ *                      proximity checks 
+ * @return              true if no illegal guides are found, 0 otherwise
+ */
+global proc int xgmGuideCheck( string $desc, float $tolerance, int $updateUI,
+                               string $zeroLengths[], string $allIdenticals[] )
+{
+    global string $xgmGuideCheckMultiEntries[];
+    global int $xgmGuideCheckNumMultiEntries;
+
+    int $result = true;
+
+    string $fmt = (uiRes("m_xgmGuideCheckTool.kNguideCheckingForDescription"));
+    print `format -s $desc $fmt`;
+
+    // Get all the guides in the description
+    string $guideList[];
+    clear $guideList;
+    catchQuiet ( $guideList = python("xg.descriptionGuides(\""+$desc+"\")"));
+    int $numGuides = `size $guideList`;
+    if ( $numGuides == 0 ) {
+        string $fmt = (uiRes("m_xgmGuideCheckTool.kNoGuidesAreFoundInDescription"));
+        print `format -s $desc $fmt`;
+        return $result;
+    }
+
+    string $fmt = "Checking ^1s guides...\n";
+    print `format -s $numGuides $fmt`;
+
+    // Initialization
+    int $skipIndices[];
+    int $numTotalSkips = 0;
+    int $numZeroLengths = 0;
+    int $numIdenticalGrps = 0;
+    int $numSameBaseGrps = 0;
+
+    clear $zeroLengths;
+    clear $allIdenticals;
+
+    // Iterate through each guide to check for errors
+    for ( $gIdx = 0; $gIdx < $numGuides; $gIdx++ ) {    
+
+        string $guide = $guideList[$gIdx];
+
+        // Get the number of cvs on the guide
+        float $data[] = `xgmGuideGeom -guide $guide -numVertices`;
+        int $ncv = $data[0];
+
+        // Get the cvs
+        vector $cvs[];
+        clear $cvs;
+        for ( $cvIdx = 0; $cvIdx < $ncv; $cvIdx++ ) {
+            $cvs[$cvIdx]= `pointPosition( $guide + ".vtx[" + $cvIdx + "]" )`;
+        }
+
+        // Check for 0-length
+        float $length = 0;
+        for ( $i=1; $i<$ncv; $i++ ) {
+            vector $v = $cvs[$i] - $cvs[$i-1];
+            $length += sqrt( dot( $v, $v ) );
+        }
+        if ( $length < $tolerance ) {
+            $zeroLengths[$numZeroLengths++] = $guide;
+            continue;
+        }
+
+        // Skip if it has been tested as an identical
+        int $skip = 0;
+        for ( $idx in $skipIndices ) {
+            if ( $gIdx == $idx ) {
+                $skip = 1;
+                break;
+            }
+        }
+        if ( $skip ) continue;
+
+        // Check against all the other guides for identical guides
+        string $identicals[] = {}, $sameBases[] = {};
+        int $numIdenticals = 0, $numSameBases = 0;
+        for ( $ogIdx = $gIdx + 1; $ogIdx < $numGuides; $ogIdx++ ) {
+
+            // Skip if it has been tested as an identical
+            $skip = 0;
+            for ( $idx in $skipIndices ) {
+                if ( $ogIdx == $idx ) {
+                    $skip = 1;
+                    break;
+                }
+            }            
+            if ( $skip ) continue;
+
+            string $otherGuide = $guideList[$ogIdx];
+
+            // Get the number of cvs on the other guide
+            float $odata[] = `xgmGuideGeom -guide $otherGuide -numVertices`;
+            int $oncv = $odata[0];
+
+            // If they dont have the same cv count then they cant be
+            // identical. Just check the base point.
+            if ( $oncv != $ncv ) {
+                vector $ob = `pointPosition ( $otherGuide + ".vtx[0]" )`;
+                if ( xgmVecEquivalent($ob,$cvs[0]) ) {
+                    $skipIndices[$numTotalSkips++] = $ogIdx;
+                    $sameBases[$numSameBases++] = $otherGuide;
+                }
+                continue;
+            }
+            
+            // Get the cvs for the other guide to compare with
+            vector $ogCVs[]; 
+            clear $ogCVs;
+            for ( $cvIdx = 0; $cvIdx < $ncv; $cvIdx++ ) 
+                $ogCVs[$cvIdx] = `pointPosition ( $otherGuide + ".vtx[" 
+                                                  + $cvIdx + "]" )`;
+
+            // Compare all the cvs from each guide
+            int $comparisons = xgmVecArrayEquivalent( $cvs, $ogCVs );
+            if ( $comparisons == 1 ) {
+                // Remember the index of the identicals so that it wont be 
+                // tested again later
+                $skipIndices[$numTotalSkips++] = $ogIdx;
+                $identicals[$numIdenticals++] = $otherGuide;
+            } else if ( $comparisons == 2 ) {
+                $skipIndices[$numTotalSkips++] = $ogIdx;
+                $sameBases[$numSameBases++] = $otherGuide;
+            }
+
+        } // End of inner guide iterations
+
+        // Add each identical group as we go
+        string $identicalGrpName, $sameBaseGrpName;
+        if ( $numIdenticals ) { 
+            // Write the duplicates into the result array
+            appendStringArray( $allIdenticals, $identicals, `size $identicals` );
+
+            if ( $updateUI ) {
+                $identicalGrpName = "xgmGuideCheckIdenticalGrp" 
+                                    + $numIdenticalGrps + "_" + $desc;
+                string $grpLabel = "Identical Group " + $numIdenticalGrps;
+
+                xgmGuideCheckResultAddGroupEntry( "xgmGuideCheckIdenticalList",
+                                    $identicalGrpName, $grpLabel, 
+                                    (uiRes("m_xgmGuideCheckTool.kGroupOfGuidesThatAreIdentical")),
+                                    $desc, $guide, $identicals );
+
+                $numIdenticalGrps++;
+            } 
+        }
+
+        // Add the group of guides that share base points
+        if ( $numSameBases ) {
+            warning ( (uiRes("m_xgmGuideCheckTool.kTheFollowingGuidesShareBasePoints")) );
+            print ( $guide + "\n" );
+            print $sameBases;
+            print "\n";
+
+            $result = false;
+
+
+            if ( $updateUI ) {
+                $sameBaseGrpName = "xgmGuideCheckSameBaseGrp" 
+                                   + $numSameBaseGrps + "_" + $desc;
+                string $grpLabel = "Same Base Group " + $numSameBaseGrps;
+
+                xgmGuideCheckResultAddGroupEntry( "xgmGuideCheckSameBaseList",
+                                $sameBaseGrpName, $grpLabel, 
+                                (uiRes("m_xgmGuideCheckTool.kGroupOfGuidesThatHaveSameBasePoint")),
+                                $desc, $guide, $sameBases );
+
+                $numSameBaseGrps++;
+            }
+        }
+
+        // Remember the guides that have multiple entries in the result list
+        if ( $updateUI && $numIdenticals && $numSameBases ) {
+            $xgmGuideCheckMultiEntries[$xgmGuideCheckNumMultiEntries++] 
+                = $guide;
+            $xgmGuideCheckMultiEntries[$xgmGuideCheckNumMultiEntries++] 
+                = $identicalGrpName + "_" + $guide;
+            $xgmGuideCheckMultiEntries[$xgmGuideCheckNumMultiEntries++] 
+                = $sameBaseGrpName + "_" + $guide;
+        }
+
+    } // End of outer guide iterations
+
+    // Print out messages and update UI if it exists
+    if ( $numZeroLengths ) {
+        warning ( (uiRes("m_xgmGuideCheckTool.kTheFollowingGuidesAreZeroLength")) );
+        print $zeroLengths;
+        print "\n";
+
+        $result = false;
+
+        // Add 0-length guides to the result UI list
+        // By default these guides will be selected and checked for deletion
+        if ( $updateUI ) {
+            xgmGuideCheckAddToResultUI("xgmGuideCheckZeroLengthList", $desc,
+                                      $zeroLengths, 1, 1, 
+                                      (uiRes("m_xgmGuideCheckTool.kListOfGuidesThatHaveZeroLength")));
+        }
+    }
+
+    int $numDuplicates = `size $allIdenticals`;
+    if ( $numDuplicates ) {
+        string $fmt = "^1s duplicate guides are found.\n";
+        warning ( `format -s $numDuplicates $fmt` );
+        $result = false;        
+    }
+
+    if ( $result ){
+        string $fmt = "No bad guides are found in description ^1s.\n";
+        print `format -s $desc $fmt`;
+    }
+    
+    string $fmt = "Done guide checking for description ^1s.\n";
+    print `format -s $desc $fmt`; 
+    return $result;    
+}
+
+/**
+ * Callback function to select guides listed in the specified widget.
+ *
+ * @param widget    The parent where the guide entries are located
+ */
+global proc xgmGuideCheckSelectGuides( string $widget )
+{
+    select -clear;
+
+    // Select the specified guides in the list
+    string $childArray[] = `columnLayout -q -childArray $widget`;
+    for ( $child in $childArray ) {
+        if ( `checkBoxGrp -q -enable $child` && `checkBoxGrp -q -v1 $child` ) {
+            $guide = `checkBoxGrp -q -label $child`;
+            select -add $guide;
+        }        
+    }
+}
+
+/**
+ * Callback function to delete guides and their entries listed 
+ * in the specified widget.
+ *
+ * @param module    Module name where the curves are from
+ * @param widget    The column layout widget to delete guide entries from
+ */
+global proc xgmGuideCheckDeleteGuides( string $widget )
+{
+    global string $xgmGuideCheckMultiEntries[];
+
+    // Delete the specified guides in the list and update UI
+    string $childArray[] = `columnLayout -q -childArray $widget`;
+    for ( $child in $childArray ) {
+        if ( `checkBoxGrp -q -enable $child` && `checkBoxGrp -q -v2 $child` ) {
+            string $guide = `checkBoxGrp -q -label $child`;
+            delete $guide;
+            deleteUI $child;
+                       
+            // Disable the other entries if a guide appears more than 
+            // once in the list
+            for ( $i = 0; $i < `size $xgmGuideCheckMultiEntries`; $i += 3 ) {
+                if ( $xgmGuideCheckMultiEntries[$i] == $guide ) {
+                    string $entry1 = $xgmGuideCheckMultiEntries[++$i];
+                    string $entry2 = $xgmGuideCheckMultiEntries[++$i];
+
+                    if ( $entry1 == $child ) 
+                        checkBoxGrp -e -enable false -va2 false true $entry2;                    
+                    else if ( $entry2 == $child )
+                        checkBoxGrp -e -enable false -va2 false true $entry1;
+                    else
+                        error (uiRes("m_xgmGuideCheckTool.kThisShouldNeverHappen"));
+
+                    break;
+                }
+            }        
+        }
+    }
+
+    // Remove the group frame if no entry is left
+    int $numRemaining = `columnLayout -q -numberOfChildren $widget`;
+    if ( $numRemaining == 0 ) {
+        deleteUI ( $widget + "Frame" );
+    }
+}

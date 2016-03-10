@@ -1,0 +1,449 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Procedure Name:
+//	AEprojectionTemplate
+//
+//  Description Name;
+//	Creates the attribute editor controls for the projection Node
+//
+//  Input Value:
+//	nodeName 
+//
+//  Output Value:
+//	None
+// 
+
+//
+//  Procedure Name:
+//	AEmakeProjNew
+//
+
+global proc AEmakeProjNew (string $pName)
+{
+	string $realName[];
+	tokenize ($pName, ".", $realName);
+
+	rowLayout -nc 2;
+	text -label "";
+	button -label (uiRes("m_AEprojectionTemplate.kInteractivePlacement"))
+			-c ("AEinvokeProj "+ $realName[0]) placButton;
+	setParent ..;
+
+	rowLayout -nc 2;
+	text -label "";
+	button -label (uiRes("m_AEprojectionTemplate.kFitToBBox"))
+			-c ("AEfitProjToGroup "+ $realName[0]) fitButton;
+	setParent ..;
+}
+
+//
+//  Procedure Name:
+//	AEmakeProjReplace
+//
+
+global proc AEmakeProjReplace (string $pName)
+{
+	string $realName[];
+	tokenize ($pName, ".", $realName);
+
+	setUITemplate -pst attributeEditorTemplate;
+	button -e -c ("AEinvokeProj "+ $realName[0]) placButton;
+	button -e -c ("AEfitProjToGroup "+ $realName[0]) fitButton;
+	setUITemplate -ppt;
+}
+
+global proc AEinvokeProj (string $projectionNode)
+//
+//	Description:
+//		Called when the user presses the "Interactive Placement" button
+//		in the Attribute Editor.
+//
+//		Determine if the projection node has texture placement node
+//		connected to it. If not, then post a dialog asking the user
+//		if one should be created.
+//
+{
+	//	Ask the user if a placement node should be created.
+	//
+	int $showConfirmDialog = false;
+	int $setProjectionTool = false;
+
+	//	First check to see if the node is already connected to
+	//	a texture placemenent node.
+	//
+	string $connectionArray[];
+	$connectionArray = `listConnections -destination false
+		($projectionNode + ".placementMatrix")`;
+
+	if (0 < size($connectionArray)) {
+		//
+		//	Have a connection.
+		//
+		if ("place3dTexture" == `nodeType $connectionArray[0]`) {
+			//
+			//	Already connected to a texture placement node, no need to
+			//	create another.
+			//
+			$setProjectionTool = true;
+
+		} else {
+			//
+			//	Connected, but not to a placement texture node. Post the
+			//	confirm dialog to see if the user wants one to be created.
+			//
+			$showConfirmDialog = true;
+		}
+		
+	} else {
+		$showConfirmDialog = true;
+	}
+
+	if ($showConfirmDialog) {
+		string $fmt = (uiRes("m_AEprojectionTemplate.kMustBeConnected"));
+		string $msg = `format -s $projectionNode $fmt`;
+		string $createPlacementNode = (uiRes("m_AEprojectionTemplate.kCreatePlacementNode"));
+		string $cancel = (uiRes("m_AEprojectionTemplate.kCancel"));
+		string $result = `confirmDialog
+			-message $msg
+			-button $createPlacementNode
+			-button $cancel
+			-dismissString $cancel
+			-defaultButton $createPlacementNode`;
+		
+		if ($cancel != $result) {
+			string $place3d = `createNode place3dTexture`;
+			connectAttr -force ($place3d + ".worldInverseMatrix[0]")
+				($projectionNode + ".placementMatrix");
+
+			$setProjectionTool = true;
+		}
+	}
+
+	AEmakeProjectionActive( $projectionNode );
+
+	if ($setProjectionTool) {
+		setToolTo shadingProjectionContext;
+	}
+}
+
+//
+//	Procedure Name:
+//	AEfitProjToGroup
+//
+
+global proc AEfitProjToGroup (string $pName)
+{
+	string	$ctx = `currentCtx`;
+
+	if( $ctx != "shadingProjectionContext" )
+		AEinvokeProj( $pName );
+	else
+		AEmakeProjectionActive( $pName );
+
+    projectionManip -fb;
+}
+
+//
+//	Procedure Name:
+//	 AEmakeProjectionActive
+//
+
+global proc AEmakeProjectionActive( string $pName )
+{
+	//
+	//	Select it in the scene graph.
+	//
+	select -r $pName;
+}
+
+//
+//  Procedure Name:
+//   checkprojType
+//
+
+global proc checkProjType ( string $nodeName )
+{
+	string $nodeAttr = $nodeName + ".projType";
+	int $value = `getAttr $nodeAttr`;
+
+	if ($value == 8) 
+	{
+		// camera projection mode
+
+		if (`optionMenu -exists linkProjMenu`)
+			optionMenu -e -enable true linkProjMenu;
+		editorTemplate -dimControl $nodeName "fitType" false;
+		editorTemplate -dimControl $nodeName "fitFill" false;
+
+		string $connect[] = `listConnections -sh true 
+							($nodeName + ".linkedCamera")`;
+		if (size($connect) > 0)
+		{
+			editorTemplate -dimControl $nodeName "uAngle" true;
+			editorTemplate -dimControl $nodeName "vAngle" true;
+			button -e -enable false placButton;
+			button -e -enable false fitButton;
+		}
+		else
+		{
+			editorTemplate -dimControl $nodeName "uAngle" false;
+			editorTemplate -dimControl $nodeName "vAngle" false;
+			button -e -enable true placButton;
+			button -e -enable true fitButton;
+		}
+	}
+	else
+	{
+		if (`optionMenu -exists linkProjMenu`)
+			optionMenu -e -enable false linkProjMenu;
+		editorTemplate -dimControl $nodeName "fitType" true;
+		editorTemplate -dimControl $nodeName "fitFill" true;
+
+		editorTemplate -dimControl $nodeName "uAngle" false;
+		editorTemplate -dimControl $nodeName "vAngle" false;
+		button -e -enable true placButton;
+		button -e -enable true fitButton;
+	}
+}
+
+//
+//  Procedure Name:
+//	 AEprojectionTemplate
+//
+
+global proc AEprojectionTemplate ( string $nodeName )
+{
+	AEswatchDisplay $nodeName;
+	editorTemplate -beginScrollLayout;
+
+		editorTemplate -beginLayout (uiRes("m_AEprojectionTemplate.kProjectionAttr")) -collapse 0;
+			editorTemplate -callCustom "AEmakeProjNew" "AEmakeProjReplace"
+					"";
+			editorTemplate -addControl "projType" "checkProjType";
+			editorTemplate -addControl "image";
+			editorTemplate -addControl "transparency";
+			editorTemplate -addControl "uAngle";
+			editorTemplate -addControl "vAngle";
+		editorTemplate -endLayout;
+
+		editorTemplate -beginLayout (uiRes("m_AEprojectionTemplate.kCameraProjectionAttr"));
+			editorTemplate -callCustom "AElinkProj" "AElinkProjReplace" "linkedCamera";
+			editorTemplate -addControl "fitType";
+			editorTemplate -addControl "fitFill";
+		editorTemplate -endLayout;
+
+		editorTemplate -beginLayout (uiRes("m_AEprojectionTemplate.kNoiseAttr"));
+			editorTemplate -addControl "amplitudeX";
+			editorTemplate -addControl "amplitudeY";
+			editorTemplate -addControl "ratio";
+			editorTemplate -addControl "ripples";
+		editorTemplate -endLayout;
+
+		editorTemplate -beginLayout (uiRes("m_AEprojectionTemplate.kRecursionDepth"));
+			editorTemplate -addControl "depth";
+		editorTemplate -endLayout;
+
+    	editorTemplate -beginLayout (uiRes("m_AEprojectionTemplate.kColorBalance"));
+        	editorTemplate -addControl "defaultTransparency";
+        	editorTemplate -addControl "transparencyGain";
+        	editorTemplate -addControl "transparencyOffset";
+    	editorTemplate -endLayout;   
+		// include/call base class/node attributes
+		AEtexture3dCommon $nodeName;
+	
+	editorTemplate -addExtraControls;
+	editorTemplate -endScrollLayout;
+}
+
+
+//
+//  Procedure Name:
+//   AElinkProj - initial creation of menu listing all cameras
+//	 so that the projection node can be linked to a selected camera.
+//
+
+global proc AElinkProj (string $projection)
+{
+	int $i, $j;
+	string $allCameras[] = `ls -ca`;
+	string $connect[] = `listConnections -sh true $projection`;
+
+    setUITemplate -pst attributeEditorTemplate;
+
+    rowLayout -nc 2 linkProjLayout;
+    	text -label (uiRes("m_AEprojectionTemplate.kLinkToCamera"));
+		optionMenu -label "" -cc ("linkProjToCamera " + $projection) linkProjMenu;
+		menuItem -label (uiRes("m_AEprojectionTemplate.kNone")) "linkProjAEnone";
+
+		$j = 0;
+		for ($i = 0; $i < size($allCameras); $i++)
+		{
+			// only perspective cameras please...
+			if (`camera -q -o $allCameras[$i]` == 0)
+			{
+				menuItem -label $allCameras[$i] ("linkProjAE" + $j);
+				$j++;
+
+				// see if this should be the selected menu item
+				if (size($connect) > 0 && $connect[0] == $allCameras[$i]) 
+					optionMenu -e -sl ($j+1) linkProjMenu;
+			}
+		}
+    setParent ..;
+
+    setUITemplate -ppt;
+}
+
+
+//
+//  Procedure Name:
+//   AElinkProjReplace - replace method for AElinkProj.
+//
+
+global proc AElinkProjReplace (string $projection)
+{
+	int $i, $j;
+	string $allCameras[] = `ls -ca`;
+	string $connect[] = `listConnections -sh true $projection`;
+
+	setUITemplate -pst attributeEditorTemplate;
+	setParent -m linkProjMenu;
+		optionMenu -e -sl 1 linkProjMenu;
+		$j = 0;
+		for ($i = 0; $i < size($allCameras); $i++) 
+		{
+			if (`camera -q -o $allCameras[$i]` == 0)
+			{
+				// create new menu item if not already there
+				if (`menuItem -exists ("linkProjAE" + $j)`)
+					menuItem -e -label $allCameras[$i] ("linkProjAE" + $j);
+				else
+					menuItem -label $allCameras[$i] ("linkProjAE" + $j);
+				$j++;
+
+				// see if this should be the selected menu item
+            	if (size($connect) > 0 && $connect[0] == $allCameras[$i])
+                	optionMenu -e -sl ($j+1) linkProjMenu;
+			}
+		}
+
+		// delete ones which are gone
+		while (`menuItem -exists ("linkProjAE" + $j)`) 
+		{
+			deleteUI ("linkProjAE" + $j);
+			$j++;
+		}
+	setParent -m ..;
+	setUITemplate -ppt;
+
+	optionMenu -e -cc ("linkProjToCamera " + $projection) linkProjMenu;
+}
+
+
+//
+//  Procedure Name:
+//   recursiveShapeList - if selected item is not a shape, then
+//	 this method finds the appropriate shape (camera) to be linked
+//	 with the projection node.
+//
+
+proc string[] recursiveShapeList(string $root)
+{
+	// returns list of all shapes under the input transform
+	string $childList[] = `listRelatives -f -c $root`;
+	string $xformList[] = `ls -tr $childList`;
+	string $shapeList[] = `ls -s $childList`;
+
+	int $xformSize = size($xformList);
+	int $shapeSize = size($shapeList);
+
+	int $i, $j, $last;
+	for( $i=0; $i<$xformSize; ++$i )
+	{
+		string $subShapes[] = recursiveShapeList($xformList[$i]);
+		int $subShapeSize = size($subShapes);
+		int $last = $shapeSize;
+		for( $j=0; $j<$subShapeSize; ++$j )
+		{
+			$shapeList[$last] = $subShapes[$j];
+			++$last;
+			++$shapeSize;
+		}
+	}
+	return $shapeList;
+}
+
+
+//
+//  Procedure Name:
+//   linkProjToCamera - connect the selected camera with the 
+//	 projection node.
+//
+
+global proc linkProjToCamera (string $projection)
+{
+	string $buffer[];
+	tokenize($projection, ".", $buffer);
+	string $nodeName = $buffer[0];
+	
+	// The first entry is reserved for "None".
+	if (`optionMenu -q -sl linkProjMenu` == 1)
+	{
+		string $connect[] = `listConnections -sh true $projection`;
+		if (size($connect) != 0)
+			disconnectAttr ($connect[0] + ".message") $projection;
+
+        editorTemplate -dimControl $nodeName "uAngle" false;
+        editorTemplate -dimControl $nodeName "vAngle" false;
+        button -e -enable true placButton;
+        button -e -enable true fitButton;
+		return;
+	}
+
+	string $camera = `optionMenu -q -v linkProjMenu`;
+	if (`objectType -isa "camera" $camera`)
+	{
+		connectAttr -f ($camera + ".message") $projection; 
+	}
+	else if (`objectType -isa "transform" $camera`)
+	{
+		// find attached shape
+		string $cameraList[] = recursiveShapeList ($camera);
+		if (`objectType -isa "camera" $cameraList[0]`)
+		{
+			connectAttr -f ($cameraList[0] + ".message") $projection;
+		}
+	}
+	else
+	{
+		// error: cast warning message
+		string $msg = (uiRes("m_AEprojectionTemplate.kCameraWarning"));
+		warning `format -s $camera -s $projection $msg`;
+	}
+
+	// Dimming certain attributes...
+    editorTemplate -dimControl $nodeName "uAngle" true;
+    editorTemplate -dimControl $nodeName "vAngle" true;
+    button -e -enable false placButton;
+    button -e -enable false fitButton;
+}

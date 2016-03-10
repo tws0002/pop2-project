@@ -1,0 +1,145 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+	//
+//
+//  Creation Date:  Oct, 2000
+//
+//	Procedure Name:
+//		mergeCharacters
+//
+//	Description:
+//		Merge multiple characters into a single character. If multiple
+//		characters are selected and some of the characters are subcharacters
+//		of another of the characters, the subcharacters will be merged
+//		into the highest level character. If none of the characters are 
+//		subcharacters, the merge will be into the last selected character.
+//
+//	Input Arguments:
+//		none: works on the selection list
+//
+//	Return Value:
+//		name of the character that the other characters were merged to
+//
+
+proc string[]
+findParentChar(string $chars[])
+//
+// Given a list of characters, recursively find those which are parents of
+// other characters in the list. Keep going til you find the most
+// parent characters of all.
+//
+{
+	int $charCount = size($chars);	
+	string $parentChar[];
+	int $ii, $jj; 
+	for ($ii = 0; $ii < $charCount; $ii++) {
+		$parentChar[$ii] = "";
+		for ($jj = 0; $jj < $charCount; $jj++) {
+			if ($ii == $jj) continue;
+			if (`character -isMember $chars[$jj] $chars[$ii]`) {
+				$parentChar[$ii] = $chars[$jj];
+				break;
+			}
+		}
+	}
+
+	string $pc;
+	int $sizeCompressed = 0;
+	string $compressedParents[];
+	for ($ii = 0; $ii < $charCount; $ii++) {
+		if ("" != $parentChar[$ii]) {
+			$compressedParents[$sizeCompressed] = $parentChar[$ii];
+			$sizeCompressed++;
+		}
+	}
+
+	// continue searching for parents until one or less is found
+	//
+	if (size($compressedParents) < 2) {
+		return $compressedParents;
+	} else {
+		string $newParents[];
+		$newParents = findParentChar($compressedParents);
+		if (size($newParents) == 0) {
+			return $compressedParents;
+		} else {
+			return $newParents;
+		}
+	}
+}
+
+global proc string
+mergeCharacters()
+//	Description:
+//		Merge multiple characters into a single character. If multiple
+//		characters are selected and some of the characters are subcharacters
+//		of another of the characters, the subcharacters will be merged
+//		into the highest level character. If none of the characters are 
+//		subcharacters, the merge will be into the last selected character.
+//
+{
+	// Check for the proper selection -> two or more characters
+	//
+	string $chars[] = `ls -sl -type character`;
+	int $charCount = size($chars);
+	if ($charCount < 2) {
+		error( (uiRes("m_mergeCharacters.kSelectTheCharsErr")) ); 
+		return "";
+	}
+
+	// Find the character to merge to (highest character in hierarchy,
+	// or if there are no subcharacters, just use the last selected character)
+	//
+	string $mergeChar;
+	string $parentChars[] = findParentChar($chars);
+	if (size($parentChars)) {
+		$mergeChar = $parentChars[size($parentChars)-1];
+	} else {
+		$mergeChar = $chars[$charCount-1];
+	}
+
+	string $character;
+	for ($character in $chars) {
+		if ($character == $mergeChar) continue;
+
+		string $mem;
+		string $members[] = `character -q $character`;
+		string $attrs[];
+		clear $attrs;
+		for ($mem in $members) {
+			if (nodeType($mem) != "character") {
+				$attrs[size($attrs)] = $mem;
+			}
+		}
+
+		// transfer the attrs to the destination character
+		//
+		character -e -fe $mergeChar $members;
+
+		// delete the source character
+		//
+		delete $character;
+	}
+
+	
+	return $mergeChar;
+}

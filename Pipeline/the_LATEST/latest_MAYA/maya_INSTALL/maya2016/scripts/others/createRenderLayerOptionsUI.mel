@@ -1,0 +1,225 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+global proc createRenderLayerOptionsUI (
+    string $parent, string $renderer) 
+//
+//  Procedure Name:
+//      createRenderLayerOptionsUI
+//
+//  Description:
+//      Creates the UI in the "Render Layer/Pass Control" 
+//		expand/collapse section for the unified render globals tab
+//      for the specified renderer.
+//
+{
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+	setParent $parent;
+
+	// Set up the spreadsheet filters
+	createRenderLayerFilters();
+
+	// If the UI is created already then just update the attribute values.
+	if (`columnLayout -exists ($renderer+"RenderLayerLayout")`) {
+		updateRenderLayerOptionsUI($renderer);
+		return;
+	}
+
+	columnLayout -adjustableColumn true ($renderer+"RenderLayerLayout");
+
+        attrControlGrp -label (uiRes("m_createRenderLayerOptionsUI.kEnableLayers"))
+            -attribute "defaultRenderGlobals.renderLayerEnable" 
+            -cc ("updateRenderLayerEnableUI(\\\""+$renderer+"\\\")")
+            ($renderer+"RenderLayerEnable");
+
+
+        attrControlGrp -label (uiRes("m_createRenderLayerOptionsUI.kEnablePasses"))
+            -attribute "defaultRenderGlobals.renderLayerPassEnable"
+            -cc ("updateRenderLayerPassEnableUI(\\\""+$renderer+"\\\")")
+            ($renderer+"RenderLayerPassEnable");
+
+		separator;
+
+        attrControlGrp -label (uiRes("m_createRenderLayerOptionsUI.kSubdirectories"))
+            -attribute "defaultRenderGlobals.renderLayerSubdirs" 
+            ($renderer+"RenderLayerSubdirs");
+
+		frameLayout
+			-label (uiRes("m_createRenderLayerOptionsUI.kRenderLayers"))
+			-labelVisible false
+			-borderVisible false
+			-collapsable false
+			($renderer+"LayerAttrLayout");
+
+		string $spreadSheetParent;
+		if (`about -linux`)
+		{
+			$spreadSheetParent = $renderer+"LayerAttrLayout";
+		}
+		else
+		{
+            // Temporary fix for bug 205463.  The spreadsheet's scrollbar 
+            // at the bottom is half covered up, so we put in the hard
+            // coded height 250 for the columnLayout which contains the 
+            // spreadsheet.  The proper fix is yet to be investigated.
+            // The columnLayout should leave enough space for the 
+            // spreadSheet without this hard coded height.
+            // When the proper fix is provided, the flag height 250 can be
+            // removed.
+            //
+            // March 9, 2004
+            //
+
+			columnLayout -adjustableColumn true -height 250 ($renderer+"LayerLyt");
+			separator;
+			$spreadSheetParent = $renderer+"LayerLyt";
+		}
+
+ 			selectionConnection -wl -parent $spreadSheetParent 
+                ($renderer+"LayerList");
+
+            // This spreadSheetEditor control is not automatically removed
+            // when its parent is removed, so we must ensure that it is
+            // deleted before creating it again.
+            //
+            if ( `spreadSheetEditor -exists ($renderer+"LayerOutliner")` ) {
+                deleteUI ($renderer+"LayerOutliner");
+            }
+
+            // The spreadSheetEditor lists the renderable attribute of all
+            // of the nodes given by aList, after applying the filter,
+            // renderLayerFilter.
+            //
+			spreadSheetEditor 
+				-mainListConnection ($renderer+"LayerList")
+				-ko false
+				-ln true
+				-fal {"rndr"}
+				-filter renderLayerFilter
+				($renderer+"LayerOutliner");
+
+		if (!(`about -linux`))		// when it is not unix
+		{
+			setParent ..;   // from columnLayout layerLyt
+		}
+
+		setParent ..;
+								 				
+	setParent ..;
+
+	setUITemplate -popTemplate;
+
+	// Make sure the values are right
+    //
+	updateRenderLayerOptionsUI($renderer);
+}
+
+global proc updateRenderLayerOptionsUI (string $renderer)
+//
+//  Procedure Name:
+//      updateRenderLayerOptionsUI
+//
+//  Description:
+//      Gets the real values from the option vars and sets the UI based
+//		on these values.  This procedure updates all of the RL/RP
+//		values.
+//
+{ 
+	int $doLayers = `getAttr "defaultRenderGlobals.renderLayerEnable"`;
+
+	int $doLayerPasses = `getAttr "defaultRenderGlobals.renderLayerPassEnable"`;
+
+	int $doSubdirs = `getAttr "defaultRenderGlobals.renderLayerSubdirs"`;
+	
+	updateRenderLayerLayoutUI($renderer, $doLayers, $doLayerPasses );
+}
+
+// Description: This procedure is called to update the render layout
+//      control.
+//
+global proc updateRenderLayerLayoutUI(
+    string $renderer, int $doLayers, int $doPasses )
+{
+	createRenderLayerFilters();
+	
+	{
+        string $filter;
+        if ( $doLayers ) {
+            $filter = "renderLayerFilter";
+        }
+        else {
+            $filter = "defaultRenderLayerFilter";
+        }
+
+		if ( $doPasses )
+		{
+			spreadSheetEditor
+				-e
+				-filter $filter
+				-fal {"rndr","b","cp","s","di","sp"}
+				($renderer+"LayerOutliner");
+
+		}
+		else
+		{
+			spreadSheetEditor
+				-e
+				-filter $filter
+				-fal {"rndr"}
+				($renderer+"LayerOutliner");
+
+		}
+
+		frameLayout
+			-e
+			 -height 250
+			-m true
+			($renderer+"LayerAttrLayout");
+
+	}
+}
+
+
+// Description: This procedure is called to update the render layer
+//      enabled control.
+//
+global proc updateRenderLayerEnableUI(string $renderer)
+{
+	int $doPasses = 0;
+	int $doLayers = 0;
+	
+	$doLayers = `getAttr defaultRenderGlobals.renderLayerEnable`;
+	$doPasses = `getAttr defaultRenderGlobals.renderLayerPassEnable`;
+	
+	
+	updateRenderLayerLayoutUI($renderer, $doLayers, $doPasses );
+}
+
+// Description: This procedure is called to update the render layer
+//      pass enabled control.
+//
+global proc updateRenderLayerPassEnableUI(string $renderer)
+{
+	int $doLayers = `getAttr defaultRenderGlobals.renderLayerEnable`;
+	int $doPasses = `getAttr defaultRenderGlobals.renderLayerPassEnable`;
+	updateRenderLayerLayoutUI($renderer, $doLayers, $doPasses );
+}

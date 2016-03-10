@@ -1,0 +1,124 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  2002
+//
+//
+//<doc>
+//<name textureDisplacePlane>
+//
+//<synopsis>
+//		textureDisplacePlane resolution textureName
+//
+//<returns>
+//		None.	
+//
+//<description>
+// This mel procedure creates a poly plane with an expression to offset the uvs based
+// on an input surface texture or oceanShader node. The input texture may be modified
+// and the plane will interactively update. The generated expression provides
+// an example of how one could use the colorAtPoint command to create a
+// displacement mapping effect. Note that for
+// preview uses the heightField node is more efficient for this general task,
+// although it does not modify geometry that can be rendered or output.
+// If one uses this for an ocean shader, the mapping is determined by the
+// position of the plane, such that translating the plane moves it over the
+// stationary ocean displacement. For surface textures the mapping is the same
+// as the texture swatch( uv 0-1).
+// If the defined resolution is greater than 20 the expression uses setAttr
+// calls to update the points on the polyset. Otherwise direct node
+// connections are created from the expression to each cv, which plays back faster
+// but takes longer to set up the expression.
+//
+//
+//<flags>
+//	None.
+//
+//<examples>
+//	// Create a noise texture 
+//  createRenderNodeCB -as2DTexture "" noise ""; 
+// // Result: noise1 //
+// textureDisplacePlane 10 noise1;
+// // Creates 10x10 poly plane with noise displacement expression //
+//</doc>
+
+global proc textureDisplacePlane(int $res, string $texture)
+{
+
+	string $result[] = `polyPlane -w 1 -h 1 -sx $res -sy $res -ax 0 1 0 -createUVs 1 -ch 1`;
+	string $plane = $result[0];
+	int $x,$y;
+	int $xSize = $res+1;
+	int $zSize = $res+1;
+	int $planeZ, $planeX;
+	int $totalSize = $xSize * $zSize;
+	string $exp = ( "float $u, $v;\n"
+				    + $plane + ".rotateX = 0;\n"
+					+"float $dummy = " + $texture + ".outColorR;\n");
+	string $nType = nodeType( $texture );
+	if( $nType == "oceanShader" ){
+		rotate 0.0 -90 0.0 $plane;
+		// define the min max values such that the plane
+		$exp += ("float $minU = " +$plane+ ".scaleX * (-0.5) + " + $plane + ".translateX;\n");
+		$exp += ("float $minV = " +$plane+ ".scaleZ * (-0.5) + " + $plane + ".translateZ;\n");
+		$exp += ("float $maxU = " +$plane+ ".scaleX *   0.5  + " + $plane + ".translateX;\n");
+		$exp += ("float $maxV = " +$plane+ ".scaleZ *   0.5  + " + $plane + ".translateZ;\n");
+	} else {
+		$exp += "float $minU = 0.0;\n";
+		$exp += "float $minV = 0.0;\n";
+		$exp += "float $maxU = 1.0;\n";
+		$exp += "float $maxV = 1.0;\n";
+	}
+	if( $res > 20 ){
+		// put loop inside expression, build array eval
+		$exp += ("int $i;\n"
+				+"float $disp[] = `colorAtPoint -mu $minU -mv $minV -xu $maxU -xv $maxV -su " 
+									+ $xSize + " -sv " + $zSize + " " + $texture + "`;\n"
+				+"string $str = \"setAttr " + $plane + ".pnts[0:" + ($totalSize-1) + "].pnty\";\n"
+				+"for( $i = 0; $i < " + $totalSize + "; $i++ ){\n"
+				+"    $str += ( \" \" + $disp[$i]);\n"
+				+"}\n"
+				+"eval $str");
+
+	} else {
+		// unfold loop and use output connections 
+		$exp += ("float $disp[] = `colorAtPoint -mu $minU -mv $minV -xu $maxU -xv $maxV -su " 
+									+ $xSize + " -sv " + $zSize + " " + $texture + "`;\n");
+		for( $z = 0; $z < $zSize; $z++ ){
+			$planeZ = ($zSize - $z - 1) * $xSize;
+			for( $x = 0; $x < $xSize; $x++ ){
+				$exp += ( $plane + ".pnts[" + ($planeZ + $x) + "].pnty = $disp[" + ($planeZ + $x) + "];\n");
+			}
+		}
+	}
+	if( $res > 10 ){
+		print (uiRes("m_textureDisplacePlane.kCreatingExpression"));
+	}
+	waitCursor -state on;
+	// print $exp;
+	expression -s $exp;
+	waitCursor -state off;
+	if( $res > 10 ){
+		print (uiRes("m_textureDisplacePlane.kDone"));
+	}
+}

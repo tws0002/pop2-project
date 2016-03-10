@@ -1,0 +1,174 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Procedure Name:
+//      buildStereoLookthruMenu
+//
+//  Description:
+//      This procedure creates a menu item for each stereo
+//      rig. New rigs can also be created through this
+//      menu. When a menu item is selected the associated camera will
+//      be placed in the model view.
+//
+//  Input Arguments:
+//      parent - menu name to build menu items for
+//      panel - name of panel this menu is associated with
+//
+//  Return Value:
+//      None.
+//
+
+// Wrapper to switch to stereo panel
+//
+global proc switchToStereoPanel( string $panel )
+{
+	scriptedPanel -e -rp $panel StereoPanel;
+}
+
+// Wrapper to look through selected:
+//
+global proc stereoCameraLookThroughSelected( string $panelEditor )
+{
+	if ( `pluginInfo -query -loaded "stereoCamera"` ) 
+	{ 
+		python("from maya.app.stereo import stereoCameraCustomPanel"); 
+		python("stereoCameraCustomPanel.switchToSelected\(\"" + $panelEditor +  "\")");
+	}
+}
+
+// Wrapper to switch to camera. Use in conjunction with look through.
+//
+global proc stereoCameraSwitchToCamera( string $camera, string $panel )
+{
+	if ( `pluginInfo -query -loaded "stereoCamera"` ) 
+	{
+        string $panelEditor = "StereoPanelEditor"; 
+
+		// Switch the panel
+		switchToStereoPanel( $panel );
+	
+		python("from maya.app.stereo import stereoCameraCustomPanel"); 
+		python("stereoCameraCustomPanel.switchToCamera\(\"" + $camera + "\"," + 
+			"\"" + $panelEditor + "\")");
+	}
+}
+
+proc int stereoViewerActiveAndHasSet( string $panel ) 
+{
+	string $panelEditor = $panel + "Editor"; 
+	if ($panel == "StereoPanel") { 
+		string $rig	 = `stereoCameraView -query -rigRoot $panelEditor`; 
+		return `objectType -isa "cameraSet" $rig`; 
+	}	
+	return 0; 
+}
+
+global proc lookThroughNewStereoCamera( string $rigType, string $panel )
+{
+	string $panelEditor = "StereoPanelEditor";
+
+	// Create a new camera and look through it
+	python("from maya.app.stereo import stereoCameraRig");
+	string $res[] = python("stereoCameraRig.createStereoCameraRig(rigName='"+$rigType+"')");
+
+	// Switch to the pannel if the creation succeeded
+	if ($res[0] != "") {
+		// Switch the panel
+		switchToStereoPanel( $panel );
+	
+		stereoCameraLookThroughSelected( $panelEditor );
+
+		// Some users create their custom rigs by parenting off existing 
+		// Maya rigs.  This is the case where a layout artist has 	
+		// positioned a camera and now wants to create a stereo rig under
+		// it. We allow this through the creation of a proxy rig. In the 
+		// case of a proxy rig, the rig root will not be the result 
+		// returned 
+		//
+		int $rigRoot = python("stereoCameraRig.isRigRoot('"+$res[0]+"')"); 
+
+		// Set camera to a default viewing location
+		string $currentCamera = `modelEditor -q -camera $panelEditor`;
+		if (size($currentCamera) && $rigRoot)
+		{
+			viewSet -p $currentCamera;
+		} 
+		else if (!$rigRoot)  
+		{ 
+			string $rigRoot = `stereoCameraView -q -rigRoot $panelEditor`; 
+			select -r $rigRoot; 
+		} 
+	}
+}
+
+global proc buildStereoLookthruMenu( string $parent, string $panel )
+{
+	if ( !`pluginInfo -query -loaded "stereoCamera"` ) 
+		loadPlugin -qt "stereoCamera";
+
+    python("from maya.app.stereo import stereoCameraMenus");
+
+    // Rebuild menu
+    //
+    setParent -menu $parent;
+    menu -e -deleteAllItems $parent;
+
+	string $pyCmdRig = ("'stereoCameraSwitchToCamera %(arg1)s "+$panel+"'");
+	string $pyCmd = ("'lookThroughModelPanel %(arg1)s "+$panel+"'");
+
+	python("stereoCameraMenus.createStereoCameraSubmenus("+$pyCmdRig+","+$pyCmd+")");
+
+		menuItem -divider true;
+
+	int $enableLayer = stereoViewerActiveAndHasSet( $panel );
+	// Create new camera rig and look through it. Add one entry per
+	// rig type
+		//
+	string $rigs[] = `stereoRigManager -listRigs`;
+	string $rig;
+	string $menuTitle = (uiRes("m_buildStereoLookthruMenu.kNew"));
+	string $menuAnnot = (uiRes("m_buildStereoLookthruMenu.kNewStereoCameraAnnot"));
+	string $menuStereoLayer = (uiRes("m_buildStereoLookthruMenu.kNewCameraSet"));
+	string $menuStereoLayerAnnot = (uiRes("m_buildStereoLookthruMenu.kNewStereoCameraLayerAnnot"));
+	int $nbRigs = size($rigs);
+	for ($rig in $rigs) {
+		string $label = $menuTitle;
+		string $layerLabel = $menuStereoLayer; 
+		if ($nbRigs>1) { 
+			$label = $label+" ("+$rig+")";
+			$layerLabel = $layerLabel + " ("+ $rig+")"; 
+		}
+		string $cmd = ("lookThroughNewStereoCamera\(\"" + $rig + "\",\""+$panel+"\"\)");
+		string $cmdSet = ("addCameraToStereoCameraSet\(\"" + $rig + "\",\""+$panel+"\"\)");
+		menuItem
+			-label $label
+			-annotation `format -stringArg $rig $menuAnnot`
+			-image      "viewStereo.png"
+			-command $cmd;
+		menuItem 
+			-label $layerLabel
+			-enable $enableLayer 
+			-annotation `format -stringArg $rig $menuStereoLayerAnnot`
+			-image		"viewStereo.png"
+			-command $cmdSet; 
+	}
+}

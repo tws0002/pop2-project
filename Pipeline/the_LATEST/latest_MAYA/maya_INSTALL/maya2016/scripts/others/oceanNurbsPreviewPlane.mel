@@ -1,0 +1,100 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  2002
+//
+//
+//<doc>
+//<name oceanNurbsPreviewPlane>
+//
+//<synopsis>
+//      oceanNurbsPreviewPlane xresolution, yresolution, textureName
+//
+//<returns>
+//      None.
+//
+//<description>
+// This mel procedure creates a poly plane with an expression to offset the uvs based
+// on an input surface texture or oceanShader node. The input texture may be modified
+// and the plane will interactively update. The generated expression provides
+// an example of how one could use the colorAtPoint command to create a
+// displacement mapping effect. Note that for
+// preview uses the heightField node is more efficient for this general task,
+// although it does not modify geometry that can be rendered or output.
+// If one uses this for an ocean shader, the mapping is determined by the
+// position of the plane, such that translating the plane moves it over the
+// stationary ocean displacement. For surface textures the mapping is the same
+// as the texture swatch( uv 0-1).
+//
+//
+//<flags>
+//  None.
+//
+//<examples>
+//
+// oceanNurbsPreviewPlane 10 10 oceanShader1;
+// // Creates 10x10 nurbs surface with cvs displaced by ocean surface //
+//</doc>
+
+
+global proc oceanNurbsPreviewPlane(int $xres, int $zres, string $oceanShader)
+{
+	string $result[] = `nurbsPlane -w 1 -lr 1 -d 1 -u $xres -v $zres -ax 0 1 0 -ch 0`;
+	string $plane = $result[0];
+	setAttr -l true ( $plane+".rotate");
+	setAttr -l true ( $plane+".scaleY");
+	setAttr -l true ( $plane+".translateY");
+	if( $zres < $xres ){
+		setAttr ($plane+".scaleZ") ((float)$zres/(float)$xres);
+	} else {
+		setAttr ($plane+".scaleX") ((float)$xres/(float)$zres);
+	}
+
+	int $x,$y;
+	int $xSize = $xres+1;
+	int $zSize = $zres+1;
+	int $planeZ, $planeX;
+
+	string $exp = ( "float $u, $v;\n"
+			  + "float $minx = " +$plane+ ".scaleX * -0.5 + " + $plane + ".translateX;\n"
+			  + "float $maxx = " +$plane+ ".scaleX *  0.5 + " + $plane + ".translateX;\n"
+			  + "float $minz = " +$plane+ ".scaleZ * -0.5 + " + $plane + ".translateZ;\n"
+	  		  + "float $maxz = " +$plane+ ".scaleZ *  0.5 + " + $plane + ".translateZ;\n"
+                    + "float $disp[] = `colorAtPoint -o A -su "+$xSize+" -sv "+$zSize
+			      +" -mu $minx -mv $minz -xu $maxx -xv $maxz "+$oceanShader+"`;\n"
+      );
+	// unfold loop and use output connections 
+	int $i=0;
+	for( $x = 0; $x < $xSize; $x++ ){
+		$planeX = $x * $zSize;
+		for( $z = 0; $z < $zSize; $z++ ){
+			$planeZ= $zSize - $z - 1;
+			$exp +=  ($plane + ".cv[" + ($planeX + $planeZ) + "].yv = $disp["+$i+"];\n");
+			$i++;
+		}
+	}
+
+	expression -s $exp;
+	select ($plane+".cv[0][0]");
+	select $plane;
+}

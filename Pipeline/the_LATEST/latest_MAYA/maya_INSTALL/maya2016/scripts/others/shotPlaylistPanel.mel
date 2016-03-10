@@ -1,0 +1,809 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Creation Date:  November 17, 2009
+//
+// Description:
+//
+//		Implementation of the shot playlist. The shot playlist is a customizable
+//		editor for displaying and managing shot information.
+//
+source SequenceEdMenu.mel;
+
+// Maintain the list of shots that existed when the widgets were created.
+// This is used to find the widgets for a particular shot.
+global string $gShotPlaylistShots[] = {};
+global string $gShotPlaylistShotWidgets = "";
+
+if (!`scriptedPanelType -exists shotPlaylistPanel`) 
+//
+// If you change this, you must also change the one in 
+// initScriptedPanels.mel
+//
+{
+	//
+	//  Define the callbacks for the shotPlaylist panel.
+	//
+	scriptedPanelType
+		-createCallback		"createShotPlaylistPanel" 
+		-initCallback		"initShotPlaylistPanel"
+		-addCallback		"addShotPlaylistPanel"
+		-removeCallback		"removeShotPlaylistPanel"
+		-saveStateCallback	"saveStateShotPlaylistPanel"
+		-deleteCallback		"deleteShotPlaylistPanel"
+		shotPlaylistPanel;
+}
+
+proc string shotPlaylistPanel()
+//
+// Description:
+//	This procedure returns the name of the panel containing the 
+//	shotPlaylist.  If there is no shotPlaylist in existence, the
+//  behavior of this procedure is undefined.
+//
+//	ASSUMPTION: This procedure assumes there is a maximum of one 
+//	shotPlaylist open. 
+//
+{
+	string $shotPlaylistPanels[] = 
+		`getPanel -scriptType "shotPlaylistPanel"`;
+	
+	return $shotPlaylistPanels[0];
+}
+
+
+// ---------------------------------------------------------------------------
+// 	Scripted panel support
+// 
+
+global proc createShotPlaylistPanel(string $panel) 
+//
+// Description:
+//	This procedure is called the first time the shotPlaylist is opened.
+//	This procedure creates the various UI entities that the shotPlaylist
+//  will use, except for those UI entities which are controls.
+//
+{
+}
+
+global proc initShotPlaylistPanel(string $panel)
+//
+// This is called when the file changes to make sure that everything
+// is up-to-date with the new file.
+//
+{
+	rebuildShotPlaylist($panel);
+}
+
+proc buildShotScrollArea(string $scrollLayout)
+{
+	global string $gShotPlaylistShots[];
+	global string $gShotPlaylistShotWidgets;
+
+	string $keys[] = getPlaylistRowFormat();
+	int $numCols = size($keys)/2;
+
+	// Create the shot rows.
+	$gShotPlaylistShotWidgets = `rowColumnLayout -numberOfColumns $numCols shotRows`;
+	int $i;
+	string $key;
+	int $width, $total = 0;
+	for ($i=0; $i<$numCols; $i++)
+	{
+		$width = $keys[$i * 2 + 1];
+		rowColumnLayout -e -columnWidth ($i+1) $width $gShotPlaylistShotWidgets;
+		$total = $total + $width;
+	}
+	rowColumnLayout -e -width $total $gShotPlaylistShotWidgets;
+
+	// Create the rows and columns.  For each shot in the sequence,
+	// Create a row using the set of keys as the format.  The shots
+	// are sorted by their sequence start times.
+	$gShotPlaylistShots = getPlaylistShotList();
+	sortShotlist($gShotPlaylistShots);
+	string $shot;
+	for ($shot in $gShotPlaylistShots)
+	{
+		string $widget, $cb, $cmd, $attr;
+		for ($i=0; $i<$numCols; $i++)
+		{
+			$key = $keys[$i * 2];
+			$width = $keys[$i * 2 + 1];
+
+			if ($key == "SHOTNAME")
+			{
+				$widget = `textField -width $width -aie true`;
+				textField -e -enterCommand ("setShotName " + $shot + " " + $widget)
+						  -text `shot -q -shotName $shot` $widget;
+				$attr 	= $shot + ".shotName";
+				$cb 	= "shotPlaylist" + $shot + "NameChanged";
+				$cmd 	= "global proc " + $cb + "() " +
+					   	  "{ shotPlaylistSetNameField(\"" + $shot + "\", \"" + $widget + "\"); }";
+				eval($cmd);
+				scriptJob -parent $widget -attributeChange $attr $cb;
+			}
+			else if ($key == "START")
+			{
+				$widget = `floatField -width $width -pre 1`;
+				floatField -e -changeCommand ("setShotStart " + $shot + " " + $widget)
+						-value `shot -q -st $shot` $widget;
+				$cb 	= "shotPlaylist" + $shot + "StartChanged";
+				$attr   = $shot + ".sf";
+				$cmd 	= "global proc " + $cb + "() " +
+					   	  "{ shotPlaylistSetStartField(\"" + $shot + "\", \"" + $widget + "\"); }";
+				eval($cmd);
+				scriptJob -parent $widget -attributeChange $attr $cb;
+			}
+			else if ($key == "END")
+			{
+				$widget = `floatField -width $width -pre 1`;
+				$attr   = $shot + ".ef";
+				floatField -e -changeCommand ("setShotEnd " + $shot + " " + $widget)
+						-value `shot -q -et $shot` $widget;
+				$cb 	= "shotPlaylist" + $shot + "EndChanged";
+				$attr   = $shot + ".ef";
+				$cmd 	= "global proc " + $cb + "() " +
+					   	  "{ shotPlaylistSetEndField(\"" + $shot + "\", \"" + $widget + "\"); }";
+				eval($cmd);
+				scriptJob -parent $widget -attributeChange $attr $cb;
+			}
+			else if ($key == "LEN")
+			{
+				$widget = `floatField -width $width -pre 1`;
+				$attr   = $shot + ".ef";
+				floatField -e -changeCommand ("setShotLen " + $shot + " " + $widget)
+						-value `shot -q -sd $shot` $widget;
+
+				// Register the callback function on both the start frame and end frame attributes.
+				$cb 	= "shotPlaylist" + $shot + "LenChanged";
+				$sattr  = $shot + ".sf";
+				$eattr  = $shot + ".ef";
+				$cmd 	= "global proc " + $cb + "() " +
+					   	  "{ shotPlaylistSetLenField(\"" + $shot + "\", \"" + $widget + "\"); }";
+				eval($cmd);
+				scriptJob -parent $widget -attributeChange $sattr $cb;
+				scriptJob -parent $widget -attributeChange $eattr $cb;
+			}
+			else if ($key == "SEQSTART")
+			{
+				$widget = `floatField -width $width -pre 1`;
+				floatField -e -changeCommand ("setShotSequenceStart " + $shot + " " + $widget)
+						-value `shot -q -sst $shot` $widget;
+				$cb 	= "shotPlaylist" + $shot + "SeqStartChanged";
+				$attr   = $shot + ".ssf";
+				$cmd 	= "global proc " + $cb + "() " +
+					   	  "{ shotPlaylistSetSeqStartField(\"" + $shot + "\", \"" + $widget + "\"); }";
+				eval($cmd);
+				scriptJob -parent $widget -attributeChange $attr $cb;
+			}
+			else if ($key == "SEQEND")
+			{
+				$widget = `floatField -width $width -pre 1`;
+				floatField -e -changeCommand ("setShotSequenceEnd " + $shot + " " + $widget)
+						-value `shot -q -set $shot` $widget;
+				$cb 	= "shotPlaylist" + $shot + "SeqEndChanged";
+				$attr   = $shot + ".se";
+				$cmd 	= "global proc " + $cb + "() " +
+					   	  "{ shotPlaylistSetSeqEndField(\"" + $shot + "\", \"" + $widget + "\"); }";
+				eval($cmd);
+				scriptJob -parent $widget -attributeChange $attr $cb;
+			}
+			else if ($key == "SEQLEN")
+			{
+				$widget = `floatField -width $width -pre 1`;
+				floatField -e -changeCommand ("setShotSequenceLen " + $shot + " " + $widget)
+						-value `shot -q -sqd $shot` $widget;
+
+				// Register the callback function on both the sequence start frame, endFrame, scale,
+				// or hold attributes change.
+				$cb 	= "shotPlaylist" + $shot + "SeqLenChanged";
+				$ssattr = $shot + ".ssf";
+				$seattr = $shot + ".se";
+				$sattr  = $shot + ".s";
+				$prattr = $shot + ".prh";
+				$psattr = $shot + ".psh";
+				$cmd 	= "global proc " + $cb + "() " +
+					   	  "{ shotPlaylistSetSeqLenField(\"" + $shot + "\", \"" + $widget + "\"); }";
+				eval($cmd);
+				scriptJob -parent $widget -attributeChange $ssattr $cb;
+				scriptJob -parent $widget -attributeChange $seattr $cb;
+				scriptJob -parent $widget -attributeChange $sattr $cb;
+				scriptJob -parent $widget -attributeChange $prattr $cb;
+				scriptJob -parent $widget -attributeChange $psattr $cb;
+			}
+			else if ($key == "CAMERA")
+			{
+				$widget = `optionMenu -width $width`;
+				shotPlaylistBuildCameraMenu($widget);
+				shotPlaylistSetCameraField($shot, $widget);
+				optionMenu -e -changeCommand ("shot -e -cc #1 " + $shot) $widget;
+				$cb 	= "shotPlaylist" + $shot + "CameraChanged";
+				$attr   = $shot + ".currentCamera";
+				$cmd 	= "global proc " + $cb + "() " +
+					   	  "{ shotPlaylistSetCameraField(\"" + $shot + "\", \"" + $widget + "\"); }";
+				eval($cmd);
+				scriptJob -parent $widget -connectionChange $attr $cb;
+			}
+			if ($key == "CLIP")
+			{
+				$widget = `textField -width $width -aie true`;
+				textField -e -enterCommand ("setShotClip " + $shot + " " + $widget) $widget;
+				shotPlaylistSetClipField($shot, $widget);
+				$attr 	= $shot + ".clip";
+				$cb 	= "shotPlaylist" + $shot + "ClipChanged";
+				$cmd 	= "global proc " + $cb + "() " +
+					   	  "{ shotPlaylistSetClipField(\"" + $shot + "\", \"" + $widget + "\"); }";
+				eval($cmd);
+				scriptJob -parent $widget -connectionChange $attr $cb;
+			}
+			else if ($key == "SEPARATOR")
+			{
+				text -align "center" -width $width -label (uiRes("m_shotPlaylistPanel.kSPACE"));
+			}
+			else
+				createPlaylistCell($shot, $key, $gShotPlaylistShotWidgets);
+		}
+	}
+	setParent ..; // from shotRows
+}
+
+global proc addShotPlaylistPanel(string $panel) 
+//
+// Description:
+//	This procedure is called when the shotPlaylist is first opened. 
+//	This procedure creates all of the UI for the shotPlaylist.
+//
+{
+	// Create any custom menus.
+	createPlaylistMenus($panel);
+
+	string $keys[] = getPlaylistRowFormat();
+
+	string $mainForm = `formLayout mainForm`;
+
+	// Create the toolbar frame and toolbar.  The toolbar can be
+	// customized by the user.
+	string $toolbarFrame = `frameLayout
+                -visible true
+                -labelVisible false
+                -collapsable true
+                -collapse false
+                toolbarFrame`;
+	string $toolbarForm = `formLayout toolbarForm`;
+	createPlaylistToolbar( $toolbarForm );
+	setParent $mainForm;
+
+	// Create a layout to contain the shot spreadsheet.
+	string $shotLayoutForm = `formLayout shotLayout`;
+
+	// Create the column headers.
+	int $numCols = size($keys)/2;
+	int $i;
+	string $key;
+	int $width;
+	string $shotHeaders = `rowColumnLayout -numberOfColumns $numCols shotHeaders`;
+
+	// Set the column widths.
+	for ($i=0; $i<$numCols; $i++)
+	{
+		$width = $keys[$i * 2 + 1];
+		rowColumnLayout -e -columnWidth ($i+1) $width $shotHeaders;
+	}
+
+	// Create the headers.
+	for ($i=0; $i<$numCols; $i++)
+	{
+		$key = $keys[$i * 2];
+		$width = $keys[$i * 2 + 1];
+
+		if ($key == "SHOTNAME")
+			text -align "center" -font boldLabelFont -width $width -label (uiRes("m_shotPlaylistPanel.kShotName"));
+		else if ($key == "START")
+			text -align "center" -font boldLabelFont -width $width -label (uiRes("m_shotPlaylistPanel.kStart"));
+		else if ($key == "END")
+			text -align "center" -font boldLabelFont -width $width -label (uiRes("m_shotPlaylistPanel.kEnd"));
+		else if ($key == "LEN")
+			text -align "center" -font boldLabelFont -width $width -label (uiRes("m_shotPlaylistPanel.kLen"));
+		else if ($key == "SEQSTART")
+			text -align "center" -font boldLabelFont -width $width -label (uiRes("m_shotPlaylistPanel.kSeqStart"));
+		else if ($key == "SEQEND")
+			text -align "center" -font boldLabelFont -width $width -label (uiRes("m_shotPlaylistPanel.kSeqEnd"));
+		else if ($key == "SEQLEN")
+			text -align "center" -font boldLabelFont -width $width -label (uiRes("m_shotPlaylistPanel.kSeqLen"));
+		else if ($key == "CAMERA")
+			text -align "center" -font boldLabelFont -width $width -label (uiRes("m_shotPlaylistPanel.kCamera"));
+		else if ($key == "CLIP")
+			text -align "center" -font boldLabelFont -width $width -label (uiRes("m_shotPlaylistPanel.kClip"));
+		else if ($key == "SEPARATOR")
+			separator -hr false -width $width;
+		else
+			createPlaylistColumnHeader($key, $shotHeaders);
+	}
+	setParent ..; // from shotHeaders
+
+	// Create a scroll layout to scroll the shot data.
+	string $scrollLayout = `scrollLayout -hst 20 -vst 20 shotScrollArea`;
+
+	buildShotScrollArea($scrollLayout);
+
+	setParent $shotLayoutForm; // from scrollLayout
+
+	// Create a refresh button.
+	string $refreshBtn = `button -height 30 -label (uiRes("m_shotPlaylistPanel.kShotRefreshBtn"))
+			-c ("rebuildShotPlaylist " + $panel)`;
+
+	formLayout -edit
+		-attachForm		$shotHeaders "left"			4
+		-attachForm		$shotHeaders "right"		0
+		-attachForm		$shotHeaders "top" 			0
+		-attachNone		$shotHeaders "bottom"
+
+		-attachForm		$scrollLayout "left"		0
+		-attachForm		$scrollLayout "right"		0
+		-attachControl	$scrollLayout "top" 		0 $shotHeaders 
+		-attachControl	$scrollLayout "bottom"		0 $refreshBtn
+
+		-attachForm		$refreshBtn "left"			0
+		-attachForm		$refreshBtn "right"			0
+		-attachNone		$refreshBtn "top"
+		-attachForm		$refreshBtn "bottom"		0
+		$shotLayoutForm;
+		
+	setParent ..; // from shotLayoutForm
+
+	// Create a form into which the user can put their own UI
+	// and call the customizable procedure.
+	string $customForm = `formLayout customForm`;
+	createCustomPlaylistUI($customForm);
+
+	setParent $mainForm;
+
+	layout -e -manage false $mainForm;
+	int $numToolbarChildren = `layout -q -numberOfChildren $toolbarFrame`;
+	int $numCustomChildren  = `layout -q -numberOfChildren $customForm`;
+
+	formLayout -edit
+		-attachForm		$shotLayoutForm "left"		0
+		-attachForm		$shotLayoutForm "right"		0
+		-attachForm		$shotLayoutForm "top" 		0
+		-attachForm		$shotLayoutForm "bottom"	0
+		$mainForm;
+
+	if ($numToolbarChildren > 0)
+	{
+		formLayout -edit
+			-attachForm		$toolbarFrame "left"	0
+			-attachForm		$toolbarFrame "right"	0
+			-attachForm		$toolbarFrame "top" 	0
+			-attachNone		$toolbarFrame "bottom"
+
+			-attachControl	$shotLayoutForm "top" 	0 $toolbarFrame
+			$mainForm;
+	}
+
+	if ($numCustomChildren > 0)
+	{
+		formLayout -edit
+			-attachForm		$customForm "left"		0
+			-attachForm		$customForm "right"		0
+			-attachNone		$customForm "top"
+			-attachForm		$customForm "bottom"	0
+
+			-attachControl	$shotLayoutForm "bottom" 0 $customForm
+			$mainForm;
+	}
+	layout -e -manage true $mainForm;
+
+	setParent ..; // from mainForm
+}
+
+global proc removeShotPlaylistPanel(string $panel) 
+//
+// Description:
+//	This procedure is called when the shotPlaylist editor is being destroyed
+//	or reparented. 
+//
+{
+}
+
+global proc string saveStateShotPlaylistPanel(string $panel) 
+//
+//  Description:
+//    Return a string that when executed will set the panel's state.
+//
+{
+	string $stateStr = "";
+	return $stateStr;
+}
+
+global proc deleteShotPlaylistPanel(string $panel) 
+//
+//  Description:
+//    Final deletion of the panel.  Clean up any resources that need to be
+//    freed.
+//
+{
+}
+
+global proc shotPlaylistBuildCameraMenu(string $optionMenu)
+{
+	string $allCameras[] = getCameraChoicesForShots();
+
+	int $i;
+	for ($i=0; $i<size($allCameras); $i++)
+		menuItem -label $allCameras[$i];
+}
+
+global proc rebuildShotPlaylist(string $panel)
+{
+	string $topControl = `panel -q -control $panel`;
+	if (!`control -exists $topControl`)
+		return;
+
+	// If the passed panel's top control is the shotPlaylistPanel widget, use it.
+	// Otherwise, look for the shotPlaylistPanel in the top control's children.
+	string $panelControl = "";
+	if (startsWith($topControl, "shotPlaylistPanel"))
+		$panelControl = $topControl;
+	else
+	{
+		string $c, $children[] = `layout -q -ca $topControl`;
+		for ($c in $children)
+		{
+			if (startsWith($c, "shotPlaylistPanel"))
+			{
+				$panelControl = $topControl + "|" + $c;
+				break;
+			}
+		}
+	}
+
+	if ($panelControl != "")
+	{
+		string $scrollArea = $panelControl + "|mainForm|shotLayout|shotScrollArea";
+		if (`control -exists $scrollArea`)
+		{
+			string $shotRows = $scrollArea + "|shotRows";
+			if (`control -exists $shotRows`)
+			{
+				deleteUI ($shotRows);
+				layout -e -manage false $scrollArea;
+				setParent $scrollArea;
+				buildShotScrollArea($scrollArea);
+				layout -e -manage true $scrollArea;
+			}
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 	Standard callback procedures for Maya defined cells
+// 
+
+global proc setShotName(string $shot, string $textField)
+{
+	shot -e -shotName `textField -q -text $textField` $shot;
+}
+
+global proc setShotStart(string $shot, string $floatField)
+{
+	shot -e -st `floatField -q -value $floatField` $shot;
+}
+
+global proc setShotEnd(string $shot, string $floatField)
+{
+	shot -e -et `floatField -q -value $floatField` $shot;
+}
+
+global proc setShotLen(string $shot, string $floatField)
+{
+	// Lengthen or shorten the end frame by the amount
+	// the duration value has changed.
+	float $fieldDur = `floatField -q -value $floatField`;
+	float $shotDur = `shot -q -sd $shot`;
+	float $delta = $fieldDur - $shotDur;
+	float $end = `shot -q -et $shot` + $delta;
+	
+	shot -e -et $end $shot;
+}
+
+global proc setShotSequenceStart(string $shot, string $floatField)
+{
+	shot -e -sst `floatField -q -value $floatField` $shot;
+}
+
+global proc setShotSequenceEnd(string $shot, string $floatField)
+{
+	shot -e -set `floatField -q -value $floatField` $shot;
+}
+
+global proc setShotSequenceLen(string $shot, string $floatField)
+{
+	// Lengthen or shorten the sequence end frame by the amount
+	// the duration value has changed.
+	float $fieldDur = `floatField -q -value $floatField`;
+	float $shotDur = `shot -q -sqd $shot`;
+	float $delta = $fieldDur - $shotDur;
+	float $end = `shot -q -set $shot` + $delta;
+	
+	shot -e -set $end $shot;
+}
+
+global proc setShotClip(string $shot, string $textField)
+{
+	shot -e -clip `textField -q -text $textField` $shot;
+}
+
+global proc shotPlaylistSetNameField(string $shot, string $textField)
+{
+	textField -e -text `shot -q -shotName $shot` $textField;
+}
+
+global proc shotPlaylistSetStartField(string $shot, string $floatField)
+{
+	floatField -e -value `shot -q -st $shot` $floatField;
+}
+
+global proc shotPlaylistSetEndField(string $shot, string $floatField)
+{
+	floatField -e -value `shot -q -et $shot` $floatField;
+}
+
+global proc shotPlaylistSetLenField(string $shot, string $floatField)
+{
+	floatField -e -value `shot -q -sd $shot` $floatField;
+}
+
+global proc shotPlaylistSetSeqStartField(string $shot, string $floatField)
+{
+	floatField -e -value `shot -q -sst $shot` $floatField;
+}
+
+global proc shotPlaylistSetSeqEndField(string $shot, string $floatField)
+{
+	floatField -e -value `shot -q -set $shot` $floatField;
+}
+
+global proc shotPlaylistSetSeqLenField(string $shot, string $floatField)
+{
+	floatField -e -value `shot -q -sqd $shot` $floatField;
+}
+
+global proc shotPlaylistSetClipField(string $shot, string $textField)
+{
+	string $ip = `shot -q -clip $shot`;
+	string $img = "";
+	if ($ip != "")
+		$img = `getAttr ($ip + ".imageName")`;
+	textField -e -text $img $textField;
+}
+
+global proc shotPlaylistSetCameraField(string $shot, string $optionMenu)
+{
+	string $cc = `shot -q -cc $shot`;
+	if ($cc == "")
+		return;
+
+	optionMenu -e -value $cc $optionMenu;
+}
+
+// ---------------------------------------------------------------------------
+// 	Public Procedures to be called by the user
+// 
+
+global proc string getPlaylistCellWidget(string $shot, string $key)
+//
+// Description:
+//	This procedure returns the widget corresponding to the cell in the column
+//  defined by the passed key for the given shot.
+//
+{
+	global string $gShotPlaylistShots[];
+	global string $gShotPlaylistShotWidgets;
+
+	if (($gShotPlaylistShotWidgets == "") || (!`control -exists $gShotPlaylistShotWidgets`) ||
+		($key == "SEPARATOR"))
+		return "";
+
+	string $keys[] = getPlaylistRowFormat();
+	int $numCols = size($keys)/2;
+
+	// Find the column index containing the key.
+	int $keyIndex;
+	for ($keyIndex = 0; $keyIndex < $numCols; $keyIndex++)
+	{
+		if ($keys[$keyIndex * 2] == $key)
+			break;
+	}
+	if ($keyIndex == $numCols)
+		return "";
+
+	// Find the shot in the shot list;
+	int $shotIndex;
+	for ($shotIndex = 0; $shotIndex < size($gShotPlaylistShots); $shotIndex++)
+	{
+		if ($gShotPlaylistShots[$shotIndex] == $shot)
+			break;
+	}
+	if ($shotIndex == size($gShotPlaylistShots))
+		return "";
+
+	// Get the widget from the set of child widgets in the shotRows rowColumn widget.
+	string $children[] = `rowColumnLayout -q -childArray $gShotPlaylistShotWidgets`;
+	int $widgetIndex = $shotIndex * $numCols + $keyIndex;
+	if ($widgetIndex >= size($children))
+		return "";
+
+	return $children[$widgetIndex];
+}
+
+global proc string[] getPlaylistCellWidgets(string $key)
+//
+// Description:
+//	This procedure returns the set of widgets for the complete column defined
+//  by the passed keyword.  The length of the string array will be equal to the
+//  number of shots displayed in the playlist.  The SEPARATOR keyword is not
+//  recognized and will return an empty list.
+//
+{
+	global string $gShotPlaylistShots[];
+	global string $gShotPlaylistShotWidgets;
+	string $widgets[];
+
+	if (($gShotPlaylistShotWidgets == "") || (!`control -exists $gShotPlaylistShotWidgets`) ||
+		($key == "SEPARATOR"))
+		return $widgets;
+
+	string $keys[] = getPlaylistRowFormat();
+	int $numCols = size($keys)/2;
+
+	// Find the column index containing the key.
+	int $keyIndex;
+	for ($keyIndex = 0; $keyIndex < $numCols; $keyIndex++)
+	{
+		if ($keys[$keyIndex * 2] == $key)
+			break;
+	}
+	if ($keyIndex == $numCols)
+		return $widgets;
+
+	// Get the child widgets of the shotRows rowColumn widget.
+	string $children[] = `rowColumnLayout -q -childArray $gShotPlaylistShotWidgets`;
+
+	// For each shot, obtain the widget corresponding to the key.
+	int $shotIndex;
+	for ($shotIndex = 0; $shotIndex < size($gShotPlaylistShots); $shotIndex++)
+	{
+		int $widgetIndex = $shotIndex * $numCols + $keyIndex;
+		if ($widgetIndex >= size($children))
+			break;
+		$widgets[$shotIndex] = $children[$widgetIndex];
+	}
+
+	return $widgets;
+}
+
+// ---------------------------------------------------------------------------
+// 	Procedures to be overridden and customized by the user
+// 
+
+
+global proc string[] getPlaylistRowFormat()
+//
+// Description:
+//	This procedure returns the format to be used by the playlist.
+//  The format is defined as an array of strings specifying the arrangement
+//  of column information of each shot to be displayed. Each column is 
+//  specified by a pair of strings, a keyword and a column width in pixels.
+//
+//  The recognized keywords are:
+//    SHOTNAME 	- The value of the shotName attribute
+//    START    	- The Maya starting frame of the shot
+//    END      	- The Maya ending frame of the shot
+//    LEN      	- The duration of the shot in the Maya timeline
+//    SEQSTART 	- The Sequence time at which the shot begins
+//    SEQEND   	- The Sequence time at which the shot ends
+//    SEQLEN   	- The duration of the shot in the Sequence timeline
+//    CAMERA   	- The camera used to view the shot
+//    CLIP     	- The playblasted clip, if any, attached to the shot
+//    SEPARATOR - A vertical bar used to break the playlist into sections
+//
+//  Any unrecognized keywords will be passed to two procedures defined below,
+//  createPlaylistCell() and createPlaylistColumnHeader().
+//
+{
+	string $keywords[] =
+	{
+		"SHOTNAME", "150",
+		"SEPARATOR", "2",
+		"START", "60", 
+		"END", "60", 
+		"SEPARATOR", "2",
+		"SEQSTART", "80", 
+		"SEQEND", "80",
+		"SEPARATOR", "2",
+		"CAMERA", "200",
+		"SEPARATOR", "2",
+		"CLIP", "250"
+	};
+
+	return $keywords;
+}
+
+global proc string[] getPlaylistShotList()
+//
+// Description:
+//	This procedure returns the list of shots to be displayed in the Playlist.
+//
+{
+	string $shotList[] =`sequenceManager -listShots`;
+
+	return $shotList;
+}
+
+global proc createPlaylistMenus(string $parent)
+//
+// Description:
+//	This procedure can be used to create a customized menu bar to be displayed
+//  in the Playlist.
+//
+{
+}
+
+global proc createPlaylistToolbar(string $parentForm)
+//
+// Description:
+//	This procedure can be used to create a customized toolbar to be displayed
+//  in the Playlist.
+//
+{
+}
+
+global proc createCustomPlaylistUI(string $parentForm)
+//
+// Description:
+//	This procedure can be used to create any customized UI to be displayed in
+//  the Playlist below the list of shot information.
+//
+{
+}
+
+global proc createPlaylistCell(string $shot, string $key, string $parent)
+//
+// Description:
+//	This procedure creates the widget to be displayed in the Playlist for the
+//  given shot in the column defined by the custom column, $key.  The parent
+//  widget is passed but is generally not needed.
+//
+{
+}
+
+global proc createPlaylistColumnHeader(string $key, string $parent)
+{
+//
+// Description:
+//	This procedure creates the widget to be displayed at the top of the column in
+//  the Playlist for the column defined by the custom column, $key.  The parent
+//  widget is passed but is generally not needed.
+//
+}
+

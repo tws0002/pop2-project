@@ -1,0 +1,244 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+proc int getNurbsSurfaceKnots( 
+	string $srfName, float $uKnots[], float $vKnots[] )
+//
+//	Description :
+//
+{
+
+	// create info Node.
+	string $infoNode ;
+	if( catch( $infoNode = `createNode surfaceInfo` ) ) {
+		return 1; // failed
+	} 
+
+	// connect surface on to the info node.
+	string $outAttr = $srfName + ".local" ; 
+	string $inAttr = $infoNode + ".is" ;
+	connectAttr $outAttr $inAttr ;
+
+	// read the knots.
+	$uKnots = `getAttr ($infoNode + ".knotsU")`;	
+	$vKnots = `getAttr ($infoNode + ".knotsV")`;	
+
+	// delete surface info node.
+	delete $infoNode ;
+
+	// worked
+	return 0;
+}
+
+global proc string printNurbsSurfaceMiscInfo(string $srf)
+// Description :
+//  returns the knot values in a string
+{
+	string $w;
+
+	// form
+	int $formU = eval("getAttr " + $srf + ".formU");
+	int $formV = eval("getAttr " + $srf + ".formV");
+	$w = "Form along U, V: " + $formU + " " + $formV + " (0 = open, 1 = closed, 2 = periodic)\n";
+
+	// degree
+	int $degreeU = eval("getAttr " + $srf + ".degreeU");
+	int $degreeV = eval("getAttr " + $srf + ".degreeV");
+	$w += "Degree along U, V: " + $degreeU + " " + $degreeV + "\n";
+	
+	// number of spans
+	int $nspansU = eval("getAttr " + $srf + ".spansU");
+	int $nspansV = eval("getAttr " + $srf + ".spansV");
+	$w += "Nspans along U, V: " + $nspansU + " " + $nspansV + "\n";
+	
+	// bounding box (what if it is 2d??)
+	float $minBox[] = eval("getAttr " + $srf + ".boundingBoxMin");
+	$w += "Bounding box min: " + $minBox[0] + " " + $minBox[1] + " " + $minBox[2];
+	$w += "\n";
+	
+	float $maxBox[] = eval("getAttr " + $srf + ".boundingBoxMax");
+	$w += "             max: " + $maxBox[0] + " " + $maxBox[1] + " " + $maxBox[2];
+	$w += "\n";
+
+	return $w;
+}
+
+global proc string printNurbsSurfaceKnots(string $srf)
+// Description :
+//  prints the knot values
+{
+	string $w;
+
+	float $uKnots[];
+	float $vKnots[];
+	if(getNurbsSurfaceKnots($srf, $uKnots, $vKnots)) {
+		return 1; // failed
+	}
+
+	$w = "Knots along U: ";
+	int $numKnots = size($uKnots);
+	for($i=0; $i<$numKnots; $i++) {
+		$w += " " + $uKnots[$i];
+	}
+	$w += "\n";
+
+	$w += "Knots along V: ";
+	int $numKnots = size($vKnots);
+	for($i=0; $i<$numKnots; $i++) {
+		$w += " " + $vKnots[$i];
+	}
+	$w += "\n";
+	return $w;
+}
+
+global proc string printNurbsSurfaceCVs(string $srf)
+// Description :
+//  prints the CV positions in world space
+{
+		
+	string $w;
+
+	// create info Node.
+	string $infoNode = `createNode surfaceInfo`;
+	
+	// connect surface on to the info node.
+	string $outAttr = $srf + ".ws[0]" ;
+	string $inAttr = $infoNode + ".is" ;
+	connectAttr $outAttr $inAttr ;
+
+	// get number of CVs in U and V (always degree+spans even
+	// for periodics since overlapping CVs are available separately)
+	int $degreeU = eval("getAttr " + $srf + ".degreeU");
+	int $nspansU = eval("getAttr " + $srf + ".spansU");
+	int $numCVsAlongU = $nspansU + $degreeU;
+
+	int $degreeV = eval("getAttr " + $srf + ".degreeV");
+	int $nspansV = eval("getAttr " + $srf + ".spansV");
+	int $numCVsAlongV = $nspansV + $degreeV;
+
+	// inform caller that
+	int $formU = eval("getAttr " + $srf + ".formU");
+	int $formV = eval("getAttr " + $srf + ".formV");
+	if($formU == 2 || $formV == 2) {
+		print "Note - surface is periodic. CV count and display will including overlapping ones along seam\n";
+	}
+
+	$w = "Number of CVs in U, V: " + $numCVsAlongU + " " + $numCVsAlongV + "\n";
+	
+	// dimension of each CV
+	int $dim = 0;
+	if( size(`ls ($srf + ".cv[0][0]")`) > 0 ) {
+		$dim = size (eval("getAttr " + $srf + ".cv[0][0]"));
+		$w += "Dimension of surface: " + $dim + "\n";
+	} else {
+		$w += "Dimension of surface: No CVs, Dimension unknown\n";
+	}
+	
+	// Get the CV positions including overlapping ones
+	$w += "CVs in world space:\n";
+	int $numCV = -1;
+	for($i=0; $i<$numCVsAlongU; $i++) {
+		for($j=0; $j<$numCVsAlongV; $j++) {
+			$numCV++;
+			float $cvs[] = `getAttr ($infoNode + ".cp["+$numCV+"]")`;
+			$w += $i + " " + $j + ": ";
+			for($k=0; $k<$dim; $k++) {
+				$w +=  $cvs[$k] + " ";
+			}
+			$w += "\n";
+		}
+	}
+	return $w;	
+}
+
+global proc string getSurfaceInformation( string $srf )
+{
+	string $info;
+
+	// get the form,degree,nspans,bbox
+	$info = printNurbsSurfaceMiscInfo($srf);
+
+	// get the knots
+	$info += printNurbsSurfaceKnots($srf);
+
+	// get the CVs
+	$info += printNurbsSurfaceCVs($srf);
+
+	return $info;
+}
+
+global proc string getSurfacesInformation( string $srf[] )
+{
+	string $info = "";
+	global int $gSelectNurbsSurfacesBit ;
+	string $srfList[] = `filterExpand -ex true
+			-sm $gSelectNurbsSurfacesBit $srf`;
+
+	int $len = size($srfList) ;
+	if( $len == 0 ) {
+		return $info;
+	}
+
+	for($srfNum = 0; $srfNum < $len; $srfNum++) {
+		$info += getSurfaceInformation( $srfList[$srfNum] );
+	}
+	return $info;
+}
+
+global proc nurbsSurfaceInformation()
+{
+	string $w; // for messages
+
+	// Get the select list.
+	string $selList[] = `ls -sl`;
+
+	// Run filter to select only the NURBS surfaces
+	global int $gSelectNurbsSurfacesBit ;
+
+	string $srfList[] = `filterExpand -ex true 
+		-sm $gSelectNurbsSurfacesBit`;
+	int $len = size($srfList) ;
+	if( $len == 0 ) {
+		print "No NURBS surfaces selected\n" ;
+		return;
+	}
+
+	// Work on the last item if more than one NURBS surface in list.
+	for($srfNum = 0; $srfNum < $len; $srfNum++) {
+		string $srf = $srfList[$srfNum] ;
+
+		// print separator if more than one surface
+		if($len>1) print "----------------------------------\n";
+
+		// surface name
+		$w = "Surface: " + $srf + "\n";
+		print $w;
+
+		string $info = getSurfaceInformation( $srf );
+		print $info;
+	}
+
+	// print separator if more than one surface
+	if($len>1) print "----------------------------------\n";
+
+	// reselect surface for which information was returned
+	select -r $selList;
+}

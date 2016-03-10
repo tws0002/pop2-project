@@ -1,0 +1,398 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  March 13, 1997
+//
+//  Description:
+//      This script creates a bookmarkEditor for the Hyper Graph
+//	as well as handling all the bookmarks for the Hyper Graph Menus
+//
+//  Input Arguments:
+//      parent
+//
+//  Return Value:
+//      None.
+//
+//
+
+
+global string $hyperBookmarks[];
+global int $hyperBookmarksInitialized = 0;
+
+
+global proc hyperViewer(string $editor)
+{
+	
+	global int $hyperBookmarksInitialized;
+
+	if (`window -exists hyperBookmarkWindow`){
+		showWindow hyperBookmarkWindow;
+		hyperBookmarkUpdate($editor);
+	} else {
+		hyperBookmarkCreateUI($editor);
+	}
+
+	if (!$hyperBookmarksInitialized) {
+		scriptJob -parent "hyperBookmarkWindow" 
+			-conditionTrue "deleteAllCondition" 
+			("hyperBookmarkUpdate " + $editor);
+		scriptJob -parent "hyperBookmarkWindow"
+			 -disregardIndex -attributeChange hyperGraphInfo.bookmarks 
+			("hyperBookmarkUpdate " + $editor);
+		$hyperBookmarksInitialized = 1;
+	}
+}
+
+
+global proc hyperBookmarkCreateUI(string $editor)
+{
+	// Create a new window
+	string $title = (uiRes("m_hyperViewer.kBookmarks"));
+	window
+		-title $title
+		-iconName $title
+		-width 150 -height 400
+		-menuBar true
+		-minimizeButton true
+		-maximizeButton false
+		hyperBookmarkWindow;
+
+	hyperBookmarkMakeMenuBar($editor);
+
+	formLayout hyperBookmarkEditorForm;
+	formLayout hyperBookmarkListForm;
+	setParent ..; // hyperBookmarkEditorForm;
+	formLayout -height 30 hyperBookmarkButtonsForm;
+	button -label (uiRes("m_hyperViewer.kCreate")) 
+		-c ("hyperBookmarkAddCallback " + $editor + " later")
+		addBookmarkButton;
+	
+	formLayout -e 
+		-attachForm hyperBookmarkListForm right 0
+		-attachForm hyperBookmarkListForm left 0
+		-attachForm hyperBookmarkListForm top 0
+		hyperBookmarkEditorForm;
+	
+	formLayout -e
+		-attachForm hyperBookmarkButtonsForm right 0
+		-attachForm hyperBookmarkButtonsForm left 0
+		-attachForm hyperBookmarkButtonsForm bottom 0
+		hyperBookmarkEditorForm;
+
+	formLayout -e
+		-attachControl hyperBookmarkListForm bottom 0 hyperBookmarkButtonsForm
+		hyperBookmarkEditorForm;
+	
+	formLayout -e
+		-af addBookmarkButton top 0 
+		-af addBookmarkButton left 0 
+		-af addBookmarkButton bottom 0
+		-af addBookmarkButton right 0 
+		hyperBookmarkButtonsForm;
+
+	hyperBookmarkUpdate($editor);
+	showWindow hyperBookmarkWindow;
+}
+
+
+global proc hyperBookmarkMakeMenuBar(string $editor)
+{
+	menu -label (uiRes("m_hyperViewer.kEdit")) -aob true;
+		menuItem 
+			-label (uiRes("m_hyperViewer.kCreateBookmarkMenuBar"))
+			-command ("hyperBookmarkAddCallback " + $editor + " later")
+			 hyperBookmarkAddMenuItem; 
+		menuItem -ob true 
+			-command ("hyperBookmarkAddCallback " + $editor + " first")
+			hyperBookmarkAddMenuOBItem; 
+		menuItem 
+			-label (uiRes("m_hyperViewer.kDeleteBookmarkMenuBar")) 
+			-command ("hyperBookmarkDeleteCallback " + $editor)
+			hyperBookmarkDeleteMenuItem;
+		menuItem 
+			-label (uiRes("m_hyperViewer.kDeleteAllBookMarks")) 
+			-command ("hyperBookmarkDeleteAllCallback " + $editor)
+			hyperBookmarkDeleteAllMenuItem;
+		menuItem 
+			-label (uiRes("m_hyperViewer.kRenameBookmark"))
+			-command ("hyperBookmarkRenameCallback " + $editor)
+			hyperBookmarkRenameMenuitem;
+}
+
+
+global proc hyperBookmarkUpdate(string $editor) 
+{
+	global string $hyperBookmarks[];
+
+	if (`window -exists hyperBookmarkWindow`) {
+		setParent
+			("hyperBookmarkWindow|" + 
+			 "hyperBookmarkEditorForm|" + 
+		 	"hyperBookmarkListForm");
+
+		if (`textScrollList -exists hyperViewerTextScrollList`){
+			deleteUI hyperViewerTextScrollList;
+		}
+
+		formLayout -e -visible false hyperBookmarkListForm;
+
+		textScrollList -height 100 
+			-allowMultiSelection no 
+			hyperViewerTextScrollList;
+
+		formLayout -e
+			-attachForm hyperViewerTextScrollList top 0 
+			-attachForm hyperViewerTextScrollList left 0 
+			-attachForm hyperViewerTextScrollList bottom 0
+			-attachForm hyperViewerTextScrollList right 0 
+			hyperBookmarkListForm;
+		$hyperBookmarks = `listConnections hyperGraphInfo.bookmarks`;
+		string $description;
+
+		for ($item in $hyperBookmarks) {
+			$description = `getAttr ($item + ".description")`;
+			if ($description == "")
+				$description = $item;
+
+			textScrollList -e -a $description hyperViewerTextScrollList;
+		}
+
+		textScrollList -e 
+			-selectCommand ("hyperBookmarkSelectCallback " + $editor)
+			hyperViewerTextScrollList;
+		textScrollList -e 
+			-doubleClickCommand ("hyperBookmarkRenameCallback " + $editor)
+			hyperViewerTextScrollList;
+		textScrollList -e 
+			-deleteKeyCommand ("hyperBookmarkDeleteCallback " + $editor)
+			hyperViewerTextScrollList;
+
+		formLayout -e -visible true hyperBookmarkListForm;
+
+		setParent ..;
+	}
+}
+
+
+global proc hyperBookmarkSelectCallback(string $editor)
+//
+// Callback for selecting hyperGraph bookmarks.
+//
+{
+	global string $hyperBookmarks[];
+	int $item[1] = `textScrollList -q -selectIndexedItem hyperViewerTextScrollList`;
+	if($item[0]>0)
+		hyperGraph -e -restoreBookmark
+			$hyperBookmarks[$item[0]-1] $editor;
+}
+
+
+global proc hyperBookmarkRenameCallback(string $editor)
+//
+// Callback for renaming hyperGraph bookmarks.
+// Check first whether something is selected
+//
+{
+	string $selectedItem[] = `textScrollList -q -si hyperViewerTextScrollList`;
+	if (`size($selectedItem)` == 0) {
+		return;
+	} 
+	else {
+		global string $hyperBookmarks[];
+		string $description;
+	
+		int $item[1] = `textScrollList -q -selectIndexedItem hyperViewerTextScrollList`;
+		
+		$description = 
+			`getAttr ($hyperBookmarks[$item[0]-1] + ".description")`;
+		
+		string $okMsgButton = (uiRes("m_hyperViewer.kOkMsgButton"));
+		string $cancelMsgButton = (uiRes("m_hyperViewer.kCancelMsgButton"));
+		string $result = `promptDialog
+			-title (uiRes("m_hyperViewer.kRenameBookmarkTitle"))
+			-message (uiRes("m_hyperViewer.kRenameMessage"))
+			-text (textScrollList ("-q", "-selectItem", "hyperViewerTextScrollList"))
+			-defaultButton $okMsgButton
+			-button $okMsgButton
+			-button $cancelMsgButton`;
+		if ($result == $okMsgButton) {
+			setAttr ($hyperBookmarks[$item[0]-1] + ".description")
+				-type "string"
+				`promptDialog -q -tx`;
+		}
+		evalDeferred(("hyperBookmarkUpdate(\"" + $editor + "\")"));
+	}
+}
+
+
+global proc hyperBookmarkDeleteCallback(string $editor)
+//
+// Callback for deleting hyperGraph bookmarks.
+// Check first whether something is selected
+//
+{
+	string $selectedItem[] = `textScrollList -q -si hyperViewerTextScrollList`;
+	if (`size($selectedItem)` == 0) {
+		return;
+	} 
+	else {
+		global string $hyperBookmarks[];
+	
+		int $item[1] = `textScrollList -q -selectIndexedItem hyperViewerTextScrollList`;
+		textScrollList -e -rii $item[0] hyperViewerTextScrollList;
+		hyperGraph -e -deleteBookmark $hyperBookmarks[$item[0]-1]
+			$editor;
+		hyperBookmarkUpdate($editor);
+	}
+}
+
+global proc hyperBookmarkDeleteAllCallback(string $editor)
+//
+// Callback for deleting all hyperGraph bookmarks.
+//
+{
+	string $allItems[] = `textScrollList -q -ai hyperViewerTextScrollList`;
+	int $numItems = size($allItems);
+	if ($numItems == 0) {
+		return;
+	} 
+	else {
+		global string $hyperBookmarks[];
+		textScrollList -e -ra hyperViewerTextScrollList;
+		for ($i = $numItems-1; $i >= 0; $i--) {
+			hyperGraph -e -deleteBookmark $hyperBookmarks[$i] $editor;
+		}
+		hyperBookmarkUpdate($editor);
+	}
+}
+
+
+global proc hyperBookmarkAddCallback(string $editor, string $renameWhen)
+//
+// Callback for adding hyperGraph bookmarks.
+//
+{
+	string $newBookmarkName;
+	string $newBookmark;
+
+	if ($renameWhen == "first"){
+		string $okNewButton = (uiRes("m_hyperViewer.kOkNewButton"));
+		string $result = `promptDialog
+			-title (uiRes("m_hyperViewer.kNameBookmarkMsg"))
+			-message (uiRes("m_hyperViewer.kNameMsg"))
+			-text (uiRes("m_hyperViewer.kBookmarkNameText"))
+			-defaultButton $okNewButton
+			-button $okNewButton 
+			-button (uiRes("m_hyperViewer.kCancelNewButton"))`;
+		if ($result == $okNewButton) {
+			$newBookmarkName = `promptDialog -q -tx`;
+			hyperGraph -e -addBookmark $editor;
+			$newBookmark = 
+				`hyperGraph -q -bookmarkName $editor`;
+			setAttr ($newBookmark + ".description") 
+				-type "string" $newBookmarkName;
+			hyperBookmarkUpdate($editor);
+		}
+	} else {
+		hyperGraph -e -addBookmark $editor;
+		hyperBookmarkUpdate($editor);
+	}
+}
+
+
+
+global proc hyperBookmarkRenameMenuCallback(string $editor, string $nodeName)
+//
+// Callback for renaming hyperGraph menuBookmarks.
+//
+{
+	string $userName = 
+		`getAttr ($nodeName + ".description")`;
+	if ($userName == "") {
+		$userName = $nodeName;
+	}
+	string $okButton = (uiRes("m_hyperViewer.kOkButton"));
+	string $result = `promptDialog
+		-title (uiRes("m_hyperViewer.kRenameBookmarkWindow"))
+		-message (uiRes("m_hyperViewer.kRenameMsg"))
+		-text $userName
+		-defaultButton $okButton
+		-button $okButton 
+		-button (uiRes("m_hyperViewer.kCancelButton"))`;
+	if ($result == $okButton) {
+		setAttr ($nodeName + ".description")
+			-type "string"
+			`promptDialog -q -tx`;
+	}
+	hyperBookmarkUpdate($editor);
+}
+
+
+global proc hyperBookmarkBuildMenu(string $editor, string $parent, int $disableDAGbookmarks)
+{
+	
+    global string $hyperBookmarks[];
+	
+    setParent -menu $parent;
+
+    menu -e -deleteAllItems $parent;
+
+    menuItem -label (uiRes("m_hyperViewer.kCreateBookmark")) 
+		-command ("hyperBookmarkAddCallback " + $editor + " later")
+		saveBMItem;
+    menuItem -ob true 
+		-command ("hyperBookmarkAddCallback " + $editor + " first");
+    menuItem -label (uiRes("m_hyperViewer.kBookmarkEditor")) 
+		-command ("hyperViewer " + $editor)
+		bookmarkEditor;
+    menuItem -divider true;
+	
+    // Create a menu item for each bookmark
+    string $bookmarks[] = `listConnections hyperGraphInfo.bookmarks`;
+    string $description;
+    string $nodeName;
+
+	for ($item in $bookmarks) {
+		$nodeName = $item;
+		$description = `getAttr ($item + ".description")`;
+		
+		if ($description == ""){
+			$description = $item;
+		}
+		
+		$enable = !($disableDAGbookmarks && `getAttr ($item + ".dagView")`);
+		
+		menuItem -label $description
+			-enable $enable
+			-command 
+			("hyperGraph -e -restoreBookmark " 
+             + $item + " " + $editor
+             +"; checkHGLabel "+$editor);
+		menuItem -ob true 
+			-enable $enable
+			-command ("hyperBookmarkRenameMenuCallback " 
+					  + $editor + " " + $nodeName);	
+	}
+}
+
+

@@ -1,0 +1,174 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+/**
+ * @file xgmMayaCurves.mel
+ * @brief Contains a MEL API for working with Maya curves.
+ *
+ * <b>CONFIDENTIAL INFORMATION: This software is the confidential and
+ * proprietary information of Walt Disney Animation Studios ("WDAS").
+ * This software may not be used, disclosed, reproduced or distributed
+ * for any purpose without prior written authorization and license
+ * from WDAS. Reproduction of any section of this software must include
+ * this legend and all copyright notices.
+ * Copyright Disney Enterprises, Inc. All rights reserved.</b>
+ *
+ * @author Patrick Witting
+ *
+ * @version Created 02/02/05
+ */
+
+
+global proc xgmMayaCurvesStraightenLine( float $points[],
+                                         int   $numCvs,
+                                         float $straightness,
+                                         int   $preserveLength )
+{
+    int $arraySize = size($points);
+    int $totalCvs = $arraySize/3; // array is xyz triples
+    if( $numCvs < 3 || $totalCvs < $numCvs ){
+        return;
+    }
+    if( $preserveLength ){
+        // determine start direction
+        vector $p1 = <<$points[0], $points[1], $points[2]>>;
+        vector $p2 = <<$points[3], $points[4], $points[5]>>;
+        vector $dir = $p2 - $p1;
+        float $len = mag( $dir );
+        if( $len > 0.0 ){
+            $dir = $dir/$len;
+        }
+        // build straight line from start direction
+        int $i;
+        vector $pNew, $pLast;
+        for( $i = 0; $i < $numCvs; $i++ ){
+            int $base = $i*3;
+            if( $i == 0 ){
+                $pNew = $p1;	
+                $p2 = $p1;
+            } else {
+                $p2 = <<$points[$base], $points[$base+1], $points[$base+2]>>;
+                vector $dif = $p2 - $p1;
+                $len = mag( $dif );
+                if( $straightness == 1.0 ){
+                    $pNew = $pLast + ($dir * $len); 
+                } else {
+                    $dif /= $len;
+                    vector $newDir = $dir * $straightness + $dif * (1.0-$straightness);
+                    float $newLen = mag($newDir);
+                    $pNew = $pLast + ($newDir * ($len/$newLen)); 
+                }
+            }
+            $points[$base] = $pNew.x;
+            $points[$base+1] = $pNew.y;
+            $points[$base+2] = $pNew.z;
+            $pLast = $pNew;
+            $p1 = $p2;
+        }	
+        vector $offset = $pNew - $p2;
+        for( $i = $numCvs; $i < $totalCvs; $i++ ){
+            int $base = $i*3;
+            $p1 = <<$points[$base], $points[$base+1], $points[$base+2]>>;
+            $p1 += $offset;
+            $points[$base] = $p1.x;
+            $points[$base+1] = $p1.y;
+            $points[$base+2] = $p1.z;
+        }
+    } else {
+        int $endIndex = (($numCvs-1) * 3);
+        vector $p1 = <<$points[0], $points[1], $points[2]>>;
+        vector $p2 =  <<$points[$endIndex], 
+        $points[$endIndex+1], 
+        $points[$endIndex+2]>>;
+        vector $dir = $p2 - $p1;
+        $dir = $dir/((float)$numCvs-1); // offset per span
+        // build straight line from start direction
+        int $i;
+        vector $pNew, $pLast;
+        for( $i = 0; $i < $numCvs; $i++ ){
+            int $base = $i*3;
+            if( $i == 0 ){
+                $pNew = $p1;	
+            } else {
+                $pNew = $pLast + $dir;
+            }
+            if( $straightness == 1.0 ){
+                $points[$base] = $pNew.x;
+                $points[$base+1] = $pNew.y;
+                $points[$base+2] = $pNew.z;
+            } else {
+                $points[$base] = $pNew.x * $straightness +$points[$base] * (1.0-$straightness) ;
+                $points[$base+1] = $pNew.y * $straightness +$points[$base+1] * (1.0-$straightness) ;
+                $points[$base+2] = $pNew.z * $straightness +$points[$base+2] * (1.0-$straightness) ;
+            }
+            $pLast = $pNew;
+        }
+    }
+}
+
+
+/**
+ *  This function will create MAYA NURBS curves$base
+ *
+ *  @param $base    The base group to place the curves in
+ *  @param $n       The number of curves to makes across the parameterization
+ *  @param $orient  The orientation of the surface
+ */
+global proc xgmMayaCurvesFromNURBS( string $base, int $n, int $orient )
+{
+    string $surfs[] = `ls -sl -dag -type nurbsSurface`;
+    if ( $surfs[0] == "" ){
+        warning (uiRes("m_xgmMayaCurves.kDoingNothing"));
+        return;
+    }
+
+    string $var;
+    if ( ($orient % 4) < 2 )
+        $var = ".un[";
+    else
+        $var = ".vn[";
+
+    int $flip;
+    if ( $orient%2 )
+        $flip = 0;
+    else
+        $flip = 1;
+
+    string $list[];
+    int    $k=0;
+    string $surf;
+    for ( $surf in $surfs ) {
+        for ( $i=0; $i<$n; $i++ ) {
+            float $vn = (float) $i / (float) ($n-1);
+            if ( $flip )  $vn = 1.0 - $vn;
+            string $curve = ( $base + "_" + $surf + "_" + $i );
+            duplicateCurve -ch 0 -o 1 -n $curve ( $surf + $var + $vn + "]" );
+
+            $list[$k++] = $curve;
+        }
+    }
+
+    string $sel[] = `ls -sl`;
+    select -r $list;
+    group -n ( $base + "_Group" );
+    select -r $sel;
+}
+

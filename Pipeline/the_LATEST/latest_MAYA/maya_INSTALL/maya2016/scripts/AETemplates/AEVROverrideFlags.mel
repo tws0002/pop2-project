@@ -1,0 +1,416 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+source "addVectorRenderAttributes";
+
+/// Utility Stuff ///
+// This code takes a node-name with attribute combination 
+// (i.e. Node.Attribute) and spits out the node's name
+//
+proc string FindMainNodeName(string $strNodeName)
+{
+	string $strBuffer[];
+	tokenize($strNodeName, ".", $strBuffer);
+	return $strBuffer[0];
+}
+
+///////////////////////////////////////////////////////////////
+///////////////// Edge Weights Control  ///////////////////////
+///////////////////////////////////////////////////////////////
+global proc VRSetEdgeWeight( string $strNodeName )
+{
+	float $fEdgeWeight = `floatSliderGrp -q -v fsEdgeWeightCtrl`;
+	setAttr ($strNodeName + ".vrEdgeWeight") $fEdgeWeight;
+	optionMenuGrp -e -sl 15 omEdgeWeightPresets;
+}
+
+global proc VRCreateEdgeWeightControl(int $nCreateUI,	
+									  string $strNodeName)
+{
+	string $strMainNodeName = FindMainNodeName($strNodeName);
+	int $nfsEdgeWeightUIExists = `floatSliderGrp -ex fsEdgeWeightCtrl`;
+	int $nOverWriteAttribsExist = `objExists ($strMainNodeName + ".vrOverwriteDefaults")`;
+	
+	if (!$nOverWriteAttribsExist)
+	{
+		// Since custom UI elements are 'global' 
+		// (i.e. there's only one instance for all the shapes)
+		// we need to control when this is visible and when it 
+		// isn't. Therefore, if the currently selected shape node
+		// doesn't have the 'vrOverwriteDefaults' 
+		// attribute enabled, then we need to hide the float slider UI.
+		// 
+		if ($nfsEdgeWeightUIExists)
+		{
+			floatSliderGrp -e -vis false fsEdgeWeightCtrl;
+		}
+		
+		return;
+	}
+	
+	if (!$nfsEdgeWeightUIExists)
+	{
+		floatSliderGrp	-label (uiRes("m_AEVROverrideFlags.kEdgeWeight"))  
+						-min -1 -max 30 -value 0 -step 0.5 
+						-cc ("VRSetEdgeWeight " + $strMainNodeName)
+						fsEdgeWeightCtrl;
+	} else { 
+		floatSliderGrp 
+			-e -cc ("VRSetEdgeWeight " + $strMainNodeName)
+			fsEdgeWeightCtrl; 
+	}
+	
+	// it needs to exist at this point and be visible
+	floatSliderGrp -e -vis true fsEdgeWeightCtrl;
+	
+	// it should exist by this point
+	if (!$nCreateUI)
+	{
+		// We don't need to create it, and by this point, 
+		// it should already exist so, we need to set it 
+		// to the attribute that it is
+		float $fEdgeWeight = `getAttr ($strMainNodeName + ".vrEdgeWeight")`;
+		floatSliderGrp -e -v $fEdgeWeight fsEdgeWeightCtrl;
+	}
+}
+
+global proc VRCreateEdgeWeightControlUI(string $strNodeName)
+{
+	VRCreateEdgeWeightControl(true, $strNodeName);
+}
+
+global proc VRReplaceEdgeWeightControlUI(string $strNodeName)
+{
+	VRCreateEdgeWeightControl(false, $strNodeName);
+}
+////////////////////////////////////////////////////////////////
+
+///////////////////////////////////////////////////////////////
+///////////////// Edge Weights UI /////////////////////////////
+///////////////////////////////////////////////////////////////
+global proc VRChangeEdgeWeights()
+{
+	// first, get the current selection
+	int $nCurrSelection = `optionMenuGrp -q -sl omEdgeWeightPresets`;
+
+	// now, I need a list of the numbers in the dropdown menu
+	float $fEdgeWeightPresets[14];
+	float $fCurrValue = 0.0;
+	$fEdgeWeightPresets = {-1.0,0.0,0.5,1.0,1.5,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0};
+	int $nNumWeights = size($fEdgeWeightPresets);
+	
+	// border-line case: if it's custom, we won't do anything, 
+	// but if it's default or hairline, we need special cases
+	if ($nCurrSelection == 1)
+	{
+		setAttr ".vrEdgeWeight" -1;
+		$fCurrValue = -1;
+	}
+	else if ($nCurrSelection == 2)
+	{
+		setAttr ".vrEdgeWeight" 0;
+		$fCurrValue = 0;
+	}
+	else if (($nCurrSelection >= 2) && ($nCurrSelection <= $nNumWeights))
+	{
+		setAttr ".vrEdgeWeight" $fEdgeWeightPresets [$nCurrSelection - 1];
+		$fCurrValue = $fEdgeWeightPresets[$nCurrSelection - 1];
+	}
+	
+	floatSliderGrp -e -v $fCurrValue fsEdgeWeightCtrl;
+}
+
+global proc VRCreateEdgeWeightPreset(int $nCreateUI, string $strNodeName)
+{	
+	int $nDoesEdgePresetUIExist = `optionMenuGrp -q -ex omEdgeWeightPresets`;
+	string $strMainNodeName = FindMainNodeName($strNodeName);
+	int $nOverWriteAttribsExist = `objExists ($strMainNodeName + ".vrOverwriteDefaults")`;
+	
+	if (!$nOverWriteAttribsExist)
+	{
+		if ($nDoesEdgePresetUIExist)
+		{
+			optionMenuGrp -e -vis false omEdgeWeightPresets;
+		}
+		
+		return;
+	}
+	
+	// Now, we need a list of the numbers in the dropdown menu
+	float $fEdgeWeightPresets[14];
+	$fEdgeWeightPresets = {-1.0, 0.0,0.5,1.0,1.5,2.0,3.0,4.0,5.0,6.0,7.0,8.0,9.0,10.0};
+	
+	int $nStart = 0;
+	int $nFinish = size($fEdgeWeightPresets);
+	float $fCurrItem = 0;
+	string $strItemText = "";
+	
+	// Our basic scenario is if the UI element exists or not 
+	// and this will be run only once since the UI is custom, 
+	// it will have one global instance
+	if (!$nDoesEdgePresetUIExist)
+	{
+		optionMenuGrp	-label (uiRes("m_AEVROverrideFlags.kEdgeWeightPresets"))  
+									-cal 1 "right" 
+									-cal 2 "center" 
+									-cc "VRChangeEdgeWeights" 
+									omEdgeWeightPresets;
+
+		for ($nStart = 0; $nStart < $nFinish; $nStart++)
+		{
+			$fCurrItem = $fEdgeWeightPresets[$nStart];
+			if ($fCurrItem == -1.0)
+			{
+				$strItemText = "Default";
+			}
+			else if ($fCurrItem == 0.0) 
+			{
+				$strItemText = "Hairline";
+			}
+			else
+			{
+				$strItemText = $fCurrItem + "pt.";
+			}
+			
+			menuItem -label $strItemText;
+		}
+		menuItem -label (uiRes("m_AEVROverrideFlags.kCustom")) ;
+	}
+	
+	// We're guaranteed at this point that the UI element needs to exist 
+	// and be visible
+	optionMenuGrp -e -vis true omEdgeWeightPresets;
+	
+	// Now, if we're doing a replace and the UI does exist, 
+	// which it should by this point then we can set it's value 
+	// to the actual value of the attribute 
+	// (which should also exist by this point)
+	float $fEdgeWeight = `getAttr ($strMainNodeName + ".vrEdgeWeight")`;
+	
+	if ($fEdgeWeight == -1.0) 
+	{
+		optionMenuGrp -e -sl 1 omEdgeWeightPresets;
+	}
+	else if ($fEdgeWeight == 0.0) 
+	{
+		optionMenuGrp -e -sl 2 omEdgeWeightPresets;
+	}
+	else
+	{
+		// set it to custom if it isn't anything else
+		optionMenuGrp -e -sl ($nFinish+1) omEdgeWeightPresets;
+		for ($nStart = 2; $nStart < $nFinish; $nStart++)
+		{
+			if ($fEdgeWeight == $fEdgeWeightPresets[$nStart])
+			{
+				optionMenuGrp -e -sl ($nStart + 1) omEdgeWeightPresets;
+			}
+		}
+	}
+}
+
+global proc VRCreateEdgeWeightPresetUI(string $strNodeName)
+{
+	VRCreateEdgeWeightPreset(true, $strNodeName);
+}
+
+global proc VRReplaceEdgeWeightPresetUI(string $strNodeName)
+{
+	VRCreateEdgeWeightPreset(false, $strNodeName);
+}
+
+//////////////////////////////////////////////////////////////////
+
+global proc VREnableEdgeStyleOps(string $strNodeName, int $nEnable)
+{
+	editorTemplate -dimControl $strNodeName "vrEdgeColor" (!$nEnable);
+	editorTemplate -dimControl $strNodeName "vrHiddenEdges" (!$nEnable);
+	editorTemplate -dimControl $strNodeName "vrHiddenEdgesOnTransparent" (!$nEnable);
+	editorTemplate -dimControl $strNodeName "vrOutlinesAtIntersections" (!$nEnable);
+	editorTemplate -dimControl $strNodeName "vrEdgePriority" (!$nEnable);
+}
+
+global proc VREdgeStyleControl(string $strNodeName)
+{
+	// The check is for when the script gets sourced the first time
+	if (`objExists ($strNodeName + ".vrEdgeStyle")`) 
+	{
+		int $ov = `getAttr ($strNodeName + ".vrOverwriteDefaults")`;
+		if ( $ov ) { 
+			int $nEdgeStyle = `getAttr ($strNodeName + ".vrEdgeStyle")`;
+			int $nEdgeStyleEnable = (3 != $nEdgeStyle);
+			VREnableEdgeStyleOps($strNodeName, $nEdgeStyleEnable);
+		}
+	}
+}
+
+global proc VREnableUI(string $strNodeName)
+{
+	string $strNodeAttr = $strNodeName + ".vrOverwriteDefaults";
+	int $nValue = 0;
+	
+	if ( `objExists $strNodeAttr`) 
+	{
+		$nValue = `getAttr $strNodeAttr`;
+	}
+
+	// dim is disable
+	editorTemplate -dimControl $strNodeName "vrFillObject" (!$nValue);
+	editorTemplate -dimControl $strNodeName "vrEdgeWeight" (!$nValue);
+	editorTemplate -dimControl $strNodeName "vrEdgeStyle" (!$nValue);
+
+	if ($nValue)
+	{
+		VREdgeStyleControl($strNodeName);
+	}
+	else
+	{
+		VREnableEdgeStyleOps($strNodeName, 0);
+	}
+	
+	// edge weights
+	if (`optionMenuGrp -q -ex omEdgeWeightPresets`)
+	{
+		optionMenuGrp -e -enable $nValue omEdgeWeightPresets;
+	}
+
+	if (`floatSliderGrp -ex fsEdgeWeightCtrl`) 
+	{
+		floatSliderGrp -e -en $nValue fsEdgeWeightCtrl;
+	}
+}
+
+global proc VRCreateUI(int $nCreateButton, string $strNodeName)
+{
+	string $strMainNodeName = FindMainNodeName($strNodeName);		
+	if ($nCreateButton == true)
+	{
+		// columnLayout -adj true;
+		string $strForm = `formLayout`;
+		button	-label (uiRes("m_AEVROverrideFlags.kAddControls"))
+				-c ("addVectorRenderAttributes " + $strMainNodeName) 
+				VRattrButton;
+		formLayout	-edit 
+					-attachForm VRattrButton "top" 5 
+					-attachPosition VRattrButton "left" 5 25 
+					-attachForm VRattrButton "bottom" 5 
+					-attachPosition VRattrButton "right" 5 75 
+					$strForm;
+		setParent ..;
+	}
+	else
+	{
+		// We do this because the command (set above) 
+		// will not change if the node changes.
+		button	-e 
+				-c ("addVectorRenderAttributes " + $strMainNodeName) 
+				VRattrButton;
+	}
+	
+	// If the attributes already exist, so
+	// the button ought to be disabled
+	button -e -enable true VRattrButton;
+	if (`objExists ".vrOverwriteDefaults"`)
+	{
+		button -e -enable false VRattrButton;
+	}
+}
+
+global proc VRFillObjectUIChanged(string $strNodeName)
+{	
+	string $strRendererName = `getAttr defaultRenderGlobals.ren`;
+	int $nOverWriteAttribsExist = `objExists ".vrOverwriteDefaults"`;
+	
+	if (($strRendererName != "mayaVector") || (!$nOverWriteAttribsExist))
+	{
+		return;
+	}
+
+	string $strMainNodeName = FindMainNodeName($strNodeName);
+
+	int $nFillStyle = `getAttr ($strNodeName + ".vrFillObject")`;
+	
+	if (($nFillStyle == 6) || ($nFillStyle == 7))
+	{
+		int $nFileFormat = `getAttr vectorRenderGlobals.imageFormat`;
+		if (($nFileFormat == 1) || ($nFileFormat == 2))
+		{
+			// Set it to average color if a style (Area Gradient or
+			// Mesh Gradient) that doesn't work with EPS or Adobe(R)
+			// Illustrator(R) file formats is chosen
+			// 
+			warning (uiRes("m_AEVROverrideFlags.kGradIncompMsg"));
+
+			setAttr ($strMainNodeName + ".vrFillObject") 5;
+		}
+	}
+}
+
+global proc VRCreateAttributes(string $strNodeName)
+{
+	VRCreateUI(true, $strNodeName);
+}
+
+global proc VRLoadAttributes(string $strNodeName)
+{
+	VRCreateUI(false, $strNodeName);
+}
+
+global proc AEVROverrideFlags(string $node)
+{
+	editorTemplate -beginLayout (uiRes("m_AEVROverrideFlags.kVectorRendererControl"))  -collapse true;	
+		setUITemplate -pst attributeEditorTemplate;
+			editorTemplate -ccu "VRCreateAttributes" "VRLoadAttributes" $node;
+
+				editorTemplate	-label (uiRes("m_AEVROverrideFlags.kOverwriteDefaultValues"))  
+								-adc "vrOverwriteDefaults" "VREnableUI";
+				
+				editorTemplate	-label (uiRes("m_AEVROverrideFlags.kFillObject"))  
+								-adc "vrFillObject" "VRFillObjectUIChanged";
+												
+				editorTemplate	-ccu "VRCreateEdgeWeightPresetUI" 
+									 "VRReplaceEdgeWeightPresetUI" $node;
+												
+				editorTemplate	-ccu "VRCreateEdgeWeightControlUI" 
+									 "VRReplaceEdgeWeightControlUI" $node;
+				
+				editorTemplate	-label (uiRes("m_AEVROverrideFlags.kEdgeStyle"))  
+								-adc "vrEdgeStyle" "VREdgeStyleControl";
+												
+				editorTemplate	-label (uiRes("m_AEVROverrideFlags.kEdgeColor"))  
+								-adc "vrEdgeColor";
+												
+				editorTemplate	-label (uiRes("m_AEVROverrideFlags.kHiddenEdges"))  
+								-adc "vrHiddenEdges";
+
+				editorTemplate  -label (uiRes("m_AEVROverrideFlags.kHiddenEdgesOnTransparent")) 
+								-adc "vrHiddenEdgesOnTransparent";
+
+				editorTemplate	-label (uiRes("m_AEVROverrideFlags.kOutlinesAtIntersections")) 
+								-adc "vrOutlinesAtIntersections";
+
+				editorTemplate	-label (uiRes("m_AEVROverrideFlags.kEdgePriority"))  
+								-adc "vrEdgePriority";
+
+				editorTemplate  -suppress "vrEdgeWeight";
+		setUITemplate -ppt;
+	editorTemplate -endLayout;
+}

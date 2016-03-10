@@ -1,0 +1,312 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Dec 3, 1998
+//
+//  Procedure Name:
+//      performPolyAverageNormal
+//
+//  Description:
+//       Perform a normal merging on selected vertex normals
+//         
+//
+
+proc setOptionVars (int $forceFactorySettings)
+{			   
+	if ($forceFactorySettings || !`optionVar -exists polyAverageNormalPrenormalize`)
+		optionVar -intValue polyAverageNormalPrenormalize 1;
+	if ($forceFactorySettings || !`optionVar -exists polyAverageNormalAllowZero`)
+		optionVar -intValue polyAverageNormalAllowZero 0;	 
+	if ($forceFactorySettings || !`optionVar -exists polyAverageNormalPostnormalize`)
+		optionVar -intValue polyAverageNormalPostnormalize 0;
+
+	if ($forceFactorySettings || !`optionVar -exists polyAverageNormalTol`)
+		optionVar -floatValue polyAverageNormalTol 0.1;
+
+	if ($forceFactorySettings || !`optionVar -exists polyAverageNormalReplace`)
+		optionVar -floatValue polyAverageNormalReplace 1.0
+				  -floatValueAppend polyAverageNormalReplace 0.0
+				  -floatValueAppend polyAverageNormalReplace 0.0;
+
+}
+
+global proc performPolyAverageNormalSetup (string $parent, int $forceFactorySettings)
+{
+	setOptionVars($forceFactorySettings);
+	setParent $parent;
+
+	int $allowZero;
+	
+	int $ival1, $ival2;
+
+	$ival1 = `optionVar -q polyAverageNormalPrenormalize`;
+
+	$allowZero = `optionVar -q polyAverageNormalAllowZero`;
+	if($allowZero == 1)
+		radioButtonGrp -e -sl 1 polyAverageNormalAllowZero;
+	else
+		radioButtonGrp -e -sl 2 polyAverageNormalAllowZero;
+
+	$ival2 = `optionVar -q polyAverageNormalPostnormalize`;
+
+	if($ival1 == 1)
+		radioButtonGrp -e -sl 1 polyAverageNormalNormalize;
+	else if($ival2 == 1)
+		radioButtonGrp -e -sl 2 polyAverageNormalNormalize;
+	else
+		radioButtonGrp -e -sl 3 polyAverageNormalNormalize;
+
+	float $fval = `optionVar -q polyAverageNormalTol`;
+	floatSliderGrp -e -v $fval polyAverageNormalTol;
+
+	float $fvals[] = `optionVar -q polyAverageNormalReplace`;
+	floatFieldGrp -edit 
+		-enable (1 - $allowZero) 
+		-v1 $fvals[0] 
+		-v2 $fvals[2] 
+		-v3 $fvals[2]  
+		polyAverageNormalReplace;
+
+}
+
+global proc performPolyAverageNormalCallback (string $parent, int $doIt)
+{
+	setParent $parent;
+
+
+	int $val = `radioButtonGrp -q -sl polyAverageNormalNormalize`;
+	
+	if($val == 1)
+	{
+		optionVar -intValue polyAverageNormalPrenormalize 1;
+		optionVar -intValue polyAverageNormalPostnormalize 0;
+	}
+	else if($val == 2)
+	{
+		optionVar -intValue polyAverageNormalPrenormalize 0;
+		optionVar -intValue polyAverageNormalPostnormalize 1;
+	}
+	else
+	{
+		optionVar -intValue polyAverageNormalPrenormalize 0;
+		optionVar -intValue polyAverageNormalPostnormalize 0;
+	}
+
+	int $val1 = `radioButtonGrp -q -sl polyAverageNormalAllowZero`;
+	if($val1 == 1)
+	{
+		optionVar -intValue polyAverageNormalAllowZero 1;
+	}
+	else
+	{
+		optionVar -intValue polyAverageNormalAllowZero 0;
+	}
+
+
+	optionVar -floatValue polyAverageNormalTol
+		`floatSliderGrp -q -v polyAverageNormalTol`;
+
+	optionVar -floatValue polyAverageNormalReplace
+		`floatFieldGrp -q -v1 polyAverageNormalReplace`
+		-floatValueAppend polyAverageNormalReplace
+		`floatFieldGrp -q -v2 polyAverageNormalReplace`
+		-floatValueAppend polyAverageNormalReplace
+		`floatFieldGrp -q -v3 polyAverageNormalReplace`;
+
+	if ($doIt) {
+		performPolyAverageNormal 0;
+		addToRecentCommandQueue "performPolyAverageNormal 0" "PolyAverageNormal";
+	}
+}
+
+
+global proc replaceNormalChanged(int $changed)
+{
+	// don't allow the replace normal to be zero length
+	//
+	float	$x, $y, $z;
+	$x= `floatFieldGrp -q -v1 polyAverageNormalReplace`;
+	$y= `floatFieldGrp -q -v2 polyAverageNormalReplace`;
+	$z= `floatFieldGrp -q -v3 polyAverageNormalReplace`;
+	if (($x*$x+$y*$y+$z*$z) != 0.0)
+	{
+		// save the good normal value
+		//
+		optionVar -floatValue polyAverageNormalReplace $x
+				  -floatValueAppend polyAverageNormalReplace $y
+				  -floatValueAppend polyAverageNormalReplace $z;
+	}
+	else
+	{
+		// restore the bad normal with previous good value
+		//
+		float $f[];
+		$f = `optionVar -q polyAverageNormalReplace`;
+		floatFieldGrp -e -v1 $f[0] -v2 $f[1] -v3 $f[2]  polyAverageNormalReplace;
+	}
+}
+
+proc polyAverageNormalOptions()
+{
+	// Global template variables for form spacing
+	global int $gOptionBoxTemplateFrameSpacing;
+	
+	string $commandName = "performPolyAverageNormal";
+	string $callback = ($commandName + "Callback");
+	string $setup = ($commandName + "Setup");
+	   
+	string $layout = getOptionBox();
+	setParent $layout;
+	setUITemplate -pushTemplate OptionBoxTemplate;
+	waitCursor -state 1;
+
+	// Form layout
+	string $parent = `formLayout polyAverageNormalOptions`;
+	
+		// Settings frame
+		string $settingsFrame = 
+		`frameLayout -label (uiRes("m_performPolyAverageNormal.kSettingsFrame"))`;
+
+			columnLayout;
+
+				radioButtonGrp 
+					-numberOfRadioButtons 3 
+					-label (uiRes("m_performPolyAverageNormal.kNormalLengths")) 
+					-vr 
+					-labelArray3 	(uiRes("m_performPolyAverageNormal.kNormalLengths1"))
+									(uiRes("m_performPolyAverageNormal.kNormalLengths2"))
+									(uiRes("m_performPolyAverageNormal.kNormalLengths3"))
+					polyAverageNormalNormalize;
+
+				// Distance tolerance
+				floatSliderGrp -label (uiRes("m_performPolyAverageNormal.kGroupingThreshold"))
+					-minValue	   0.0	-maxValue		1000.0
+					-fieldMinValue 0.0	-fieldMaxValue	1000.0
+					polyAverageNormalTol;
+
+				// Allow zero normals
+				radioButtonGrp 
+					-numberOfRadioButtons 2 
+					-label (uiRes("m_performPolyAverageNormal.kZeroLengthHandle")) 
+					-vertical 
+					-labelArray2 	(uiRes("m_performPolyAverageNormal.kZeroLengthHandle1"))
+									(uiRes("m_performPolyAverageNormal.kZeroLengthHandle2"))
+					-onCommand1 "floatFieldGrp -edit -enable false polyAverageNormalReplace"
+					-onCommand2 "floatFieldGrp -edit -enable true polyAverageNormalReplace"
+					polyAverageNormalAllowZero;
+
+				// ReplaceNormal
+				floatFieldGrp -label "" 
+					-cc "replaceNormalChanged"
+					-numberOfFields 3 
+					polyAverageNormalReplace;
+					
+			setParent ..; // columnLayout
+
+		setParent $parent; // frameLayout
+		
+	setParent ..; // formLayout
+
+	// Attach frame to form layout
+	formLayout -e
+		-af $settingsFrame "top" $gOptionBoxTemplateFrameSpacing
+		-af $settingsFrame "left" $gOptionBoxTemplateFrameSpacing
+		-af $settingsFrame "right" $gOptionBoxTemplateFrameSpacing
+		-an $settingsFrame "bottom"
+	$parent;
+
+	waitCursor -state 0;
+	setUITemplate -popTemplate;
+	   
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit -label (uiRes("m_performPolyAverageNormal.kAverageNormalsButton"))
+	       -command ($callback + " " + $parent + " " + 1)
+		$applyBtn;
+
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + $parent + " " + 0 + "; hideOptionBox")
+		$saveBtn;
+
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + " " + $parent + " " + 1)
+		$resetBtn;
+			 
+	setOptionBoxTitle( (uiRes("m_performPolyAverageNormal.kAverageNormalsOptions")) );
+
+	setOptionBoxHelpTag( "AverageNormals" );
+
+	eval (($setup + " " + $parent + " " + 0));      
+	showOptionBox();
+}
+
+global proc string performPolyAverageNormal (int $option)
+{
+	string $cmd="";
+	switch ($option) {
+
+	  case 1: polyAverageNormalOptions; 
+		// Just the option box
+		break;
+		
+	  default:
+		setOptionVars(false);
+
+		int $prenormalize = `optionVar -query polyAverageNormalPrenormalize`;
+		int $allowZero = `optionVar -query polyAverageNormalAllowZero`;
+		int $postnormalize = 0;
+		if ($prenormalize == 0)
+			$postnormalize = `optionVar -query polyAverageNormalPostnormalize`;
+
+		float $dTol = `optionVar -q polyAverageNormalTol`;
+
+		float $repNorm[];
+		if ($allowZero == 1)
+		{
+			$repNorm[0] = 1.0;
+			$repNorm[1] = $repNorm[2] = 0.0;
+		}
+		else
+			$repNorm = `optionVar -q polyAverageNormalReplace`;
+
+		$cmd = ("polyAverageNormal -prenormalize " + $prenormalize + " "
+					+ "-allowZeroNormal " + $allowZero + " "
+					+ "-postnormalize " + $postnormalize + " "
+					+ "-distance " + $dTol + " "
+					+ "-replaceNormalXYZ "
+						+ $repNorm[0] + " "
+						+ $repNorm[1] + " "
+						+ $repNorm[2] + " ");
+
+		if ($option == 0)
+			evalEcho $cmd;
+		break;
+	}
+	return $cmd;
+}
+
+
+
+
+

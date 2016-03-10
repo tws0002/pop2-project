@@ -1,0 +1,81 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  20 Feb 2002
+//
+//  Description:
+//      Time changes trigger an expression which sets the
+//		cache name to the correct segment when using segmented
+//		cache files.  
+//
+global proc updateCacheSegmentAtCurrentTime( string $cacheNode, 
+											 string $namingPrefix ) 
+{
+	verifyWorkspaceFileRule( "diskCache", "data" );
+	string $diskCacheDir = ( `workspace -q -rootDirectory` + 
+	                         `workspace -fileRuleEntry "diskCache"` );
+
+	// Find the expression connected to the cacheNode and back up
+	// one level to get the animCurve.
+	//
+	string $connections[] = `listConnections -d false ($cacheNode + ".segmentStartFrame")`;
+	if( size( $connections ) ) {
+		$connections = `listConnections -d false ($connections[0] + ".segmentStartFrame")`;
+
+		string $animCurve;
+		if( size( $connections ) ) {
+			$animCurve = $connections[0];
+		}
+		
+		if( size( $animCurve ) ) {
+			float  $time      = `currentTime -q`;
+			float  $val[]     = `keyframe -t $time -q -eval $animCurve`;
+
+			string $cacheName = `getAttr( $cacheNode + ".cacheName" )`;
+			string $segName   = fluidCacheSegmentizeName( $cacheNode, $val[0], $namingPrefix );
+			
+			string $segFile = $diskCacheDir + "/" + $segName;
+			
+			if( `file -q -exists $segFile` ) {
+				setAttr -type "string" ( $cacheNode + ".cacheName" ) $segFile;
+			}
+
+			// We're here because time changed.  If time changing caused
+			// us to swap in a different segment of the cache file, the
+			// fluid won't update because it thinks it already has (since 
+			// the current frame isn't part of the swapped-out cache file).
+			// We'll need to kick the fluid to update from the new cache file
+			// name.
+			//
+			if( $cacheName != $segName ) {
+				// Yes, this would normally cause another evaluation of
+				// the expression, which would bring us back into this
+				// MEL proc, but we will only execute this the FIRST time
+				// the fluid evaluates from the swapped in cache file.
+				//
+				currentTime `currentTime -q`;
+			}
+		}
+	}
+}
+

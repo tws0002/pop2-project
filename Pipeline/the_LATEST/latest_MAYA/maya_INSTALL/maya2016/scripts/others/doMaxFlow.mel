@@ -1,0 +1,338 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+global string $gPreviousMaxSent[] = {};
+global int $gPreviousMaxScriptJob = -1;
+
+//
+// Check whether the previously sent object list contains items still
+// in the scene
+//
+proc
+string[] validatePreviousMaxSendList()
+{
+	global string $gPreviousMaxSent[];
+	string $stillAround[] = validatePreviousSendList($gPreviousMaxSent);
+	return $stillAround;
+}
+
+//
+// Clear the saved list of previously sent items. Usually called by FileNew.
+//
+global proc
+clearPreviousMaxSendList()
+{
+	global string $gPreviousMaxSent[];
+	clear($gPreviousMaxSent);
+}
+
+
+proc deselectHikRigs()
+{
+    // Max does not supports Rigs
+    // Deselect any Rig  or Rig element that may remain being selected
+                
+	string $controlSets[] = `ls -type HIKControlSetNode`;
+    string $todeselect[] = `ls -sl -type HIKControlSetNode`;
+                
+	for( $rig in $controlSets )
+	{
+        string $effectors[] = hikGetIkNodesFromControlRig( $rig, 1 ); 
+        string $fks[] = hikGetFkNodesFromControlRig( $rig );
+                    
+        if( size( $effectors ) > 0 )
+        {
+            $effectors = `ls -sl $effectors`;
+
+            if( size( $effectors ) > 0 )
+            {
+                $todeselect = stringArrayCatenate( $todeselect, $effectors );
+            }
+        }              
+
+        if( size( $fks ) > 0 )
+        {
+            $fks = `ls -sl $fks`;
+
+            if( size( $fks ) > 0 )
+            {
+                $todeselect = stringArrayCatenate( $todeselect, $fks );
+            }
+        }              
+    }
+                
+    if( size( $todeselect ) > 0 )
+    { 
+        select -deselect $todeselect;
+    }
+}
+
+
+//
+// Modify the selection list so that it includes the hierarchy and other
+// associated nodes that we want to export.
+//
+global
+proc int augmentSelectionForOneClickMax( string $action,
+										 int $restrictedUpdate  )
+{
+	string $sel[] = `ls -sl`;
+	if (size($sel) == 0) {
+		//
+		// Nothing was selected. See if there is a previous selection and
+		// ask if they want to send that.
+		//
+		// Eventually we want to give the option to suppress the dialog.
+		// So the optionVars are there for that.
+		//
+		string $cancelInfoMsg = (uiRes("m_doMaxFlow.kSendCancelled"));
+
+		$sel = validatePreviousMaxSendList();
+		if (size($sel) > 0 &&
+			(! oneClickDefaultSendPreviousSelection())) {
+			
+			string $doSend = `layoutDialog -ui "createOneClickSelectionDialog(1)"`;
+			if ($doSend != "Yes") {
+				print $cancelInfoMsg;
+				return 0;
+			}
+		}
+		if (size($sel) == 0) {
+			// There was no previous selection, ask if they want to send
+			// everything.
+			//
+			$sel = getEntireSceneNoCameras();
+			if (! oneClickDefaultSendEntireScene()) {
+				if (size($sel) > 0) {
+					string $doSend = `layoutDialog -ui "createOneClickSelectionDialog(0)"`;
+					if ($doSend != "Yes") {
+						print $cancelInfoMsg;
+						return 0;
+					}
+				}
+			}
+		}
+	}
+
+	if (size($sel) == 0) {
+		error((uiRes("m_doMaxFlow.kNothingToSend")));
+		return 0;
+	}
+	
+	for ($obj in $sel) {
+		// select the top item in the hierarchy for all selected items
+		//
+		oneClickSelectRoot( $obj );
+	}
+	string $constraintsSel[] = `ls -sl -type constraint`;
+	select -hierarchy;
+
+	if( $restrictedUpdate )
+	{
+		// select -hierarchy causes meshes to be really selected instead of there associated transform
+		// From there we can find skinCluster assocuated to selected meshes and then then the influences
+		string $meshes[] = `ls -sl -type mesh`;
+		
+		if( size( $meshes ) > 0 )
+		{
+			string $skinClusters[] = `listConnections -type skinCluster -s 1 -d 0 $meshes`; 	
+
+			if( size( $skinClusters ) > 0 )
+			{
+				string $influences[] = `listConnections -s 1 -d 0 -type transform $skinClusters`;
+
+				if( size( $influences ) > 0 )
+				{
+					for( $influence in $influences)
+					{
+						oneClickSelectRoot( $influence );
+					}
+
+					select -hierarchy;
+				}
+			}
+		}
+
+		if( `pluginInfo -q -l "mayaHIK"` ) 
+		{
+
+			// Now that hierarchies are selected, for every character check if the skeleton or the rig are selected
+			string $characters[] = `ls -type HIKCharacterNode -type HIKControlSetNode`;
+
+			for( $character in $characters )
+			{
+				string $hipsBone = hikGetSkNode( $character, 1 );
+
+				if( $hipsBone != "" )
+				{
+					string $selection[] = `ls -sl $hipsBone`;
+
+					if( size( $selection ) > 0 )
+					{
+                        doOneClickSelectHikSkeleton( $character );
+					}
+				}
+			}
+
+
+			// Check for selected control sets and select the associated character
+			string $selectedControlSets[] = `ls -sl -type HIKControlSetNode`;
+
+			for( $rig in $selectedControlSets )
+			{
+				string $character = hikGetCharacterDefinition( $rig );
+
+				if( $character != "" )
+				{
+                    doOneClickSelectHikSkeleton( $character );
+				}
+			}
+
+			select -hierarchy;
+		}
+
+		if( $action != "update" )
+		{
+			addSkinRelatedToSelection();
+			addBlendShapeTargetsForSelection();
+		}
+
+        deselectHikRigs();
+
+		// Some source constraits are added by select -hierarchy
+		// Keep these new selected constraints only if all the
+		// associated targets are also selected
+		//
+		oneClickConstraintTargetValidation($constraintsSel);
+	}
+	else
+	{
+		// Now add all dag nodes in the "history" and "future" of the
+		// selection -- this gets things like constraint targets, skinning,
+		// blendShape targets etc. We don't need to grab the history nodes
+		// themselves since FBX export will do the appropriate thing.
+		//
+		string $allFuture[] = `listHistory -future 1`;
+		string $allHistory[] = `listHistory`;
+		select -add `ls -type "dagNode" $allFuture`;
+		select -add `ls -type "dagNode" $allHistory`;
+		addSkinRelatedToSelection();
+	}
+
+	global string $gPreviousMaxSent[];
+	$gPreviousMaxSent = `ls -sl`;
+	
+	global int $gPreviousMaxScriptJob;
+	if ($gPreviousMaxScriptJob < 0) {
+		$gPreviousMaxScriptJob = `scriptJob -permanent -e deleteAll "clearPreviousMaxSendList"`;
+	}
+	
+	return 1;
+}
+
+
+//
+// Description:
+//    This is the actual function invoked by the "Send to Max"
+//    menu items.
+//
+//	Input arguments:
+//	  $version: The version of this option box.  Used to know how to 
+//	            interpret the $args array.
+//
+//		$args[0] = $action. Available values are:
+//				sendNew, update, add, receive, selectPrevious
+//		$args[1] = During "receive": The filename to receive. During "sendNew",
+//              optionally used to specify the active camera.
+//		$args[2] = During "receive": If true, do a file new.  During "sendNew",
+//              optionally used to specify whether the active camera is a
+//				default camera.
+//		$args[3] = only used during "receive": If true, do an add vs merge.
+//
+//  Return:
+//		For receive, returns "Success" or "Failure" based on the result of the operation.
+//		For all other operations, returns the filename that was sent to Max.
+//
+global proc
+string doMaxFlow(string $args[])
+{
+	if (! `exists validatePreviousSendList`) {
+		source "oneClickUtilities.mel";
+	}
+
+	string $action = $args[0];
+	if ($action == "sendNew" ||
+		$action == "update" ||
+		$action == "add")
+	{
+		int $restrictedUpdate = getOneClickRestrictedUpdateVal();
+		if (!augmentSelectionForOneClickMax( $action, $restrictedUpdate )) {
+			// User cancelled the operation.
+			//
+			return "";
+		}
+
+		string $camName = "";
+		int $isDefaultCam = 0;
+/*
+// Commented out since the current design thinking is that we
+// should not send cameras between hero applications.
+//
+		if (size($args) >= 3 && size($args[1]) > 0) {
+			$camName = $args[1];
+			int $isDefaultCam = $args[2];
+		}
+*/
+		string $maxExportPreset = "FBXResetExport; FBXExportBakeComplexAnimation -v true; FBXExportBakeResampleAnimation -v true;";
+
+		string $filename;
+		$filename = doOneClickSendOperation($maxExportPreset,
+											"Maya_to_Max_",
+											$restrictedUpdate,
+											$camName,
+											$isDefaultCam,
+											1 /* include connections */,
+                                            false /* embedTextures */  );
+		return $filename;
+	}
+	else if ($action == "receive") {
+		string $filename = $args[1];
+		int $newScene = $args[2];
+		int $addFlag = $args[3];		
+
+		string $result = doOneClickReceiveOperation("FBXResetImport",
+													$filename,
+													$newScene,
+													$addFlag, 
+                                                    false             );
+		return $result;
+	} else if ($action == "selectPrevious") {
+		string $previousItems[] = validatePreviousMaxSendList();
+		if (size($previousItems) > 0) {
+			select -r $previousItems;
+		} else {
+			error((uiRes("m_doMaxFlow.kPreviousItemsNoLongerInScene")));
+		}
+	} else {
+		warning((uiRes("m_doMaxFlow.kInvalidAction")));
+	}
+	return "";
+}

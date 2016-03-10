@@ -1,0 +1,585 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//////////////////////////////////////////////////////////////////////////////
+//	This file contains the MEL script to create the Paintable Attribute Menu
+//////////////////////////////////////////////////////////////////////////////
+
+global proc string [] artSkinFindSkinClusterNodes()
+//
+// Return an array with currently active skin cluster nodes.
+//
+{
+    
+    string $skinClusters[];    
+    
+    string $cmd = "artAttrSkinPaintCtx -q -objattrArray " + `currentCtx`;
+    string $paintClusters = `eval $cmd`;
+
+    string $buffer[];
+    tokenize( $paintClusters, " ", $buffer );	
+    
+    int    $skinIdx = 0;
+    for ( $item in $buffer ) {
+	    string $itemElems[];
+	    tokenize( $item, ".", $itemElems );
+	    int $nbElem = size($itemElems);
+	    if ( ( $nbElem < 3 ) || ( $itemElems[2] != "paintWeights") ) 
+		    continue; 
+
+	    // We have the skinCluster node.
+	    if( `objExists $itemElems[1]` )
+	    {
+		    $skinClusters[$skinIdx] = $itemElems[1];
+		    $skinIdx ++;
+	    }
+    }
+	
+	//When we are in select mode or paint select mode, the skin paint context may not know which
+	//skin we are working on.  We will try to find the skin cluster based on
+	//the current selection.
+	if(size($skinClusters) < 1)
+	{
+	    //First, see if there are joints selected
+	    string $sels[] = `ls -sl -type joint`;
+	    if(size($sels) > 0) 
+	    {
+	        string $clusters[] = `listConnections -s 0 -d 1 -type skinCluster $sels[0]`;
+	        if(size($clusters) > 0) {
+	            $skinClusters[0] = $clusters[0];
+	            return $skinClusters;
+	        }
+	    }
+	    
+	    $sels = `ls -sl`;
+	    for($sel in $sels) {
+	        if(`nodeType $sel` == "transform") {
+	            string $skinCluster = findRelatedSkinCluster($sel);
+	            if($skinCluster != "") {
+	                $skinClusters[0] = $skinCluster;
+	                return $skinClusters;
+	            }
+	        }
+	        
+	        if(`nodeType $sel` == "mesh" || `nodeType $sel` == "nurbsSurface") {
+	            string $buffer[];
+	            //Might have selected a component of the mesh or nurbs.
+	            tokenize( $sel, ".", $buffer );	
+	            
+	            string $skinCluster = findRelatedSkinCluster($buffer[0]);
+	            if($skinCluster != "") {
+	                $skinClusters[0] = $skinCluster;
+	                return $skinClusters;
+	            }
+	            
+	        }
+	        
+	    }	    	    
+	}
+
+	return $skinClusters;
+}
+
+
+
+
+global proc artAttrSkinSetNormalizationMethod(string $skinCluster)
+{
+    if(!`optionMenuGrp -exists artAttrSkinNormalizationMode`)
+        return;
+        
+    string $plug = $skinCluster + ".nw";
+    int $currNormalizationMode = `getAttr $plug`;
+    if($currNormalizationMode == 0) //off
+        optionMenuGrp -e -sl 1 artAttrSkinNormalizationMode; 
+    else if($currNormalizationMode == 1) //interactive
+        optionMenuGrp -e -sl 2 artAttrSkinNormalizationMode; 
+    else    //post
+        optionMenuGrp -e -sl 3 artAttrSkinNormalizationMode; 
+}
+// Synchronisation of the selection
+// Local stuff, Interface section follows
+
+
+proc string artSkinSyncListFromSceneSelection( )
+// Sync the influences list based on the selection of the scene
+// Returns the item the last selected item
+// Must not be called outside of the current scope
+{
+	global string $gArtSkinInfluencesList;
+
+	string $lastSelectedItem = ""; // returnValue
+	
+	string $items[] = `treeView -q -ch "" $gArtSkinInfluencesList`;
+			
+	
+	// Refresh the selection state of the clean items only
+	if( size( $items ) > 0 )
+	{
+		string $lsCmd = "ls -sl";
+		
+		for( $item in $items )
+		{
+			$lsCmd += " " + $item;
+		}
+		
+		string $sel[] = `eval $lsCmd`;
+				
+		if( size( $sel ) > 0 )
+		{
+			$lastSelectedItem = $sel[size($sel)-1];		
+		}
+
+		int $useLowOrderMethod = (size( $sel ) > 3);
+		
+		
+		for( $item in $items )
+		{
+			int $selectState = 0;
+				
+			if( $useLowOrderMethod )
+			{
+				// the constrant 3 is an arbritary number used to determine which method to use
+				// use slow method but low order method
+				if( size( `ls -sl $item` ) > 0 )
+				{
+					$selectState = 1;
+				}
+			}
+			else
+			{
+				// Fast high order method
+				for( $selItem in $sel )
+				{			
+					if( isSameObject( $selItem, $item ) )
+					{
+						$selectState = 1;
+					}
+				}
+			}
+			
+			treeView -e -selectItem $item $selectState $gArtSkinInfluencesList; 
+		}		
+	}			
+
+	return $lastSelectedItem;
+}
+
+proc artSkinInfSyncSelectionFromList( string $lastItem )
+// Update the scene selection state with the state of the influences list
+// This has to be called everytime the selection of the influences list is updated
+{
+	global string $gArtSkinInfluencesList;
+
+	string $items[] = `treeView -q -ch "" $gArtSkinInfluencesList`;
+	
+
+	// Update the scene selection from the list
+	if( size( $items ) > 0 )
+	{
+		for( $item in $items )
+		{
+			if( $item != $lastItem )
+			{
+				int $selected = `treeView -q -itemSelected $item $gArtSkinInfluencesList`;;
+							
+				if( $selected )
+				{
+					select -add $item;
+				}
+				else
+				{
+					select -d $item;
+				}
+			}
+		}
+		
+		if( $lastItem != "" && objExists( $lastItem ) )
+		{
+			select -add $lastItem;
+		}
+	} 
+}		
+
+// Interface Section Global Interface
+
+global int $artSkinInflSyncGate = 0;
+
+global proc artSkinPaintInflChanged( string $influence )
+{
+	global int $artSkinInflSyncGate;
+	global string $gArtSkinInfluencesList;
+
+	// Prevent reentrency
+	if( $artSkinInflSyncGate )
+	{
+		return;
+	}
+	$artSkinInflSyncGate = 1;
+		
+	// Ensure that the item is main selected in the list and in the scene
+	if( $influence != "" )
+	{
+	    string $currContext = `currentCtx`;    
+		int $paintMode = `artAttrSkinPaintCtx -q -skinPaintMode $currContext`; 
+	    //paintMode: 1 == skin paint weights, 0 == marquee select, 2 == paint select
+		if( $paintMode == 0 )
+		{
+			catchQuiet( `select -add $influence` );
+		}
+		
+		if( ($gArtSkinInfluencesList !="") &&(`treeView -q -exists $gArtSkinInfluencesList`) )
+		{
+			if( `treeView -q -itemExists $influence $gArtSkinInfluencesList` )
+			{
+				catchQuiet( `treeView -e -si $influence 1 $gArtSkinInfluencesList` );
+			}
+		}
+	}
+	
+    string $currContext = `currentCtx`;    
+    int $paintMode = `artAttrSkinPaintCtx -q -skinPaintMode $currContext`; 
+    
+    if( $paintMode == 0 )
+    {
+		if( `treeView -q -exists $gArtSkinInfluencesList` )
+		{
+			artSkinInfSyncSelectionFromList( $influence );
+		}
+    }
+
+
+	// Update Selection Colors
+	skinClusterInflUpdateSelectionColors $gArtSkinInfluencesList;
+
+	$artSkinInflSyncGate = 0;
+}
+
+
+// Called when the selection is about to change.
+// Used to keep tracking og the last selected item.
+// Also used to remember selection order of influences
+// (which is needed for the move weights tool)
+//
+global proc int artSkinInflListChanging( string $item, int $state )
+{
+	global string $gArtSkinOrderedInfluenceSelectionList[];
+	global string $artSkinLastSelectedInfluence;
+	global int $artSkinInflSyncGate;
+
+	// Prevent reentrency
+	if( $artSkinInflSyncGate==0 )
+	{
+		if( $state )
+		{
+			$artSkinLastSelectedInfluence = $item;
+		}
+		else
+		{
+			$artSkinLastSelectedInfluence = "";	
+		}
+	}
+
+	if( $state ) {
+		if( !stringArrayContains($item, $gArtSkinOrderedInfluenceSelectionList) ) {
+			$gArtSkinOrderedInfluenceSelectionList[size($gArtSkinOrderedInfluenceSelectionList)] = $item;
+		}
+	}
+	else {
+		if( stringArrayContains($item, $gArtSkinOrderedInfluenceSelectionList) ) {
+			$gArtSkinOrderedInfluenceSelectionList = stringArrayRemove( { $item }, $gArtSkinOrderedInfluenceSelectionList);
+		}
+	}
+
+	return true;
+}
+
+global proc artSkinInflListChanged( string $artCommand )
+// Called once the influence list selection or content has changed
+{
+	global string $artSkinLastSelectedInfluence;
+	global int $artSkinInflSyncGate;
+	global string $gArtSkinInfluencesList;
+
+	if( $artSkinInflSyncGate )
+	{
+		return;
+	}
+	$artSkinInflSyncGate = 1;
+
+
+    string $currContext = `currentCtx`;    
+    int $paintMode = `artAttrSkinPaintCtx -q -skinPaintMode $currContext`; 
+
+	string	$influence = $artSkinLastSelectedInfluence;
+		
+    // Update Paint Selection
+	artSkinSelectInfluence( $artCommand, $influence );
+	
+	// Update scene selection, scene must be sync wih the entre contains of the selection list	    
+	//paintMode: 1 == skin paint weights, 0 == marquee select, 2== paint select 
+    if( $paintMode == 0 )
+    {
+		artSkinInfSyncSelectionFromList( $influence );
+	}
+	    
+    // Update Colors
+	skinClusterInflUpdateSelectionColors $gArtSkinInfluencesList;
+
+	$artSkinInflSyncGate = 0;
+}
+
+global proc artSkinInflSceneSelectionChanged( )
+// Called once the scene selection has changed
+{
+	
+	global int $artSkinInflSyncGate;
+	global string $gArtSkinInfluencesList;
+
+	string $sel[] = `ls -sl`;
+				
+    string $currContext = `currentCtx`;  
+    int $paintMode = `artAttrSkinPaintCtx -q -skinPaintMode $currContext`; 
+    
+    //paintMode: 1 == skin paint weights, 0 == marquee select, 2== paint select
+    if( $paintMode == 1 )
+    {
+		return;
+	}
+
+
+	if( $artSkinInflSyncGate )
+	{
+		return;
+	}
+	$artSkinInflSyncGate = 1;
+	
+	
+	// Sync the selection list to selection state to match the new selection
+	// List selection must be updated with the selection of the entire scene
+	
+	string	$influence = artSkinSyncListFromSceneSelection( );
+	
+	// Update Paint Selection
+	global string $artSkinCurrentInfluence;
+	$artSkinCurrentInfluence = $influence;
+	
+	artAttrSkinPaintCtx -e -inf $artSkinCurrentInfluence $currContext; 
+
+    // Update Selection Colors
+	skinClusterInflUpdateSelectionColors $gArtSkinInfluencesList;
+
+
+	$artSkinInflSyncGate = 0;
+}
+
+
+global proc artSkinUpdateSelectionStateAfterListRebuild( )
+{
+
+	string $lastSelected;
+
+	global string $artSkinCurrentInfluence;
+	
+	if( $artSkinCurrentInfluence != "" )
+	{	
+		// $lastSelected = artAttrSkinShortName( $artSkinCurrentInfluence );
+		$lastSelected = $artSkinCurrentInfluence;
+	}
+	artSkinInfSyncSelectionFromList( $lastSelected );	
+}
+
+////
+global proc string artSkinInflGetSelection( string $softSelection[], int $addHardSelectToSoftSelect )
+{
+	// This method currently gets its information from the influences list
+	// In the future it could be 
+    global string $artSkinCurrentInfluence;
+    global string $gArtSkinInfluencesList;
+	global string $gArtSkinOrderedInfluenceSelectionList[];
+
+	clear( $softSelection );
+
+	if( `treeView -q -exists $gArtSkinInfluencesList` )
+	{
+		$softSelection = $gArtSkinOrderedInfluenceSelectionList;
+		
+		if( ($artSkinCurrentInfluence!="")&& !$addHardSelectToSoftSelect )
+		{
+			string $toRemove[];
+			$toRemove[0] = $artSkinCurrentInfluence;
+			
+			stringArrayRemove( $toRemove, $softSelection );
+		}
+	}
+	else if( $addHardSelectToSoftSelect && ($artSkinCurrentInfluence!="") )
+	{
+		// If the treeView is not displayed, the selection is exclusively limited to the 
+		// In the future this could be expended to also include the scene selection
+		$softSelection[0] = $artSkinCurrentInfluence;
+	}
+	
+	return $artSkinCurrentInfluence;
+}
+
+global proc artAttrSkinJointMenuRebuild(
+	string 	$artCommand
+)
+//
+//	Description:
+// 		Creates a menu that shows all the paintable joints.
+// 
+{
+
+	global string $artSkinCurrentInfluence;
+	global int $artSkinInflSyncGate;
+	global string $gArtSkinInfluencesList;	
+	global string $gArtSkinOrderedInfluenceSelectionList[];
+
+			
+	if( $artSkinInflSyncGate )
+	{
+		return;
+	}
+
+	// Find all the skin cluster nodes.
+	string $skinClusters[] = artSkinFindSkinClusterNodes();
+	$gArtSkinOrderedInfluenceSelectionList = {};
+
+	if (! `treeView -q -ex $gArtSkinInfluencesList`) {
+
+		// If the influence list does not exist, there is no menu to build
+		// but we'll still set the current influence if we can find one to
+		// set.
+		//
+		if (size($skinClusters) > 0) {
+			string $infToSet;
+			int $currentExists = 0;
+
+			// See if the current influence is valid for this skinCluster.
+			// If it is, we'll use that. Otherwise, we'll use the first
+			// influence of the first skin.
+			//
+			for ($sc in $skinClusters) {
+				string $infs[] = `skinCluster -q -inf $sc`;
+				for ($inf in $infs) {
+					if (size($infToSet) == 0) {
+						// if the former influence is not found, we'll
+						// default to use the first one
+						//
+						$infToSet = $inf;
+					}
+					if (size($artSkinCurrentInfluence) == 0) {
+						// there is no current influence so just use
+						// the first one
+						//
+						source artAttrSkinCallback;
+						break;
+					}
+					if ($inf == $artSkinCurrentInfluence) {
+						$currentExists = 1;
+						$infToSet = $artSkinCurrentInfluence;
+						break;
+					}
+				}				
+				if ($currentExists) 
+					break;
+			}
+
+			// We found an influence to set.
+			//
+			if (size($infToSet) != 0) {
+				artSkinSelectInfluence($artCommand,$infToSet);
+				$gArtSkinOrderedInfluenceSelectionList[size($gArtSkinOrderedInfluenceSelectionList)] = $infToSet;
+			}
+		}
+	}
+	else
+	{
+	
+		skinClusterInflPopulate( $skinClusters, $gArtSkinInfluencesList, 1 );
+
+		// Select a default influence
+		string $influenceToSelect = "";
+
+		// First check if the previously selected influence 
+		// object is valid for the selected surfaces and 
+		// if that's the case, select it again. Otherwise 
+		// use the influence that was last used for the 
+		// first of the surfaces.
+		
+		if( $artSkinCurrentInfluence != "" )
+		{
+			if( `treeView -q -itemExists $artSkinCurrentInfluence $gArtSkinInfluencesList` )
+			{
+				$influenceToSelect = $artSkinCurrentInfluence;
+			}
+		}
+
+
+		if( $influenceToSelect == "" )
+		{
+			// Since the selected influence has not been found
+			// Find what influence object is currently used 
+			// for the first surface and make it the current 
+			// object for all the other surfaces too.
+
+			string $skinCluster = $skinClusters[0];
+			if( $skinCluster != "" && $skinCluster != " " ) {
+				string $skinClusterPlug = $skinCluster + ".ptt";
+				string $connections[]   = `listConnections $skinClusterPlug`;
+
+				if ((size($connections) != 0) && ($connections[0] != "")) {
+					$influenceToSelect = $connections[0];
+				} else {
+					// Just dont select anything in that case
+				}
+			}
+		}
+		artSkinSelectInfluence( $artCommand, $influenceToSelect );
+		$gArtSkinOrderedInfluenceSelectionList[size($gArtSkinOrderedInfluenceSelectionList)] = $influenceToSelect;
+	}
+
+	if(size($skinClusters) > 0) {
+	    artAttrSkinSetNormalizationMethod($skinClusters[0]);
+	}
+	
+}
+
+///////////////////////////////////////////////////////////////////
+// Main procedure - creates a popup menu listing all active joints.
+///////////////////////////////////////////////////////////////////
+
+global proc artAttrSkinJointMenu(
+	string 	$parent,
+	string 	$artCommand
+)
+//
+//	Description:
+// 		Creates a menu that shows all the paintable joints.
+// 
+{
+	source skinClusterInflMenu;	
+
+	artAttrSkinJointMenuRebuild( $artCommand );
+	
+
+}

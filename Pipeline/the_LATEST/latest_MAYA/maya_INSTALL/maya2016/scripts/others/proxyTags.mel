@@ -1,0 +1,144 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+// Creation Date:  Oct 15, 2004
+//
+//  Procedure Name:
+//      proxyTags
+//
+//  Description:
+//      Returns the proxy tags currently in use.
+//
+
+global proc string[] proxyUsedTags( string $refNode )
+//
+//	Description:
+//		Returns the proxy tags in use in the proxy set to which refNode
+//	belongs. If refNode is null, gAddProxyNode is used instead for refNode.
+//
+{
+	if( !`exists isValidReference` ){
+		source "proxyUtils.mel";
+	}
+	if( !isValidReference( $refNode ) ){
+		global string $gAddProxyNode;
+		if( !`isValidReference($gAddProxyNode)` ){
+			// Clear gAddProxyNode, since it's not pointing to a valid
+			// reference. This could happen if file -f -new is done at just the
+			// wrong time.
+			//
+			$gAddProxyNode = "";
+		}
+		$refNode = $gAddProxyNode;
+	}
+	string $usedTags[];
+	int $usedSize = 0;
+	if( isValidReference( $refNode ) ){
+		// Exclude the tag of the reference node
+		//
+		string $tag = `getAttr ($refNode + ".proxyTag")`;
+		if( $tag == "" ){
+			// An empty string gets replaced by the word "original" when we
+			// turn the reference into a proxy.  This also happens in
+			// proxyAdd.mel, so if you change it here, change it there too!
+			// TODO Replace by a global constant of some sort so we don't
+			// have to do worry about it.
+			//
+			$tag = (uiRes("m_proxyTags.kOriginal"));
+		}
+		$usedTags[$usedSize] = $tag;
+		$usedSize++;
+
+		// Find the proxy manager, and exclude tags from all other proxies.
+		//
+		string $proxyManagerPlug = `connectionInfo -sfd ($refNode + ".proxyMsg")`;
+		if( $proxyManagerPlug != "" ){
+			string $usedPM = `plugNode $proxyManagerPlug`;
+			string $nodeType = `objectType $usedPM`;
+			if( $nodeType == "proxyManager" ){
+				// Go through all tags, and add them to the used list.
+				//
+				string $refNodes[] = `listConnections -type reference ($usedPM + ".proxyList")`;
+				int $refSize = size($refNodes);
+				int $refIndex = 0;
+				
+				while( $refIndex < $refSize ){
+					$tag = `getAttr ($refNodes[$refIndex] + ".proxyTag")`;
+					$usedTags[$usedSize] = $tag;
+					$usedSize++;
+					$refIndex++;
+				}
+			}
+		}
+	}
+	if( $usedSize > 0 ){
+		// Remove duplicates and sort
+		//
+		string $uniqTags[] = stringArrayRemoveDuplicates( $usedTags );
+		$usedTags = sort( $uniqTags );
+	}
+	return( $usedTags );
+}
+
+global proc string[] proxyTags( int $excludeUsedTags )
+//
+//	Description:
+//		Returns the proxy tags in use in the scene. If exludeUseTags is set to
+//	true, tags that are already used in the proxy set to which gAddProxyNode
+//	belongs are excluded, since we want tags to be unique.
+//
+{
+	string $globalTags[];
+	int $globalSize = 0;
+	
+	string $excludedTags[] = proxyUsedTags( "" );
+
+	// Get all the proxy managers, and find the tags
+	//
+	string $proxyManagers[] = `ls -type proxyManager`;
+	int $pmSize = size($proxyManagers);
+	int $pmIndex = 0;
+	while( $pmIndex < $pmSize ){
+		string $pm = $proxyManagers[$pmIndex];
+		// Go through each of the tags, and add it to the global list.
+		//
+		string $refNodes[] = `listConnections -type reference ($pm + ".proxyList")`;
+		int $refSize = size($refNodes);
+		int $refIndex = 0;
+		
+		while( $refIndex < $refSize ){
+			string $tag = `getAttr ($refNodes[$refIndex] + ".proxyTag")`;
+			if( !stringArrayContains( $tag, $excludedTags ) ){
+				$globalTags[$globalSize] = $tag;
+				$globalSize++;
+			}
+			$refIndex++;
+		}
+		$pmIndex++;
+	}
+	// Now make the list unique.
+	//
+	string $uniqTags[] = stringArrayRemoveDuplicates( $globalTags );
+	$globalTags = sort( $uniqTags );
+	return( $globalTags );
+}

@@ -1,0 +1,146 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+proc getShadingEnginesFromMaterial( string $SG[], string $material, string $visitedNodes[] )
+{
+    // Iterate through connections and identify ShadingGroup sets.
+    string $dests[] = `listConnections -s 0 -d 1 $material`;
+    for ( $dest in $dests )
+    {
+        if( `objExists $dest` )
+        {
+			// visitedNodes is used for loop detection and avoidance.
+			if (!`stringArrayContains $dest $visitedNodes`)
+			{
+				$visitedNodes[`size $visitedNodes`] = $dest;
+
+                if ( "shadingEngine" == `nodeType $dest` )
+                    $SG[`size $SG`] = $dest;
+                else
+				    getShadingEnginesFromMaterial($SG, $dest, $visitedNodes);
+			}
+        }
+    }
+}
+
+global proc int soloMaterialNode(string $node, string $attribName)
+{
+    global string $gSoloShaderName;
+    			
+	string $thisNodeType = `nodeType $node`;
+    int $isShader = `getClassification -satisfies "drawdb/shader" $thisNodeType`;
+        
+    // proceed if it is a shader node with an "outColor" attribute
+	if ($isShader)
+	{	
+        string $thisNodeType = `nodeType $node`;
+        int $isSurfaceShader = `getClassification -satisfies "drawdb/shader/surface" $thisNodeType`;
+        if ( $isSurfaceShader )
+        {
+            removeMaterialSoloing();
+            return 1;
+        }
+
+		int $attribNameSpecified = ($attribName != "");
+		if (!$attribNameSpecified)
+		{
+			string $acceptedOutputs[] = {"outColor", "output", "outValue"};
+			for( $outp in $acceptedOutputs ) 
+			{
+				if (attributeExists ($outp, $node))
+				{
+					$attribName = $outp;
+					break;
+				}
+			}
+			
+			if ($attribName == "")
+				return 0;
+		}
+			
+		// first thing we want to do is unsolo any existing connections
+	    removeMaterialSoloing();		    
+
+		// create a surface shader node if it doesn't already exist
+	    if( !`objExists $gSoloShaderName` )
+	    {
+	        $gSoloShaderName = `createNode surfaceShader -n "vp2_soloShader" -ss`;
+            hide $gSoloShaderName;
+	    }
+	    string $ssName = ($gSoloShaderName + ".outColor");
+	         
+		string $outputName = $node + "." + $attribName;
+		string $SGs[];
+		string $visitedNodes[]; // for tracking loop detection
+		if ($attribNameSpecified)
+			getShadingEnginesFromMaterial($SGs, $node, $visitedNodes);
+		else
+			getShadingEnginesFromMaterial($SGs, $outputName, $visitedNodes);
+
+		for( $sg in $SGs ) 
+		{		
+			string $inputName = $sg + ".soloShader";
+
+			if (!attributeExists ("soloShader", $sg ))
+			{
+				// add the attribute (not saveable, hidden, not writable, not keyable)
+				addAttr -ln "soloShader" -nn "Solo Shader" -at float3 -s 0 -h 1 -r 0 -k 0 -usedAsColor $sg;
+				addAttr -ln "soloShaderX" -nn "Solo Shader X" -at "float" -s 0 -h 1 -r 0 -k 0 -p soloShader $sg;
+				addAttr -ln "soloShaderY" -nn "Solo Shader Y" -at "float" -s 0 -h 1 -r 0 -k 0 -p soloShader $sg;
+				addAttr -ln "soloShaderZ" -nn "Solo Shader Z" -at "float" -s 0 -h 1 -r 0 -k 0 -p soloShader $sg;
+				setAttr -type float3 $inputName 0 0 0;					
+			}			
+			connectAttr -f $ssName $inputName;
+		}
+		
+		string $attrType = `getAttr -type $outputName`;
+		if ($attrType == "float")
+		{
+			connectAttr -f $outputName ($ssName + ".outColorR");
+			connectAttr -f $outputName ($ssName + ".outColorG");
+			connectAttr -f $outputName ($ssName + ".outColorB");
+		}
+		else if($attrType == "float2")
+		{
+			connectAttr -f $outputName ($ssName + ".outColorR");
+			connectAttr -f $outputName ($ssName + ".outColorG");
+		}
+		else if($attrType == "float3")
+		{
+			connectAttr -f $outputName $ssName;
+		}
+		return 1;
+	}
+	return 0;
+}
+
+global proc soloMaterial()
+{
+    global string $gSoloShaderName;
+    
+	// loop through each selected node
+	$selected = `ls -sl`;
+	for( $node in $selected ) 
+	{	    				
+		if (soloMaterialNode($node, "") != 0)
+			return; // we only solo the first selected shader we encounter.			
+	}
+}

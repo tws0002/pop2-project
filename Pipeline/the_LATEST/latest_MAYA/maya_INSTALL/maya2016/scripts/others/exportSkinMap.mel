@@ -1,0 +1,305 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//  Procedure: exportSkinMap
+//
+//	Description:
+//		This mel script is used to export a weight map for the skinning
+//		data for each joint that affects the selected skin.
+//
+//	    To use, select the skin or skins, and type "exportSkinMap"
+//
+//
+proc int checkForLattice(string $obj) {
+	
+	string $cpShape[] = `ls -type controlPoint $obj`;
+	int $isLattice = 0;
+	if (size($cpShape) > 0) {
+		if (nodeType($obj) == "lattice") {
+			$isLattice = 1;
+		}
+	} else {
+		$cpShape = `listRelatives -pa -type controlPoint $obj`;
+		for ($cp in $cpShape) {
+			if (nodeType($cp) == "lattice") {
+				$isLattice = 1;
+				break;
+			}
+		}
+	}
+	if ($isLattice) {
+		string $warnMsg = (uiRes("m_exportSkinMap.kSkippingWarn"));
+		warning(`format -s $obj $warnMsg`);
+	}
+	return $isLattice;
+}
+
+proc string convertToFileName(string $fileNames[],
+							  string $mapName,string $skin, string $inf, int $mapCount)
+{
+	string $result;
+	string $infBuff[], $infBuffColon[];
+	int $numTokensPipe = tokenize($inf,"|",$infBuff);
+	int $numTokensColon = tokenize($inf,":",$infBuffColon);
+	string $infNameForFile = $infBuff[$numTokensPipe-1];
+	if ($numTokensColon > 1) {
+		if (size($infBuffColon[$numTokensColon-1]) < size($infNameForFile)) {
+			$infNameForFile = $infBuffColon[$numTokensColon-1];
+		}
+	}
+
+	string $skinBuff[], $skinBuffColon[];
+	$numTokensPipe = tokenize($skin,"|",$skinBuff);
+	$numTokensColon = tokenize($skin,":",$skinBuffColon);	
+	string $skinNameForFile = $skinBuff[$numTokensPipe-1];
+	if ($numTokensColon > 1) {
+		if (size($skinBuffColon[$numTokensColon-1]) < size($skinNameForFile)) {
+			$skinNameForFile = $skinBuffColon[$numTokensColon-1];
+		}
+	}
+	
+	$result = ($skinNameForFile+"_"+$infNameForFile);
+	if (AWNumberOfOccurrencesInStringArray($result, $fileNames)) {
+		$result += ("_"+$mapCount);
+	}
+	
+	if (size($result) > 100) {
+		// The actual file name size limit is 256 on most OS, but anything
+		// longer than 100 is already hard to read, so we'll stop it there.
+		//
+		$result = ($mapName+"_"+$mapCount);
+	}
+
+	return $result;
+}
+
+global proc int exportSkinWeightMap(string $fileName, string $fileType)
+{
+	global string $gMainProgressBar;
+
+	source "artAttrSkinCallback.mel";
+	source "artAttrSkinJointMenu.mel";
+
+	// Make sure we are in Skin Paint Weight Tool.
+	string $currCtx = `currentCtx`;
+	artAttrSkinToolScript 4;
+
+	string $artCmd = "artAttrSkinPaintCtx -query -exportfiletype `currentCtx`";
+	$fileType = eval( $artCmd );
+
+	$fileType = tolower($fileType);
+	if ($fileType == "iff") {
+		$fileType = "iff";
+	} else if ($fileType == "jpeg") {
+		$fileType = "jpg";
+	} else if ($fileType == "tiff") {
+		$fileType = "tiff";
+	} else if ($fileType == "quantel") {
+		$fileType = "qtl";
+	} else if ($fileType == "alias") {
+		$fileType = "pix";
+	} else if ($fileType == "softimage") {
+		$fileType = "pic";
+	} else if ($fileType == "gif") {
+		$fileType = "gif";
+	} else if ($fileType == "rla") {
+		$fileType = "rla";
+	} else if ($fileType == "sgi") {
+		$fileType = "sgi";
+	} else if ($fileType == "eps") {
+		$fileType = "eps";
+	}else if  ($fileType == "targa") {
+		$fileType = "tga";
+	}else if  ($fileType == "windowsbitmap") {
+		$fileType = "bmp";
+	}else if  ($fileType == "quicktime image") {
+		$fileType = "qtif";
+	}else if  ($fileType == "quickdraw") {
+		$fileType = "qd";
+	}else if  ($fileType == "photoshop") {
+		$fileType = "psd";
+	}else if  ($fileType == "png") {
+		$fileType = "png";
+	}else if  ($fileType == "macpaint") {
+		$fileType = "pntg";
+	}
+
+	// Get the selected skins.
+	int $skinCount = 0;
+	string $currentSelection[] = `ls -sl`;
+	string $skins[];
+	string $clusters[];
+	int $latticeFound = 0;
+	for ($sel in $currentSelection) {
+		if (checkForLattice($sel)) {
+			$latticeFound = 1;
+			continue;
+		}
+		
+		// Find the cluster.
+		string $buff[];
+		tokenize($sel,".",$buff);
+		string $cluster = findRelatedSkinCluster($buff[0]);
+		if ("" != $cluster) {
+			$skins[$skinCount] = $sel;
+			$clusters[$skinCount] = $cluster;
+			$skinCount++;
+		}
+	}
+
+	if (0 == $skinCount) {
+		if ($latticeFound) {
+			error (uiRes("m_exportSkinMap.kLatticeError"));
+		} else {			
+			error (uiRes("m_exportSkinMap.kNoSkinsError"));
+		}
+		return 0;
+	}
+
+	// Find the file and directory name.
+	string $buff[];
+	tokenize($fileName,"/",$buff);
+	string $fn = $buff[size($buff)-1];
+	tokenize($fn,"\\",$buff);
+	$fn = $buff[size($buff)-1];	
+	$dir = substring($fileName,1,size($fileName)-size($fn));
+	tokenize($fn,".",$buff);
+	$fn = $buff[0];
+
+	$fileName = ($dir+$fn+".weightMap");
+	$fileId = fopen( $fileName, "w" );
+	if ($fileId == 0) {
+		string $fileOpenError = (uiRes("m_exportSkinMap.kFileOpenError"));
+		error (`format -s $fileName $fileOpenError`);
+		return 0;
+	}
+
+	int $passed = 1;
+
+	// Write out a master file that links the joint names to the map names.
+	fprint($fileId,"// Exported skin weight map file\n");
+	fprint($fileId,"// \n");
+	$skinCount = 0;
+	int $mapCount = 0;
+	string $fileNames[];
+	for ($skin in $skins) {
+		string $infs[] = `skinCluster -q -wi $clusters[$skinCount]`;
+		for ($inf in $infs) {
+			string $dat = ($skin+"\t"+$inf+"\t");
+			string $fileName = convertToFileName($fileNames,$fn,$skin,$inf,$mapCount);
+			$fileNames[$mapCount] = $fileName;
+			string $mapFn = ($fileName+"."+$fileType);
+			$dat += ($mapFn+"\n");
+			fprint($fileId,$dat);
+			$mapCount++;
+		}
+		$skinCount++;
+	}
+
+	if (catch(`fclose $fileId`)) {
+		string $error = (uiRes("m_exportSkinMap.kFileCloseError"));
+		error(`format -s $fileName $error`);
+		$passed = 0;
+	}
+
+	if ($mapCount > 5) {
+		string $msg = (uiRes("m_exportSkinMap.kDlgMsg"));
+		string $yes = (uiRes("m_exportSkinMap.kYes"));
+		string $formattedMsg = `format -s $mapCount $msg`;		
+		string $confirm = `confirmDialog -message ($formattedMsg) -button $yes -button (uiRes("m_exportSkinMap.kNo")) -defaultButton $yes`;
+		if ($confirm != $yes) {
+			sysFile -del $fileName;
+			return 0;
+		}
+	}
+
+	// Make a directory to contain the maps.
+	string $mapDir = ($dir + $fn);
+	if (! `file -q -exists $mapDir` ) {
+		workspace -cr $mapDir;
+	}
+
+	int $statusIncrement = 100 / $mapCount;
+	progressBar -edit
+				-beginProgress
+				-status (uiRes("m_exportSkinMap.kExportingSkinMaps"))
+				-maxValue 100
+				$gMainProgressBar;
+	// Export the maps for each joint.
+	if ($passed) {
+		$skinCount = 0;
+		int $mapCount = 0;
+		for ($skin in $skins) {
+			string $infs[] = `skinCluster -q -wi $clusters[$skinCount]`;
+			for ($inf in $infs) {
+				// Generate a map name for this influence.
+				string $mapFn = ($mapDir+"/"+$fileNames[$mapCount]+"."+$fileType);
+				if (`file -q -exists $mapFn`) {
+					sysFile -del $mapFn;
+				}
+
+				// Set the influence into the tool.
+				select -r $skin;
+				artSkinSelectInfluence( "artAttrSkinPaintCtx", $inf );
+				
+				// Make sure that the file name  will not be expanded.
+				artAttrSkinPaintCtx -e -expandfilename false `currentCtx`;
+
+				// Export the map for that influence now.
+				artAttrSkinPaintCtx -e -exportfilesave $mapFn `currentCtx`;
+				$mapCount++;
+				progressBar -edit -step $statusIncrement $gMainProgressBar;
+			}
+			$skinCount++;
+		}
+	}
+	
+	// Go back to the original context.
+	setToolTo $currCtx;
+	select -r $currentSelection;
+	progressBar -edit -endProgress $gMainProgressBar;
+
+	return $passed;
+}
+
+global proc exportSkinMap( string $version, string $args[] ) {
+
+	if (`about -evalVersion`) {
+	    string $cancel = (uiRes("m_exportSkinMap.kCancel"));
+		confirmDialog
+			-message (uiRes("m_exportSkinMap.kExportMsg"))
+			-button $cancel  -defaultButton $cancel;
+		return;
+	}
+
+	// set the fileBrowser directory to the images dir if it exists
+	//
+	string $imageDir = (`workspace -q -rd`+"sourceimages\/");
+	if (`file -q -ex $imageDir`) {
+		workspace -dir $imageDir;
+	}
+
+	// bring up the file browser dialog so that they can choose a file name
+	//
+	string $writeMap = (uiRes("m_exportSkinMap.kWriteMap"));
+	fileBrowser( "exportSkinWeightMap", $writeMap, "map", 1);
+}

@@ -1,0 +1,204 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  2004
+//
+//<doc>
+//<name bakeFluidShading>
+//
+//<synopsis>
+//      bakeFluidShading resolutionFactor
+//
+//<returns>
+//      None.
+//
+//<description>
+// This mel procedure bakes the density and shading of selected fluid nodes.
+// For each node a new fluid is created that does not have textures or
+// self shadowing, yet which has the effect of textures and self shadowing
+// defined into its density and color arrays. In some respects it is like
+// rendering the fluid into a 3D volume, rather than into a 2d image.
+// The resolution factor determines the resolution of the resulting baked
+// fluids. For example a value of 2 will double the resolution of the original
+// fluid. In order to resolve textural details one may need fairly high resolutions
+// on the baked fluids. The original fluids are hidden after the operation.
+//
+//<flags>
+//  None.
+//
+//<examples>
+//
+// bakeFluidShading 2.0;
+//
+//</doc>
+
+
+
+
+global proc bakeFluidToFluid( string $source, string $destination )
+{
+	// float $res[3] = getAttr($source + ".resolution");
+	float $res[3] = getAttr($destination + ".resolution");
+	int $is2d = getAttr($source + ".is2d");
+	int $destIs2d = getAttr($destination + ".is2d");
+	if( $is2d != $destIs2d ){
+		warning((uiRes("m_bakeFluidShading.kInvalidBakeTarget")));
+		return;
+	}
+
+	int $realLights = getAttr($source + ".realLights");
+	if( $realLights ){
+		setAttr ($source + ".realLights" ) false;
+	}
+	int $sourceVis = `getAttr ($source + ".visibility")`;
+	int $destinationVis = `getAttr ($destination + ".visibility")`;
+	setAttr ($source + ".visibility") false;
+	setAttr ($destination + ".visibility") false;
+	int $i,$j,$k;
+	string $near = ($source + ".pointObj");
+	string $far = ($source + ".farPointObj");
+	string $outCol = ($source + ".outColor");
+	string $outTransp = ($source + ".outTransparency");
+	if( $is2d ){
+		float $voxelDepth = 1.0/$res[0];
+		if( $res[1] > $res[0] ){
+			$voxelDepth = 1.0/$res[1];
+		}
+		setAttr ($source + ".filterSizeZ") $voxelDepth;
+		float $pz = -0.95;
+		// float $pz = 0;
+		float $pzFar = 0.95;
+		// float $pzFar = $voxelDepth * 0.05; 
+		for( $i = 0; $i < $res[0]; $i++ ){
+			float $px = ((float)$i + 0.5)/$res[0];
+			$px = $px * 2 - 1.0;
+			for( $j = 0; $j < $res[1]; $j++ ){
+				float $py = ((float)$j + 0.5)/$res[1];
+				$py = $py * 2 - 1.0;
+				setAttr $near $px $py $pz;
+				setAttr $far $px $py $pzFar;
+				float $color[3] = `getAttr $outCol`;
+				float $transp[3] = `getAttr $outTransp`;
+				float $opacity = 1.0 - $transp[0];
+				if( $opacity > 0.000001 ){
+					$color[0] /= $opacity;
+					$color[1] /= $opacity;
+					$color[2] /= $opacity;
+				}
+				setFluidAttr -at "density" -fv ($opacity) -xi $i -yi $j $destination;
+				setFluidAttr -at "color" -vv ($color[0]) ($color[1]) ($color[2]) -xi $i -yi $j $destination;
+			}
+		}
+	} else {
+		float $voxelDepth = 1.0/$res[2];
+		setAttr ($source + ".filterSizeZ") $voxelDepth;
+		for( $i = 0; $i < $res[0]; $i++ ){
+			float $px = ((float)$i + 0.5)/$res[0];
+			$px = $px * 2 - 1.0;
+			for( $j = 0; $j < $res[1]; $j++ ){
+				float $py = ((float)$j + 0.5)/$res[1];
+				$py = $py * 2 - 1.0;
+				for( $k = 0; $k < $res[2]; $k++ ){
+					float $pz = (float)$k /$res[2];
+					$pz = $pz * 2 - 1.0;
+					float $pzFar = $pz + $voxelDepth;
+					setAttr $near $px $py $pz;
+					setAttr $far $px $py $pzFar;
+					float $color[3] = `getAttr $outCol`;
+					float $transp[3] = `getAttr $outTransp`;
+					float $opacity = 1.0 - $transp[0];
+					if( $opacity > 0.000001 ){
+						$color[0] /= $opacity;
+						$color[1] /= $opacity;
+						$color[2] /= $opacity;
+					}
+					setFluidAttr -at "density" -fv ($opacity) -xi $i -yi $j -zi $k $destination;
+					setFluidAttr -at "color" -vv ($color[0]) ($color[1]) ($color[2]) -xi $i -yi $j -zi $k $destination;
+
+				}
+			}
+		}
+	}
+	setAttr ($destination + ".visibility") $destinationVis;
+	setAttr ($source + ".visibility") $sourceVis;
+	if( $realLights ){
+		setAttr ($source + ".realLights" ) true;
+	}
+}
+
+global proc bakeFluidShading(float $resolutionFactor)
+{
+	string $fluids[] = `ls -sl -dag -shapes -type fluid`;
+	if( size( $fluids ) < 1 ){
+		warning((uiRes("m_bakeFluidShading.kNoFluidsSelected")));
+		return;
+	}
+	string $fluid;
+	for( $fluid in $fluids ){
+		float $res[3] = getAttr($fluid + ".resolution");
+		float $dim[3] = getAttr($fluid + ".dimensions");
+		int $is2d = getAttr($fluid + ".is2d");
+		int $newX = $res[0] * $resolutionFactor;
+		int $newY = $res[1] * $resolutionFactor;
+		int $newZ = $res[2] * $resolutionFactor;
+		if( $is2d ){
+			$newZ = 1;
+		}
+		int $numVoxels = $newX * $newY * $newZ;
+		if( $numVoxels > 8000000 ){
+			warning((uiRes("m_bakeFluidShading.kResolutionTooHigh")));
+			return;
+		}
+		string $newFluid;
+		if( $is2d ){
+			$newFluid = `create2DFluid $newX $newY $dim[0] $dim[1] $dim[2]`;
+		} else {
+			$newFluid = `create3DFluid $newX $newY $newZ $dim[0] $dim[1] $dim[2]`;
+		}
+		setAttr ($newFluid + ".velocityMethod") 0 ;
+		setAttr ($newFluid + ".colorMethod") 1 ;
+		setAttr ($newFluid + ".densityMethod") 1 ;
+		setAttr ($newFluid + ".densityScale") 1.0 ;
+		setAttr ($newFluid + ".realLights") false ;
+		setAttr ($newFluid + ".renderInterpolator") 3;
+		setAttr ($newFluid + ".dropoffShape") 0;
+		string $tforms[] = `listTransforms $fluid`;	
+		string $newTforms[] = `listTransforms $newFluid`;	
+		if( size($tforms) < 1 || size( $newTforms ) < 1 ){
+			// should never happen but we are being cautious
+			warning( (uiRes("m_bakeFluidShading.kMissingTransformErr")));
+			return;
+		}
+		
+		parent -r $newTforms[0] $tforms[0];
+		if( $numVoxels > 10000 ){
+			string $fmt = (uiRes("m_bakeFluidShading.kBakeMsg"));
+			warning(`format -s $fluid $fmt`);
+		}
+		waitCursor -state on;
+		setAttr ($fluid + ".visibility") false;
+		bakeFluidToFluid( $fluid, $newFluid );
+		waitCursor -state off;
+	}
+	print( "\n");
+}

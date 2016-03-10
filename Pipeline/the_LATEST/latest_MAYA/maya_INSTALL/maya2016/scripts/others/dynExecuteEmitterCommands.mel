@@ -1,0 +1,143 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+//
+//
+//  Creation Date:  May, 1997
+//
+//  Description:
+//      dynExecuteEmitterCommands executes the emitter command, particle
+//		command (to create the emission object) and connectDynamic command.
+//
+//  Input Arguments():
+//		int $isCreate -- create or add mode
+//		string $emitterCmd -- the emitter command string 
+//
+//  Return Value:
+//      None.
+//
+
+//
+//  ============== dynExecuteEmitterCommands ==============
+//
+//  SYNOPSIS
+//      Execute the emitter command and connectDynamic command.
+//      If executing a "Create"/positional emitter command,  create
+//      one emitter, create a particle and connect it to the emitter.
+//      If executing an "Add" emitter command, add the emitter to
+//      all items in the selection list, create a particle and connect
+//      it to the emitters.
+//
+global proc dynExecuteEmitterCommands(int $isCreate, string $emitterCmd, int $createNParticle)
+{
+	string $selected[] = `ls -sl`;
+
+    if (!$isCreate && size($selected) == 0)
+	{
+		warning (uiRes("m_dynExecuteEmitterCommands.kNothingSelected"));
+		return;
+	}
+
+	string $emitterNames[] = evalEcho($emitterCmd);
+	string $shapeToConnect;
+
+	// Create the particle to be emitted into.
+	//
+	string $cmd = "particle";
+
+	if( $createNParticle ){
+		$cmd = "nParticle";
+	}
+	string $particleNames[] = evalEcho($cmd);
+	$shapeToConnect = $particleNames[0];
+
+	// If die on exit was set, set this attribute of the particle shape.
+	//
+	if (`optionVar -query emitterDieOnExit`)
+	{
+		setAttr ($particleNames[0]+".dieOnEmissionVolumeExit") 1;
+	}
+
+	// If "need parent uv" was set, and this is a surface emitter,
+	// add the parentU/parentV attributes to the particel shape.
+	//
+	if ((`optionVar -query emitterNeedParentUV`) &&
+		(`optionVar -query emitterTypesOM` == 3))
+	{
+		// $particleNames[1] holds the shape name
+		//
+		addAttr -ln parentU -dt doubleArray $particleNames[1];
+		addAttr -ln parentU0 -dt doubleArray $particleNames[1];
+		addAttr -ln parentV -dt doubleArray $particleNames[1];
+		addAttr -ln parentV0 -dt doubleArray $particleNames[1];		
+	}
+
+    // If creating a positional emitter, connect it to the particle
+    // just created.
+    //
+    if ($isCreate)
+    {
+		evalEcho connectDynamic -em $emitterNames[0] $shapeToConnect;
+    }
+    else
+    {
+        // If adding emitters to geometry, connect them all to the
+        // particle just created. Emitter command returns name of
+		// owner and actual emitter. We want to use the emitter's name
+		// in the connect command, so as to connect only that emitter
+		// and not any others it may own.
+        //
+        string $connectCmd = "connectDynamic ";
+        for ($i = 0; $i < size($emitterNames)/2; $i++)
+        {
+            $connectCmd = $connectCmd + "-em "+$emitterNames[$i*2+1]+" ";
+        }
+
+        $connectCmd = $connectCmd + $shapeToConnect + "; ";
+
+        evalEcho ($connectCmd);
+    }
+
+	// Make the new emitters selected.
+	// The result of the "create emitter" command is
+	//	   emitter1
+	// The result of the add emitter command is
+	//        object1 emitter1 object2 emitter2 ... object_n emitter_n
+	//
+	select -cl;
+
+	if ($isCreate)
+	{
+		for ($i = 0; $i < (size($emitterNames)); $i ++)
+		{
+			select -add $emitterNames[$i];
+		}
+	}
+	else
+	{
+		for ($i = 1; $i < (size($emitterNames)); $i += 2)
+		{
+			select -add $emitterNames[$i];
+		}
+	}
+}
+

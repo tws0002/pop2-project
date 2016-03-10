@@ -1,0 +1,157 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Mar 14, 1997
+//
+//  Description:
+//      This script defines detach on an active list
+//
+
+proc performDetachPresetSurfaces( int $history,
+								  int $rpo,
+								  string $surfaces[],
+								  string $results[] )
+{
+	global int $gSelectNurbsSurfacesBit;
+
+	string $cmd = "detachSurface" + " -ch " + $history +
+		" -rpo " + $rpo + " ";
+
+	string $results[];
+	string $detachResults[];
+
+	// for each string returned from groupObjectsByName, execute the command
+	//
+	string $groupStrings[];
+	$groupStrings = groupObjectsByName( $surfaces, "\\[" );
+	int $numStrings = size( $groupStrings );
+
+	for( $i = 0; $i < $numStrings; $i ++ ) {
+		// execute $cmd + $groupStrings[$i]	
+		if( catch( $detachResults = evalEcho( $cmd + $groupStrings[$i]))) {
+			string $tmpWarning = (uiRes("m_performDetachPreset.kWarningProblemEvaluatingCmd"));
+			warning(`format -s $cmd -s $groupStrings[$i] $tmpWarning`);
+		}
+		else {
+			int $j;
+			int $numResults = size( $results );
+			int $numDetachResults = size( $detachResults );
+			for( $j = 0; $j < $numDetachResults; $j ++, $numResults ++ ) {
+				$results[$numResults] = $detachResults[$j];
+			}
+		}
+	}
+
+	if( 0 == size($results) ) {
+        error (uiRes("m_performDetachPreset.kDetachSurfacesFailedInputSurfaces"));
+	}
+}
+
+proc performDetachPresetCurves( int $history,
+								int $rpo,
+								string $curves[],
+								string $results[] )
+{
+	global int $gSelectNurbsCurvesBit;
+
+	string $cmd = "detachCurve" + " -ch " + $history + " -cos on" +
+		" -rpo " + $rpo + " ";
+
+	string $results[];
+	string $detachResults[];
+
+	// for each string returned from groupObjectsByName, execute the command
+	// So if the active list is: curve1.u[0.3] curve2.u[0.5] curve1.u[0.6]
+	// these commands will be executed:
+	//   detachCurve <flags> curve1.u[0.3] curve1.u[0.6];
+	//   detachCurve <flags> curve2.u[0.5];
+	//
+	string $groupStrings[];
+	$groupStrings = groupObjectsByName( $curves, "\\." );
+	int $numStrings = size( $groupStrings );
+
+	for( $i = 0; $i < $numStrings; $i ++ ) {
+		// execute $cmd + names of curves
+		if( catch( $detachResults = evalEcho( $cmd + $groupStrings[$i] ))) {
+			warning(`format -s $cmd -s $groupStrings[$i] (uiRes("m_performDetachPreset.kWarningProblemEvaluatingCmd"))` );
+		}
+		else {
+			int $j;
+			int $numResults = size( $results );
+			int $numDetachResults = size( $detachResults );
+			for( $j = 0; $j < $numDetachResults; $j ++, $numResults ++ ) {
+				$results[$numResults] = $detachResults[$j];
+			}
+		}
+	}
+
+	if( 0 == size($results) ) {
+        error (uiRes("m_performDetachPreset.kDetachSurfacesFailedInputCurves"));
+	}
+}
+
+global proc performDetachPreset( int $history, int $rpo )
+{
+    // Get a list of each type of acceptable object type
+	// curves, and curves-on-surface.
+	//
+    global int $gSelectCurveParmPointsBit;
+	global int $gSelectEditPointsBit;
+    global int $gSelectIsoparmsBit;
+    string $curves[] = `filterExpand -ex true -sm $gSelectCurveParmPointsBit -sm $gSelectEditPointsBit`;
+    string $surfaces[] = `filterExpand -ex true -sm $gSelectIsoparmsBit`;
+
+	if( (0 == size($curves)) && (0 == size($surfaces)) ) {
+		error (uiRes("m_performDetachPreset.kDetachSurfacesInvalSelection"));
+		return;
+	}
+
+	int $doHilite = `shouldHiliteAfterCompute`;
+
+	string $crvRes[], $srfRes[];
+	if( size($curves) > 0 ) {
+		performDetachPresetCurves( $history, $rpo, $curves, $crvRes );
+	}
+	if( size($surfaces) > 0 ) {
+		performDetachPresetSurfaces( $history, $rpo, $surfaces, $srfRes );
+	}
+
+	if( (size($srfRes) + size($crvRes)) > 0 ) {
+		int $n;
+		string $select = "select ";
+
+		$n = size($crvRes);
+		for( $i=0; $i<$n; $i ++ ) {
+			$select = $select + $crvRes[$i] + " ";
+		}
+
+		$n = size($srfRes);
+		for( $i=0; $i<$n; $i ++ ) {
+			$select = $select + $srfRes[$i] + " ";
+		}
+		select -cl;
+		if( $doHilite ) $select += ";hilite;";
+
+		eval( $select );
+	}
+}

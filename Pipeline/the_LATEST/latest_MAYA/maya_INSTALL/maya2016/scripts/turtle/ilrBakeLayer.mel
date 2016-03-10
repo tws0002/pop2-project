@@ -1,0 +1,679 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// provided at the time of installation or download, or which otherwise accompanies 
+
+//
+// Procedures for Turtle's bake layer system.
+// 
+
+global proc ilrSetCurrentBakeLayer(string $layer)
+{
+	if (!`objExists $layer`) {
+		warning("Bake layer " + $layer + " not found");
+		ilrRebuildBakeLayerSystem();
+		return;
+	}
+	
+	int $layerId = `getAttr ($layer + ".index")`;
+	setAttr TurtleBakeLayerManager.currentBakeLayer $layerId;
+
+	ilrUpdateBakingTab();
+	ilrUpdateBLE();
+	ilrUpdateUVSA();
+}
+
+global proc string ilrGetCurrentBakeLayer()
+{
+	int $idx = `getAttr TurtleBakeLayerManager.currentBakeLayer`;
+	string $connection[] = `listConnections TurtleBakeLayerManager.bakeLayerId[$idx]`;
+	if (size($connection) == 0) {
+		warning("Current bake layer not found (id=" + $idx + ")");
+		return ilrRebuildBakeLayerSystem();
+	}
+	return $connection[0];
+}
+
+global proc ilrConnectBakeLayer(string $layer) {
+	// Find the first available bake layer id
+	//
+	int $i, $index = -1;
+	int $numBakeLayers = size(`getAttr TurtleBakeLayerManager.bakeLayerId`);
+	for ($i=0; $i<=$numBakeLayers; $i++) {
+		if (size(`listConnections TurtleBakeLayerManager.bakeLayerId[$i]`) == 0) {
+			$index = $i;
+			break;
+		}
+	}
+	if ($index < 0) {
+		error("Could not find a valid bake layer id!");
+	} else {
+		connectAttr ($layer + ".index") TurtleBakeLayerManager.bakeLayerId[$index];
+		setAttr ($layer + ".index") $index;
+	}
+	
+	// Create and connect all option nodes
+	//	
+	string $renderOptions = "TurtleRenderOptions"; // <-- Use the default one for now...
+	connectAttr ($renderOptions + ".message") ($layer + ".renderOptions");
+}
+
+global proc string ilrCreateBakeLayer(string $name, int $assignSelection)
+{
+	string $selection[] = `ls -selection`;
+
+	// Create the new layer
+	//
+	string $layer;
+	if (size($name)) {
+		$layer = `createNode "ilrBakeLayer" -name $name -skipSelect`;
+	} else {
+		$layer = `createNode "ilrBakeLayer" -skipSelect`;
+	}
+
+	// Connect layer to TurtleBakeLayerManager and TurtleRenderOptions
+	//
+	ilrConnectBakeLayer($layer);
+
+	// Assign objects on the selection list
+	//	
+	if ($assignSelection) {
+		ilrAddSurfacesToBakeLayer($selection, $layer);
+	}
+
+	// Rebuild the UI
+	//
+	ilrRebuildCurrentBakeLayerMenus();
+
+	// Make this the current layer
+	//
+	ilrSetCurrentBakeLayer($layer);
+
+	// Reset the selection list
+	//
+	select $selection;
+
+	return $layer;
+}
+
+global proc ilrDeleteBakeLayer(string $layer)
+{
+	int $id = `getAttr ($layer + ".index")`;
+	if ($id == 0) {
+		error("Can't delete default bake layer");
+	}
+	
+	delete $layer;
+
+	// Rebuild the UI
+	//
+	ilrRebuildCurrentBakeLayerMenus();
+
+	ilrSetCurrentBakeLayer("TurtleDefaultBakeLayer");
+}
+
+global proc ilrAddSurfaceToBakeLayer(string $surface, string $layer)
+{
+	// Check for children and add each child seperatly
+	//
+	string $children[] = `listRelatives -children -noIntermediate -path $surface`;
+	if(size($children) > 0)
+	{
+		for($child in $children)
+			ilrAddSurfaceToBakeLayer($child, $layer);
+		return;
+	}
+	
+	// Check if it's an intermediate object
+	//
+	if(`getAttr ($surface+".intermediateObject")` != 0)
+	{
+		return;
+	}
+		
+	// Check if it's a vaild object type
+	//
+	string $type = `nodeType $surface`;
+	if($type != "mesh" && $type != "nurbsSurface" && $type != "subdiv")
+	{
+		warning("Node " + $surface + " was not added to the bake layer (invalid type \"" + $type + "\")");
+		return;
+	}
+
+	// Add the surface to the bake layer
+	//
+	sets -include $layer $surface;
+}
+
+global proc ilrAddSurfacesToBakeLayer(string $surfaces[], string $layer)
+{
+	for ($s in $surfaces) {
+		ilrAddSurfaceToBakeLayer($s, $layer);
+	}
+}
+
+global proc ilrRemoveSurfacesFromBakeLayer(string $surfaces[], string $layer)
+{
+	if (size($surfaces)) {
+
+		// Break all source/envelope links for this surface
+		//
+		for ($surface in $surfaces) {
+			string $sources[] = ilrGetBakeLayerSourceSurfaces($layer, $surface);
+			for ($source in $sources) {
+				ilrBreakBakeLayerSourceLink($layer, $surface, $source);
+			}
+			string $envelopes[] = ilrGetBakeLayerEnvelopeSurfaces($layer, $surface);
+			for ($envelope in $envelopes) {
+				ilrBreakBakeLayerEnvelopeLink($layer, $surface, $envelope);
+			}
+		}
+		
+		// Remove surfaces from the layer
+		//
+		sets -remove $layer $surfaces;
+	}
+}
+
+global proc ilrClearBakeLayer(string $layer)
+{
+	string $links[];
+	int $i, $numLinks;
+
+	// Find and break all source links
+	//
+	$numLinks = `getAttr -size ($layer + ".sourceLinks")`;
+	for ($i = 0; $i < $numLinks; $i++)
+	{
+		$links = `listConnections -shapes 1 -plugs 1 -connections 1 ($layer + ".sourceLinks[" + $i + "].sourceLinkFrom")`;
+		if (size($links) > 1) {
+			disconnectAttr $links[1] $links[0];
+		}
+		$links = `listConnections -shapes 1 -plugs 1 -connections 1 ($layer + ".sourceLinks[" + $i + "].sourceLinkTo")`;
+		if (size($links) > 1) {
+			disconnectAttr $links[1] $links[0];
+		}
+	};
+
+	// Find and break all envelope links
+	//
+	$numLinks = `getAttr -size ($layer + ".envelopeLinks")`;
+	for ($i = 0; $i < $numLinks; $i++)
+	{
+		$links = `listConnections -shapes 1 -plugs 1 -connections 1 ($layer + ".envelopeLinks[" + $i + "].envelopeLinkFrom")`;
+		if (size($links) > 1) {
+			disconnectAttr $links[1] $links[0];
+		}
+		$links = `listConnections -shapes 1 -plugs 1 -connections 1 ($layer + ".envelopeLinks[" + $i + "].envelopeLinkTo")`;
+		if (size($links) > 1) {
+			disconnectAttr $links[1] $links[0];
+		}
+	};
+
+	// Clear the layer members
+	//
+	sets -clear $layer;
+}
+
+global proc ilrBuildAssignBakeLayerMenu(string $parent)
+{
+	//	This procedure is called to build a menu of existing bake layers which can
+	//	be assigned to the current selection.
+
+	setParent -menu $parent;
+	menu -edit -deleteAllItems $parent;
+
+	// Get a list of all bake layer nodes which have the current node type
+	//
+	string $layer;
+	string $layerArray[] = `ls -exactType "ilrBakeLayer"`;
+
+	for ($layer in $layerArray)
+	{
+		// Create menu item from bake layer name
+		//
+		menuItem 
+			-label $layer 
+			-annotation ("Assign selected objects to bake layer " + $layer) 
+			-command ("ilrAddSurfacesToBakeLayer(`ls -selection`, \"" + $layer + "\")");
+
+		// Add an option box to the menu item which will
+		// bring up the bake layer in the attribute editor
+		//
+		menuItem 
+			-optionBox true 
+			-annotation ("Display " + $layer + " in the Attribute Editor") 
+			-command ("ilrAddSurfacesToBakeLayer(`ls -selection`, \"" + $layer + "\"); ilrShowAE(\"" + $layer + "\")");
+	}
+}
+
+global proc ilrSetCurrentBakeLayerFromMenu(string $menu)
+{
+	string $layer = `optionMenuGrp -query -value $menu`;
+	ilrSetCurrentBakeLayer($layer);
+}
+
+global proc ilrBuildCurrentBakeLayerMenu(string $menu)
+{
+	if (!`optionMenuGrp -exists $menu`)
+		return;
+
+	string $oldParent = `setParent -q`;
+
+	string $menuName = ($menu + "|OptionMenu");	
+	setParent -menu $menuName;
+
+	// Delete old menu items
+	//
+	string $item;
+	string $itemArray[] = `optionMenuGrp -query -itemListLong $menu`;
+	for ($item in $itemArray)
+	{
+		deleteUI -menuItem $item;
+	}
+	
+	// Create one menu item for each layer
+	//
+	string $layer;
+	string $layerArray[] = `ls -exactType "ilrBakeLayer"`;
+	for ($layer in $layerArray)
+	{
+		menuItem 
+			-label $layer 
+			-command ("ilrSetCurrentBakeLayer(\"" + $layer + "\")");
+	}
+
+	setParent $oldParent;
+}
+
+global proc ilrRebuildCurrentBakeLayerMenus()
+{
+	// Updates layer menu in bake tab
+	$tab = ilrSetParentToBakingTab();
+	if (size($tab)) {
+		ilrBuildCurrentBakeLayerMenu($tab + "|ilrCurrentBakeLayerMenu");
+	}
+}
+
+global proc ilrMakeBakeLayerSourceLink(string $layer, string $member, string $source)
+{
+	// If the source is not a shape, do a reqursive call with it큦 children
+	//
+	string $children[] = `listRelatives -children -noIntermediate -path $source`;
+	if(size($children) > 0)
+	{
+		for($child in $children)
+			ilrMakeBakeLayerSourceLink($layer, $member, $child);
+		return;
+	}
+
+	// Check if it's a vaild object type
+	//
+	string $type = `nodeType $source`;
+	if(($type != "mesh" && $type != "nurbsSurface" && $type != "subdiv") ||
+		(`getAttr ($source+".intermediateObject")` != 0))
+	{
+		return;
+	}
+
+	// Check if we need to use the transform name
+	// instead of the shape name (for instances)
+	//
+	string $tokens[];
+	$numTokens = `tokenize $source "|" $tokens`;
+	if ($numTokens > 1) {
+		$source = $tokens[0];
+	}
+
+	int $numLinks = `getAttr -size ($layer + ".sourceLinks")`;
+	int $i;
+
+	// Make sure the link doesn't exist already
+	//
+	for ($i = 0; $i < $numLinks; $i++)
+	{
+		string $linkFrom[] = `listConnections -shapes 1 ($layer + ".sourceLinks[" + $i + "].sourceLinkFrom")`;
+		string $linkTo[] = `listConnections -shapes 1 ($layer + ".sourceLinks[" + $i + "].sourceLinkTo")`;
+		if (size($linkFrom) && $linkFrom[0]==$source && size($linkTo) && $linkTo[0]==$member)
+		{
+			return;
+		}
+	}
+	
+	// Find the first array index that doesn't have a valid link
+	//
+	for ($i = 0; $i < $numLinks; $i++)
+	{
+		string $linkFrom[] = `listConnections -shapes 1 ($layer + ".sourceLinks[" + $i + "].sourceLinkFrom")`;
+		string $linkTo[] = `listConnections -shapes 1 ($layer + ".sourceLinks[" + $i + "].sourceLinkTo")`;
+		if (size($linkFrom)==0 || size($linkTo)==0)
+			break;
+	}
+
+	// Make the link
+	//
+	if (!`isConnected ($source + ".message") ($layer + ".sourceLinks[" + $i + "].sourceLinkFrom")`) {
+		connectAttr -force ($source + ".message") ($layer + ".sourceLinks[" + $i + "].sourceLinkFrom");
+	}
+	if (!`isConnected ($member + ".message") ($layer + ".sourceLinks[" + $i + "].sourceLinkTo")`) {
+		connectAttr -force ($member + ".message") ($layer + ".sourceLinks[" + $i + "].sourceLinkTo");
+	}
+}
+
+global proc ilrBreakBakeLayerSourceLink(string $layer, string $member, string $source)
+{
+	// If the source is not a shape, do a reqursive call with it큦 children
+	//
+	string $children[] = `listRelatives -children -noIntermediate -path $source`;
+	if(size($children) > 0)
+	{
+		for($child in $children)
+			ilrBreakBakeLayerSourceLink($layer, $member, $child);
+		return;
+	}
+
+	int $numLinks = `getAttr -size ($layer + ".sourceLinks")`;
+	int $i;
+
+	// Find the link and break it
+	//
+	for ($i = 0; $i < $numLinks; $i++)
+	{
+		string $linkFrom[] = `listConnections -shapes 1 ($layer + ".sourceLinks[" + $i + "].sourceLinkFrom")`;
+		string $linkTo[] = `listConnections -shapes 1 ($layer + ".sourceLinks[" + $i + "].sourceLinkTo")`;
+		if (size($linkFrom) && $linkFrom[0]==$source && size($linkTo) && $linkTo[0]==$member)
+		{
+			disconnectAttr ($source + ".message") ($layer + ".sourceLinks[" + $i + "].sourceLinkFrom");
+			disconnectAttr ($member + ".message") ($layer + ".sourceLinks[" + $i + "].sourceLinkTo");
+			return;
+		}
+	}
+}
+
+global proc ilrMakeBakeLayerEnvelopeLink(string $layer, string $member, string $envelope)
+{
+	// If the envelope is not a shape, do a reqursive call with it큦 children
+	//
+	string $children[] = `listRelatives -children -noIntermediate -path $envelope`;
+	if(size($children) > 0)
+	{
+		for($child in $children)
+			ilrMakeBakeLayerEnvelopeLink($layer, $member, $child);
+		return;
+	}
+
+	// Check if it's a vaild object type
+	//
+	string $type = `nodeType $envelope`;
+	if(($type != "mesh" && $type != "nurbsSurface" && $type != "subdiv") ||
+		(`getAttr ($envelope+".intermediateObject")` != 0))
+	{
+		return;
+	}
+
+	// Check if we need to use the transform name
+	// instead of the shape name (for instances)
+	//
+	string $tokens[];
+	$numTokens = `tokenize $envelope "|" $tokens`;
+	if ($numTokens > 1) {
+		$envelope = $tokens[0];
+	}
+
+	int $numLinks = `getAttr -size ($layer + ".envelopeLinks")`;
+	int $i;
+
+	// Make sure the link doesn't exist already
+	//
+	for ($i = 0; $i < $numLinks; $i++)
+	{
+		string $linkFrom[] = `listConnections -shapes 1 ($layer + ".envelopeLinks[" + $i + "].envelopeLinkFrom")`;
+		string $linkTo[] = `listConnections -shapes 1 ($layer + ".envelopeLinks[" + $i + "].envelopeLinkTo")`;
+		if (size($linkFrom) && $linkFrom[0]==$envelope && size($linkTo) && $linkTo[0]==$member)
+		{
+			return;
+		}
+	}
+	
+	// Find the first array index that doesn't have a valid link
+	//
+	for ($i = 0; $i < $numLinks; $i++)
+	{
+		string $linkFrom[] = `listConnections -shapes 1 ($layer + ".envelopeLinks[" + $i + "].envelopeLinkFrom")`;
+		string $linkTo[] = `listConnections -shapes 1 ($layer + ".envelopeLinks[" + $i + "].envelopeLinkTo")`;
+		if (size($linkFrom)==0 || size($linkTo)==0)
+			break;
+	}
+
+	// Make the link
+	//
+	if (!`isConnected ($envelope + ".message") ($layer + ".envelopeLinks[" + $i + "].envelopeLinkFrom")`) {
+		connectAttr -force ($envelope + ".message") ($layer + ".envelopeLinks[" + $i + "].envelopeLinkFrom");
+	}
+	if (!`isConnected ($member + ".message") ($layer + ".envelopeLinks[" + $i + "].envelopeLinkTo")`) {
+		connectAttr -force ($member + ".message") ($layer + ".envelopeLinks[" + $i + "].envelopeLinkTo");
+	}
+}
+
+global proc ilrBreakBakeLayerEnvelopeLink(string $layer, string $member, string $envelope)
+{
+	// If the envelope is not a shape, do a reqursive call with it큦 children
+	//
+	string $children[] = `listRelatives -children -noIntermediate -path $envelope`;
+	if(size($children) > 0)
+	{
+		for($child in $children)
+			ilrBreakBakeLayerEnvelopeLink($layer, $member, $child);
+		return;
+	}
+
+	int $numLinks = `getAttr -size ($layer + ".envelopeLinks")`;
+	int $i;
+
+	// Find the link and break it
+	//
+	for ($i = 0; $i < $numLinks; $i++)
+	{
+		string $linkFrom[] = `listConnections -shapes 1 ($layer + ".envelopeLinks[" + $i + "].envelopeLinkFrom")`;
+		string $linkTo[] = `listConnections -shapes 1 ($layer + ".envelopeLinks[" + $i + "].envelopeLinkTo")`;
+		if (size($linkFrom) && $linkFrom[0]==$envelope && size($linkTo) && $linkTo[0]==$member)
+		{
+			disconnectAttr ($envelope + ".message") ($layer + ".envelopeLinks[" + $i + "].envelopeLinkFrom");
+			disconnectAttr ($member + ".message") ($layer + ".envelopeLinks[" + $i + "].envelopeLinkTo");
+			return;
+		}
+	}
+}
+
+global proc string[] ilrGetBakeLayerSourceSurfaces(string $layer, string $member)
+{
+	string $surfaces[];
+	
+	int $numLinks = `getAttr -size ($layer + ".sourceLinks")`;
+	for ($i = 0; $i < $numLinks; $i++)
+	{
+		string $linkFrom[] = `listConnections -shapes 1 ($layer + ".sourceLinks[" + $i + "].sourceLinkFrom")`;
+		string $linkTo[] = `listConnections -shapes 1 ($layer + ".sourceLinks[" + $i + "].sourceLinkTo")`;
+		if (size($linkFrom) && size($linkTo) && $linkTo[0]==$member)
+		{
+			$surfaces[size($surfaces)] = ilrExtendToShape($linkFrom[0]);
+		}
+	}
+	
+	return $surfaces;
+}
+
+global proc string[] ilrGetBakeLayerEnvelopeSurfaces(string $layer, string $member)
+{
+	string $surfaces[];
+	
+	int $numLinks = `getAttr -size ($layer + ".envelopeLinks")`;
+	for ($i = 0; $i < $numLinks; $i++)
+	{
+		string $linkFrom[] = `listConnections -shapes 1 ($layer + ".envelopeLinks[" + $i + "].envelopeLinkFrom")`;
+		string $linkTo[] = `listConnections -shapes 1 ($layer + ".envelopeLinks[" + $i + "].envelopeLinkTo")`;
+		if (size($linkFrom) && size($linkTo) && $linkTo[0]==$member)
+		{
+			$surfaces[size($surfaces)] = ilrExtendToShape($linkFrom[0]);
+		}
+	}
+	
+	return $surfaces;
+}
+
+global proc string ilrCreateDefaultBakeLayer()
+{
+	if (`objExists "TurtleDefaultBakeLayer"`) {
+		return "TurtleDefaultBakeLayer";
+	}
+	
+	// Create the layer
+	//
+	string $layer = `createNode "ilrBakeLayer" -shared -name "TurtleDefaultBakeLayer" -skipSelect`;
+	lockNode TurtleDefaultBakeLayer;
+	connectAttr ($layer + ".index") TurtleBakeLayerManager.bakeLayerId[0];
+	setAttr ($layer + ".index") 0;
+
+	// Create and connect all options nodes
+	//	
+	string $renderOptions = "TurtleRenderOptions"; // <-- Use the default one for now...
+	connectAttr ($renderOptions + ".message") ($layer + ".renderOptions");
+
+	// Rebuild the UI
+	//
+	ilrRebuildCurrentBakeLayerMenus();
+
+	// Make this the current layer
+	//
+	ilrSetCurrentBakeLayer($layer);
+
+	return $layer;
+}
+
+// Procedure for setting up which bake layers to bake out
+// then batch baking is started. The input string can be
+// one of three things:
+//
+// 1. empty string - no bake layers will be baked
+// 2. "all"        - all bake layers will be baked
+// 3. "layer list" - the layers in the list (separated by spaces) will be baked
+//
+global proc ilrSetBatchBakeLayers(string $layers)
+{
+	int $i, $j, $state;
+	string $allLayers[] = `ls -type ilrBakeLayer`;
+
+	if (size($layers) == 0) {
+		// Set all layers to non-renderable.
+		for($i = 0; $i < size($allLayers); $i++) {
+			setAttr ($allLayers[$i] + ".renderable") false;
+		}
+	} else if ($layers == "all") {
+		// Set all layers to renderable.
+		for($i = 0; $i < size($allLayers); $i++) {
+			setAttr ($allLayers[$i] + ".renderable") true;
+		}
+	} else {
+		// Assume a list of layers.
+		// Turn all layers off, except the ones explicitely named.
+		string $selectedLayers[];
+		tokenizeList($layers, $selectedLayers);
+		for ($i = 0; $i < size($allLayers); $i++) {
+			$state = 0;
+			for ($j = 0; $j < size($selectedLayers); $j++) {
+				if ($allLayers[$i] == $selectedLayers[$j]) {
+					$state = 1;
+					break;
+				}
+			}
+			setAttr ($allLayers[$i] + ".renderable") $state;
+		}
+	}
+}
+
+// Rebuild the bake layer system and user interface.
+// This procedure will be called if the bake layer system fails to complete a task.
+// Reasons for this can be that the current bake layer doesn't exist anymore,
+// or the bake layer manager is not in sync, e.t.c.
+// Returns the current bake layer after rebuild.
+//
+global proc string ilrRebuildBakeLayerSystem()
+{
+	warning("Bake layer system is out of sync, rebuilding the system");
+	
+	string $renderOptions = "TurtleRenderOptions"; // <-- Use the default one for now...
+
+	// Make sure the bake layer manager and render options node exists
+	//
+	if (!`objExists TurtleBakeLayerManager`) {
+		ilrCreateBakeLayerManagerNode();
+	}
+
+	if (!`objExists $renderOptions`) {
+		ilrCreateRenderOptionsNode();
+	}
+	
+	// Make sure we have a default bake layer
+	//
+	string $defaultLayer = ilrCreateDefaultBakeLayer();
+
+	string $layer;
+	string $layers[] = `ls -type ilrBakeLayer`;
+
+	// disconnect all layers
+	for ($layer in $layers) {
+		// disconnect layer from manager
+		string $managerConnection[] = `connectionInfo -destinationFromSource ($layer + ".index")`;
+		if (size($managerConnection) > 0) {
+			disconnectAttr ($layer + ".index") $managerConnection[0];
+		}
+
+		// disconnect layer from render options		
+		string $optionsConnection = `connectionInfo -sourceFromDestination ($layer + ".renderOptions")`;
+		if ($optionsConnection != "") {
+			disconnectAttr $optionsConnection ($layer + ".renderOptions");
+		}
+	}
+	
+	// reconnect default layer
+	connectAttr ($defaultLayer + ".index") TurtleBakeLayerManager.bakeLayerId[0];
+	setAttr ($defaultLayer + ".index") 0;
+	connectAttr ($renderOptions + ".message") ($defaultLayer + ".renderOptions");	
+	
+	// reconnect the remaining layers
+	for ($layer in $layers) {
+		if ($layer != $defaultLayer) {
+			ilrConnectBakeLayer($layer);
+		}
+	}
+	
+	// Rebuild the bake layer menu
+	//
+	ilrRebuildCurrentBakeLayerMenus();
+
+	// Make this the current layer 
+	// (also updates the options UI)
+	//
+	ilrSetCurrentBakeLayer($defaultLayer);
+
+	return $defaultLayer;
+}

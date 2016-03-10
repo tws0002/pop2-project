@@ -1,0 +1,2330 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Description:
+//      This file implements the connectWindow for making connections between nodes.
+//
+//////////////////////////////////////////////////////////////////////
+//
+//  Procedure Name:
+//      connectWinModalCmd
+//
+//  Description:
+//      conifugres the window to either be modal (ie, do a bunch of things,
+//		then press a button to perform the actions) or interactive, where
+//		connections are made/broken for each click in the input window.
+//		
+//  Input Arguments:
+//      $topWindow - name of the top connection window for control name construction
+//
+//  Return Value:
+//      None.
+//
+global proc connectWinModalCmd(string $topWindow)
+{
+	global string $rightWin, $leftWin;
+
+	int $autoConnect = `optionVar -q "connectWindowAutoConnect"`;
+	int $isModal = 0;
+
+	if($autoConnect == 0) {
+		$isModal = 1;
+	}
+
+	string $buttonParent = $topWindow + "|tl|cwForm|";
+
+	string $dis = $buttonParent + "dis";
+	string $con = $buttonParent + "con";
+
+	button -e -enable $isModal $dis;
+	button -e -enable $isModal $con;
+
+	int $leftToRight = 1;
+					
+	if(`optionVar -exists "connectWindowLeftToRight"` == 1) {
+		$leftToRight = `optionVar -q "connectWindowLeftToRight"`;
+	} else {
+		optionVar -iv "connectWindowLeftToRight" $leftToRight;
+	}
+
+	if($autoConnect) {
+		// we've just turned off autoconnect; set input window
+		// to highlight unconnected pressed plugs.
+		if($leftToRight) {
+			nodeOutliner -e -pressHighlightsUnconnected false $rightWin;
+		} else {
+			nodeOutliner -e -pressHighlightsUnconnected false $leftWin;
+		}
+	} else {
+		// we've just turned on autoconnect; set input window
+		// to not highlight unconnected pressed plugs.
+		nodeOutliner -e -pressHighlightsUnconnected true $rightWin;
+		nodeOutliner -e -pressHighlightsUnconnected true $leftWin;
+	}
+}
+
+global proc modalNodeOutlinerDeleteWindow(string $win)
+{
+	if(`window -exists $win`) {
+		deleteUI $win;
+	}
+}
+
+global proc modalNodeOutlinerOutputsCmd(string $outWin)
+//
+//  Procedure Name:
+//      modalNodeOutlinerOutputsCmd
+//
+//  Description:
+//      Returns the selected attribute and closes the window.
+//		
+//  Input Arguments:
+//      outWin - the output window name
+//
+//  Return Value:
+//      None.
+//
+{
+	string $tempVar = `nodeOutliner -q -lastClickedNode $outWin`; 
+	global string $postCommand;
+	string $cmd = substitute( "%attr", $postCommand, $tempVar);
+	evalDeferred( "modalNodeOutlinerDeleteWindow \"connectWindowModal\"" );
+	eval $cmd;
+}
+
+global proc modalNodeOutlinerInputsCmd(string $inWin)
+//
+//  Procedure Name:
+//      nodeOutlinerInputsCmd
+//
+//  Description:
+//      returns the clicked attr in the inwin, and closes the window
+//		
+//		
+//  Input Arguments:
+//      inWin - the input window name
+//
+//  Return Value:
+//      None.
+//
+{
+	string $tempVar = `nodeOutliner -q -lastClickedNode $inWin`; 
+	global string $postCommand;
+	string $cmd = substitute( "%attr", $postCommand, $tempVar);
+	evalDeferred( "modalNodeOutlinerDeleteWindow \"connectWindowModal\"" );
+	eval $cmd;
+}
+
+global proc nodeOutlinerOutputsCmd(string $outWin, string $inWin)
+//
+//  Procedure Name:
+//      nodeOutlinerOutputsCmd
+//
+//  Description:
+//      sets the connectivity attribute of the rightWin to be the 
+//		last clicked item in the input win.
+//		
+//  Input Arguments:
+//      outWin - the output window name
+//      inWin - the input window name
+//
+//  Return Value:
+//      None.
+//
+{
+	string $tempVar; 
+	$tempVar = `nodeOutliner -q -lastClickedNode $outWin`; 
+	nodeOutliner -e -c $tempVar $inWin;
+}
+
+global proc nodeOutlinerInputsCmd(string $outWin, string $inWin)
+//
+//  Procedure Name:
+//      nodeOutlinerInputsCmd
+//
+//  Description:
+//      connects the last clicked attr in the inwin
+//		
+//		
+//  Input Arguments:
+//      inWin - the input window name
+//      outWin - the output window name
+//
+//  Return Value:
+//      None.
+//
+{
+	int $autoConnect = `optionVar -q "connectWindowAutoConnect"`;
+
+	if($autoConnect == 1) {
+		global string $rightWin, $leftWin;
+		string $outTemp, $inTemp, $cmd; 
+		$outTemp = `nodeOutliner -q -lastClickedNode $outWin` ; 
+		$inTemp = `nodeOutliner -q -lastClickedNode $inWin` ; 
+
+		if($outTemp != " " && $inTemp != " ") {
+
+			string $tokens[];
+			tokenize($outTemp, ".", $tokens);
+			int $numTokens1 = `size $tokens`;
+			tokenize($inTemp, ".", $tokens);
+			int $numTokens2 = `size $tokens`;
+
+			if($numTokens1 > 1 && $numTokens2 > 1 ) {
+				string $result;
+
+				string $outTempType = `nodeType $outTemp`;
+				string $inTempType = `nodeType $inTemp`;
+
+				// must special case this - it is still possible to get unit conversion 
+				// nodes to appear in the CW, and the window will not function properly
+				// if the "-ignoreUnitConversion" flag is used
+				//
+				string $iucFlag = "-ignoreUnitConversion";
+				if ( $outTempType == "unitConversion" || $inTempType == "unitConversion") {
+					$iucFlag = "";
+				}
+
+				string $conCmd = "isConnected " + $iucFlag + " " + $outTemp + " " + $inTemp;
+
+				if(`eval $conCmd` != 0) { 
+					$cmd = ("disconnectAttr "+$outTemp+" "+$inTemp+";\n"); 
+				} else { 
+					$cmd = ("connectAttr -f "+$outTemp+" "+$inTemp+";\n"); 
+				} 
+				$result = `evalEcho $cmd`; 
+			}
+
+			// redraw the window not clicked in
+			int $leftToRight = 1;
+					
+			if(`optionVar -exists "connectWindowLeftToRight"` == 1) {
+				$leftToRight = `optionVar -q "connectWindowLeftToRight"`;
+			} else {
+				optionVar -iv "connectWindowLeftToRight" $leftToRight;
+			}
+
+			if($leftToRight == 1) {
+				nodeOutliner -e -redraw $leftWin;
+			} else {
+				nodeOutliner -e -redraw $rightWin;
+			}
+		}
+	}
+}
+
+global proc connectWindowValues(string $windowName)
+//
+//  Procedure Name:
+//      connectWindowValues
+//
+//  Description:
+//      updates the configure frame controls to the state
+//	of the node outliners.
+//
+//  Input Arguments:
+//		$windowName - name of the connection Window, used
+//		to generate the control names.
+//
+//      also uses two global variables, $rightWin and $leftWin
+//		Which are the names of the input and output configured nodeOutliners
+//		in the connect window script elsewhere in this file.
+//
+//  Return Value:
+//      None.
+//
+{
+	global string $rightWin, $leftWin;
+	int $value;
+	string $strValue;
+
+	if(`menuItem -exists "autoConnectCWMI"`) {
+		$value = `optionVar -q "connectWindowAutoConnect"`;
+		menuItem -e -checkBox $value "autoConnectCWMI";
+	}
+	
+	if( `radioMenuItemCollection -exists "AttrNameDisplayCW"` ) {
+		$strValue = `optionVar -q "connectWindowNamesDisplay"`;
+		if( $strValue == "nice" ) {
+			menuItem -e -radioButton true "niceAttrNameDisplayCW";
+		} else {
+			if( $strValue == "long" ) {
+				menuItem -e -radioButton true "longAttrNameDisplayCW";
+			} else {
+				menuItem -e -radioButton true "shortAttrNameDisplayCW";
+			}
+		}
+	}
+	
+	if( `radioMenuItemCollection -exists "AttributeAlphaOrderCW"` ) {
+		$strValue = `optionVar -q "connectWindowAttrAlphaOrder"`;
+		if( $strValue == "default" ) {
+			menuItem -e -radioButton true "attrAlphaOrderCWDefault";
+		} else {
+			if( $strValue == "ascend" ) {
+				menuItem -e -radioButton true "attrAlphaOrderCWAscend";
+			} else {
+				menuItem -e -radioButton true "attrAlphaOrderCWDescend";
+			}
+		}
+	}
+	
+	if(`menuItem -exists "leftSideCWInputMI"`) {
+		$cmd = "nodeOutliner -q -showReadOnly "+$leftWin;
+		$value = `eval $cmd`;
+		if($value == 1) {
+			menuItem -e -radioButton $value "leftSideCWReadOnlyMI";
+		} else {
+			$cmd = "nodeOutliner -q -showInputs "+$leftWin;
+			$value = `eval $cmd`;
+			if($value == 1) {
+				menuItem -e -radioButton $value "leftSideCWInputMI";
+			} else {
+				$cmd = "nodeOutliner -q -showOutputs "+$leftWin;
+				$value = `eval $cmd`;
+				if ($value == 1) {
+					menuItem -e -radioButton $value "leftSideCWOutputMI";
+				} else {
+					$cmd = "nodeOutliner -q -showPublished "+$leftWin;
+					$value = `eval $cmd`;
+					menuItem -e -radioButton $value "leftSideCWPublishedMI";
+				}
+			}
+		}
+
+		$cmd = "nodeOutliner -q -showNonKeyable "+$leftWin;
+		$value = `eval $cmd`;
+		menuItem -e -checkBox $value "leftSideCWNonKeyMI";
+
+		$cmd = "nodeOutliner -q -showConnectedOnly "+$leftWin;
+		$value = `eval $cmd`;
+		menuItem -e -checkBox $value "leftSideCWConOnlyMI";
+
+		$cmd = "nodeOutliner -q -showHidden "+$leftWin;
+		$value = `eval $cmd`;
+		menuItem -e -checkBox $value "leftSideCWHiddenMI";
+	}
+
+	if(`menuItem -exists "rightSideCWInputMI"`) {
+
+		$cmd = "nodeOutliner -q -showReadOnly "+$rightWin;
+		$value = `eval $cmd`;
+		if($value == 1) {
+			menuItem -e -radioButton $value "rightSideCWReadOnlyMI";
+		} else {
+			$cmd = "nodeOutliner -q -showInputs "+$rightWin;
+			$value = `eval $cmd`;
+			if($value == 1) {
+				menuItem -e -radioButton $value "rightSideCWInputMI";
+			} else {
+				$cmd = "nodeOutliner -q -showOutputs "+$rightWin;
+				$value = `eval $cmd`;
+				if ($value == 1) {
+					menuItem -e -radioButton $value "rightSideCWOutputMI";
+				} else {
+					$cmd = "nodeOutliner -q -showPublished "+$rightWin;
+					$value = `eval $cmd`;
+					menuItem -e -radioButton $value "rightSideCWPublishedMI";
+				}
+			}
+		}
+
+		$cmd = "nodeOutliner -q -showNonKeyable "+$rightWin;
+		$value = `eval $cmd`;
+		menuItem -e -checkBox $value "rightSideCWNonKeyMI";
+
+		$cmd = "nodeOutliner -q -showConnectedOnly "+$rightWin;
+		$value = `eval $cmd`;
+		menuItem -e -checkBox $value "rightSideCWConOnlyMI";
+
+		$cmd = "nodeOutliner -q -showHidden "+$rightWin;
+		$value = `eval $cmd`;
+		menuItem -e -checkBox $value "rightSideCWHiddenMI";
+	}
+}
+
+global proc connectWindowMenuCmd(string $itemName)
+//
+//  Procedure Name:
+//      connectWindowMenuCmd
+//
+//  Description:
+//      Command called by every item in the connect window menu
+//
+//  Input Arguments:
+//		$itemName - the name of the item calling this command
+//
+//      also uses two global variables, $rightWin and $leftWin
+//		Which are the names of the input and output configured nodeOutliners
+//		in the connect window script elsewhere in this file.
+//
+//  Return Value:
+//      None.
+//
+{
+	global string $leftWin, $rightWin;
+	int $value, $antiValue;
+	global int $windowMode;
+	string $connectWindow = $windowMode?"connectWindowModal":"connectWindow";
+
+	if($itemName == "autoConnectCWMI") {
+		$value = `menuItem -q -checkBox $itemName`;
+		optionVar -intValue "connectWindowAutoConnect" $value;
+		connectWinModalCmd $connectWindow;
+	} else if ($itemName == "leftSideCWInputMI") {
+		$value = `menuItem -q -radioButton $itemName`;
+		$antiValue = !$value;
+		nodeOutliner -e -showPublished $antiValue -showInputs $value -showOutputs $antiValue -showReadOnly $antiValue $leftWin;
+	} else if ($itemName == "rightSideCWInputMI") {
+		$value = `menuItem -q -radioButton $itemName`;
+		$antiValue = !$value;
+		nodeOutliner -e -showPublished $antiValue -showInputs $value -showOutputs $antiValue -showReadOnly $antiValue $rightWin;
+	} else if ($itemName == "leftSideCWOutputMI") {
+		$value = `menuItem -q -radioButton $itemName`;
+		$antiValue = !$value;
+		nodeOutliner -e -showPublished $antiValue -showOutputs $value -showInputs $antiValue -showReadOnly $antiValue $leftWin;
+	} else if ($itemName == "rightSideCWOutputMI") {
+		$value = `menuItem -q -radioButton $itemName`;
+		$antiValue = !$value;
+		nodeOutliner -e -showPublished $antiValue -showOutputs $value -showInputs $antiValue -showReadOnly $antiValue $rightWin;
+	} else if ($itemName == "leftSideCWReadOnlyMI") {
+		$value = `menuItem -q -radioButton $itemName`;
+		$antiValue = !$value;
+		nodeOutliner -e -showPublished $antiValue -showReadOnly $value -showInputs $antiValue -showOutputs $antiValue $leftWin;
+	} else if ($itemName == "rightSideCWReadOnlyMI") {
+		$value = `menuItem -q -radioButton $itemName`;
+		$antiValue = !$value;
+		nodeOutliner -e -showPublished $antiValue -showReadOnly $value -showInputs $antiValue -showOutputs $antiValue $rightWin;
+	} else if ($itemName == "rightSideCWPublishedMI") {
+		$value = `menuItem -q -radioButton $itemName`;
+		$antiValue = !$value;
+		nodeOutliner -e -showPublished $value -showReadOnly $antiValue -showInputs $antiValue -showOutputs $antiValue $rightWin;
+	} else if ($itemName == "leftSideCWPublishedMI") {
+		$value = `menuItem -q -radioButton $itemName`;
+		$antiValue = !$value;
+		nodeOutliner -e -showPublished $value -showReadOnly $antiValue -showInputs $antiValue -showOutputs $antiValue $leftWin;
+	} else if ($itemName == "leftSideCWNonKeyMI") {
+		$value = `menuItem -q -checkBox $itemName`;
+		nodeOutliner -e -showNonKeyable $value $leftWin;
+		optionVar -iv "connectWindowLeftSNK" $value;
+	} else if ($itemName == "rightSideCWNonKeyMI") {
+		$value = `menuItem -q -checkBox $itemName`;
+		nodeOutliner -e -showNonKeyable $value $rightWin;
+		optionVar -iv "connectWindowRightSNK" $value;
+	} else if ($itemName == "leftSideCWConOnlyMI") {
+		$value = `menuItem -q -checkBox $itemName`;
+		nodeOutliner -e -showConnectedOnly $value $leftWin;
+		optionVar -iv "connectWindowLeftCNO" $value;
+	} else if ($itemName == "rightSideCWConOnlyMI") {
+		$value = `menuItem -q -checkBox $itemName`;
+		nodeOutliner -e -showConnectedOnly $value $rightWin;
+		optionVar -iv "connectWindowRightCNO" $value;
+	} else if ($itemName == "leftSideCWHiddenMI") {
+		$value = `menuItem -q -checkBox $itemName`;
+		nodeOutliner -e -showHidden $value $leftWin;
+		optionVar -iv "connectWindowLeftSHD" $value;
+	} else if ($itemName == "rightSideCWHiddenMI") {
+		$value = `menuItem -q -checkBox $itemName`;
+		nodeOutliner -e -showHidden $value $rightWin;
+		optionVar -iv "connectWindowRightSHD" $value;
+	}
+}
+
+global proc connectWindowSwitchCmd(string $controlName)
+//
+//  Procedure Name:
+//      connectWindowSwitchCmd
+//
+//  Description:
+//      script to allow connections change the connection direction
+//	in the connect window.
+//
+//  Input Arguments:
+//		$controlName - which is the name of the button to be
+//		label changed.
+//
+//      also uses two global variables, $rightWin and $leftWin
+//		Which are the names of the input and output configured nodeOutliners
+//		in the connect window script elsewhere in this file.
+//
+//  Return Value:
+//      None.
+//
+{
+	global string $rightWin, $leftWin;
+	string $inputs = (uiRes("m_connectWindow.kInputs"));
+	string $outputs = (uiRes("m_connectWindow.kOutputs"));
+	string $cmd;
+
+	int $outHidden = `nodeOutliner -q -showHidden $leftWin`;
+	int $inHidden = `nodeOutliner -q -showHidden $rightWin`;
+
+	// get the name of the parent of the button
+	string $tokens[];
+	tokenize ( $controlName,"|",$tokens );
+
+	string $formParent = $tokens[0];
+	int $i;
+	int $numTokens = `size $tokens`;
+	
+	for($i = 1; $i < $numTokens - 1; $i++) {
+		$formParent += ("|" + $tokens[$i]);
+	}
+	string $children[] = `formLayout -q -childArray $formParent`;
+
+	// assume this layout was created by MEL function connectWindow,
+	// and the first two children are the labels.
+	// find out the state of the connection window, and 
+	// change the labels accordingly.
+
+	int $autoConnect = 1;
+
+	if(`optionVar -exists "connectWindowAutoConnect"` == 1) {
+		$autoConnect = `optionVar -q "connectWindowAutoConnect"`;
+	} else {
+		optionVar -iv "connectWindowLeftToRight" $autoConnect;
+	}
+
+	int $leftToRight = 1;
+					
+	if(`optionVar -exists "connectWindowLeftToRight"` == 1) {
+		$leftToRight = `optionVar -q "connectWindowLeftToRight"`;
+	} else {
+		optionVar -iv "connectWindowLeftToRight" $leftToRight;
+	}
+
+	$phuIn = "";
+	$phuOut = "";
+	if($autoConnect) {
+		$phuIn = " -pressHighlightsUnconnected false ";
+		$phuOut = " -pressHighlightsUnconnected true ";
+	}
+
+	if($leftToRight != 1) {
+		optionVar -iv "connectWindowLeftToRight" true;
+		button -e -label (uiRes("m_connectWindow.kFromTo")) $controlName;
+		text -e -label $inputs $children[0];
+		text -e -label $outputs $children[1];
+		
+		// configure $inputs to show inputs
+		$cmd = ("nodeOutliner -e -multiSelect true -showInputs true -showOutputs false -showHidden "
+			   + $outHidden + $phuIn + " -noConnectivity -selectCommand \"nodeOutlinerInputsCmd " 
+			   + $leftWin + " " + $rightWin + "; nodeOutliner -e -r " + $rightWin
+			   + "\" " + $rightWin);
+		evalEcho $cmd;		
+
+		// configure $outputs to show outputs
+		$cmd = ("nodeOutliner -e -multiSelect false -showInputs false -showOutputs true -showHidden " +
+			   $inHidden + $phuOut + " -noConnectivity -selectCommand \"nodeOutlinerOutputsCmd " + $leftWin +
+			   " " + $rightWin + "; nodeOutliner -e -r " + $leftWin + "\" " + $leftWin);
+		evalEcho $cmd;		
+
+	} else {
+		optionVar -iv "connectWindowLeftToRight" false;
+		button -e -label (uiRes("m_connectWindow.kToFrom")) $controlName;		
+		text -e -label $outputs $children[0];
+		text -e -label $inputs $children[1];
+
+		// configure $inputs to show outputs
+		$cmd = ("nodeOutliner -e -multiSelect false -noConnectivity -showInputs false -showOutputs " + 
+			   "true -showHidden " + $outHidden + $phuOut + " -selectCommand \"nodeOutlinerOutputsCmd " + 
+			   $rightWin + " " + $leftWin + "; nodeOutliner -e -r "+$rightWin + "\" "
+			   + $rightWin);
+		evalEcho $cmd;		
+
+		// configure $outputs to show inputs
+		$cmd = ("nodeOutliner -e -multiSelect true -noConnectivity -showInputs true -showOutputs false " +
+			   "-showHidden " + $inHidden + $phuIn + " -selectCommand \"nodeOutlinerInputsCmd " + 
+			   $rightWin + " " + $leftWin + "; nodeOutliner -e -r " + $leftWin + "\" " +
+			   $leftWin);
+		evalEcho $cmd;		
+	}
+
+	// update the frame
+	tokenize ($controlName,"|",$tokens);
+	
+	connectWindowValues $tokens[0];
+
+	if(`popupMenu -exists leftPropagateMenu`) {
+		popupMenu -e -deleteAllItems leftPropagateMenu;
+	}
+}
+
+global proc connectWindowClearCmd()
+//
+//  Procedure Name:
+//      connectWindowClearCmd
+//
+//  Description:
+//      empty the contents of the window
+//
+//  Input Arguments:
+//      none, but uses two global variables, $rightWin and $leftWin
+//		Which are the names of the input and output configured nodeOutliners
+//		in the connect window script elsewhere in this file.
+//
+//  Return Value:
+//      None.
+//
+{
+	global string $rightWin;
+	global string $leftWin;
+	global string $connectWinLeftLabel;
+	global string $connectWinRightLabel;
+
+	string $cmd = "nodeOutliner -e -noConnectivity -removeAll";
+	$cmd += (" \"" + $rightWin + "\"");
+	eval $cmd;
+
+	$cmd = "nodeOutliner -e -noConnectivity -removeAll";
+	$cmd += (" \"" + $leftWin + "\"");
+	eval $cmd;
+
+	if(`popupMenu -exists rightPropagateMenu`) {
+		popupMenu -e -deleteAllItems rightPropagateMenu;
+	}
+	if(`popupMenu -exists leftPropagateMenu`) {
+		popupMenu -e -deleteAllItems leftPropagateMenu;
+	}
+
+	text -e -label " " $connectWinLeftLabel;
+	text -e -label " " $connectWinRightLabel;
+}
+
+global proc connectWindowRemoveCmd()
+//
+//  Procedure Name:
+//      connectWindowRemoveCmd
+//
+//  Description:
+//      remove the highlighted items from display in the window
+//		reset the connectivity in the input window if the connectivity 
+//		happens to be the one deleted.
+//
+//  Input Arguments:
+//      none, but uses two global variables, $rightWin and $leftWin
+//		Which are the names of the input and output configured nodeOutliners
+//		in the connect window script elsewhere in this file.
+//
+//  Return Value:
+//      None.
+//
+{
+	global string $rightWin;
+	global string $leftWin;
+	global string $connectWinLeftLabel;
+	global string $connectWinRightLabel;
+
+	int $leftToRight = 1;
+					
+	if(`optionVar -exists "connectWindowLeftToRight"` == 1) {
+		$leftToRight = `optionVar -q "connectWindowLeftToRight"`;
+	} else {
+		optionVar -iv "connectWindowLeftToRight" $leftToRight;
+	}
+
+	// remove from right win
+
+	string $cmd = ("nodeOutliner -q -currentSelection "+$rightWin);
+	string $contents[] = `eval $cmd`;
+	string $connectivity = "";
+	
+	int $numNodes = `size $contents`;
+	
+	if ( $numNodes > 0 ) {
+		if(! $leftToRight) {
+			$connectivity = `nodeOutliner -q -connectivity $leftWin`;
+		}
+
+		$cmd = "nodeOutliner -e ";
+		for($node in $contents) {
+			$cmd += ("-remove " + $node + " ");
+			if($connectivity == $node) {
+				nodeOutliner -e -noConnectivity $leftWin;
+			}
+		}
+		$cmd += $rightWin;
+		eval $cmd;
+
+		// reset the label
+		$contents = `nodeOutliner -q -nd $rightWin`;
+		$numNodes = `size $contents`;
+		if ( $numNodes > 0 ) {
+			text -e -label $contents[0] $connectWinRightLabel;
+		} else {
+			text -e -label " " $connectWinRightLabel;			
+		}
+	}
+	
+	// remove from output win
+	$cmd = ("nodeOutliner -q -currentSelection "+$leftWin);
+	$contents = `eval $cmd`;
+
+	$numNodes = `size $contents`;
+	
+	if ( $numNodes > 0 ) {
+		if($leftToRight) {
+			$connectivity = `nodeOutliner -q -connectivity $rightWin`;
+		}
+
+		$cmd = "nodeOutliner -e ";
+		for($node in $contents) {
+			$cmd += ("-remove " + $node + " ");
+			if($connectivity == $node) {
+				nodeOutliner -e -noConnectivity $rightWin;
+			}
+		}
+		$cmd += $leftWin;
+		eval $cmd;
+
+		// reset the label
+		$contents = `nodeOutliner -q -nd $leftWin`;
+		$numNodes = `size $contents`;
+		if ( $numNodes > 0 ) {
+			text -e -label $contents[0] $connectWinLeftLabel;
+		} else {
+			text -e -label " " $connectWinLeftLabel;			
+		}
+	}
+	if(`popupMenu -exists rightPropagateMenu`) {
+		popupMenu -e -deleteAllItems rightPropagateMenu;
+	}
+	if(`popupMenu -exists leftPropagateMenu`) {
+		popupMenu -e -deleteAllItems leftPropagateMenu;
+	}
+}
+
+global proc connectWindowBreakCmd()
+//
+//  Procedure Name:
+//      connectWindowBreakCmd
+//
+//  Description:
+//      script for breaking the connections between highlighted 
+//		attributes in the node connection window.
+//
+//  Input Arguments:
+//      none, but uses two global variables, $rightWin and $leftWin
+//		Which are the names of the input and output configured nodeOutliners
+//		in the connect window script elsewhere in this file.
+//
+//  Return Value:
+//      None.
+//
+{
+	global string $rightWin;
+	global string $leftWin;
+
+	// get current selections in both windows
+
+	string $cmd = ("nodeOutliner -q -currentSelection "+$rightWin);
+	string $input[] = `evalEcho $cmd`;
+
+	// remove from output win
+
+	$cmd = ("nodeOutliner -q -currentSelection "+$leftWin);
+	string $output[] = `evalEcho $cmd`;
+
+	int $leftToRight = 1;
+					
+	if(`optionVar -exists "connectWindowLeftToRight"` == 1) {
+		$leftToRight = `optionVar -q "connectWindowLeftToRight"`;
+	} else {
+		optionVar -iv "connectWindowLeftToRight" $leftToRight;
+	}
+
+	int $numNodes;
+	
+	if($leftToRight != 1) {
+		$numNodes = `size $output`;
+
+		if( `size $input` == 1 && $numNodes > 0) {
+			int $i;
+			for($i = 0; $i < $numNodes; $i++) {
+				$cmd = ("disconnectAttr " + $input[0] + " " + $output[$i]);
+				evalEcho $cmd;
+			}
+		}
+	} else {
+		$numNodes = `size $input`;
+
+		if( `size $output` == 1 && $numNodes > 0) {
+			int $i;
+			for($i = 0; $i < $numNodes; $i++) {
+				$cmd = ("disconnectAttr " + $output[0] + " " + $input[$i]);
+				evalEcho $cmd;
+			}
+		}
+	}
+
+	// redraw both windows
+	nodeOutliner -e -redraw $leftWin;
+	nodeOutliner -e -redraw $rightWin;
+
+	if(`popupMenu -exists rightPropagateMenu`) {
+		popupMenu -e -deleteAllItems rightPropagateMenu;
+	}
+	if(`popupMenu -exists leftPropagateMenu`) {
+		popupMenu -e -deleteAllItems leftPropagateMenu;
+	}
+}
+
+global proc connectWindowMakeCmd()
+//
+//  Procedure Name:
+//      connectWindowMakeCmd
+//
+//  Description:
+//      script for making the connections between highlighted attributes in the 
+//		node connection window.
+//
+//  Input Arguments:
+//      none, but uses two global variables, $rightWin and $leftWin
+//		Which are the names of the input and output configured nodeOutliners
+//		in the connect window script elsewhere in this file.
+//
+//  Return Value:
+//      None.
+//
+{
+	global string $rightWin;
+	global string $leftWin;
+
+	// get current selections in both windows
+	//
+	string $cmd = ("nodeOutliner -q -currentSelection "+$rightWin);
+	string $input[] = `evalEcho $cmd`;
+
+	// remove from output win
+	//
+	$cmd = ("nodeOutliner -q -currentSelection "+$leftWin);
+	string $output[] = `evalEcho $cmd`;
+
+	int $numNodes;
+	string $result;
+	
+	int $leftToRight = 1;
+					
+	if(`optionVar -exists "connectWindowLeftToRight"` == 1) {
+		$leftToRight = `optionVar -q "connectWindowLeftToRight"`;
+	} else {
+		optionVar -iv "connectWindowLeftToRight" $leftToRight;
+	}
+
+	if($leftToRight) {
+		$numNodes = `size $input`;
+		if( `size $output` == 1 && $numNodes > 0) {
+			int $i;
+			for($i = 0; $i < $numNodes; $i++) {
+				$cmd = ("connectAttr -f " + $output[0] + " " +$input[$i]);
+				$result = `evalEcho $cmd`;
+			}
+		}
+	} else {
+		$numNodes = `size $output`;
+		if( `size $input` == 1 && $numNodes > 0) {
+			int $i;
+			for($i = 0; $i < $numNodes; $i++) {
+				$cmd = ("connectAttr -f " + $input[0] + " " +$output[$i]);
+				$result = `evalEcho $cmd`;
+			}
+		}
+	}
+
+	// redraw both windows
+	nodeOutliner -e -redraw $leftWin;
+	nodeOutliner -e -redraw $rightWin;
+
+	if(`popupMenu -exists rightPropagateMenu`) {
+		popupMenu -e -deleteAllItems rightPropagateMenu;
+	}
+	if(`popupMenu -exists leftPropagateMenu`) {
+		popupMenu -e -deleteAllItems leftPropagateMenu;
+	}
+}
+
+global proc connectWindowReplaceLeft(string $nodeName)
+//
+//  Procedure Name:
+//      connectWindowReplaceLeft
+//
+//  Description:
+//      Replace the left side of the connection window with the named node
+//
+//  Input Arguments:
+//		$nodeName, expected to be either a node's name or a node.attribute
+//      also uses the global variable $leftWin
+//		the nodeOutliner on the left side of the connect
+//		window script elsewhere in this file.
+//
+//  Return Value:
+//      None.
+//
+{
+	global string $leftWin;
+	global string $connectWinLeftLabel;
+
+	global int $windowMode;
+	string $connectWindow = $windowMode?"connectWindowModal":"connectWindow";
+
+	string $tokens[];
+	tokenize ($nodeName,".",$tokens);
+
+	if(`window -exists $connectWindow`) {
+		nodeOutliner -e -replace $tokens[0] -noConnectivity $leftWin;
+ 		text -e -label $nodeName $connectWinLeftLabel;
+	}
+	if(`popupMenu -exists leftPropagateMenu`) {
+		popupMenu -e -deleteAllItems leftPropagateMenu;
+	}
+}
+
+global proc connectWindowAddToLeft(string $nodeName)
+//
+//  Procedure Name:
+//      connectWindowAddToLeft
+//
+//  Description:
+//      Add the named node to the left side of the connection window
+//
+//  Input Arguments:
+//		$nodeName, expected to be either a node's name or a node.attribute
+//      also uses the global variable $leftWin
+//		the nodeOutliner on the left side of the connect
+//		window script elsewhere in this file.
+//
+//  Return Value:
+//      None.
+//
+{
+	global string $leftWin;
+	global string $connectWinLeftLabel;
+	global int $windowMode;
+	string $connectWindow = $windowMode?"connectWindowModal":"connectWindow";
+
+	string $tokens[];
+	tokenize ($nodeName,".",$tokens);
+
+	if(`window -exists $connectWindow`) {
+		nodeOutliner -e -addObject $tokens[0] -noConnectivity $leftWin;
+ 		text -e -label $nodeName $connectWinLeftLabel;
+	}
+	if(`popupMenu -exists leftPropagateMenu`) {
+		popupMenu -e -deleteAllItems leftPropagateMenu;
+	}
+}
+
+global proc connectWindowSetLeftLabel(string $label)
+//
+//  Procedure Name:
+//      connectWindowSetLeftLabel
+//
+//  Description:
+//      Set the left label on the left side to the input string
+//
+//  Input Arguments:
+//		$label - the new label value.
+//
+//  Return Value:
+//      None.
+//
+{
+	global string $connectWinLeftLabel;
+	global int $windowMode;
+	string $connectWindow = $windowMode?"connectWindowModal":"connectWindow";
+
+	if(`window -exists $connectWindow`) {
+ 		text -e -label $label $connectWinLeftLabel;
+	}
+}
+
+global proc connectWindowFillFromActiveList(int $side )
+//
+//  Procedure Name:
+//      connectWindowFillFromActiveList
+//
+//  Description:
+//      Load what's active into one side of the connection window
+//
+//  Input Arguments:
+//      $side: 0 will replace the left side, != 0 will replace the right
+//
+//  Return Value:
+//      None.
+//
+{
+	global string $leftWin;
+	global string $rightWin;
+	global int $windowMode;
+	string $connectWindow = $windowMode?"connectWindowModal":"connectWindow";
+
+	if(`window -exists $connectWindow`) {
+
+		string $nodeOutlinerName;
+
+		if( $side == 0 && ($windowMode != 2)) {
+			$nodeOutlinerName = $leftWin;
+			if(`popupMenu -exists leftPropagateMenu`) {
+				popupMenu -e -deleteAllItems leftPropagateMenu;
+			}
+		} else if( $windowMode != 1){
+			$nodeOutlinerName = $rightWin;
+			if(`popupMenu -exists rightPropagateMenu`) {
+				popupMenu -e -deleteAllItems rightPropagateMenu;
+			}
+		}
+
+		string $active[];
+		$active = `ls -sl`;
+
+		int $numActive = `size $active`;
+		
+		if( ($nodeOutlinerName != "") && ($numActive > 0)) {
+			string $cmd = ("nodeOutliner -e -replace " + $active[0] + " " + $nodeOutlinerName);
+			evalEcho $cmd;
+
+			if( !$windowMode ){
+				// If the outputs window is being refreshed, force a refresh
+				// and re-setting of connectivity parameters of the inputs
+				// window, so any rows that are dimmed will be undimmed.
+				//
+				int $leftToRight = 1;
+				if(`optionVar -exists "connectWindowLeftToRight"` == 1) {
+					$leftToRight = `optionVar -q "connectWindowLeftToRight"`;
+				}
+
+				if ($leftToRight == 1)
+				{
+					// If outputs are in the left window and the left window
+					// has been re-loaded, clear the connectivity of the
+					// right window so it will refresh.
+					//
+					if ($nodeOutlinerName == $leftWin)
+					{
+						nodeOutliner -e -nc $rightWin;
+					}
+				}
+				else
+				{
+					// If outputs are in the right window and the right window
+					// has a new node in it, clear the connectivity of the left
+					// window so it will refresh.
+					//
+					if ($nodeOutlinerName == $rightWin)
+					{
+						nodeOutliner -e -nc $leftWin;
+					}
+				}
+
+				if($numActive > 1) {
+					int $i;
+					for($i = 1; $i < $numActive; $i++) {
+						$cmd = ("nodeOutliner -e -addObject " + $active[$i] + " " + $nodeOutlinerName);
+						evalEcho $cmd;
+					}
+				}
+			}
+		}
+	}
+}
+
+global proc connectWindowReplaceRight(string $nodeName)
+//
+//  Procedure Name:
+//      connectWindowReplaceRight
+//
+//  Description:
+//      Replace the right side of the connection window with the named node
+//
+//  Input Arguments:
+//		$nodeName, expected to be either a node's name or a node.attribute
+//      also uses the global variable $leftWin
+//		the nodeOutliner on the left side of the connect
+//		window script elsewhere in this file.
+//
+//  Return Value:
+//      None.
+//
+{
+	global string $rightWin;
+	global string $connectWinRightLabel;
+	global int $windowMode;
+	string $connectWindow = $windowMode?"connectWindowModal":"connectWindow";
+
+	string $tokens[];
+	tokenize ($nodeName,".",$tokens);
+
+	if(`window -exists $connectWindow`) {
+		if( $windowMode ){
+			nodeOutliner -e -replace $tokens[0] $rightWin;
+		} else {
+			nodeOutliner -e -replace $tokens[0] -nc $rightWin;
+			}
+		}
+		text -e -label $nodeName $connectWinRightLabel;
+	if(`popupMenu -exists rightPropagateMenu`) {
+		popupMenu -e -deleteAllItems rightPropagateMenu;
+	}
+}
+
+global proc connectWindowAddToRight(string $nodeName)
+//
+//  Procedure Name:
+//      connectWindowAddToRight
+//
+//  Description:
+//      Add the named node to the right side of the connection window
+//
+//  Input Arguments:
+//		$nodeName, expected to be either a node's name or a node.attribute
+//      also uses the global variable $leftWin
+//		the nodeOutliner on the left side of the connect
+//		window script elsewhere in this file.
+//
+//  Return Value:
+//      None.
+//
+{
+	global string $rightWin;
+	global string $connectWinRightLabel;
+	global int $windowMode;
+	string $connectWindow = $windowMode?"connectWindowModal":"connectWindow";
+
+	string $tokens[];
+	tokenize ($nodeName,".",$tokens);
+
+	if(`window -exists $connectWindow`) {
+		nodeOutliner -e -addObject $tokens[0] -nc $rightWin;
+ 		text -e -label $nodeName $connectWinRightLabel;
+	}
+	if(`popupMenu -exists rightPropagateMenu`) {
+		popupMenu -e -deleteAllItems rightPropagateMenu;
+	}
+}
+
+global proc connectWindowSetRightLabel(string $label)
+//
+//  Procedure Name:
+//      connectWindowSetRightLabel
+//
+//  Description:
+//      Set the right label on the right side to the input string
+//
+//  Input Arguments:
+//		$label - the new label value.
+//
+//  Return Value:
+//      None.
+//
+{
+	global string $connectWinRightLabel;
+	global int $windowMode;
+	string $connectWindow = $windowMode?"connectWindowModal":"connectWindow";
+
+	if(`window -exists $connectWindow`) {
+ 		text -e -label $label $connectWinRightLabel;
+	}
+}
+
+//
+//  Procedure Name:
+//      CWpropagateMenuCB
+//
+//  Description:
+//      "pages over" the connect window.  the contents of one side move
+//		to the opposite window, and a given node is loaded to the empty side.
+//
+//  Input Arguments:
+//		$side - "-left" to page left, "-right" to page right.
+//		$nodes - a string in the form "node1 node2 node3 ... nodeX"
+//			representing the nodes to load into the outliner opposite $side.
+//		$menu1, $menu2 - the names of the two menus so they can be cleared.
+//
+//  Return Value:
+//      None.
+//
+global proc CWpropagateMenuCB(string $side, string $nodes, string $menu1, string $menu2)
+{
+	global string $leftWin, $rightWin;
+	string $clearWin, $shuffleWin;
+	
+	string $contents[];
+	int $leftToRight = 1;
+	if(`optionVar -exists "connectWindowLeftToRight"` == 1) {
+		$leftToRight = `optionVar -q "connectWindowLeftToRight"`;
+	} else {
+		optionVar -iv "connectWindowLeftToRight" $leftToRight;
+	}
+    if ($side == "-left") {
+		$clearWin = $leftWin;
+		$shuffleWin = $rightWin;
+	} else if ($side == "-right") {
+		$clearWin = $rightWin;
+		$shuffleWin = $leftWin;
+	}
+
+	$contents = `nodeOutliner -q -nodesDisplayed $clearWin`;
+
+	nodeOutliner -e -removeAll $leftWin;
+	nodeOutliner -e -removeAll $rightWin;
+
+	string $nodeArray[];
+	tokenize ($nodes," ",$nodeArray);
+	for($node in $nodeArray) {
+		nodeOutliner -e -addObject $node -nc $clearWin;
+	}
+	for($thing in $contents) {
+		nodeOutliner -e -addObject $thing -nc $shuffleWin;
+	}
+
+	popupMenu -e -deleteAllItems $menu1;
+	popupMenu -e -deleteAllItems $menu2;
+}
+
+//
+//  Procedure Name:
+//      CWpropagateMenu
+//
+//  Description:
+//      Fills a popup menu with the currently connected attr names.
+//		Depending on the input strings and the connect window configuration.
+//
+//  Input Arguments:
+//		$side - "-left" for the left button, "-right" for the right button.
+//		$menu - the name of the menu holding the items
+//		$otherMenu - the name of the opposite menu
+//
+//  Return Value:
+//      None.
+//
+global proc CWpropagateMenu(string $side, string $menu, string $otherMenu)
+{
+	global string $rightWin, $leftWin;
+	setParent -m $menu;
+
+    popupMenu -e -deleteAllItems $menu;
+
+	int $leftToRight = 1;
+	if(`optionVar -exists "connectWindowLeftToRight"` == 1) {
+		$leftToRight = `optionVar -q "connectWindowLeftToRight"`;
+	} else {
+		optionVar -iv "connectWindowLeftToRight" $leftToRight;
+	}
+
+	string $nodes[];
+	if ($side == "-left") {
+		$nodes = `nodeOutliner -q -nodesDisplayed $leftWin`;
+	} else {
+		$nodes = `nodeOutliner -q -nodesDisplayed $rightWin`;
+	}
+
+	int $i,$numcons,$showconn = true,$count = 0;
+	string $connections[];
+	string $nodeArray[];
+	string $types[];
+	string $class[];	
+	string $nearplug,$farplug;
+	
+    if (($side == "-left" && $leftToRight == 1) ||
+		($side == "-right" && $leftToRight == 0)
+		) {
+
+		for ($node in $nodes) {
+			if($count > 0) {
+				menuItem -divider true;
+			}
+
+			catch ($connections =
+				   `listConnections -s true -d false -c true -p true $node`);
+			$numcons = size($connections);
+			
+			for ($i = 0; $i < $numcons; $i+=2) {
+				$nearplug = $connections[$i]; 
+				$farplug = $connections[$i+1];
+				tokenize($farplug, ".", $nodeArray);
+				menuItem -label ($farplug + "->" + $nearplug)
+					-c ("CWpropagateMenuCB "+$side + " " + $farplug + 
+						" " + $menu + " " + $otherMenu);
+			}
+			$count++;
+			clear $connections;
+			clear $nodeArray;
+		}
+    } else {
+        for ($node in $nodes) {
+			if($count > 0) {
+				menuItem -divider true;
+			}
+			
+			catch ($connections = 
+				   `listConnections -s false -d true -p true -c true $node`);
+			$numcons = size($connections);
+			
+			for ($i = 0; $i < $numcons; $i+=2) {
+				$nearplug = $connections[$i]; 
+				$farplug = $connections[$i+1];
+				tokenize($farplug, ".", $nodeArray);
+
+				if($nearplug == ($node + ".message")) {
+					$types = `ls -showType $nodeArray[0]`;
+					if(size($types) > 0) {
+						$class = `getClassification $types[1]`;
+						if(! ($class[0] != "" || 
+							  $types[1] == "renderGlobals" ||
+							  `objectType -isa "camera" $nodeArray[0]` ||
+							  $types[1] == "imagePlane")) {
+							$showconn = false;
+						}
+						clear $class;
+					}
+					clear $types;
+				}
+
+				if($showconn) {
+					menuItem -label ($nearplug + "->" + $farplug) -c 
+						("CWpropagateMenuCB "+$side + " " + $nodeArray[0]
+						 + " " + $menu + " " + $otherMenu);
+				}
+				$showconn = true;
+			}
+			$count++;
+			clear $connections;
+			clear $nodeArray;
+        }
+	}
+}
+
+//
+//  Procedure Name:
+//      CWpopupMenuCB
+//
+//  Description:
+//      Callback for the right mouse button popup menu on the nodeOutliner.
+//		Adds the last selected menu label to the opposite window.
+//
+//  Input Arguments:
+//		$nodeOutliner - the node outliner calling this command.
+//
+//  Return Value:
+//      None.
+//
+global proc CWpopupMenuCB(string $nodeOutliner)
+{
+	global string $leftWin, $rightWin;
+	string $cmd = "nodeOutliner -q -lastMenuChoice " + $nodeOutliner;
+	string $label = `eval $cmd`;
+	
+	if($label != "Next Available") {
+		if($nodeOutliner == $leftWin) {
+			connectWindowAddToRight $label;
+		} else {
+			connectWindowAddToLeft $label;
+		}
+	}
+}
+
+//
+//  Procedure Name:
+//      CWpropagateButtonCB
+//
+//  Description:
+//      "pages over" the connect window.  the contents of one side move
+//		to the opposite window, and a given node is loaded to the empty side.
+//		Will use the first option, if any, present in the menu
+//
+//  Input Arguments:
+//		$type - "-left" to page left, "-right" to page right.
+//		$menu - the name of the menu of the button
+//		$otherMenu - the name of the menu of the other button 
+//
+//  Return Value:
+//      None.
+//
+global proc CWpropagateButtonCB(string $type, string $menu, string $otherMenu)
+{
+	int $numItems = `popupMenu -query -numberOfItems $menu`;
+	if($numItems == 0) {
+		CWpropagateMenu $type $menu $otherMenu;
+		$numItems = `popupMenu -query -numberOfItems $menu`;
+	}
+	
+	string $items[] = `popupMenu -query -itemArray $menu`;
+	$numItems = `size $items`;
+	if($numItems > 0) {
+		string $command = `menuItem -query -command $items[0]`;
+		eval $command;
+	}
+
+	popupMenu -e -deleteAllItems $menu;
+	popupMenu -e -deleteAllItems $otherMenu;
+}
+
+global proc buildCWConfigureMenu (string $menu, string $outLinerName, string $idString)
+//
+//  Procedure Name:
+//      buildCWConfigureMenu
+//
+//  Description:
+//      Creates the menus for configuring half of the connect window
+//
+//  Input Arguments:
+//		string $menu - the name of the menu that the items will belong to.
+//		string $outLinerName - the name of the nodeOutliner to edit.
+//		string $idString - A unique key string to construct the optionVar default 
+//			string for the filter menu options. values : "Left" or "Right"
+//
+//  Return Value:
+//      None.
+//
+{
+	string $itemName;
+	// assume that the menu parent is properly set.
+	//
+	$itemName = $outLinerName + "OutputMI";
+	if(!`menuItem -exists $itemName`) {
+
+		setParent -menu $menu;
+		
+		radioMenuItemCollection ($menu + "Filters");
+
+			menuItem -label (uiRes("m_connectWindow.kShowReadable")) -p $menu -radioButton false
+				-command ("connectWindowMenuCmd " + $itemName)
+			$itemName;
+
+			$itemName = $outLinerName + "ReadOnlyMI";
+			menuItem -label (uiRes("m_connectWindow.kShowOutputsOnly")) -p $menu -radioButton false 
+				-command ("connectWindowMenuCmd " + $itemName)
+			$itemName;
+
+			$itemName = $outLinerName + "InputMI";
+			menuItem -label (uiRes("m_connectWindow.kShowInputsOnly")) -p $menu -radioButton false 
+				-command ("connectWindowMenuCmd " + $itemName)
+			$itemName;
+
+			$itemName = $outLinerName + "PublishedMI";
+			menuItem -label (uiRes("m_connectWindow.kShowPublishedOnly")) -p $menu -radioButton false 
+				-command ("connectWindowMenuCmd " + $itemName)
+			$itemName;
+
+		menuItem -p $menu -divider true;
+
+		// find the default value, if any for the non-keyable filter
+		//
+		int $menuSetVal = true;
+
+		if(`optionVar -exists ("connectWindow" + $idString + "SNK")` == 1) {
+			$menuSetVal = `optionVar -q ("connectWindow" + $idString + "SNK")`;
+		} else {
+			optionVar -iv ("connectWindow" + $idString + "SNK") $menuSetVal;
+		}
+
+		$itemName = $outLinerName + "NonKeyMI";
+		menuItem -label (uiRes("m_connectWindow.kShowNonKeyable")) -p $menu -checkBox $menuSetVal
+			-command ("connectWindowMenuCmd " + $itemName)
+		$itemName;
+
+		$menuSetVal = false;
+
+		if(`optionVar -exists ("connectWindow" + $idString + "CNO")` == 1) {
+			$menuSetVal = `optionVar -q ("connectWindow" + $idString + "CNO")`;
+		} else {
+			optionVar -iv ("connectWindow" + $idString + "CNO") $menuSetVal;
+		}
+
+		$itemName = $outLinerName + "ConOnlyMI";
+		menuItem -label (uiRes("m_connectWindow.kShowConnectedOnly")) -p $menu -checkBox $menuSetVal
+			-command ("connectWindowMenuCmd " + $itemName)
+		$itemName;
+
+		$menuSetVal = false;
+
+		if(`optionVar -exists ("connectWindow" + $idString + "SHD")` == 1) {
+			$menuSetVal = `optionVar -q ("connectWindow" + $idString + "SHD")`;
+		} else {
+			optionVar -iv ("connectWindow" + $idString + "SHD") $menuSetVal;
+		}
+
+		$itemName = $outLinerName + "HiddenMI";
+		menuItem -label (uiRes("m_connectWindow.kShowHidden")) -p $menu -checkBox $menuSetVal 
+			-command ("connectWindowMenuCmd " + $itemName)	
+		$itemName;
+
+		connectWindowValues "connectWindow";
+	}
+}
+
+global proc buildConnectContextHelpItems(string $nameRoot, string $menuParent)
+//
+//  Description:
+//		Build context sensitive menu items
+//		
+//  Input Arguments:
+//		$nameRoot - name to use as the root of all item names
+//		$menuParent - the name of the parent of this menu
+//
+//  Return Value:
+//      None
+//
+{
+	menuItem -label (uiRes("m_connectWindow.kHelpConnectionEdi"))
+		-enableCommandRepeat false
+		-command "showHelp ConnectionEditor";
+}
+
+//
+//  Procedure Name:
+//      setNodeOutlinerAttrAlphaOrder
+//
+//  Description:
+//		Sets the NodeOutliner attribute alpha order
+//
+//  Input Arguments:
+//      force - 0 = check current state, 1 = don't
+//      state - 0 = default, 1 = ascend, 2 = descend
+//
+//  Return Value:
+//      None.
+//
+global proc setNodeOutlinerAttrAlphaOrder( int $force, string $state )
+{
+
+	global string $rightWin, $leftWin;
+	global int $windowMode;
+	string $win = $windowMode==1?$leftWin:$rightWin;
+
+	//	Query the current "name" state of the node outliner.
+	//
+	string $currentAAO = `nodeOutliner -query -aao $win`;
+
+	if( ! $force ) {
+		//	Prevent changing to current setting.
+		//
+		if( $currentAAO == "default" && $state == "default" ) return;
+		if( $currentAAO == "descend" && $state == "descend" ) return;
+		if( $currentAAO == "ascend" && $state == "ascend" ) return;
+	}
+
+	optionVar -stringValue "connectWindowAttrAlphaOrder" $state;
+
+	if( $state == "default" ) {
+		if( $windowMode != 1 ){
+			nodeOutliner -e -attrAlphaOrder "default" $rightWin;
+		}
+		if( $windowMode != 2 ){
+			nodeOutliner -e -attrAlphaOrder "default" $leftWin;
+		}
+	} else if( $state == "ascend" ) {
+		if( $windowMode != 1 ){
+			nodeOutliner -e -attrAlphaOrder ascend $rightWin;
+		}
+		if( $windowMode != 2 ){
+			nodeOutliner -e -attrAlphaOrder ascend $leftWin;
+		}
+	} else {
+		if( $windowMode != 1 ){
+			nodeOutliner -e -attrAlphaOrder descend $rightWin;
+		}
+		if( $windowMode != 2 ){
+			nodeOutliner -e -attrAlphaOrder descend $leftWin;
+		}
+	}
+}
+
+//
+//  Procedure Name:
+//      setNodeOutlinerDisplayNames
+//
+//  Description:
+//		Sets the NodeOutliner long/short name flag
+//
+//  Input Arguments:
+//      force - 0 = check current state, 1 = don't
+//      state - 0 (short), 1 (nice), 2 (long)
+//
+//  Return Value:
+//      None.
+//
+global proc setNodeOutlinerDisplayNames( int $force, int $state )
+{
+	global string $rightWin, $leftWin;
+	global int $windowMode;
+	string $win = $windowMode==1?$leftWin:$rightWin;
+
+	//	Query the current "name" state of the node outliner.
+	//
+	int $longNames = `nodeOutliner -query -longNames $win`;
+	int $niceNames = `nodeOutliner -query -niceNames $win`;
+
+	if( ! $force ) {
+		//	Check for a change.
+		//
+		if( $niceNames && $state == 1 ) return;
+		if( !$niceNames && $longNames && $state == 2 ) return;
+		if( !$niceNames && !$longNames && $state == 0 ) return;
+	}
+
+	optionVar -intValue "connectWindowDisplayNamesCW" $state;
+
+	if( $state == 2 ) {
+		if( $windowMode != 1 ){
+			nodeOutliner -e -ln true -nn false $rightWin;
+		}
+		if( $windowMode != 2 ){
+			nodeOutliner -e -ln true -nn false $leftWin;
+		}
+	} else if( $state == 1 ) {
+		if( $windowMode != 1 ){
+			nodeOutliner -e -ln true -nn true $rightWin;
+		}
+		if( $windowMode != 2 ){
+			nodeOutliner -e -ln true -nn true $leftWin;
+		}
+	} else {
+		if( $windowMode != 1 ){
+			nodeOutliner -e -ln false -nn false $rightWin;
+		}
+		if( $windowMode != 2 ){
+			nodeOutliner -e -ln false -nn false $leftWin;
+		}
+	}
+}
+
+proc buildConnectWindowMenu ()
+//
+//  Procedure Name:
+//      buildConnectWindowMenu
+//
+//  Description:
+//      Creates the menus for the connection window
+//
+//  Input Arguments:
+//		None.
+//
+//  Return Value:
+//      None.
+//
+{
+	global string $rightWin, $leftWin;
+	global int $windowMode;
+	string $itemName;
+	string $tokens[];
+	int $numTokens;
+	string $noName = "nodeOutlinerName";
+	
+	// assume that the menu parent is properly set.
+	menu -label (uiRes("m_connectWindow.kOptions")) 
+		-tearOff true
+		-postMenuCommandOnce true
+		-familyImage "menuIconOptions.png";
+		if( !$windowMode ){
+			menuItem -label (uiRes("m_connectWindow.kAutoConnect")) -checkBox 1 
+				-command ("connectWindowMenuCmd autoConnectCWMI") 
+			"autoConnectCWMI";
+		}
+	setParent -menu ..;
+
+	//	short = 0, nice = 1, long = 2
+	//	( same logic as in createOutlinerPanelMenu.mel )
+	int $nameDisplay = 1;
+	string $win = $windowMode==1?$leftWin:$rightWin;
+	if (!`nodeOutliner -query -niceNames $win`) {
+		$nameDisplay = (`nodeOutliner -query -longNames $win` ? 2 : 0);
+	}
+	menuItem -label (uiRes("m_connectWindow.kChannelNames")) -subMenu true;
+		radioMenuItemCollection ("AttrNameDisplayCW");
+		menuItem -label (uiRes("m_connectWindow.kNice"))
+			-radioButton ( $nameDisplay == 1 )
+			-command ( "setNodeOutlinerDisplayNames 0  1" )
+			"niceAttrNameDisplayCW";
+		menuItem -label (uiRes("m_connectWindow.kLong"))
+			-radioButton ( $nameDisplay == 2 )
+			-command ( "setNodeOutlinerDisplayNames 0  2" )
+			"longAttrNameDisplayCW";
+		menuItem -label (uiRes("m_connectWindow.kShort"))
+			-radioButton ( $nameDisplay == 0 )
+			-command ( "setNodeOutlinerDisplayNames 0 0" )
+			"shortAttrNameDisplayCW";
+		setParent -menu ..;
+
+	string $attrAlphaOrder = `nodeOutliner -query -attrAlphaOrder $win`;
+	menuItem -label (uiRes("m_connectWindow.kAttrAlphaOrder")) -subMenu true;
+		radioMenuItemCollection ("AttributeAlphaOrderCW");
+		menuItem -label (uiRes("m_connectWindow.kAttrAlphaDefault"))
+			-radioButton ($attrAlphaOrder == "default")
+			-command ("setNodeOutlinerAttrAlphaOrder 0 \"default\"" )
+			"attrAlphaOrderCWDefault";
+		menuItem -label (uiRes("m_connectWindow.kAttrAlphabeticalAscend"))
+			-radioButton ($attrAlphaOrder == "ascend")
+			-command ("setNodeOutlinerAttrAlphaOrder 0 ascend" )
+			"attrAlphaOrderCWAscend";
+		menuItem -label (uiRes("m_connectWindow.kAttrAlphabeticalDescend"))
+			-radioButton ($attrAlphaOrder == "descend")
+			-command ("setNodeOutlinerAttrAlphaOrder 0 descend" )
+			"attrAlphaOrderCWDescend";
+	setParent -menu ..;
+
+	string $label;
+	if( $windowMode ){
+		$label = (uiRes("m_connectWindow.kDisplay"));
+	}
+	if( $windowMode != 2 ){
+		if( $windowMode == 0 ){
+			$label = (uiRes("m_connectWindow.kLeftDisplay"));
+		}
+		tokenize ($leftWin, "|", $tokens);
+		$numTokens = `size $tokens`;
+		if($numTokens > 0) {
+			$numTokens--;
+			$noName = $tokens[$numTokens];
+		}
+		menu -label $label 
+			-tearOff true 
+			-postMenuCommandOnce true
+			-postMenuCommand ("buildCWConfigureMenu leftSideCWM " + $noName + " Left") 
+			-familyImage "menuIconLeftSideFilters.png"
+			leftSideCWM;
+		setParent -menu ..;
+	}
+
+	if( $windowMode != 1 ){
+		if( $windowMode == 0 ){
+			$label = (uiRes("m_connectWindow.kRightDisplay"));
+		}
+		tokenize ($rightWin, "|", $tokens);
+		$numTokens = `size $tokens`;
+		if($numTokens > 0) {
+			$numTokens--;
+			$noName = $tokens[$numTokens];
+		}
+		menu -label $label
+			-tearOff true 
+			-postMenuCommandOnce true
+			-postMenuCommand ("buildCWConfigureMenu rightSideCWM " + $noName + " Right") 
+			-familyImage "menuIconRightSideFilters.png"
+			rightSideCWM;
+		setParent -menu ..;
+	}
+
+	if( !$windowMode ){
+		//	Adds support for the Context Sensitive Help Menu.
+		//
+		addContextHelpProc "connectWindow" "buildConnectContextHelpItems";
+
+		doHelpMenu "connectWindow" "connectWindow";
+
+		connectWindowValues "connectWindow";
+	}
+}
+
+global proc populateConnectWindow ()
+{
+	string $selection[] = `ls -sl`;
+	int $numSel = `size $selection`;
+
+	// if none return
+	if( $numSel == 0 )
+		return;
+
+	// if one just add it to the left side ...
+	if( $numSel == 1 ) {
+		select -replace $selection[0];
+		connectWindowFillFromActiveList 0;	// left side
+		select -replace $selection;
+	}
+	// else there are two or more so just take the first two ...
+	else {
+		select -replace $selection[0];
+		connectWindowFillFromActiveList 0;	// left side
+		select -replace $selection;
+		select -toggle $selection[0];
+		connectWindowFillFromActiveList 1;	// right side
+		select -toggle $selection[0]; 
+	}
+}
+
+global proc connectWindow (	int $selectOutput, string $outputPlug,
+							string $command)
+//
+//  Procedure Name:
+//      connectWindow
+//
+//  Description:
+//      Creates a window with some buttons and two node outliners,
+//		Connected and separately configured
+//
+//  Input Arguments:
+//		$selectOutput:	True iff we want to be in modal mode for selecting an
+//						output attribute
+//		$outputPlug:	If non-empty, we want to be in modal mode for selecting
+//						an input attribute that is compatible with the given
+//						output plug.
+//		$command:		Post command to execute in modal mode. If supplied, it
+//						should have one parameter encoded as "%attr", which
+//						will be replace with the selected input plug if
+//						connectWindow was called with a valid argument for
+//						$outputPlug. Mandatory in modal mode.
+//
+//  Return Value:
+//      None.
+//
+{
+	global string $rightWin;
+	global string $leftWin;
+	global int $windowMode;
+	// This window can be in three modes:
+	//	0	- normal connection editor mode
+	//	1	- left window only modal mode (for selecting an output attribute)
+	//	2	- right window only modal mode (for selecting an input attribute)
+	//
+	int $leftWinOnly = $selectOutput;
+	int $rightWinOnly = $outputPlug != "";
+	$windowMode = $leftWinOnly?1:($rightWinOnly?2:0);
+	if( $windowMode ){
+		if( $command == "" ){
+			// We're modal, but no post command was supplied, so we bail
+			//
+			return;
+		} else {
+			global string $postCommand;
+			$postCommand = $command;
+		}
+	}
+
+	string $connectWindow = $windowMode?"connectWindowModal":"connectWindow";
+	string $otherWindow = $windowMode?"connectWindow":"connectWindowModal";
+	if( `window -exists $otherWindow`){
+		deleteUI $otherWindow;
+	}
+
+	string $windowLabel;
+	if( $windowMode == 1 ){
+		$windowLabel = (uiRes("m_connectWindow.kOutputSelector"));
+	} else if( $windowMode == 2 ){
+		$windowLabel = (uiRes("m_connectWindow.kInputSelector"));
+	} else {
+		$windowLabel = (uiRes("m_connectWindow.kConnectionEditor"));
+	}
+	if(`window -exists $connectWindow`) {
+		connectWindowClearCmd;
+
+		populateConnectWindow;
+		showWindow $connectWindow;
+	} else {
+		window -rtf 0 -h 620 -w 520 
+			-title $windowLabel
+			-iconName (uiRes("m_connectWindow.kConnection"))
+			$connectWindow;
+
+		string $aTab = `menuBarLayout tl`;
+		
+			string $aForm = `formLayout -p $aTab cwForm`;
+
+				int $modal;
+				if( !$windowMode ){
+					$modal = false;
+					int $autoConnect = true;
+						
+					if(`optionVar -exists "connectWindowAutoConnect"` == 1) {
+						$autoConnect = `optionVar -q "connectWindowAutoConnect"`;
+					} else {
+						optionVar -iv "connectWindowAutoConnect" $autoConnect;
+					}
+							
+					if($autoConnect == 0) {
+						$modal = true;
+					}
+
+					string $leftActiveBtn = `button -label (uiRes("m_connectWindow.kReloadLeftButton")) -p $aForm 
+					-c "connectWindowFillFromActiveList 0" 
+					-annotation (uiRes("m_connectWindow.kReplaceLeftContentsAnnot"))
+							fillLeft`;
+
+					string $rightActiveBtn = `button -label (uiRes("m_connectWindow.kReloadRightButton")) -p $aForm 
+					-annotation (uiRes("m_connectWindow.kReplaceRightContentsAnnot"))
+					 -c "connectWindowFillFromActiveList 1" 
+							 fillRight`;
+				}
+
+				string $labelForm = `formLayout labelForm`;
+					string $inputText;
+					string $outputText;
+					string $switchBut;
+					if( !$leftWinOnly ){
+						$inputText = `text -p $labelForm -label (uiRes("m_connectWindow.kInputsForm")) 
+											-al "center" inputText`;
+					}
+					if( !$rightWinOnly ){
+						$outputText = `text -p $labelForm -label (uiRes("m_connectWindow.kOutputsForm")) 
+											 -al "center" outputText`;
+
+					}
+					if( !$windowMode ){
+						$switchBut = `button -p $labelForm -label (uiRes("m_connectWindow.kFromToButtonText")) 
+											-annotation (uiRes("m_connectWindow.kChangetoconnectAnnot"))
+											switchBut`;
+						button -e -c ("connectWindowSwitchCmd "+ $switchBut) $switchBut;
+					}
+				setParent ..;
+
+				if( $rightWinOnly ){
+					formLayout -e 
+						-af inputText "top" 1
+						-af inputText "bottom" 1
+						-ap inputText "right" -50 75
+						
+					$labelForm;
+				} else if( $leftWinOnly ){
+					formLayout -e 
+						-af outputText "top" 1 
+						-af outputText "bottom" 1
+						-ap outputText "left" -50 25
+
+					$labelForm;
+				} else {
+					formLayout -e 
+						-af inputText "top" 1
+						-af inputText "bottom" 1
+						-ap inputText "right" -50 75
+						
+						-af switchBut "top" 1
+						-af switchBut "bottom" 1
+						-ap switchBut "right" 0 65
+						-ap switchBut "left" 0 35
+
+						-af outputText "top" 1 
+						-af outputText "bottom" 1
+						-ap outputText "left" -50 25
+
+					$labelForm;
+				}
+
+				string $connectPane;
+				if( $windowMode ){
+					$connectPane = `paneLayout -configuration "single" 
+										  -height 300 -paneSize 1 100 100 
+										  connectWindowPane`;
+				} else {
+					$connectPane = `paneLayout -configuration "vertical2" 
+										  -separatorThickness 5 -height 300 -paneSize 1 50 100 
+										  -paneSize 1 50 100
+										  connectWindowPane`;
+				}
+
+					if( !$rightWinOnly ){
+						// get some value defaults for the left side nodeOutliner.
+						//
+						int $defaultSNK = true;
+						int $defaultCNO = false;
+						int $defaultSHD = false;
+						int $defaultSP = false;
+
+						if(`optionVar -exists ("connectWindowLeftSNK")` == 1) {
+							$defaultSNK = `optionVar -q ("connectWindowLeftSNK")`;
+						} else {
+							optionVar -iv ("connectWindowLeftSNK") $defaultSNK;
+						}
+
+						if(`optionVar -exists ("connectWindowLeftCNO")` == 1) {
+							$defaultCNO = `optionVar -q ("connectWindowLeftCNO")`;
+						} else {
+							optionVar -iv ("connectWindowLeftCNO") $defaultCNO;
+						}
+
+						if(`optionVar -exists ("connectWindowLeftSHD")` == 1) {
+							$defaultSHD = `optionVar -q ("connectWindowLeftSHD")`;
+						} else {
+							optionVar -iv ("connectWindowLeftSHD") $defaultSHD;
+						}
+
+						if(`optionVar -exists ("connectWindowLeftSP")` == 1) {
+							$defaultSP = `optionVar -q ("connectWindowLeftSP")`;
+						} else {
+							optionVar -iv ("connectWindowLeftSP") $defaultSP;
+						}
+
+
+						$leftWin = `nodeOutliner -showOutputs true 	//configured for inputs
+									 -addCommand "connectWindowSetLeftLabel %node"
+									 -showNonConnectable false  // like it says
+									 -showConnectedOnly $defaultCNO  // like it says
+									 -showNonKeyable $defaultSNK // like it says
+									 -showHidden  $defaultSHD // like it says
+									 -showPublished  $defaultSP // like it says
+									 -ms 0 			//multiple select disallowed
+									 leftSideCW`;
+
+							nodeOutliner -e 
+							-menuCommand ("CWpopupMenuCB " + $leftWin)
+						$leftWin;
+					}
+
+					if( !$leftWinOnly ){
+						// get some value defaults for the right side nodeOutliner.
+						//
+						$defaultSNK = true;
+						$defaultCNO = false;
+						$defaultSHD = false;
+						$defaultSP = false;
+
+						if(`optionVar -exists ("connectWindowRightSNK")` == 1) {
+							$defaultSNK = `optionVar -q ("connectWindowRightSNK")`;
+						} else {
+							optionVar -iv ("connectWindowRightSNK") $defaultSNK;
+						}
+
+						if(`optionVar -exists ("connectWindowRightCNO")` == 1) {
+							$defaultCNO = `optionVar -q ("connectWindowRightCNO")`;
+						} else {
+							optionVar -iv ("connectWindowRightCNO") $defaultCNO;
+						}
+
+						if(`optionVar -exists ("connectWindowRightSHD")` == 1) {
+							$defaultSHD = `optionVar -q ("connectWindowRightSHD")`;
+						} else {
+							optionVar -iv ("connectWindowRightSHD") $defaultSHD;
+						}
+
+						if(`optionVar -exists ("connectWindowRightSP")` == 1) {
+							$defaultSP = `optionVar -q ("connectWindowRightSP")`;
+						} else {
+							optionVar -iv ("connectWindowRightSP") $defaultSP;
+						}
+
+						$rightWin = `nodeOutliner -showInputs true 	//configured for inputs
+									 -addCommand "connectWindowSetRightLabel %node"
+									 -showNonConnectable false // like it says
+									 -showConnectedOnly $defaultCNO  // like it says
+									 -showNonKeyable $defaultSNK // like it says
+									 -showHidden  $defaultSHD // like it says
+									 -showPublished  $defaultSP // like it says
+									 -ms true 			//multiple select allowed
+									 rightSideCW`;
+
+							nodeOutliner -e 
+							-menuCommand ("CWpopupMenuCB " + $rightWin)
+							$rightWin;
+						if( $rightWinOnly ){
+							string $connectivityPlug = $outputPlug;
+							if(`plugAttr $outputPlug` == ""){
+								// Find a suitable output plug, that is, a
+								// triple, since that's the default choice in
+								// TattributeMenuAction::finishMenu if no
+								// attribute is specified on the source plug
+								// (i.e., in this exact case)
+								//
+								string $outputNode = `plugNode $outputPlug`;
+								string $attrs[]=`listAttr -output -readOnly $outputNode`;
+
+								int $index=0;
+								int $numAttrs = size($attrs);
+								while( $index < $numAttrs ){
+									string $plug = $outputNode + "." +$attrs[$index];
+									string $attrType = `getAttr -type $plug`;
+									if( $attrType == "float3" ){
+										$connectivityPlug = $plug;
+										break;
+									}
+									$index++;
+								}
+							}
+							if( $connectivityPlug != "" ){
+								nodeOutliner -e -c $connectivityPlug $rightWin;
+							} else {
+								nodeOutliner -e -nc $rightWin;
+							}
+						}
+					}
+
+					int $leftToRight = 1;
+					string $leftLabel, $rightLabel;
+					if( $leftWinOnly ){
+						nodeOutliner -e 
+							-selectCommand ("modalNodeOutlinerOutputsCmd " + $leftWin )
+						$leftWin;
+						$leftLabel = (uiRes("m_connectWindow.kOutputsOnlyLabel"));
+					} else if( $rightWinOnly ){
+						nodeOutliner -e -selectCommand 
+							("modalNodeOutlinerInputsCmd " + $rightWin )
+						$rightWin;
+						$rightLabel = (uiRes("m_connectWindow.kInputsOnlyLabel"));
+
+					} else {
+						
+						if(`optionVar -exists "connectWindowLeftToRight"` == 1) {
+							$leftToRight = `optionVar -q "connectWindowLeftToRight"`;
+						} else {
+							optionVar -iv "connectWindowLeftToRight" $leftToRight;
+						}
+
+						if($leftToRight == 1) {
+							// just need to set commands
+							button -e -label (uiRes("m_connectWindow.kFromToButton")) $switchBut;						
+							nodeOutliner -e 
+								-selectCommand ("nodeOutlinerOutputsCmd " + $leftWin + " " + $rightWin )
+							$leftWin;
+
+							nodeOutliner -e -pressHighlightsUnconnected false -selectCommand 
+								("nodeOutlinerInputsCmd " + $leftWin + " " + $rightWin +
+								"; nodeOutliner -e -r " + $rightWin)
+							$rightWin;
+
+							$leftLabel = (uiRes("m_connectWindow.kOutputsLabel"));
+							$rightLabel = (uiRes("m_connectWindow.kInputsLabel"));
+						} else {
+							// need to reconfigure the listers as well as set the commands
+							text -e -label (uiRes("m_connectWindow.kOutputsText")) $inputText;
+							text -e -label (uiRes("m_connectWindow.kInoutsText")) $outputText;
+							button -e -label (uiRes("m_connectWindow.kToFronButton")) $switchBut;
+
+							nodeOutliner -e -showInputs false -showOutputs true
+								-selectCommand ("nodeOutlinerOutputsCmd " + $rightWin + " " + $leftWin)
+								$rightWin;
+							nodeOutliner -e -pressHighlightsUnconnected false -showInputs true 
+								-showOutputs false -selectCommand 
+								("nodeOutlinerInputsCmd " + $rightWin + " " + $leftWin + 
+								"; nodeOutliner -e -r " + $leftWin )
+								$leftWin;
+
+							$leftLabel = (uiRes("m_connectWindow.kInputsTextLabel"));
+							$rightLabel = (uiRes("m_connectWindow.kOutputsTextLabel"));
+						}
+					}
+					
+				setParent ..;
+					
+				string $labelForm2 = `formLayout labelForm2`;
+					if( !$leftWinOnly ){
+						global string $connectWinRightLabel;
+						$connectWinRightLabel 
+							= `text -label $rightLabel -p $labelForm2 -al "center" connectWinRightLabel`;
+					}
+					
+					if( !$rightWinOnly ){
+						global string $connectWinLeftLabel;
+						$connectWinLeftLabel 
+							= `text -label $leftLabel -p $labelForm2 -al "center" connectWinLeftLabel`;
+					}
+
+					if( !$windowMode ){
+						// page left/right buttons
+						string $buttonName = `button -label "<" -p $labelForm2 -width 10
+											 -annotation (uiRes("m_connectWindow.kMoveRighttoLeftAnnot")) 
+											 pageLeft`;
+						string $buttonName2 = `button -label ">" -p $labelForm2 -width 10
+											  -annotation (uiRes("m_connectWindow.kMoveLefttoRightAnnot")) 
+											  pageRight`;
+						// menus for the button
+						string $menuName = `popupMenu -parent pageLeft leftPropagateMenu`;
+						string $menuName2 = `popupMenu -parent pageRight rightPropagateMenu`;
+
+						popupMenu -e -postMenuCommand 
+							("CWpropagateMenu -left " + $menuName + " " + $menuName2 ) 
+							$menuName;
+						button -e -c 
+							("CWpropagateButtonCB -left " + $menuName + " " + $menuName2 ) 
+							$buttonName;
+						popupMenu -e -postMenuCommand 
+							("CWpropagateMenu -right " + $menuName2 + " " + $menuName ) 
+							$menuName2;
+						button -e -c 
+							("CWpropagateButtonCB -right " + $menuName2 + " " + $menuName ) 
+							$buttonName2;
+
+						separator buttonSep;
+					}
+
+				setParent ..;
+	
+				if( $leftWinOnly ){
+					formLayout -e 
+		
+						-af connectWinLeftLabel "top" 1
+						-af connectWinLeftLabel "bottom" 8
+						-ap connectWinLeftLabel "left" -50 25
+
+					$labelForm2;
+				} else if( $rightWinOnly ){
+					formLayout -e 
+		
+						-af connectWinRightLabel "top" 1
+						-af connectWinRightLabel "bottom" 8
+						-ap connectWinRightLabel "right" -50 75
+
+					$labelForm2;
+				} else {
+					formLayout -e 
+		
+						-af buttonSep "left" 0
+						-af buttonSep "right" 0
+						-af buttonSep "bottom" 5
+
+						-af connectWinLeftLabel "top" 1
+						-af connectWinLeftLabel "bottom" 8
+						-ap connectWinLeftLabel "left" -50 25
+
+						-an pageRight "top" 
+						-af pageRight "bottom" 8
+						-ap pageRight "left" 0 50
+						-ap pageRight "right" 0 54
+		
+						-an pageLeft "top" 
+						-af pageLeft "bottom" 8
+						-ap pageLeft "left" 0 45
+						-ap pageLeft "right" 0 49
+
+						-af connectWinRightLabel "top" 1
+						-af connectWinRightLabel "bottom" 8
+						-ap connectWinRightLabel "right" -50 75
+
+					$labelForm2;
+				}
+
+				if( !$windowMode ){
+					// and four more buttons at the bottom
+					button -label (uiRes("m_connectWindow.kClearAll")) -p $aForm 
+						-annotation (uiRes("m_connectWindow.kRemoveevrythingAnnot"))
+						-c "connectWindowClearCmd" clear;
+					button -label (uiRes("m_connectWindow.kRemove")) -p $aForm 
+						-annotation (uiRes("m_connectWindow.kRemhighlightedAnnot"))
+						-c "connectWindowRemoveCmd" nuke;
+					button -label (uiRes("m_connectWindow.kBreak")) -p $aForm -enable $modal 
+						-annotation (uiRes("m_connectWindow.kBreakhighlightedAnnot"))
+						-c "connectWindowBreakCmd" dis;
+					button -label (uiRes("m_connectWindow.kMake")) -p $aForm -enable $modal
+						-annotation (uiRes("m_connectWindow.kConnectAnnot"))
+						-c "connectWindowMakeCmd" con;
+					button -label (uiRes("m_connectWindow.kClose")) -p $aForm 
+						-annotation (uiRes("m_connectWindow.kCloseAnnot"))
+						-c ("deleteUI " + $connectWindow) closeBtn;
+				}
+
+			setParent ..;
+		setParent ..;
+
+		// set the attachments
+		int $active = 0;
+				
+		if(`optionVar -exists "connectWindowActive"` == 1) {
+			$active = `optionVar -q "connectWindowActive"`;
+		} else {
+			optionVar -iv "connectWindowActive" $active;
+		}
+
+		if( $windowMode ){
+			formLayout -e 
+				-af labelForm "top" 1
+				-af labelForm "left" 1
+				-af labelForm "right" 1
+
+				-ac connectWindowPane "top" 1 labelForm
+				-af connectWindowPane "left" 1
+				-af connectWindowPane "right" 1
+				-ac connectWindowPane "bottom" 0 labelForm2
+
+				-an labelForm2 "top" 
+				-af labelForm2 "left" 1
+				-af labelForm2 "right" 1
+				-af labelForm2 "bottom" 1
+
+			$aForm;
+		} else {
+			formLayout -e 
+				-af fillLeft "top" 1
+				-ap fillLeft "right" 0 49
+				-af fillLeft "left" 1
+
+				-af fillRight "top" 1
+				-ap fillRight "left" 0 49
+				-af fillRight "right" 1
+
+				-ac labelForm "top" 1 fillLeft
+				-af labelForm "left" 1
+				-af labelForm "right" 1
+
+				-ac connectWindowPane "top" 1 labelForm
+				-af connectWindowPane "left" 1
+				-af connectWindowPane "right" 1
+				-ac connectWindowPane "bottom" 0 labelForm2
+
+				-an labelForm2 "top" 
+				-af labelForm2 "left" 1
+				-af labelForm2 "right" 1
+				-ac labelForm2 "bottom" 0 clear
+
+				-an clear "top"
+				-af clear "left" 5
+				-ap clear "right" 3 20
+				-af clear "bottom" 5
+
+				-an nuke "top"
+				-ap nuke "left" 2 20 
+				-ap nuke "right" 3 40
+				-af nuke "bottom" 5
+
+				-an dis "top"
+				-ap dis "left" 3 40
+				-ap dis "right" 2 60
+				-af dis "bottom" 5
+
+				-an con "top"
+				-ap con "left" 2 60
+				-ap con "right" 3 80
+				-af con "bottom" 5
+
+				-an closeBtn "top"
+				-ap closeBtn "left" 2 80
+				-af closeBtn "right" 5
+				-af closeBtn "bottom" 5
+			$aForm;
+		}
+		
+		buildConnectWindowMenu;
+
+		populateConnectWindow;
+
+		string $attrSortStyle = "default";
+		if(`optionVar -exists "connectWindowAttrAlphaOrder"` == 1) {
+			$attrSortStyle = `optionVar -q "connectWindowAttrAlphaOrder"`;
+		} else {
+			optionVar -stringValue "connectWindowAttrAlphaOrder" $attrSortStyle;
+		}
+		setNodeOutlinerAttrAlphaOrder( 1, $attrSortStyle );
+
+		int $nameDisplay = 2;
+		if(`optionVar -exists "connectWindowDisplayNamesCW"` == 1) {
+			$nameDisplay = `optionVar -q "connectWindowDisplayNamesCW"`;
+		} else {
+			optionVar -iv "connectWindowDisplayNamesCW" $nameDisplay;
+		}
+		setNodeOutlinerDisplayNames( 1, $nameDisplay );
+
+		scriptJob -parent $connectWindow -event "NewSceneOpened" "connectWindowClearCmd;";
+
+		showWindow $connectWindow;
+
+		// restore the parent window so next controls made
+		// don't get added to the connect Window
+		//
+		setParent ..;
+	}
+}

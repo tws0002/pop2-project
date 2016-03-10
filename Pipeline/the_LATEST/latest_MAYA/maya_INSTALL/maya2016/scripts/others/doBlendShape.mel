@@ -1,0 +1,404 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  June, 1997
+//
+//  Description:
+//      This script assembles one or more commands to perform blendShape
+//		creation or editing operations.
+//
+
+global proc int findBlendShapeConn(string $blendShapeNode,
+								   string $lp1[])
+
+//
+//	Description:
+//		Utility method used by swapBlendShapeTargets to find which
+//		plug in the $lp1 string array is a plug on the specified
+//		blendShape node.
+//
+//	Return value: -1 if plug is not found, else index of found plug
+//
+{
+	int $ii;
+	int $result = -1;
+	string $buff[];
+	for ($ii = 0; $ii < size($lp1); $ii++) {
+		tokenize($lp1[$ii],".",$buff);
+		if (size($buff) && $buff[0] == $blendShapeNode) {
+			$result = $ii;
+			break;
+		}
+	}
+	return $result;
+}
+
+proc string targetAttribute(string $target)
+//
+// Description:
+//  Return a string that corresponds to the world-space output attribute
+//  for the target.
+//
+{
+	string $targetShape = $target;
+	string $isTransform[] = `ls -type transform $target`;
+	if (size($isTransform)) {
+		string $rels[] = `listRelatives -type controlPoint -ni -pa $target`;
+		if (size($rels)) {
+			$targetShape = $rels[0];
+		}
+	}
+
+	string $futureAttr;
+	string $nt = `nodeType $targetShape`;
+	if      ($nt == "mesh")         { $futureAttr = ".w[0]";  }
+	else if ($nt == "nurbsSurface")	{ $futureAttr = ".ws[0]"; }
+	else if ($nt == "subdiv")		{ $futureAttr = ".ws[0]"; }	
+	else if ($nt == "nurbsCurve") 	{ $futureAttr = ".ws[0]"; }
+	else if ($nt == "lattice")		{ $futureAttr = ".wl[0]"; }
+	string $result = ($targetShape+$futureAttr);
+	return $result;
+}
+
+global proc	int swapBlendShapeTargets(int $bsp,
+									  string $blendShapeNode,
+									  string $target1,
+									  string $target2)
+//
+// Method: swapBlendShapeTargets
+//
+// Arguments:
+//		int $bsp (whether or not the blendShape was specified)
+//		string $blendShapeNode (the blendShape node, if $bsp == true)
+//		string $target1 (1st target to swap)
+//		string $target2 (2nd target to swap)
+//
+// Return: 0 if error occurs, else 1
+//
+{
+	string $node = $blendShapeNode;
+
+	string $attr  = targetAttribute($target1);
+	string $attr2 = targetAttribute($target2);
+
+	string $lp1[]=`listConnections -p true -t blendShape $attr`;
+	string $lp2[]=`listConnections -p true -t blendShape $attr2`;
+
+	// if one of the targets is not connected, return an error
+	//
+	if (size($lp1) == 0 || size($lp2) == 0) {
+		string $errString;
+		string $errFormat = (uiRes("m_doBlendShape.kNotATarget"));
+		if (size($lp1) == 0) {
+			$errString = `format -stringArg $target1 $errFormat`;
+		}
+		if (size($lp2) == 0) {
+			$errString = `format -stringArg $target2 $errFormat`;
+		}
+		error($errString);
+		return 0;
+	}
+	
+	string $conn1 = $lp1[0];
+	string $conn2 = $lp2[0];
+
+	// one of the targets is a target for > 1 blendShape
+	//
+	if (size($lp1) > 1 || size($lp2) > 1)
+	{
+		if (! $bsp) {
+			error( (uiRes("m_doBlendShape.kMustSpecifyBlendShape")));
+			return 0;
+		} else {
+			// verify that the specified blendShape is attached to both
+			// of these targets
+			//
+			int $which = findBlendShapeConn($blendShapeNode,$lp1);
+			string $errFormat = (uiRes("m_doBlendShape.kNotATargetOnBlendShape"));
+			if ($which == -1) {
+				$errString = `format -stringArg $target1 -stringArg $blendShapeNode $errFormat`;
+				error($errString);
+				return 0;
+			}
+			$conn1 = $lp1[$which];
+			
+			$which = findBlendShapeConn($blendShapeNode,$lp2);
+			if ($which == -1) {
+				$errString = `format -stringArg $target2 -stringArg $blendShapeNode $errFormat`;
+				error($errString);
+				return 0;
+			}
+			$conn2 = $lp2[$which];
+		}
+		$node = $blendShapeNode;
+	} else {
+		// verify that the target shapes are both on the same blendShape
+		//
+		string $buff1[], $buff2[];
+		tokenize($conn1,".",$buff1);
+		tokenize($conn2,".",$buff2);
+		if (0 == size($buff1) || 0 == size($buff2) || $buff1[0]!=$buff2[0])
+		{
+			error( (uiRes("m_doBlendShape.kTargetShapesOnDiff")));
+			return 0;
+		}
+		$node = $buff1[0];
+	}
+
+	// form the command to swap the targets
+	//
+	string $cmd = "disconnectAttr " + $attr +  " "  +  $conn1 +
+		";disconnectAttr " + $attr2 + " "  +  $conn2 +
+		";connectAttr  "   + $attr +  " "  +  $conn2 +
+		";connectAttr  "   + $attr2 + " "  +  $conn1 + ";";
+
+	// determine the blendShape indices in order to swap the target
+	// attribute alias names
+	//
+	int $index1 = bsTargetIndex($conn1);
+	int $index2 = bsTargetIndex($conn2);
+	if ($index1 == -1 || $index2 == -1) {
+		warning( (uiRes("m_doBlendShape.kCouldntDetermine")));
+	} else if ($index1 != $index2) {
+		string $alias1 = `aliasAttr -q ($node+".w["+$index1+"]")`;
+		string $alias2 = `aliasAttr -q ($node+".w["+$index2+"]")`;
+
+		// form the command to swap the attribute aliases
+		//
+		if (size($alias1) && size($alias2)) {
+			$cmd += ("aliasAttr -rm "+($node+"."+$alias1)+";");
+			$cmd += ("aliasAttr -rm "+($node+"."+$alias2)+";");
+			$cmd += ("aliasAttr "+$alias2+" "+($node+".w["+$index1+"];"));
+			$cmd += ("aliasAttr "+$alias1+" "+($node+".w["+$index2+"];"));
+		}
+	}
+	
+	if (catch(evalEcho($cmd))) {
+		undo;
+	}
+	return 1;
+}
+
+global proc  doBlendShape(int $mode,
+						  int $tween,
+						  int $top,
+						  int $bsp,
+						  string $bsn,
+						  int $bstp,
+						  string $bstn,
+						  float $bstw,
+						  int $deltgt)
+//
+//  Input Arguments:
+//		int $mode (1 == add, 3 == remove, 2 == swap)
+//		int $tween (whether or not we are in in-between mode)
+//		int $top (whether or not to check topology)
+//		int $bsp (whether or not the blendShape was specified)
+//		string $bsn (blendShape node, if it was specified)
+//		int $bstp (whether or not the blendShapeTarget was specified)
+//		int $bstn (target name, if it was specified)
+//		float $bstw (target weight, if target was specified)
+//		int $deltgt (whether or not to delete the targets)
+//
+//  Return Value:
+//      None.
+//
+{
+	string $sel[]=`ls -sl`;
+	int $cnt = size($sel);
+
+	if ($cnt == 0)
+	{
+		// at a minimum the base shape on the blendShape must be selected
+		//
+		error( (uiRes("m_doBlendShape.kMustSelectBase")));
+		return;
+	}
+
+	if ($cnt == 1) {
+		// error: no target is specified and none is selected
+		//
+		if (!$bstp || size($bstn) == 0) {
+			error ( (uiRes("m_doBlendShape.kMustSelectBoth")));
+			return;
+		}
+
+		$sel[1] = $sel[0];
+		$sel[0] = $bstn;
+		$cnt = 2;
+	}
+
+	// if mode == swap or mode == add  and the number of selected objects
+	// is 1 ...
+	//
+	if ($cnt < 2 && $mode!=3)
+	{
+		if ($deltgt)
+		{
+			if (!$bsp || $bsn=="")
+			{
+				// if no blendShape was specified, it must be selected
+				//
+				$bsn=$sel[$cnt-1];
+			}
+			
+			if (nodeType($bsn) != "blendShape") {
+				error( (uiRes("m_doBlendShape.kMustSelectBlendShapeNode")));
+				return;
+			}
+
+			// delete all the targets from the blendShape
+			//
+			string $tgts[]=`blendShape -q -t $bsn`;
+			string $delc = "delete ";
+			for ($tg in $tgts)
+				$delc += ($tg + " ");
+			evalEcho $delc;
+		}
+		else
+		{
+			error ( (uiRes("m_doBlendShape.kSpecifyAtLeast")));
+		}
+		return;
+	}
+
+	$cmd = "blendShape -e ";
+
+	// check topology 
+	//
+	if (!$top)
+	{
+		$cmd += (" -tc " + $top);
+	}		
+
+	if (!$bsp || $bsn=="")
+	{
+		$bsn=$sel[$cnt-1];
+	}
+
+	// if blendShape node was not specified let the 
+    // last sel item (an aux. object) be used so that
+    // the deformer command can try and figure out the 
+    // blendShape node from it.
+
+
+	// add target mode
+	//
+	if ($mode==1)
+	{
+		int $wc=`blendShape -q -wc $bsn`;
+	    if ($tween) {
+		  if ($bstp) {
+			  if ($tween > $wc) {
+				error( (uiRes("m_doBlendShape.kInbetweenIndex")));
+				return;
+			  }
+			  $wc = $tween-1;
+			  $cmd += " -ib";
+		  } else {
+			  error( (uiRes("m_doBlendShape.kMustSpecifyTargetToAdd")));
+			  return;
+		  }
+
+		  // find the multiIndex that corresponds to this logical index
+		  //
+		  int $mi = bsMultiIndexForTarget($bsn,$wc);
+		  if (-1 != $mi) {
+			  $wc = $mi;
+		  }
+		} else {
+			// find the multiIndex of the next available target
+			//			
+			if ($wc > 0) {
+				int $mi = bsMultiIndexForTarget($bsn,$wc-1);
+				if (-1 != $mi) {
+					$wc = $mi+1;
+				}
+			}
+		}
+		
+		for ($i=0;$i<$cnt-1;$i++)
+		{
+			if (!$tween)
+			{
+				$cmd +=(" -t " + $sel[$cnt-1] + " " + ($wc+$i) +" " + 
+					$sel[$i] + " 1"); 
+			}
+			else
+			{
+			    float $ib;
+			    if ($cnt == 2) {
+				  $ib = $bstw;
+			    } else {
+				  $ib = $bstw*($i+1);
+			    }
+				$cmd +=(" -t " + $sel[$cnt-1] + " " + $wc +" " + 
+						$sel[$i] + " "+$ib);
+			}
+		}
+		$cmd +=" "+ $bsn;
+	}
+	// remove target mode
+	//
+	else if ($mode==3)
+	{
+		int $wc=`blendShape -q -wc $bsn`;
+		$cmd += " -rm";
+
+		for ($i=0;$i<=$cnt-1;$i++)
+		{
+			$cmd +=(" -t " + $sel[$cnt-1] + " " + $wc + " " + 
+					$sel[$i] + " 1"); 
+		}
+		$cmd +=" "+ $bsn;
+	}
+	// swap target mode
+	//
+	else if ($mode==2)
+	{
+		if (size($sel)!=2)
+		{
+			error((uiRes("m_doBlendShape.kSpecifyTwoTargets")));
+			return;
+		}
+		else
+		{
+			swapBlendShapeTargets($bsp,$bsn,$sel[0],$sel[1]);
+			return;
+		}
+	}
+	evalEcho($cmd);
+
+	// delete the targets if requested
+	//
+	if ($deltgt) {
+		string $tgts[]=`blendShape -q -t $bsn`;
+		string $delc = "delete ";
+		for ($tg in $tgts)
+			$delc += ($tg + " ");
+		evalEcho $delc;
+	}
+	return;
+}
+
+

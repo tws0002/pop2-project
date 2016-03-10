@@ -1,0 +1,410 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  26 Feb 1996
+//
+//  Description:
+//      This procedure fills the history popup
+
+proc string fillOutSection( string $chain[], string $itemsMenu[],
+							int $doTheMenu, int $maxItems )
+{
+	string $cmdString = "";
+	string $nt, $item, $each, $label;
+	string $list[];
+	int $n, $cntr, $lineCntr;
+
+	int $moreSubs = 0;
+	int $subs = 0;
+
+	$cntr = size($itemsMenu);
+	$lineCntr = $cntr;
+	for( $item in $chain ) {
+
+        if(`objectType -isa animBlendNodeBase $item` == 1)
+            continue;
+	
+		if( (1 == $doTheMenu) && ($lineCntr > $maxItems) ) {
+			$moreSubs += 1;
+			menuItem -label (uiRes("m_historyPopupFill.kMore")) 
+			  -subMenu true
+			  -to true
+			  -aob true
+			  ("SESMM" + string($moreSubs));
+			$lineCntr = 0;
+		}
+
+		tokenize( $item, "|", $list );
+		$n = size($list);
+		if( 1 == $n ) {
+			$nt = `nodeType $item`;
+			$label = `nodeTypeNiceName $nt`;
+
+			if( 1 == $doTheMenu ) {
+				$itemsMenu[$cntr] = 
+					`menuItem -c ( "select -add " + $item ) -label $label`;
+				menuItem -optionBox true -c ( "showEditor " + $item + ";");
+				$cntr += 1;
+				$lineCntr += 1;
+			}
+			if( "" != $cmdString ) {
+				$cmdString = $cmdString + " + \"\\\"" + $item + " \\\"\"";
+			}
+			else {
+				$cmdString = "\"\\\"" + $item + "\\\"\"";
+			}
+		}
+		else if( $n > 0 ) {
+			$nt = `nodeType $list[0]`;
+
+			string $cbi = "select -add";
+			string $lab = (`nodeTypeNiceName $nt` + "...");
+			string $cbo = ("showEditor " + $list[0] + ";");
+
+			for( $each in $list ) {
+				$cbi = $cbi + " " + $each;
+				if( "" != $cmdString ) {
+					$cmdString = $cmdString + " + \"\\\"" + $each + "\\\"\"";
+				}
+				else {
+					$cmdString = "\"\\\"" + $each + "\\\"\"";
+				}
+			}
+
+			if( 1 == $doTheMenu ) {
+				$itemsMenu[$cntr] = `menuItem -c $cbi -label $lab`;
+				menuItem -optionBox true -c $cbo;
+				$cntr += 1;
+				$lineCntr += 1;
+			}
+		}
+	}
+	for( $i=0; $i<$moreSubs; $i+=1 ) {
+		setParent -menu ..;
+	}
+
+	if( (1 == $doTheMenu) && size( $chain ) > 0 ) menuItem -d true;
+
+	return $cmdString;
+}
+
+global proc disableAllListed( string $all )
+{
+	string $list[];
+	tokenize( $all, $list );
+	string $item;
+
+	if( size( $list) > 0 ) {
+		for( $item in $list ) {
+			if( size($item) > 0 ) {
+				setAttr ($item + ".nodeState") 2;
+			}
+		}
+	} else {
+		warning (uiRes("m_historyPopupFill.kNoNodestoDisable")) ;
+	}
+}
+
+global proc enableAllListed( string $all )
+{
+	string $list[];
+	tokenize( $all, $list );
+	string $item;
+
+	if( size( $list ) > 0 ) {
+		for( $item in $list ) {
+			if( size($item) > 0 ) {
+				setAttr ($item + ".nodeState") 0;
+			}
+		}
+	} else {
+		warning (uiRes("m_historyPopupFill.kNoNodestoEnable")) ;
+	}
+}
+
+proc string[] appendNucleusRelated( string $nodes[],
+									string $node,
+									int $future)
+//
+//	Description:
+//		If this node is a nucleus type node, return the relevant related nodes
+//
+{
+	string $nodeType = `nodeType $node`;
+	string $nTypes[];
+	switch( $nodeType ){
+		case "nCloth":
+			if( $future ){
+				$nTypes = {"nucleus"};
+			} else {
+				$nTypes = {"nCloth", "dynamicConstraint", "cacheFile",
+							"cacheBlend" };
+			}
+			break;
+		case "nRigid":
+			if( $future ){
+				$nTypes = {"nRigid", "nucleus"};
+			} else {
+				$nTypes = {"dynamicConstraint"};
+			}
+			break;
+		case "dynamicConstraint":
+			if( $future ){
+				$nTypes = {"nucleus"};
+			} else {
+				$nTypes = {"nCloth", "nRigid"};
+			}
+			break;
+		default:
+			return $nodes;
+			break;
+	}
+	string $tmpNodes[] = getNucleusRelated( $node, $nTypes, "", 0 );
+	if( size($nodes) > 0 ){
+		string $retval[] = stringArrayCatenate( $nodes, $tmpNodes );
+		return $retval;
+	} else {
+		return $tmpNodes;
+	}
+}
+
+proc string[] findSpecialCaseMenuItems(	string $item,
+										int $future,
+										int $nucleusOnly)
+//
+// Normally the inputs/outputs menus are pruned of dag objects.
+// This method allows us to add dagObjects to the list in special
+// cases where it improves the workflow.
+//
+{
+	string $result[];
+
+	// If an hikEffector is selected, add its handle to the outputs list.
+	//
+	if (!$nucleusOnly && $future && nodeType($item) == "hikEffector") {
+		string $handles[] = `listConnections -s 0 -d 1 -type hikHandle $item`;
+		for ($handle in $handles) {
+			$result[size($result)] = $handle;
+		}
+	}
+	// If this is a node of type nCloth, nRigid, or dynamicConstraint,
+	// we'll need to add more nodes.
+	//
+	string $leaves[] = `listRelatives -fullPath -shapes $item`;
+	for ($leaf in $leaves) {
+		// get the leaf's nodeType; if it's an nObject, get the related nodes
+		//
+		$result = appendNucleusRelated( $result, $leaf, $future );
+		string $plugs[] = `listConnections -s false -sh true -d true $leaf`;
+		for( $plug in $plugs ) {
+			$result = appendNucleusRelated( $result, $plug, $future );
+		}
+	}
+
+	return $result;
+}
+
+global proc string historyPopupFill( string $nameItem, int $future,
+									 int $doTheMenu )
+//
+// Description:
+//     $doTheMenu is 0 - no GUI, just there to return the result
+//                   1 - full GUI and menus
+//                   2 - detach table, but no menus
+{
+	int $maxItemsPerScreen = 25;
+
+	string $chainFalse1[];
+	string $chainFalse2[];
+	string $chainTrue1[];
+	string $chainTrue2[];
+	string $cmdString, $nt;
+	string $objectsWithFormat, $objects, $futureString;
+	string $itemsMenu[], $oldCmd;
+	string $transforms[];
+	string $label;
+
+	int $nameListSize;
+	int $i;
+	int $dupList;
+
+	int $showLevel = 2;
+	int $pruneDag = 1;
+	int $showDetach = 1;
+
+	if( "" == $nameItem ) {
+		if( 1 == $doTheMenu ) {
+			menuItem -label (uiRes("m_historyPopupFill.kNoSelection"))  noSelectionItem;
+		}
+	}
+	else {
+		if( 1 == $doTheMenu ) {
+			if ($future) $label = (uiRes("m_historyPopupFill.kSelectAllOutputs"));
+			else $label = (uiRes("m_historyPopupFill.kSelectAllInputs"));
+			menuItem -label $label selectAllHistoryItem;
+
+			if( $showDetach ) {
+				if ($future) $label = (uiRes("m_historyPopupFill.kEnableAllOutputs"));
+				else $label = (uiRes("m_historyPopupFill.kEnableAllInputs"));
+				menuItem -label $label enableAllHistoryItem;
+
+				if ($future) $label = (uiRes("m_historyPopupFill.kDisableAllOutputs"));
+				else $label = (uiRes("m_historyPopupFill.kDisableAllInputs"));
+				menuItem -label $label disableAllHistoryItem;
+			}
+
+			menuItem -d true;
+		}
+
+		$transforms = `ls -typ transform $nameItem`;
+		if( size($transforms) > 0 ) {
+			$chainFalse2 = `listHistory -gl true -pdo $pruneDag -lf false
+				-f $future -il $showLevel $nameItem`;
+			string $extraItems[] = findSpecialCaseMenuItems($nameItem,$future,0);
+			for ($extraItem in $extraItems) {
+				$chainFalse2[size($chainFalse2)] = $extraItem;
+			}
+			$cmdString = fillOutSection( $chainFalse2, $itemsMenu, $doTheMenu,
+										 $maxItemsPerScreen );
+		}
+
+		$chainTrue2 = `listHistory -gl true -pdo $pruneDag -lf true
+			-f $future -il $showLevel $nameItem`;
+
+		// Make sure skip this section if it is exactly identical to
+		// the previous section then skip it.  This happens if there
+		// is no leaf node under a transform.
+		//
+		$dupList = 0;
+		int $len = size($chainFalse2) ;
+		if( ($len  == size($chainTrue2)) )
+		{
+			$dupList = 1;
+			for ($i = 0; $i < $len ; $i++)
+			{
+				if ($chainFalse2[$i] != $chainTrue2[$i])
+				{
+					$dupList = 0;
+					break;
+				}
+			}
+		}
+
+		if( !$dupList ) {
+			if( "" != $cmdString ) {
+				$cmdString = $cmdString + " + " +
+					fillOutSection( $chainTrue2, $itemsMenu,
+									$doTheMenu, $maxItemsPerScreen );
+			} else {
+				$cmdString = fillOutSection( $chainTrue2, $itemsMenu,
+											 $doTheMenu, $maxItemsPerScreen );
+			}
+
+		}
+
+		if( (1 == $doTheMenu) && size($cmdString) > 0  ) {
+			menuItem -e -c ( "evalEcho( \"select -add \" +" +
+							 $cmdString + ")" )
+			  selectAllHistoryItem;
+		}
+
+		// Build up the list of all the objects.  $objectsWithFormat
+		// has formatting information so windows can be brought
+		// up with separators in the right places.  $objects
+		// has all the targets, but leaves out formatting info.
+		//
+		$objectsWithFormat = "";
+		$objects = "";
+		$transforms = `ls -typ transform $nameItem`;
+		if( size($transforms) > 0 ) {
+			$chainFalse1 = `listHistory -gl false -pdo $pruneDag -lf false
+				-f $future -il 1 $nameItem`;
+			string $extraItems[] = findSpecialCaseMenuItems($nameItem,$future,1);
+			for ($extraItem in $extraItems) {
+				$chainFalse1[size($chainFalse1)] = $extraItem;
+			}
+			for( $item in $chainFalse1 ) {
+			    if(`objectType -isa animBlendNodeBase $item` == 1)
+                    continue;
+				$objectsWithFormat = $objectsWithFormat + " " + $item;
+				$objects = $objects + " " + $item;
+			}
+			if( size( $chainFalse1 ) > 0 ) {
+				$objectsWithFormat = $objectsWithFormat + " SEPARATOR ";
+			}
+		}
+
+		// If we already determined that chainTrue was a duplicate of
+		// chainFalse, do not add it again.
+		//
+		if( !$dupList ) {
+			$chainTrue1 = `listHistory -gl false -pdo $pruneDag -lf true
+						  -f $future -il 1 $nameItem`;
+			for( $item in $chainTrue1 ) {
+			    if(`objectType -isa animBlendNodeBase $item` == 1)
+                    continue;
+				$objectsWithFormat = $objectsWithFormat + " " + $item;
+				$objects = $objects + " " + $item;
+			}
+		}
+		
+		if( $future ) {
+			$futureString = "output";
+		}
+		else {
+			$futureString = "input";
+		}
+		
+		$objectsWithFormat = "\"" + $objectsWithFormat + "\"";
+
+		if( (1 == $doTheMenu) && $showDetach ) {
+			if ($future) $label = (uiRes("m_historyPopupFill.kAllOutputs"));
+			else $label = (uiRes("m_historyPopupFill.kAllInputs"));
+			menuItem -label $label 
+				-c ( "detachHistoryTable \"" + $nameItem + "\" " +
+					 $future + " " + $futureString + " " + 
+					 $objectsWithFormat ) detachHistoryItem;
+
+			menuItem -e -c ("enableAllListed " + $objectsWithFormat ) 
+				enableAllHistoryItem;
+			menuItem -e -c ("disableAllListed "+ $objectsWithFormat) 
+				disableAllHistoryItem;
+		}
+		else if( 2 == $doTheMenu ) {
+			eval( "detachHistoryTable \"" + $nameItem + "\" " +
+				  $future + " " + $futureString + " " + $objectsWithFormat );
+		}
+
+		// Add the deselect cmd to the menuItem callbacks.
+		//
+		string $item;
+
+		if( (1 == $doTheMenu) ) {
+			for( $item in $itemsMenu ) {
+				$oldCmd = `menuItem -q -c $item`;
+				menuItem -e -c ("select -d " + $objects + "; " + $oldCmd) $item;
+			}
+		}
+	}
+	return $objects;
+}

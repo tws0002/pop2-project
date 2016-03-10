@@ -1,0 +1,2626 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  October 28 2003
+//
+//  Description:
+//      This script is the UI interface for creating Phototshop
+//		files with empty layer sets for selected shader channels
+//      and generating the node network
+//
+
+global string $psdRightWin, $psdLeftWin, $psdUVListMenu;
+global string $gPsdFileName;
+global string $gSelectedShape;
+global string $gSnapShotName;
+global string $gPsdChannelList[] = {"color", "transparency",
+					"incandescence", "bump", "ambientColor", "diffuse",
+					"translucence", "specularColor", "reflectivity",
+					"reflectedColor", "displacement"};
+
+global string $gPsdDetailedChannelList[];
+global float $gPsdAspectRatio;
+global int $gForceConnectionFlag[];
+global string $psdIncludeUVSnapshot;
+global string $gPsdShadingEng[];
+
+proc buildPsdTextureWindowMenu ()
+//
+//  Procedure Name:
+//      buildPsdTextureWindowMenu
+//
+//  Description:
+//      Creates the menus for the PsdTexture Window
+//
+//  Input Arguments:
+//		None.
+//
+//  Return Value:
+//      None.
+//
+{
+
+	global string 	$psdTextureWin;
+
+	menu -label (uiRes("m_photoShopPaintTex.kEdit"))
+		-tearOff true
+		-postMenuCommandOnce true;
+		menuItem -label (uiRes("m_photoShopPaintTex.kResetSettings"))
+			-command ("psdWindowResetSettingsCmd");
+		menuItem -label (uiRes("m_photoShopPaintTex.kSaveSettings"))
+			-command ("psdWindowSaveSettingsCmd");
+
+	setParent -menu ..;
+
+	addContextHelpProc $psdTextureWin "buildPhotoshopPaintTexContextHelpItems";
+	doHelpMenu $psdTextureWin $psdTextureWin;
+
+}
+
+global proc psdWindowResetSettingsCmd()
+//  Description:
+//      Reset to factory settings
+//
+{
+	psdSetFactorySettings(1);
+}
+
+global proc psdWindowSaveSettingsCmd()
+//  Description:
+//      Save the settings of the controls.
+//
+{
+	global string $psdResX, $psdResY, $psdAspectRatio, $psdIncludeUVSnapshot;
+	global string $psdDetlShrtList, $psdAntiAlias, $psdColorValueSlider, $psdUVLocation, $psdOpenPhotoshop;
+	int $value;
+	float $coValues[3];
+
+	$value = `intSliderGrp -q -value $psdResX` ;
+	optionVar -intValue psdSizeX $value;
+
+	$value = `intSliderGrp -q -value $psdResY` ;
+	optionVar -intValue psdSizeY $value;
+
+	$value = `checkBoxGrp -q -v1 $psdAspectRatio`;
+	optionVar -intValue psdAspectRatioValue $value;
+
+	$value = `checkBoxGrp -q -v1 $psdAntiAlias`;
+	optionVar -intValue psdAntiAliasValue $value;
+
+	$value = `checkBoxGrp -q -v1 $psdDetlShrtList`;
+	optionVar -intValue psdDetailedListValue $value;
+
+	$value = `radioButtonGrp -q -select  $psdUVLocation`;
+	optionVar -intValue psdUVSnapshotPosition $value;
+
+	$coValues = `colorSliderGrp  -q -rgb $psdColorValueSlider`;
+	optionVar -clearArray "psdColorValue" ;
+	optionVar -floatValueAppend psdColorValue $coValues[0]
+					-floatValueAppend psdColorValue $coValues[1]
+					-floatValueAppend psdColorValue $coValues[2];
+
+	$value = `checkBoxGrp -q -v1 $psdIncludeUVSnapshot`;
+	optionVar -intValue psdIncludeUVSnapValue $value;
+
+	$value = `checkBoxGrp -q -v1 $psdOpenPhotoshop`;
+	optionVar -intValue psdOpenPhotoshopValue $value;
+}
+
+global proc buildPhotoshopPaintTexContextHelpItems(string $nameRoot, string $menuParent)
+//
+//  Description:
+//		Build context sensitive menu items
+//
+//  Return Value:
+//      None
+//
+{
+	menuItem -label (uiRes("m_photoShopPaintTex.kHelpPSDNetworkOptions"))
+		-enableCommandRepeat false
+		-command "showHelp CreatePSDNetwork";
+}
+
+
+proc string[] psdUniqueNodeList(
+	string  $nodes[]
+)
+//
+//	Description:
+//		Returns a unique list of nodes. Eliminate
+//		all the dublicates.
+//
+{
+	string	$uniqueNodes[];
+	int		$nodeIndx = 0;
+
+	for ( $node in $nodes ) {
+		int $found = 0;
+		for ($uNode in $uniqueNodes ) {
+			if ( $node == $uNode ) {
+				$found = 1;
+				break;
+			}
+		}
+
+		// Add it to the list.
+		if ( $found == 0 ) {
+			$uniqueNodes[$nodeIndx] = $node;
+			$nodeIndx ++;
+		}
+	}
+
+	return $uniqueNodes;
+}
+
+global proc string [] psdGetShadingEngines(
+	string $shape
+)
+//
+//	Description:
+//		Returns a unique list of shading engines for
+//		a given shape.
+//
+{
+	// Get all the shading engines.
+	string $shadingEngs[] = `listConnections -destination  true -type "shadingEngine" $shape`;
+
+	// Eliminte the dublicates.
+	  string $uniqueEngs[] = stringArrayRemoveDuplicates($shadingEngs);
+
+	return $uniqueEngs;
+}
+
+
+global proc psdRetainConnections(string $connectList[])
+{
+	global string $psdRightWin ;
+	global int $gForceConnectionFlag[] ;
+
+	int $connectIndex, $itemIndex;
+	string $itemList[] = `psdChannelOutliner -q -allItems $psdRightWin`;
+
+	int $connectIndex, $itemIndex;
+	for($connectIndex = 0; $connectIndex < size($connectList); $connectIndex++){
+		for($itemIndex = 0; $itemIndex < size($itemList); $itemIndex++){
+			if($connectList[$connectIndex] == $itemList[$itemIndex]){
+				$gForceConnectionFlag[$itemIndex] = false;
+				break;
+			}
+		}
+	}
+}
+
+global proc psdConnectedWinApplyCmd()
+//
+//	Description:
+//		This gets executed when the Apply button is pressed
+//		in the connected attributes window. At this point
+//		all the node network gets created.
+//
+{
+	global int $gForceConnectionFlag[];
+	global string $gUVSnapPositionTop;
+	global string $gPsdFileName, $psdFileNameTextField, $psdResX, $psdResY;
+	global string $gSnapShotName, $psdRightWin, $psdTextureWin;
+
+	int $closeFlag = `optionVar -q "gCloseFlag"`;
+	if($closeFlag)
+	{
+		window -e -visible false $psdTextureWin;
+	}
+
+	int $xRes = `intSliderGrp -q -value $psdResX`;
+	int $yRes = `intSliderGrp -q -value $psdResY`;
+	psdProcessNodeConnections($gPsdFileName, $gSnapShotName, $gUVSnapPositionTop, $psdRightWin, $xRes, $yRes, true);
+
+	int $initValues[];
+	$gForceConnectionFlag = $initValues;
+
+	if(!$closeFlag){
+		window -e -visible true $psdTextureWin;
+	}
+
+	psdChannelOutliner -e -removeAll $psdRightWin;
+	textFieldGrp -e -text "" $psdFileNameTextField;
+
+}
+
+global proc psdConnectedWinCloseCmd()
+{
+	global int $gForceConnectionFlag[];
+	global string $psdTextureWin ;
+
+	int $initValues[];
+
+	$gForceConnectionFlag = $initValues;
+
+
+	window -e -visible true $psdTextureWin;
+
+}
+
+global proc string psdShowConnectedList(string $itemList[],  int $closeFlag)
+{
+	global int $gForceConnectionFlag[];
+
+	if(`optionVar -exists "gCloseFlag"`){
+		optionVar -remove gCloseFlag;
+	}
+	optionVar -iv "gCloseFlag" $closeFlag;
+
+	int $index = 0, $stringSize, $numTokens, $connectedIndex = 0;
+	string $tokens[], $bumpString,$connectedAttrListStr, $connectedList[];
+	for($index = 0; $index < size($itemList); $index++){
+		if($gForceConnectionFlag[$index]){
+			$numtokens = `tokenize $itemList[$index] "." $tokens`;
+			if($tokens[$numtokens - 1] == "normalCamera"){
+					$stringSize = size($itemList[$index]) ;
+					$bumpString = `substring $itemList[$index] 1 ($stringSize - 12)`;
+					$itemList[$index] = $bumpString + "bump";
+
+			}
+			// Do not show in the dialog if connected to a file node.
+			if(psdIsConnectedToFileNode($itemList[$index])){
+				continue;
+			}
+			$connectedList[$connectedIndex++] = $itemList[$index];
+			$connectedAttrListStr = $connectedAttrListStr + "          - " + $itemList[$index] + "\n";
+		}
+	}
+
+	string $labelStr = (uiRes("m_photoShopPaintTex.kConnectionsMsg"));
+	$labelStr = `format -s $connectedAttrListStr $labelStr`;
+	string $yes =  (uiRes("m_photoShopPaintTex.kYes"));
+	string $no = (uiRes("m_photoShopPaintTex.kNo"));
+	string $cancel = (uiRes("m_photoShopPaintTex.kCancel"));
+
+	string $answer = `confirmDialog -title (uiRes("m_photoShopPaintTex.kConnectedAttributes"))
+									-message $labelStr
+									-messageAlign "left"
+									-button $yes
+									-button $no
+									-button $cancel
+									-cancelButton $cancel
+									-defaultButton $yes`;
+
+	if($answer == $no){
+		psdRetainConnections($connectedList);
+	}
+	return $answer;
+}
+
+global proc string[] psdVerifyForBumpMapInSelectedChannelList(string $controlName)
+{
+		int $index, $numTokens;
+		string $psdAttributes[], $bumpString;
+
+		string $itemList[] = `psdChannelOutliner -q -allItems $controlName`;
+
+		for($index = 0; $index < size($itemList); $index++){
+				$numTokens = `tokenize $itemList[$index] "." $psdAttributes`;
+				if($psdAttributes[size($psdAttributes) - 1] == "bump"){
+						$stringSize = size($itemList[$index]) ;
+						$bumpString = `substring $itemList[$index] 1 ($stringSize - 4)`;
+						$itemList[$index] = $bumpString + "normalCamera";
+				}
+		}
+		return $itemList;
+}
+
+proc int psdFindShapeInSwitchNode(
+	string 	$shape,
+	string	$switchNode
+)
+//
+//	Description:
+//		This function returns an index to the surface int
+//		the switch node if the surface is already connected
+//		to that switch node. Otherwise -1 is returned.
+//
+{
+	string	$nType = `nodeType $shape`;
+
+	string	$switchPlug = $switchNode + ".input";
+	string	$shapes[];
+
+	if ( $nType == "mesh" ) {
+		$shapes = `listConnections -sh 1 -type "mesh" $switchPlug`;
+	} else if ( $nType == "nurbsSurface" ) {
+		$shapes = `listConnections -sh 1 -type "nurbsSurface" $switchPlug`;
+	} else if (  $nType == "subdiv" ) {
+		$shapes = `listConnections -sh 1 -type "subdiv" $switchPlug`;
+	} else {
+		return -1;
+	}
+
+	int $idx;
+	int $num = size( $shapes );
+
+	for ($idx = 0; $idx < $num; $idx++ ) {
+		if ( $shape == $shapes[$idx] )
+			return $idx;
+	}
+	return -1;
+}
+
+proc string psdGetFileNameFromNode(string $node)
+{
+    string $nodeType = eval("nodeType " + $node);
+    string $fileName = "";
+    string $fileNode;
+
+	switch($nodeType){
+
+		case "file":
+			$fileNode = $node;
+			break;
+		default:
+			string $msg = (uiRes("m_photoShopPaintTex.kFileTextureName"));
+			warning (`format -s $node $msg`);
+			return "";
+	}
+
+	$fileName = eval("getAttr " + $fileNode + ".fileTextureName") ;
+	return $fileName;
+}
+
+global proc int psdIsConnectedToPsdFileNode(string $item)
+{
+	string $nodeType, $interNode, $interAttr, $linkedNode ;
+	string $psdAttributes[] ;
+
+	int $isPsdFileNode = 0 ;
+	int $numTokens = `tokenize $item "." $psdAttributes`;
+
+	// Check if the string contains bump, replace it with normalCamera
+	if($psdAttributes[size($psdAttributes) - 1] == "bump"){
+		$stringSize = size($item) ;
+		string $bumpString = `substring $item 1 ($stringSize - 4)`;
+		$item = $bumpString + "normalCamera";
+	}
+
+	string $linkCmd = "listConnections " ;
+	$linkCmd += $item;
+	string $tmpList[] = eval( $linkCmd );
+	if(!size($tmpList)){
+		return false ;
+	}
+
+
+	$linkedNode = $tmpList[0];
+	$nodeType = eval("nodeType " + $linkedNode) ;
+
+
+	if( $nodeType == "bump2d" || $nodeType == "displacementShader" ) {
+		if( $nodeType == "bump2d" )
+			$interAttr = ".bumpValue";
+		else if ( $nodeType == "displacementShader" )
+			$interAttr = ".displacement";
+
+		$tmpList = eval("listConnections " + $linkedNode + $interAttr);
+		$interNode = $linkedNode; // store the bump/disp node
+
+		string $nextNodeType = eval("nodeType " + $tmpList[0]);
+
+		// The bump nodes may be connected to file texture nodes or to switch nodes,
+		// if a switch node is found, advance one step to get the file texture node
+		//
+		if( $nextNodeType == "tripleShadingSwitch" || $nextNodeType == "singleShadingSwitch")
+		{
+			$linkedNode = $tmpList[0];
+			$nodeType = $nextNodeType;
+		}
+		else{
+			$linkedNode = $tmpList[0];
+		}
+	}
+
+	if(`nodeType $linkedNode` == "psdFileTex"){
+		$isPsdFileNode = 1;
+	}
+	return $isPsdFileNode ;
+}
+
+global proc int psdIsConnectedToFileNode(string $item)
+{
+	string $nodeType, $interNode, $interAttr, $linkedNode ;
+	string $psdAttributes[] ;
+
+	int $isFileNode = 0 ;
+	int $numTokens = `tokenize $item "." $psdAttributes`;
+
+	// Check if the string contains bump, replace it with normalCamera
+	if($psdAttributes[size($psdAttributes) - 1] == "bump"){
+		$stringSize = size($item) ;
+		string $bumpString = `substring $item 1 ($stringSize - 4)`;
+		$item = $bumpString + "normalCamera";
+	}
+
+	string $linkCmd = "listConnections " ;
+	$linkCmd += $item;
+	string $tmpList[] = eval( $linkCmd );
+	if(!size($tmpList)){
+		return false ;
+	}
+
+
+	$linkedNode = $tmpList[0];
+	$nodeType = eval("nodeType " + $linkedNode) ;
+
+
+	if( $nodeType == "bump2d" || $nodeType == "displacementShader" || $nodeType == "bump3d" ) {
+		if( $nodeType == "bump2d" || $nodeType == "bump3d")
+			$interAttr = ".bumpValue";
+		else if ( $nodeType == "displacementShader" )
+			$interAttr = ".displacement";
+
+		$tmpList = eval("listConnections " + $linkedNode + $interAttr);
+		$interNode = $linkedNode; // store the bump/disp node
+
+		string $nextNodeType = eval("nodeType " + $tmpList[0]);
+
+		// The bump nodes may be connected to file texture nodes or to switch nodes,
+		// if a switch node is found, advance one step to get the file texture node
+		//
+		if( $nextNodeType == "tripleShadingSwitch" || $nextNodeType == "singleShadingSwitch")
+		{
+			$linkedNode = $tmpList[0];
+			$nodeType = $nextNodeType;
+		}
+		else{
+			$linkedNode = $tmpList[0];
+		}
+	}
+	if ( $nodeType == "tripleShadingSwitch" || $nodeType == "singleShadingSwitch" )
+	{
+		// switch nodes can be directly connected to shader or to bump2d/dispShader
+		// All such cases are handled here.
+		//
+		global string $gSelectedShape;
+		string $switchNodeAttr;
+		if ( $nodeType == "tripleShadingSwitch" ) {
+			$switchNodeAttr = "inTriple";
+		}
+		else if ( $nodeType == "singleShadingSwitch" ) {
+			$switchNodeAttr = "inSingle";
+		}
+
+		string $switchNode = $linkedNode;
+		int $srfIdx = psdFindShapeInSwitchNode( $gSelectedShape, $switchNode );
+
+		if ( $srfIdx != -1 )
+		{
+			string $connection = ".input[" + $srfIdx + "]." + $switchNodeAttr;
+			$tmpList = eval("listConnections " + $switchNode + $connection);
+			$linkedNode = $tmpList[0];
+		}
+	}
+	if(`nodeType $linkedNode` == "file"){
+		$isFileNode = 1;
+	}
+	return $isFileNode ;
+}
+
+global proc string  psdProcessConnectProcedurals(string $connectedChannel)
+{
+	global string $gSelectedShape, $psdResX, $psdResY;
+
+	string $nodeType, $textureNode, $interAttr, $linkedNode ;
+	string $psdAttributes[] ;
+	int $numAttributes;
+
+	int $numTokens = `tokenize $connectedChannel "." $psdAttributes`;
+	$textureNode = "";
+
+	// Check if the string contains bump, replace it with normalCamera
+	int $stringSize;
+	if($psdAttributes[size($psdAttributes) - 1] == "bump"){
+		$stringSize = size($connectedChannel) ;
+		string $bumpString = `substring $connectedChannel 1 ($stringSize - 4)`;
+		$item = $bumpString + "normalCamera";
+	}
+	string $linkCmd = "listConnections " ;
+	$linkCmd += $connectedChannel;
+	string $tmpList[] = eval( $linkCmd );
+	if(!size($tmpList)){
+		return "" ;
+	}
+	$linkedNode = $tmpList[0];
+	$nodeType = eval("nodeType " + $linkedNode) ;
+
+	string $connection2Shader = "";
+	string $actualConnectedChannel = "";
+	string $connection2file = "";
+	int $isBump3dConnected = 0;
+	if($nodeType == "bump3d")
+	{
+		// 3d textures attached to bump need to be handled in a special way.
+		// once we do convert solid on 3d textures, a file texture
+		// created should be connected to bump2d. So the original connections
+		// to the shader which consists of bump3d is overridden and a bump2d
+		// node is connected.
+		$isBump3dConnected = 1 ;
+		string $bump2dNode = `shadingNode -asUtility bump2d`;
+		$actualConnectedChannel = $connectedChannel;
+		$connection2Shader = $bump2dNode + ".outNormal";
+		$connection2file = $bump2dNode + ".bumpValue";
+	}
+
+	int $specialNodes = ($nodeType == "bump2d" || $nodeType == "displacementShader" || $nodeType == "bump3d") ;
+	int $bumpNodes =  ($nodeType == "bump2d" || $nodeType == "bump3d") ;
+	if($specialNodes) {
+		if( $bumpNodes ){
+			$interAttr = ".bumpValue";
+		}else{
+			$interAttr = ".displacement";
+		}
+
+		$connectedChannel = $linkedNode + $interAttr;
+
+		$tmpList = eval("listConnections " + $connectedChannel);
+		$nodeType = `nodeType $tmpList[0]`;
+
+		if(`getClassification -satisfies "texture/2d" $nodeType` || `getClassification -satisfies "texture/3d" $nodeType`)
+		{
+			string $connectedAttr = $linkedNode + $interAttr;
+			$textureNode = `connectionInfo -sourceFromDestination $connectedAttr`;
+		}
+
+	}
+	else
+	{
+		$nodeType = `nodeType $linkedNode`;
+		if(`getClassification -satisfies "texture/2d" $nodeType` || `getClassification -satisfies "texture/3d" $nodeType`)
+			$textureNode = `connectionInfo -sourceFromDestination $connectedChannel`;
+	}
+
+	if($textureNode == "")
+		return 0;
+
+
+	string $convSolidChannel = $actualConnectedChannel ;
+	if($psdAttributes[size($psdAttributes) - 1] == "normalCamera"){
+		// We need this in the form, "shader.bump", as the
+		// psdConvertSolidTxOptions would have stored the channel is this way.
+		$stringSize = size($actualConnectedChannel) ;
+		string $bumpString = `substring $actualConnectedChannel 1 ($stringSize - 12)`;
+		$convSolidChannel = $bumpString + "bump";
+	}
+	if(!`psdConvSolidTxOptions -exists $convSolidChannel`)
+	{
+			psdConvSolidTxOptions -e
+									-channelString $convSolidChannel
+									-antiAlias false
+									-backgroundMode "Shader default"
+									-fillTextureSeams true
+									-bakeUsingVirtualPlane true
+									-bakeTransparency false;
+			psdConvSolidTxOptions -e -saveAll;
+	}
+
+	int $antiAliasFlag = `psdConvSolidTxOptions  -channelString $convSolidChannel -q -antiAlias`;
+	int $fillTxFlag = `psdConvSolidTxOptions  -channelString $convSolidChannel -q -fillTextureSeams`;
+	int $bakeVirtualPlane = `psdConvSolidTxOptions  -channelString $convSolidChannel -q -bakeUsingVirtualPlane`;
+	int $transFlag = `psdConvSolidTxOptions  -channelString $convSolidChannel -q -bakeTransparency`;
+	string $bgMode = `psdConvSolidTxOptions  -channelString $convSolidChannel -q -backgroundMode`;
+	float  $bgColor[] =  `psdConvSolidTxOptions  -channelString $convSolidChannel -q -backgroundColor`;
+
+
+	switch ($bgMode)
+	{
+		case "Shader default":
+				$bgMode = "shader";
+				break;
+
+		case "Custom color":
+				$bgMode = "color";
+				break;
+
+		case "Extend Edge Color":
+				$bgMode = "extend";
+				break;
+	}
+
+	string $fileNodes[];
+	int $valueX = `intSliderGrp -q -value $psdResX` ;
+	int $valueY = `intSliderGrp -q -value $psdResY` ;
+	if($bgMode == "shader")
+	{
+		$fileNodes = `convertSolidTx
+									-antiAlias $antiAliasFlag
+									-fillTextureSeams  $fillTxFlag
+									-samplePlane  $bakeVirtualPlane
+									-alpha $transFlag
+									-backgroundMode $bgMode
+									-resolutionX $valueX
+									-resolutionY $valueY
+									-fileFormat "iff"
+									-force true
+									$textureNode
+									$gSelectedShape`;
+	}
+	else
+	{
+		int $backgroundColor[3];
+		$backgroundColor[0] = $bgColor[0] * 255;
+		$backgroundColor[1] = $bgColor[1] * 255;
+		$backgroundColor[2] = $bgColor[2] * 255;
+		$fileNodes = `convertSolidTx
+								-antiAlias $antiAliasFlag
+								-fillTextureSeams  $fillTxFlag
+								-samplePlane  $bakeVirtualPlane
+								-alpha $transFlag
+								-backgroundMode $bgMode
+								-backgroundColor  $backgroundColor[0] $backgroundColor[1] $backgroundColor[2]
+								-resolutionX $valueX
+								-resolutionY $valueY
+								-fileFormat "iff"
+								-force true
+								$textureNode
+								$gSelectedShape`;
+	}
+
+	tokenize $textureNode "." $psdAttributes;
+
+	string $fileAttributeChannel = $fileNodes[0] + "." + $psdAttributes[size($psdAttributes)-1];
+	if($isBump3dConnected)
+	{
+		connectAttr -force $connection2Shader $actualConnectedChannel  ;
+		connectAttr -force $fileAttributeChannel $connection2file ;
+	}
+	else
+	{
+		connectAttr -force  $fileAttributeChannel $connectedChannel;
+	}
+	return $fileNodes[0];
+}
+
+global proc psdProcessNodeConnections(string $psdFileName, string $snapShotName,
+																			int $uvSnapPositionTop, string $controlName, int $xRes, int $yRes, int $isCreate)
+{
+	global int		$gIndex;
+	global string	$psdDeleteList[], $gEditDeletedChannels[] ;
+	string			$psdAttributes[],  $attributeStr, $fileNodeList[], $layerList[];
+	global int		$gForceConnectionFlag[];
+	int					$red = 0, $green= 0, $blue = 0;
+	float				$colorList[], $tmpRGB[3];
+	int					$colListSize;
+	string			$linkedNodes[], $finalLinkedNodeList[];
+	int					$gFinalForceConnectionFlag[], $export3dPaintList[] ;
+
+	int $export3dPaint = 1;
+	string $itemList[];
+
+	if($isCreate){
+ 		$itemList = psdVerifyForBumpMapInSelectedChannelList($controlName);
+ 	}else{
+ 		$itemList = psdEditCheckBump();
+ 	}
+	int $index, $numTokens, $nodeIndex = 0;
+	$colListSize = 0;
+	string $newFileNode[];
+	int $numNewFileNodes = 0;
+	for ($index = 0; $index < size($itemList); $index++){
+		$numTokens = `tokenize $itemList[$index] "." $psdAttributes`;
+
+		//if(`connectionInfo -isDestination $itemList[$index]`)
+		 // continue;
+
+		$attributeStr = ".outColor";
+		string $nodeName = "PSD_"+ $psdAttributes[0] + "_" + $psdAttributes[1];
+		string $node = `shadingNode -name $nodeName -asTexture psdFileTex`;
+
+		string $fileNode = $node;
+
+		if($gForceConnectionFlag[$index])
+		{
+			if($isCreate)
+			{
+				if(!psdIsConnectedToFileNode($itemList[$index])){
+				// Store the file nodes which get created during the convertSolidTx operation
+				// This should be deleted once the PSD file gets created.
+
+					$newFileNode[$numNewFileNodes++] = psdProcessConnectProcedurals($itemList[$index]);
+				}
+			}else{
+				if(!psdIsConnectedToFileNode($itemList[$index]) && !psdIsConnectedToPsdFileNode($itemList[$index])){
+				// Store the file nodes which get created during the convertSolidTx operation
+				// This should be deleted once the PSD file gets created.
+
+					$newFileNode[$numNewFileNodes++] = psdProcessConnectProcedurals($itemList[$index]);
+				}
+			}
+		}
+		 // Handle the normalCamerea attribute separately as it is not directly connected
+		 // to the file texture node.
+
+		int $normalIndex;
+		// Flag to indicated the need to transfer a file image to PSD file. This flag will
+		// be true if a file texture node is connected to the channel.
+		$export3dPaint = 1;
+		if(!psdIsConnectedToFileNode($itemList[$index])){
+			$export3dPaint = 0 ;
+		}
+
+		for($normalIndex = 0; $normalIndex < size($psdAttributes);$normalIndex++){
+			 if($psdAttributes[$normalIndex] == "normalCamera" ){
+				if( psdIsConnectedToFileNode($itemList[$index])){
+					// if exporting 3dPaint network, make alpha as Luminance true
+					setAttr ($fileNode + ".alphaIsLuminance" ) 1;
+				}else if(psdIsConnectedToPsdFileNode($itemList[$index])){
+					// Do not do anything here. This is for the editing stuff.
+				} else {
+					// create a new bump2d node only if export3dPaint is not requested
+					//
+					string $bumpNode = `shadingNode -asUtility bump2d`;
+					connectAttr ($node + ".outAlpha") ($bumpNode + ".bumpValue");
+					setAttr ($node + ".alphaIsLuminance" ) 1;
+					$attributeStr = ".outNormal";
+					$node = $bumpNode;
+					$export3dPaint = 0 ;
+				}
+			 }
+
+			 else if($psdAttributes[$normalIndex] == "displacementShader" ){
+					if( psdIsConnectedToFileNode($itemList[$index]) ){
+						// if exporting 3dPaint network, make alpha as Luminance true
+						setAttr ($fileNode + ".alphaIsLuminance" ) 1;
+					}else if(psdIsConnectedToPsdFileNode($itemList[$index])){
+					// Do not do anything here. This is for the editing stuff.
+					}else {
+						// create a new disp node only if export3dPaint is not requested
+						//
+						string $displacementNode = `shadingNode -asUtility displacementShader`;
+						connectAttr ($node + ".outAlpha") ($displacementNode + ".displacement");
+						setAttr ($node + ".alphaIsLuminance" ) 1;
+						$attributeStr = ".displacement" ;
+						$node = $displacementNode;
+						$export3dPaint = 0 ;
+					}
+			 }
+		}
+
+		string $variableType  = `getAttr -type $itemList[$index]`;
+		if(`strcmp $variableType "float"` == 0 ){
+			setAttr ($fileNode + ".alphaIsLuminance" ) 1;
+			$attributeStr = ".outAlpha";
+		}
+
+		string $tokens[], $channel;
+		int $numTokens = `tokenize $itemList[$index] "." $tokens`;
+
+		$channel = $tokens[$numTokens - 1] ;
+		if( $channel == "color" || $channel == "transparency" ||
+			$channel == "ambientColor" || $channel == "incandescence" ||
+			$channel == "specularColor" || $channel == "reflectedColor" )
+		{
+			string $colCmd = "getAttr " + $itemList[$index];
+			float $col[3] = eval($colCmd);
+
+			$tmpRGB[0] = $col[0];
+			$tmpRGB[1] = $col[1];
+			$tmpRGB[2] = $col[2];
+		}
+		else if( $channel == "diffuse" || $channel == "translucence" ||
+					$channel == "reflectivity" )
+		{
+			string $colCmd = "getAttr " + $itemList[$index];
+			float $col = eval($colCmd);
+
+			if( $col < 0.0 )
+				$col = 0.0;
+			else if( $col > 1.0)
+				$col = 1.0;
+
+			$tmpRGB[0] = $col;
+			$tmpRGB[1] = $col;
+			$tmpRGB[2] = $col;
+		}
+		else if( $channel == "normalCamera" ) {
+			$col = 0.5;
+
+			$tmpRGB[0] = $col;
+			$tmpRGB[1] = $col;
+			$tmpRGB[2] = $col;
+		}
+		else if( $channel == "displacementShader") {
+			$col = 0.0;
+
+			$tmpRGB[0] = $col;
+			$tmpRGB[1] = $col;
+			$tmpRGB[2] = $col;
+		}
+
+		string $cmd;
+			if($gForceConnectionFlag[$index]){
+				if( $export3dPaint == 1 ) {
+					// search the 3d Paint node network
+					//
+					string $linkCmd = "listConnections " ;
+					$linkCmd += $itemList[$index];
+					string $tmpList[] = eval( $linkCmd );
+					string $nodeType;
+					string $interNode, $interAttr;
+
+					$linkedNodes[$index] = $tmpList[0];
+					$nodeType = eval("nodeType " + $linkedNodes[$index]) ;
+
+					if( $nodeType == "bump2d" || $nodeType == "displacementShader") {
+						if( $nodeType == "bump2d")
+							$interAttr = ".bumpValue";
+						else if ( $nodeType == "displacementShader" )
+							$interAttr = ".displacement";
+
+						$tmpList = eval("listConnections " + $linkedNodes[$index] + $interAttr);
+						$interNode = $linkedNodes[$index]; // store the bump/disp node
+
+						string $nextNodeType = eval("nodeType " + $tmpList[0]);
+
+						// The bump nodes may be connected to file texture nodes or to switch nodes,
+						// if a switch node is found, advance one step to get the file texture node
+						//
+						$attributeStr = ".outAlpha";
+						$node = $fileNode;
+						$linkedNodes[$index] = $tmpList[0];
+						if( $nextNodeType == "tripleShadingSwitch" || $nextNodeType == "singleShadingSwitch")
+						{
+							$nodeType = $nextNodeType;
+						}
+					}
+					if ( $nodeType == "tripleShadingSwitch" || $nodeType == "singleShadingSwitch" )
+					{
+						// switch nodes can be directly connected to shader or to bump2d/dispShader
+						// All such cases are handled here.
+						//
+						global string $gSelectedShape;
+						string $switchNodeAttr;
+						if ( $nodeType == "tripleShadingSwitch" ) {
+							$switchNodeAttr = "inTriple";
+						}
+						else if ( $nodeType == "singleShadingSwitch" ) {
+							$switchNodeAttr = "inSingle";
+						}
+
+						string $switchNode = $linkedNodes[$index];
+						int $srfIdx = psdFindShapeInSwitchNode( $gSelectedShape, $switchNode );
+
+						if ( $srfIdx != -1 )
+						{
+							string $connection = ".input[" + $srfIdx + "]." + $switchNodeAttr;
+							$tmpList = eval("listConnections " + $switchNode + $connection);
+							$linkedNodes[$index] = $tmpList[0];
+
+							// update the link : file tex node to switchNode.input[]
+							//
+							$cmd = "connectAttr -force " + $node + $attributeStr + " " + $switchNode + $connection ;
+						}
+					}
+					else if ( $nodeType == "bump2d" || $nodeType == "displacementShader") {
+						// update the link : file tex node to (bump.bumpValue/dispShader.disp)
+						//
+						$cmd = "connectAttr -force " + $node + $attributeStr + " " + $interNode + $interAttr ;
+					}
+					else {
+						// update the link : Any node to shader.channel
+						//
+						$cmd = "connectAttr -force " + $node + $attributeStr + " " + $itemList[$index] ;
+					}
+				}
+				else {
+					$cmd = "connectAttr -force " + $node + $attributeStr + " " + $itemList[$index] ;
+				}
+			}else{
+				if(!`connectionInfo -isDestination $itemList[$index]`){
+		 			$cmd = "connectAttr " + $node + $attributeStr + " " + $itemList[$index] ;
+				}
+		}
+
+		if(	$cmd == "" || catch(`eval($cmd)`)){
+			delete $node;
+		}else{
+			string $place2d = `shadingNode -asUtility place2dTexture`;
+            fileTexturePlacementConnect($fileNode, $place2d);
+
+            // Connect texture placement.
+            string $connectCmd = ("connectAttr "+$place2d+".outUV "+$fileNode+".uv");
+			evalEcho $connectCmd;
+			$connectCmd = ("connectAttr "+$place2d+".outUvFilterSize "+$fileNode+".uvFilterSize");
+			evalEcho $connectCmd;
+
+			// Specify the flag for each channel as this flag is set to 0 for bump and displacement
+			$export3dPaintList[$nodeIndex] = $export3dPaint ;
+	 		$fileNodeList[$nodeIndex] = $fileNode;
+	 		$layerList[$nodeIndex] = $itemList[$index];
+
+			if( $channel == "color" || $channel == "transparency" ||
+				$channel == "ambientColor" || $channel == "incandescence" ||
+				$channel == "diffuse" || $channel == "translucence" ||
+				$channel == "normalCamera" || $channel == "displacementShader" ||
+				$channel == "specularColor" || $channel == "reflectivity" ||
+				$channel == "reflectedColor" )
+			{
+				$colorList[$colListSize + 0] = $tmpRGB[0];
+				$colorList[$colListSize + 1] = $tmpRGB[1];
+				$colorList[$colListSize + 2] = $tmpRGB[2];
+				$colListSize += 3;
+			}
+
+			$gFinalForceConnectionFlag[$nodeIndex] = $gForceConnectionFlag[$index];
+			$finalLinkedNodeList[$nodeIndex] = $linkedNodes[$index];
+			$nodeIndex++;
+		}
+	}
+
+
+	string $cmd = "";
+	string $finalCmd = "";
+	$colListSize = 0;
+	string $tmpLayerName = "";
+
+	for($index = 0; $index < $nodeIndex; $index++){
+			string $tokens[], $channel;
+			int $numTokens = `tokenize $layerList[$index] "." $tokens`;
+
+			$channel = $tokens[1] ;
+			if ($channel == "normalCamera"){
+				$tmpLayerName = $tokens[0] + ".bump";
+			}else{
+				$tmpLayerName = $layerList[$index];
+			}
+			if( $channel == "color" ||
+				$channel == "transparency" ||
+				$channel == "ambientColor" ||
+				$channel == "incandescence" ||
+				$channel == "diffuse" ||
+				$channel == "translucence" ||
+				$channel == "normalCamera" ||
+				$channel == "displacementShader"||
+				$channel == "specularColor" ||
+				$channel == "reflectivity" ||
+				$channel == "reflectedColor"
+				)
+			{
+				if( $export3dPaintList[$index] == 1 ) {
+					if(  $gFinalForceConnectionFlag[$index] == 1 ) {
+						// if the image from any of the nodes has been requested
+						//
+						if(`nodeType $finalLinkedNodeList[$index]` == "file"){
+							string $fileName = psdGetFileNameFromNode($finalLinkedNodeList[$index]);
+							string $msg = (uiRes("m_photoShopPaintTex.kFileTextureAdded"));
+							warning (`format -s $finalLinkedNodeList[$index] -s $tmpLayerName $msg`) ;
+							if( size($fileName) != 0 ) {
+								if($isCreate){
+									$cmd += " -imageFileName " + "\"" + $fileName + "\" \"" + $tmpLayerName + "\" "
+																												+ ($index + 1) ;
+								}else{
+									$cmd += " -addChannelImage " + "\"" + $tmpLayerName + "\""
+													+ " " +  "\"" + $fileName + "\"" ;
+								}
+							}
+							else
+							{
+								string $msg = (uiRes("m_photoShopPaintTex.kImageNotObtained"));
+								warning (`format -s $layerList[$index] $msg`);
+								if($isCreate){
+									$cmd += " -channels " + "\"" + $layerList[$index] + "\" " + ($index + 1) + " true";
+								}else{
+									$cmd += " -addChannel " + "\"" + $layerList[$index] + "\"";
+								}
+							}
+						}
+						else // if the image cannot be obtained, put an empty layer
+						{
+							$red = $colorList[$colListSize + 0] * 255;
+							$green = $colorList[$colListSize + 1] * 255;
+							$blue = $colorList[$colListSize + 2] * 255;
+
+							if($isCreate){
+								$cmd += " -channelRGB " + "\"" + $tmpLayerName + "\" "
+										+ ($index + 1) + " " + $red + " " + $green + " " + $blue;
+							}else{
+								$cmd += " -addChannelColor " + "\"" + $tmpLayerName + "\" "
+													+ "  " +  " " + $red + " " + $green + " " + $blue ;
+							}
+						}
+						$colListSize += 3;
+					}
+					else {
+						// 3d Paint export, fill color
+						$red = $colorList[$colListSize + 0] * 255;
+						$green = $colorList[$colListSize + 1] * 255;
+						$blue = $colorList[$colListSize + 2] * 255;
+						$colListSize += 3;
+						if($isCreate){
+							$cmd += " -channelRGB " + "\"" + $tmpLayerName + "\" "
+										+ ($index + 1) + " " + $red + " " + $green + " " + $blue;
+						}else{
+							$cmd += " -addChannelColor " + "\"" + $tmpLayerName + "\" "
+													+ " " +  " " + $red + " " + $green + " " + $blue ;
+						}
+					}
+				}
+				else // no 3d Paint export, only fill color
+			    {
+					$red = $colorList[$colListSize + 0] * 255;
+					$green = $colorList[$colListSize + 1] * 255;
+					$blue = $colorList[$colListSize + 2] * 255;
+					$colListSize += 3;
+
+					if($isCreate){
+						$cmd += " -channelRGB " + "\"" + $tmpLayerName + "\" "
+									+ ($index + 1) + " " + $red + " " + $green + " " + $blue;
+					}else{
+							$cmd += " -addChannelColor " + "\"" + $tmpLayerName + "\""
+													+ " " +  " " + $red + " " + $green + " " + $blue ;
+					}
+				}
+			}
+			else // put an empty layer. Passing true to create an empty layer in a layer set.
+			{
+				if($isCreate){
+					$cmd += " -channels " + "\"" + $tmpLayerName + "\" " + ($index + 1)  + " true";
+				}else{
+					$cmd += " -addChannel " + "\"" + $tmpLayerName + "\"" ;
+				}
+			}
+	}
+
+
+	if($isCreate){
+		if($snapShotName != ""){
+			$finalCmd = "psdTextureFile -xResolution "+ $xRes
+					 									+ " -psf " + "\"" + $psdFileName + "\""
+					 									+ " -snapShotImageName " + "\"" + $snapShotName + "\""
+					 									+ " -uvSnapPostionTop  " + $uvSnapPositionTop
+					 									+ " -yResolution " + $yRes + $cmd;
+		}else{
+			$finalCmd = "psdTextureFile -xResolution "+ $xRes
+					 									+ " -psf " + "\"" + $psdFileName + "\""
+					 									+ " -yResolution " + $yRes + $cmd  ;
+		}
+
+	}
+	else{
+
+		if($snapShotName != ""){
+			$finalCmd = "psdEditTextureFile -psf "
+									+  "\"" + $psdFileName + "\""
+									+ " -snapShotImage " + "\"" + $snapShotName + "\""
+									+ " -uvSnapPostionTop  " + $uvSnapPositionTop
+									+ $cmd ;
+		}else{
+
+			$finalCmd = "psdEditTextureFile -psf " +  "\"" + $psdFileName + "\""  + $cmd ;
+		}
+	}
+	if(size($gEditDeletedChannels) > 0)
+	{
+		string $warningMessage = (uiRes("m_photoShopPaintTex.kChannelDeletionMsg")) ;
+		string $ok= (uiRes("m_photoShopPaintTex.kOk"));
+		string $cancel = (uiRes("m_photoShopPaintTex.kCancel"));
+
+		string $warning = `confirmDialog -title (uiRes("m_photoShopPaintTex.kWarning")) 	-ma "center" 	-message $warningMessage
+										-button $ok -button $cancel -defaultButton $cancel `;
+
+		if($warning == $ok){
+			int $delIndex;
+			$cmd = "";
+			string $editDeleteChannel;
+			string $delPsdNodes[];
+			for($delIndex = 0; $delIndex < size($gEditDeletedChannels); $delIndex++)
+			{
+				$editDeleteChannel = `substitute "bump" $gEditDeletedChannels[$delIndex] "normalCamera"`;
+				$delPsdNodes = `listConnections -source true -destination false -type "psdFileTex" $editDeleteChannel`;
+				if(size($delPsdNodes) == 0)
+				{
+					string $bumpConnections[] = `listConnections -source true -destination false -type "bump2d" $editDeleteChannel`;
+					if(size($bumpConnections) > 0){
+						$delPsdNodes = `listConnections -source true -destination false -type "psdFileTex" $bumpConnections[0]`;
+					}else{
+					// Look for the displacement connections.
+						string $displacementNodes[] = `listConnections -source true -destination false -type "displacement" $editDeleteChannel`;
+						if(size($displacementNodes) > 0)
+							$delPsdNodes = `listConnections -source true -destination false -type "psdFileTex" $displacementNodes[0]`;
+					}
+				}
+				// There should be only node connected here to the particular channel. Get the corresponding layer set.
+				string $delLayerSetName = `getAttr($delPsdNodes[0] + ".layerSetName")`;
+				$cmd += " -deleteChannel " + "\"" + $delLayerSetName + "\"" ;
+			}
+		}
+		if($finalCmd == ""){
+			$finalCmd = "psdEditTextureFile -psf " +  "\"" + $psdFileName + "\""  + $cmd ;
+		}else{
+			$finalCmd += $cmd;
+		}
+	}
+	eval($finalCmd);
+
+	sysFile -delete $snapShotName;
+	for($index = 0; $index < $nodeIndex; $index++)
+	{
+		setAttr -type "string" ($fileNodeList[$index] + ".fileTextureName") $psdFileName;
+		string $tokens[], $channel;
+		int $numTokens = `tokenize $layerList[$index] "." $tokens`;
+
+		if ($tokens[1] == "normalCamera"){
+			$tmpLayerName = $tokens[0] + ".bump";
+		}else{
+			$tmpLayerName = $layerList[$index];
+		}
+		setAttr -type "string" ($fileNodeList[$index] + ".layerSetName") $tmpLayerName;
+	}
+
+	string $initializeString[];
+	for($index = 0; $index < size($psdDeleteList); $index++){
+			if(`connectionInfo -isDestination $psdDeleteList[$index]`){
+				string $source = `connectionInfo -sourceFromDestination $psdDeleteList[$index]`;
+				disconnectAttr $source $psdDeleteList[$index];
+			}
+	}
+	$psdDeleteList = $initializeString; // Initialize the delete list
+	$gIndex = 0;
+
+	for($index = 0; $index < $numNewFileNodes; $index++)
+	{
+		string $newFileName = `getAttr ($newFileNode[$index] + ".fileTextureName")`;
+		sysFile -delete $newFileName;
+		delete $newFileNode[$index];
+	}
+}
+
+
+global proc psdMakeNodeConnections(string $psdFileName, string $snapShotName, int $closeFlag, int $uvSnapPositionTop)
+{
+	 global string	$psdRightWin, $psdResX, $psdResY;
+	 global string	$psdTextureWin;
+	 global int $gForceConnectionFlag[];
+
+	 global string $gPsdFileName;
+	 global string $gSnapShotName;
+	 global string $gUVSnapPositionTop;
+
+	 $gPsdFileName = $psdFileName;
+	 $gSnapShotName = $snapShotName;
+	 $gUVSnapPositionTop = $uvSnapPositionTop;
+
+	 string $itemList[] = psdVerifyForBumpMapInSelectedChannelList($psdRightWin);
+
+	 int $index;
+	 for ($index = 0; $index < size($itemList); $index++){
+		if(`connectionInfo -isDestination $itemList[$index]`){
+			$gForceConnectionFlag[$index] = 1;
+			if(psdIsConnectedToFileNode($itemList[$index])){
+				continue;
+			}
+		}else{
+			$gForceConnectionFlag[$index] = 0;
+		}
+	 }
+
+// If the procedural textures exists then pop up the
+// Connected attribute dialog
+
+	if(`optionVar -exists "gCloseFlag"`){
+		optionVar -remove gCloseFlag;
+	}
+	optionVar -iv "gCloseFlag" $closeFlag;
+
+	psdConnectedWinApplyCmd();
+}
+
+
+global proc string psdCheckConnectionsForChannel(string $connectedChannel)
+//
+//	Description:
+//		This function returns the png file associated with
+//		a particular procedural node which is connected
+//		to the shader. An empty string is	returned if no
+//		no connections exist.
+//
+{
+	// Get the node connected to a particular channel.
+	string $imageFileName = "";
+	string $tokens[] ;
+	tokenize $connectedChannel "." $tokens;
+	string $connectedNode;
+
+	// Replace bump with normalCamera for getting the connections.
+
+	string $connections[] ;
+	if($tokens[size($tokens)-1] == "bump"){
+		$connectedChannel = $tokens[0] + "." + "normalCamera";
+	}
+
+	if ($tokens[size($tokens)-1] == "displacement"){
+		$connectedChannel = $tokens[0] + ".outColor" ;
+		$connections = `listConnections -destination on -source off $connectedChannel`;
+
+		// The default lambert material's outColor is connected to both initialShadingGroup and
+		// initialParticleSE. We need to take the displacement attribute of initialShadingGroup
+		// only.
+
+		if(size($connections) > 1){
+			int $index;
+			for($index = 0; $index < size($connections); $index++)
+			{
+				 if(`nodeType $connections[$index]` == "shadingEngine"){
+						$connections[0] = $connections[$index];
+				 }
+			}
+		}
+		$connectedChannel = $connections[0] + ".displacementShader" ;
+	}
+
+	$connections = `listConnections -destination off -source on $connectedChannel`;
+
+
+	// Return an empty string if there are no connections.
+	if (size($connections) == 0){
+	 return $imageFileName;
+	}
+
+	// We need the procedural node  type conneced to the channel. If it is bump, then do one
+	// extra level of  processing, due to the presence of intermediate,  bump2d node.
+
+	string $nodetype = `nodeType $connections[0]`;
+	$connectedNode =  $connections[0];
+	if($nodetype == "bump2d" || $nodetype == "bump3d"){
+		$connectedChannel =$connections[0] +  ".bumpValue" ;
+		string $bumpConnections[] = `listConnections -destination off -source on $connectedChannel` ;
+		if (size($connections) == 0){
+			return $imageFileName;
+		}
+		$nodetype = `nodeType $bumpConnections[0]`;
+		$connectedNode =  $bumpConnections[0];
+	}
+
+	// Handling of displacement attribute.
+	if($nodetype == "displacementShader"){
+		$connectedChannel =$connections[0] +  ".displacement" ;
+		string $displacementConnections[] = `listConnections -destination off -source on $connectedChannel` ;
+		if (size($connections) == 0){
+			return $imageFileName;
+		}
+		$nodetype = `nodeType $displacementConnections[0]`;
+		$connectedNode =  $displacementConnections[0];
+	}
+
+	if($nodetype == "transform")
+	{
+	// This is for handling fluidTexture.
+		 string $shapeNodes[] = `listRelatives -s $connections[0]`;
+		 $nodetype = `nodeType $shapeNodes[0]`;
+		 $connectedNode =  $shapeNodes[0];
+	}
+
+	if($nodetype == "file")
+	{
+		if(`getAttr ($connectedNode + ".fileTextureName")` == ""){
+			string $warningString = (uiRes("m_photoShopPaintTex.kNoImagefile")) ;
+			warning(`format -s $connectedNode $warningString`);
+		}
+	}
+	// Depending on the node type return a proper png file.
+
+	$imageFileName = "out_" + $nodetype + ".png" ;
+
+	return $imageFileName;
+}
+
+
+global proc psdRightButtonCmd()
+{
+	global string $psdLeftWin, $psdDetlShrtList, $psdShortList;
+	global string $psdRightWin, $psdXRes, $psdYRes ;
+	global string $gPsdShadingEng[] ;
+	global string $gPsdDetailedChannelList[] ;
+
+	string $selectedItems[];
+
+	int $checkBoxFlag = `checkBoxGrp -q -v1 $psdDetlShrtList`;
+	int $index;
+
+	if($checkBoxFlag){
+		$selectedItems = `nodeOutliner -q -currentSelection  $psdLeftWin`;
+	}else{
+		string $tempSelectedItems[] = `psdChannelOutliner -q -selectItem $psdShortList`;
+		int $i, $selectItemIndex = 0;
+		for ($index = 0; $index < size($tempSelectedItems); $index++){
+
+			string $definedChannelTokens[];
+			// We  return the list in the form "shader.channel" for the short list.
+			// So apply tokenize to get the channel name
+
+			tokenize $tempSelectedItems[$index] "." $definedChannelTokens;
+
+			// Delete the selected item from the left control.
+			psdChannelOutliner -e
+									-psdParent  $definedChannelTokens[0]
+									-removeChild $definedChannelTokens[size($definedChannelTokens) - 1]
+									$psdShortList;
+
+			for ($i = 0; $i < size($gPsdDetailedChannelList); $i++){
+
+				string $tokens[];
+				tokenize $gPsdDetailedChannelList[$i] "." $tokens;
+
+				if($definedChannelTokens[size($definedChannelTokens)-1]  == "bump" &&
+																 $tokens[size($tokens) - 1] == "normalCamera"){
+						$tokens[size($tokens) - 1] = "bump";
+				}
+				// Since we are now displaying the stuff in a tree structure, we need to handle each shader's
+				// attribute separately unlike previously,where we never used to differentiate among shaders.
+				// This is the reason why we have the second check here.
+
+				if(($definedChannelTokens[size($definedChannelTokens)-1]  == "displacement") &&
+												($tokens[0] == $definedChannelTokens[0])){
+						int $shadingIndex = 0;
+						string $shadingEngAttr, $connectMatAttr, $connectMatAttrTokens[];
+						for($shadingIndex = 0; $shadingIndex < size($gPsdShadingEng); $shadingIndex++){
+
+							$shadingEngAttr = $gPsdShadingEng[$shadingIndex] + ".surfaceShader";
+
+							// Take the incomming  connection from the shader to the Shading engine
+
+							$connectMatAttr = `connectionInfo -sourceFromDestination $shadingEngAttr`;
+
+							tokenize $connectMatAttr "." $connectMatAttrTokens;
+							// We are supposed to consider the shading engine which corresponds to
+							// the shader's selected displacement attribute.
+
+							if($connectMatAttrTokens[0] == $tokens[0]){
+								$selectedItems[$selectItemIndex++] = $gPsdShadingEng[$shadingIndex] + ".displacementShader";
+							}
+						}
+						break;
+				}
+
+
+				if(($tokens[size($tokens) - 1] == $definedChannelTokens[size($definedChannelTokens)-1])
+															&& ($tokens[0] == $definedChannelTokens[0])){
+						if(($tokens[size($tokens) - 1]) == "bump" ){
+							$selectedItems[$selectItemIndex++] = $tokens[size($tokens) - 2] + ".bump" ;
+						}else{
+							$selectedItems[$selectItemIndex++] = $gPsdDetailedChannelList[$i];
+						}
+				}
+			}
+		}
+	}
+
+
+	for($index = 0; $index < size($selectedItems); $index ++){
+		string $itemList[] = `psdChannelOutliner -q -allItems $psdRightWin`;
+		int $listIndex, $found = 0;
+		for($listIndex = 0; $listIndex < size($itemList); $listIndex++){
+		   if($itemList[$listIndex] == $selectedItems[$index]){
+		   	$found = 1;
+		   	break;
+		   }
+		 }
+		 if($found == 0){
+			// tokenize the item selected so as to get the parent and the child.
+
+			string $parentChild[];
+			tokenize  $selectedItems[$index] "." $parentChild;
+
+			// Get the xpm file associated with the procedural texture connected to a particular
+			// channel.
+			string $imageFileName = psdCheckConnectionsForChannel($selectedItems[$index]);
+			psdChannelOutliner -e
+										-psdParent  $parentChild[0]
+										-addChild $parentChild[size($parentChild) -1]  $imageFileName
+										$psdRightWin;
+
+		 }
+	}
+}
+
+global proc string[] psdGetMaterialsGivenShape(string $psdShape)
+//
+//	Description:
+//		Get the materials connected to the shape selected.
+//
+{
+	global string $gEditShadingEng[] ;
+
+	$gEditShadingEng = psdGetShadingEngines($psdShape);
+
+	int $materialIndex = 0;
+	string  $tmpMaterialList[], $materialList[];
+	for ($matIndex = 0; $matIndex < size($gEditShadingEng); $matIndex++){
+		string $materialConn[] = `listConnections ($gEditShadingEng[$matIndex] + ".surfaceShader")`;
+		for($index = 0; $index < size($materialConn); $index++){
+				$tmpMaterialList[$materialIndex++] = $materialConn[$index];
+		}
+	}
+	$materialList = stringArrayRemoveDuplicates($tmpMaterialList);
+	return $materialList;
+}
+
+global proc psdLeftButtonCmd()
+//
+//	Description:
+//		This gets executed the left arrow button is pressed. This results
+//		in removal of some of the selected channels displayed in the
+//		right side of the list.
+//
+{
+	global string $psdRightWin, $psdShortList, $gSelectedShape, $gPsdChannelList[];
+
+	string $selectedText[] = `psdChannelOutliner -q -selectItem $psdRightWin`;
+	int			$index, $channelIndex, $attrIndex;
+	string	$tokens[], $imageFileName, $shadingEngAttr,
+				$connectMatAttr, $connectMatAttrTokens[], $attributeList[];
+
+	string $psdShaders[] = psdGetMaterialsGivenShape($gSelectedShape);
+	int $count = 0;
+	for($index = 0; $index < size($psdShaders); $index++)
+	{
+		$attrConnections = `listAttr -r -o $psdShaders[$index]` ;
+		// This is short list representation of channels of all the shaders attached to the shape object.
+		for($channelIndex = 0; $channelIndex < size($gPsdChannelList); $channelIndex++)
+		{
+			string $tmpAttribute = $psdShaders[$index] + "." + $gPsdChannelList[$channelIndex];
+			for($attrIndex = 0; $attrIndex < size($attrConnections); $attrIndex++)
+			{
+				if($attrConnections[$attrIndex] == $gPsdChannelList[$channelIndex]
+							|| $gPsdChannelList[$channelIndex] == "bump" || $gPsdChannelList[$channelIndex] == "displacement"){
+					$attributeList[$count++] = $tmpAttribute;
+					break;
+				}
+			}
+		}
+	}
+
+	string $allRightItemList[] = `psdChannelOutliner -q -allItems $psdRightWin`;
+	string $finalRightItems[] = stringArrayRemove($selectedText, $allRightItemList);
+
+	string $finalLeftItemList[];
+	$count = 0;
+	for ($index = 0; $index < size($attributeList); $index++)
+	{
+		for($channelIndex = 0; $channelIndex < size($finalRightItems); $channelIndex++)
+		{
+			if($finalRightItems[$channelIndex] == $attributeList[$index])
+				break;
+		}
+		if($channelIndex == size($finalRightItems)){
+			$finalLeftItemList[$count++] = $attributeList[$index];
+		}
+	}
+
+	for($index = 0; $index < size($selectedText); $index ++)
+	{
+		// Tokenize to get the parent and child.
+		tokenize $selectedText[$index] "." $tokens;
+		psdChannelOutliner -e
+								-psdParent  $tokens[0]
+								-removeChild $tokens[size($tokens) -1]
+								$psdRightWin;
+	}
+
+		// We are trying to rearrange the attributes in the same order as before.
+	psdChannelOutliner -e -removeAll $psdShortList;
+	for($index = 0; $index < size($finalLeftItemList); $index++)
+	{
+		tokenize $finalLeftItemList[$index] "." $tokens;
+
+		// Handle displacement channel separately.
+
+		if($tokens[size($tokens)-1] == "displacementShader")
+		{
+			$shadingEngAttr = $tokens[0] + ".surfaceShader";
+
+			// Take the incomming  connection from the shader to the Shading engine.
+			$connectMatAttr = `connectionInfo -sourceFromDestination $shadingEngAttr`;
+			tokenize $connectMatAttr "." $connectMatAttrTokens;
+
+			// When displacement shader attribute  is selected for deletion in the right window, put
+			// back the channel as "displacement" under the appropriate shader in the left control.
+
+			$tokens[0] = $connectMatAttrTokens[0] ;
+			$tokens[size($tokens) -1] = "displacement" ;
+		}
+		$imageFileName = psdCheckConnectionsForChannel($finalLeftItemList[$index]);
+		psdChannelOutliner -e
+									-psdParent  $tokens[0]
+									-addChild $tokens[size($tokens) -1] $imageFileName
+									$psdShortList;
+	}
+}
+
+global proc int psdUpdateFileName( string $filename, string $fileType )
+{
+   global string $psdFileNameTextField;
+
+
+   string $shortName = `workspace -projectPath $filename`;
+
+	textFieldGrp -e -fileName $shortName $psdFileNameTextField;
+	return 1;
+}
+
+global proc psdSaveFile()
+{
+	string  $workSpace = `workspace -q -fn`;
+    setWorkingDirectory $workSpace "image" "sourceImages";
+
+    string $set = (uiRes("m_photoShopPaintTex.kSet"));
+	fileBrowser("psdUpdateFileName",$set,"Photoshop",1);
+}
+
+global proc psdUpdateTextureWithNewScene()
+{
+	global string $psdLeftWin, $psdRightWin, $psdTextureWin ;
+
+	if(!`window -q -visible $psdTextureWin`)
+		return;
+	nodeOutliner -e -removeAll $psdLeftWin;
+	psdChannelOutliner -e -removeAll $psdRightWin;
+	warning (uiRes("m_photoShopPaintTex.kSelectObject"));
+}
+
+proc string[] psdUniqueNodeList(
+	string  $nodes[]
+)
+//
+//	Description:
+//		Returns a unique list of nodes. Eliminate
+//		all the dublicates.
+//
+{
+	string	$uniqueNodes[];
+	int		$nodeIndx = 0;
+
+	for ( $node in $nodes ) {
+		int $found = 0;
+		for ($uNode in $uniqueNodes ) {
+			if ( $node == $uNode ) {
+				$found = 1;
+				break;
+			}
+		}
+
+		// Add it to the list.
+		if ( $found == 0 ) {
+			$uniqueNodes[$nodeIndx] = $node;
+			$nodeIndx ++;
+		}
+	}
+
+	return $uniqueNodes;
+}
+
+global proc psdEnableDisableUVSnapControl(string $psdShape)
+//
+//	Description:
+//		Function for enabling or disabling the UV sets for
+//		the selected object or not.
+//
+{
+	global string $psdUVListMenu;
+
+	// if user has selected any "non-mesh" objects disable UV set selection control
+
+	string $items[] = `optionMenuGrp -q -itemListLong $psdUVListMenu`;
+	int $itemCount = size($items);
+	int $uvIndex;
+
+	if($itemCount > 0) {
+		for ($uvIndex=0; $uvIndex < $itemCount; ++$uvIndex) {
+			deleteUI -menuItem $items[$uvIndex];
+		}
+	}
+	if($psdShape == ""){
+		optionMenuGrp -e -enable false $psdUVListMenu ;
+		return;
+	}
+
+	string $nodetype = `nodeType $psdShape`;
+	if( $nodetype != "mesh" && $nodetype != "subdiv")
+	{
+		optionMenuGrp -e -enable false $psdUVListMenu ;
+	}
+	else
+	{
+		string $sList[] = `ls -sl `;
+
+		string $allUVSet[];
+		if($nodetype == "mesh"){
+			$allUVSet  = `polyUVSet -q -allUVSets $sList[0]`;
+		}else{
+			$allUVSet[0] = `getAttr ($psdShape + ".uvSet[0].uvSetName")`;
+		}
+		for($uvIndex = 0; $uvIndex < size($allUVSet); ++$uvIndex){
+			menuItem -parent ($psdUVListMenu + "|OptionMenu") -label $allUVSet[$uvIndex] ;
+		}
+
+		if(size($allUVSet) > 0){
+			optionMenuGrp -e -select 1  $psdUVListMenu;
+		}
+
+		optionMenuGrp -e -enable true $psdUVListMenu ;
+	}
+}
+
+global proc string psdIsSelectedObjectProper(string  $sList[])
+//
+//	Description:
+//		Checks if the selected object is proper or not.
+//		Only Nurbs, polys and Subdiv surfaces need to be
+//		selected.
+//
+{
+		global string $gSelectedShape;
+
+		string $invalid = (uiRes("m_photoShopPaintTex.kInvalidSelection"));
+
+		string $psdShape[] = `listRelatives -s $sList[0]`;
+		string $emptyString = "";
+		if(size($psdShape) < 1){
+			string $initialNodetype = `nodeType $sList[0]`;
+			if($initialNodetype == "nurbsSurface"
+		   	|| $initialNodetype == "mesh"
+		    || $initialNodetype == "subdiv")
+			{
+				$gSelectedShape = $sList[0];
+				return $gSelectedShape;
+			}
+			else
+			{
+				error $invalid;
+				return $emptyString;
+			}
+		}
+
+		string $nodetype = `nodeType $psdShape[0]`;
+		if($nodetype != "nurbsSurface" && $nodetype != "mesh" && $nodetype != "subdiv"){
+			error $invalid;
+			return $emptyString;
+		}
+
+		$gSelectedShape = $psdShape[0];
+		return $gSelectedShape;
+}
+
+global proc psdUpdateTextureWithSelectionChanged()
+{
+//
+// Discription:
+//			This is a script job which gets executed when ever the user
+//			changes the selection of the active object. The attribute list
+//			changes if the selected object has a different shader associated
+//			with it.
+//
+		global string $psdTextureWin, $psdLeftWin, $psdRightWin, $psdUVListMenu ;
+		global string  $psdShortList, $gPsdChannelList[];
+		global string $gPsdShadingEng[], $gMaterialList[], $gPsdDetailedChannelList[];
+		global string $psdFileNameTextField;
+
+		string $initializeString[];
+		$gPsdShadingEng = $initializeString;
+		$gPsdDetailedChannelList = $initializeString;
+
+		// Get the object selected
+
+		if(!`window -q -visible $psdTextureWin`)
+			return;
+
+		string $sList[] = `ls -sl `;
+
+		psdChannelOutliner -e -removeAll $psdShortList;
+		nodeOutliner -e -removeAll $psdLeftWin;
+		psdChannelOutliner -e -removeAll $psdRightWin;
+		textFieldGrp -e -text "" $psdFileNameTextField;
+
+		if (size($sList) > 1 || size($sList) == 0){
+			psdEnableDisableUVSnapControl("");
+			return;
+		}
+
+		string $psdShape = psdIsSelectedObjectProper($sList);
+		if($psdShape == "")
+		   return;
+
+		$gPsdShadingEng = psdGetShadingEngines($psdShape);
+
+		psdEnableDisableUVSnapControl($psdShape);
+
+		string $scenename = getSceneName();
+		string $filename = $scenename + "_" + $psdShape	+ ".psd";
+		$filename = psdGetProperPath($filename);
+		$filename = `workspace -projectPath $filename`;
+		textFieldGrp -e -fileName $filename $psdFileNameTextField;
+
+		// Go through each shader associated with selected object and display its channels
+		// This applies to both short list and the long list. Display the shading engine's
+		// displacement attribute in the short list.
+
+		int $index, $matIndex, $attrIndex ;
+		string $attrConnections[];
+		for ($matIndex = 0; $matIndex < size($gPsdShadingEng); $matIndex++){
+			string $materialConn[] = `listConnections ($gPsdShadingEng[$matIndex] + ".surfaceShader")`;
+			for ($index = 0; $index < size($materialConn) ;$index++){
+				nodeOutliner -e -nc -showNonKeyable true -showReadOnly true -showOutputs true
+																	-showInputs false -a $materialConn[$index] $psdLeftWin;
+			}
+			string $displacementConn[] = `listConnections ($gPsdShadingEng[$matIndex] + ".displacementShader")`;
+			if(size($displacementConn) > 0){
+				if(`nodeType $displacementConn[0]` == "displacementShader"){
+						$materialConn[size($materialConn)] = $gPsdShadingEng[$matIndex] + ".displacementShader" ;
+				}
+			}
+
+		}
+
+
+		// Display of the short list is taken care off here. Repetion of the
+		// attributes is avoided here.
+
+		int $materialIndex = 0;
+		string  $tmpMaterialList[];
+		for ($matIndex = 0; $matIndex < size($gPsdShadingEng); $matIndex++){
+			string $materialConn[] = `listConnections ($gPsdShadingEng[$matIndex] + ".surfaceShader")`;
+			for($index = 0; $index < size($materialConn); $index++){
+					$tmpMaterialList[$materialIndex++] = $materialConn[$index];
+			}
+		}
+		$gMaterialList = stringArrayRemoveDuplicates($tmpMaterialList);
+
+
+		string $combinedChannels[];
+
+
+		// Updation of the short list
+
+		int $channelIndex = 0;
+		int $i;
+		for($i = 0; $i < size($gMaterialList); $i++){
+			$attrConnections = `listAttr -r -o $gMaterialList[$i]` ;
+			for($index = 0; $index < size($attrConnections); $index++){
+					$combinedChannels[$channelIndex] = $attrConnections[$index];
+					$gPsdDetailedChannelList[$channelIndex] = $gMaterialList[$i] + "." + $attrConnections[$index];
+					$channelIndex++;
+			}
+		}
+		psdChannelOutliner -e -removeAll $psdShortList;
+		string $psdShortChannelList[];
+		int $materialIndex, $count;
+		for($materialIndex = 0; $materialIndex < size($gMaterialList); $materialIndex++)
+		{
+			for($index = 0; $index < size($gPsdChannelList); $index++)
+			{
+				$psdShortChannelList[$count] = $gMaterialList[$materialIndex] + "." + $gPsdChannelList[$index];
+				$count++;
+			}
+		}
+
+		int $shortChannelIndex;
+		for($shortChannelIndex = 0; $shortChannelIndex < size($psdShortChannelList); $shortChannelIndex++)
+		{
+			string $tokens[];
+			int $numTokens = `tokenize $psdShortChannelList[$shortChannelIndex] "." $tokens`;
+			string $comparisionString;
+
+			// Replace bump with normalCamera for comparision with the original detailed
+			// list of shader attributes.
+
+			if ($tokens[$numTokens - 1] == "bump")
+			{
+				$comparisionString  = $tokens[0] + "." + "normalCamera";
+			}
+			else
+			{
+				$comparisionString = $psdShortChannelList[$shortChannelIndex];
+			}
+			if($tokens[$numTokens - 1] == "displacement")
+			{
+					string $imageFileName = psdCheckConnectionsForChannel($comparisionString);
+					psdChannelOutliner -e
+							-psdParent $tokens[0]
+							-addChild $tokens[$numTokens -1] $imageFileName
+							$psdShortList;
+			}
+			else
+			{
+				for($index = 0; $index < size($gPsdDetailedChannelList); $index++)
+				{
+						if($comparisionString == $gPsdDetailedChannelList[$index])
+						{
+						// tokens[0] is the shader and tokens[numTokens -1] is the channel.
+						// Add shader as the parent and channel as the child for the control.
+								string $imageFileName = psdCheckConnectionsForChannel($comparisionString);
+								psdChannelOutliner -e
+												-psdParent $tokens[0]
+												-addChild $tokens[$numTokens -1] $imageFileName
+												$psdShortList;
+						}
+				}
+			}
+		}
+}
+
+global proc psdApplyCmd()
+{
+	int $closeFlag = 0, $index;
+
+	if(!psdCreateNodeNetwork($closeFlag))
+		return;
+	psdWindowSaveSettingsCmd();
+	string $selectedItems[] = `ls -sl`;
+	for($index = 0; $index < size($selectedItems); $index++){
+			select -deselect $selectedItems[$index];
+	}
+}
+
+global proc string psdGetProperPath(string $tempPath)
+//
+// Discription:
+//			Given just the file name, a proper path directing it to the
+//			"sourceimages" directory is returned.
+//
+{
+	string $tokens[], $imageDir, $sourceImages;
+	int $numTokens;
+	$numTokens = `tokenize $tempPath "/" $tokens`;
+	if ($numTokens == 1){
+	 		$sourceImages = `workspace -q -fileRuleEntry "sourceImages"`;
+			if($sourceImages == ""){
+	 				string $rootDir = `workspace -q -rootDirectory`;
+	 				$imageDir = $rootDir + "sourceimages";
+	 				if (!`filetest -d $imageDir`){
+	 					sysFile -makeDir $imageDir;
+	 				}
+	 		}else{
+	 				$imageDir = `workspace -expandName $sourceImages` ;
+	 		}
+	 		$tempPath = $imageDir + "/" + $tempPath;
+	 }
+	 return $tempPath;
+}
+
+global proc int psdCreateNodeNetwork(int $closeFlag)
+//Discription
+//			This writes the psd file on to the disk and creates the node
+//			network appropriately
+//
+{
+	global int $gIndex;
+	global string $psdFileNameTextField, $psdDeleteList[], $psdRightWin, $psdUVLocation;
+	global string $psdUVListMenu, $psdReferenceFileName, $psdResX, $psdResY;
+	global string $psdColorValueSlider, $psdAntiAlias, $psdIncludeUVSnapshot, $psdOpenPhotoshop;
+
+	// Handle the attributes which are removed from the selected attributes list
+	if (size($psdDeleteList) > 0){
+	  	string $tempList[];
+	  	int $i, $delIndex = 0;
+			for($i = 0; $i < size($psdDeleteList); $i++){
+					if(`connectionInfo -isDestination $psdDeleteList[$i]`){
+							$tempList[$delIndex++] = $psdDeleteList[$i];
+					}
+			}
+			if(size( $tempList) > 0){
+				$gIndex = size( $tempList);
+				$psdDeleteList = $tempList;
+			}
+			if(`connectionInfo -isDestination $psdDeleteList[0]`){
+				string $srcList[];
+				string $source = `connectionInfo -sourceFromDestination  $psdDeleteList[0]`;
+				int $numSrc = `tokenize $source "." $srcList`;
+				string $flName = `getAttr ($srcList[0] + ".fileTextureName")`;
+				textFieldGrp -e -fileName $flName $psdFileNameTextField;
+			}
+	}
+
+	string $tempPath = `textFieldGrp -q -fileName  $psdFileNameTextField`;
+	if($tempPath == ""){
+		error (uiRes("m_photoShopPaintTex.kNoFile"));
+		return 0;
+	}
+
+	// If the user selects the directory from the file dialog, then it
+	// will be written to the directory specified in the file dialog. If
+	// the user enters just the file name in the field, then it gets written
+	// to the "sourceimages" directory.
+
+	string $tokens[], $imageDir, $sourceImages;
+	int $numTokens;
+
+	$tempPath = psdGetProperPath($tempPath);
+
+	string $psdFilePathName = `workspace -expandName $tempPath`;
+
+
+
+	int $numItems = `psdChannelOutliner -q -numberOfItems $psdRightWin` ;
+
+	if($numItems == 0){
+		error (uiRes("m_photoShopPaintTex.kNoAttrs"));
+		return 0;
+	}
+
+	string  $psdFileName;
+
+
+	$numTokens = `tokenize $psdFilePathName "/" $tokens`;
+	$psdFileName = $tokens[size($tokens) - 1];
+
+	$psdFilePath = dirname($psdFilePathName);
+	if(`filetest -d $psdFilePath`){
+			$sourceImages = $psdFilePath;
+	}else{
+			$imageDir = `workspace -q -fileRuleEntry "sourceImages"`;
+			if($imageDir == ""){
+				$sourceImages = `workspace -q -rd`;
+			}else{
+				$sourceImages = `workspace -expandName $imageDir`;
+			}
+
+	}
+	int $stringSize = size($psdFileName);
+	string $extension = `substring $psdFileName ($stringSize -2) $stringSize`;
+	if($extension != "psd"){
+			$psdFileName += ".psd";
+	}
+
+	$psdFileName = $sourceImages  + "/" + $psdFileName;
+
+	if(`filetest -f $psdFileName`){
+		string $ok= (uiRes("m_photoShopPaintTex.kOk"));
+		string $cancel = (uiRes("m_photoShopPaintTex.kCancel"));
+
+		string $warningMsg = `confirmDialog -title (uiRes("m_photoShopPaintTex.kWarning"))
+			-ma "center"
+			-message (uiRes("m_photoShopPaintTex.kFileExistsMsg"))
+			-button $ok -button $cancel -defaultButton $ok `;
+
+		if($warningMsg == $cancel){
+			return 0;
+		}
+	}
+
+	int $uvsnap = `checkBoxGrp -q -value1 $psdIncludeUVSnapshot`;
+
+	string $tempFileName = "";
+	int $uvSnapPositionTop = true;
+	if($uvsnap){
+		int $xRes = `intSliderGrp -q -value  $psdResX`;
+		int $yRes = `intSliderGrp -q -value  $psdResY`;
+
+		string $selectedUVSet = `optionMenuGrp -q -value $psdUVListMenu` ;
+
+		$tempFileName = getenv("TMPDIR");
+		$tempFileName += "/tempPsd.iff";
+
+		float $rgb[3] = `colorSliderGrp -q -rgbValue $psdColorValueSlider`;
+		int $antiAliasedVal = `checkBoxGrp -q -value1 $psdAntiAlias`;
+
+		if(`radioButtonGrp -q -select $psdUVLocation` == 1){
+			$uvSnapPositionTop = true ;
+		}else{
+			$uvSnapPositionTop = false ;
+		}
+	  // Get the options for uvsnap shot image
+
+		 float $color[3];
+		$color[0] = $rgb[0] * 255;
+		$color[1] = $rgb[1] * 255;
+		$color[2] = $rgb[2] * 255;
+
+		if ($antiAliasedVal){
+			uvSnapshot -o -antiAliased -name $tempFileName
+								  -uvSetName $selectedUVSet
+								  -redColor $color[0]
+								  -greenColor $color[1]
+								  -blueColor $color[2]
+								  -ff "iff"
+								  -xResolution $xRes
+								  -yResolution $yRes ;
+		}else{
+				uvSnapshot -o -name $tempFileName
+								  -uvSetName $selectedUVSet
+								  -redColor $color[0]
+								  -greenColor $color[1]
+								  -blueColor $color[2]
+								  -ff "iff"
+								  -xResolution $xRes
+								  -yResolution $yRes ;
+		}
+
+	}
+
+	psdMakeNodeConnections($psdFileName, $tempFileName, $closeFlag, $uvSnapPositionTop);
+
+	int $photoshopVal = `checkBoxGrp -q -value1 $psdOpenPhotoshop`;
+	if ( $photoshopVal )
+	{
+		launchImageEditor -eif $psdFileName;
+	}
+
+	return 1;
+}
+
+global proc psdCreateCmd()
+//Discription
+//			This writes the psd file on to the disk and creates the node
+//			network appropriately and closes the window.
+//
+{
+		int $closeFlag = 1;
+		psdWindowSaveSettingsCmd();
+		if (!psdCreateNodeNetwork($closeFlag))
+			return;
+}
+
+global proc psdCloseCmd()
+//Discription
+//			This closes the window without doing anything.
+//
+
+{
+	global string $psdTextureWin;
+
+	window -e -visible false $psdTextureWin;
+}
+
+global proc psdDetlShrtListCmd()
+//Discription
+//			This command gets executed when the user toggles between the short attribute
+//			list and the detailed attribute list.
+//
+
+{
+	global string $psdDetlShrtList, $psdAttributeListLayout;
+
+	int $checkBoxFlag = `checkBoxGrp -q -v1 $psdDetlShrtList`;
+	if($checkBoxFlag){
+		tabLayout -e -selectTab detailedListLayout $psdAttributeListLayout;
+
+	}else{
+		tabLayout -e -selectTab shortListLayout $psdAttributeListLayout;
+	}
+}
+
+proc psdAdjustSizeSlider(string  $whichSlider, int $makePowerTwoFlag)
+//Discription
+//			This adjusts the x resolution and y resolution when the aspect
+//			ratio check box is toggled on
+//
+{
+	global float $gPsdAspectRatio;
+	global string $psdAspectRatio, $psdResX, $psdResY;
+
+	int $value = `checkBoxGrp -q -v1 $psdAspectRatio`;
+	if ( $value ) {
+		if ( $whichSlider == "xSlider" ) {
+			int $valX = eval("intSliderGrp -q -value  $psdResX");
+			int $tempVal = $valX/$gPsdAspectRatio;
+			int $newVal = $tempVal;
+			if($makePowerTwoFlag){
+				$newVal = psdMakePowerOfTwo($tempVal);
+			}
+			intSliderGrp -e -v $newVal $psdResY;
+		} else {
+			int $valY   = eval("intSliderGrp -q -value $psdResY");
+			int $tempVal = $valY*$gPsdAspectRatio;
+			int $newVal = $tempVal;
+			if($makePowerTwoFlag){
+				$newVal = psdMakePowerOfTwo($tempVal);
+			}
+			intSliderGrp -e -v $newVal $psdResX;
+		}
+	}
+}
+
+
+
+global proc int psdMakePowerOfTwo(int $sz)
+//Discription
+//			This adjusts the movment of Size X and Size Y slider to the values of
+//			power of 2.
+//
+{
+	int $prevSize = 0, $nextSize = 1;
+	while ($nextSize < $sz ){
+	   $prevSize = $nextSize;
+	   $nextSize = $nextSize * 2;
+	}
+
+	int $newSize;
+
+	if(($sz - $prevSize) < ($nextSize - $sz)){
+			$newSize = $prevSize;
+	}else{
+		$newSize = $nextSize;
+	}
+	return $newSize;
+
+}
+
+global proc psdChangeXResolutionDragCmd(int $sz)
+//Discription
+//			This gets exected when the slider is moved with the left
+//			mouse button. This is callback command
+//
+
+{
+    global string $psdResX;
+
+	int $newSize = psdMakePowerOfTwo($sz) ;
+	intSliderGrp -e -value $newSize $psdResX ;
+	psdAdjustSizeSlider("xSlider", 1);
+}
+
+global proc psdChangeXResolutionChCmd(int $sz)
+//Discription
+//			This gets exected when the slider is moved with the left
+//			mouse button. This is callback command
+//
+
+{
+	psdAdjustSizeSlider("xSlider", 0);
+}
+
+
+global proc psdChangeYResolutionDragCmd(int $sz)
+//Discription
+//			This gets exected when the slider is moved with the left
+//			mouse button. This is callback command
+//
+{
+	global string $psdResY;
+
+	int $newSize = psdMakePowerOfTwo($sz);
+	intSliderGrp -e -value $newSize $psdResY ;
+	psdAdjustSizeSlider("ySlider", 1);
+}
+
+global proc psdChangeYResolutionChCmd(int $sz)
+//Discription
+//			This gets exected when the slider is moved with the left
+//			mouse button. This is callback command
+//
+{
+	psdAdjustSizeSlider("ySlider", 0);
+}
+
+
+global proc psdKeepAspectRatioCmd(int $aspect)
+//Discription
+//			Calcuates the aspect ratio and maintains
+//			it with respect to x and y resolution
+//
+{
+	global string $psdResX, $psdResY;
+	global float $gPsdAspectRatio;
+
+	if($aspect){
+		float $sizeX = `intSliderGrp -q -value  $psdResX`;
+		float $sizeY = `intSliderGrp -q -value  $psdResY`;
+
+
+		$gPsdAspectRatio = $sizeX / $sizeY;
+
+	}
+}
+
+global proc psdSetFactorySettings(int $factorySettings)
+//Discription
+//			Resets the default settings for all the controls.
+//
+{
+	global string $psdResX, $psdResY, $psdAspectRatio, $psdIncludeUVSnapshot;
+	global string $psdDetlShrtList, $psdAntiAlias, $psdColorValueSlider, $psdUVLocation, $psdOpenPhotoshop;
+
+	int $value;
+	if($factorySettings || !`optionVar -exists psdSizeX`)
+	{
+		$value = 1024;
+		optionVar -intValue psdSizeX $value;
+		intSliderGrp -e -value $value $psdResX ;
+	}else{
+		$value = `optionVar -q psdSizeX` ;
+		intSliderGrp -e -value $value $psdResX ;
+	}
+	if($factorySettings || !`optionVar -exists psdSizeY`)
+	{
+		$value = 1024 ;
+		optionVar -intValue psdSizeY $value;
+		intSliderGrp -e -value $value $psdResY ;
+	}else{
+		$value = `optionVar -q psdSizeY` ;
+		intSliderGrp -e -value $value $psdResY ;
+	}
+	if($factorySettings || !`optionVar -exists psdAspectRatioValue`)
+	{
+		$value = 1;
+		optionVar -intValue psdAspectRatioValue $value;
+		checkBoxGrp -e -v1 $value $psdAspectRatio;
+	}else{
+		$value = `optionVar -q psdAspectRatioValue` ;
+		checkBoxGrp -e -v1 $value $psdAspectRatio;
+	}
+	if($factorySettings || !`optionVar -exists psdAntiAliasValue`)
+	{
+		$value = 0;
+		optionVar -intValue psdAntiAliasValue $value;
+		checkBoxGrp -e -v1 $value $psdAntiAlias;
+	}else{
+		$value = `optionVar -q psdAntiAliasValue` ;
+		checkBoxGrp -e -v1 $value $psdAntiAlias;
+	}
+	if($factorySettings || !`optionVar -exists psdDetailedListValue`)
+	{
+		$value = 0;
+		optionVar -intValue psdDetailedListValue $value;
+		checkBoxGrp -e -v1 $value $psdDetlShrtList;
+		psdDetlShrtListCmd();
+	}else{
+		$value = `optionVar -q psdDetailedListValue` ;
+		checkBoxGrp -e -v1 $value $psdDetlShrtList;
+		psdDetlShrtListCmd();
+	}
+
+	if($factorySettings || !`optionVar -exists psdUVSnapshotPosition`)
+	{
+		$value = 1;
+		optionVar -intValue psdUVSnapshotPosition $value;
+		radioButtonGrp -e -select $value $psdUVLocation;
+	}else{
+		$value = `optionVar -q psdUVSnapshotPosition`;
+		radioButtonGrp -e -select $value $psdUVLocation;
+	}
+
+	if($factorySettings || !`optionVar -exists psdColorValue`){
+		float $colorValue = 1.0;
+
+		optionVar -clearArray "psdColorValue" ;
+		optionVar -floatValueAppend psdColorValue $colorValue
+					-floatValueAppend psdColorValue $colorValue
+					-floatValueAppend psdColorValue $colorValue;
+		colorSliderGrp  -e -rgb $colorValue $colorValue $colorValue $psdColorValueSlider;
+
+	}
+	else{
+		float $coValues[3] = `optionVar -q psdColorValue`;
+		colorSliderGrp  -e -rgb $coValues[0] $coValues[1] $coValues[2] $psdColorValueSlider;
+	}
+
+	if($factorySettings || !`optionVar -exists psdIncludeUVSnapValue`)
+	{
+		$value = 1;
+		optionVar -intValue psdIncludeUVSnapValue $value;
+		checkBoxGrp -e -v1 $value $psdIncludeUVSnapshot;
+		psdIncludeUVSnapShotCmd($value);
+	}else{
+		$value = `optionVar -q psdIncludeUVSnapValue` ;
+		checkBoxGrp -e -v1 $value $psdIncludeUVSnapshot;
+		psdIncludeUVSnapShotCmd($value);
+	}
+
+	if($factorySettings || !`optionVar -exists psdOpenPhotoshopValue`)
+	{
+		$value = 0;
+		optionVar -intValue psdOpenPhotoshopValue $value;
+		checkBoxGrp -e -v1 $value $psdOpenPhotoshop;
+	}else{
+		$value = `optionVar -q psdOpenPhotoshopValue` ;
+		checkBoxGrp -e -v1 $value $psdOpenPhotoshop;
+	}
+}
+
+
+global proc psdIncludeUVSnapShotCmd(int $switchFlag)
+//Discription
+//			Executes the command when UV snap shot check box
+//			is made ON or OFF
+//
+{
+	global string $psdColorValueSlider, $psdAntiAlias, $psdUVLocation;
+	global string $psdUVListMenu;
+
+
+	checkBoxGrp -e -enable1 $switchFlag $psdAntiAlias;
+	colorSliderGrp -e -enable $switchFlag $psdColorValueSlider;
+	radioButtonGrp -e -enable $switchFlag $psdUVLocation;
+
+
+	if($switchFlag == 1){
+		string $sList[] = `ls -sl `;
+		string $psdShape = psdIsSelectedObjectProper($sList);
+		psdEnableDisableUVSnapControl($psdShape);
+	}else{
+		optionMenuGrp -e -enable $switchFlag $psdUVListMenu;
+	}
+}
+
+
+global proc psdConvertSolidOptCmd()
+{
+	global string $psdRightWin;
+
+	string $itemList[] = `psdChannelOutliner -q -allItems $psdRightWin`;
+	if(size($itemList) == 0)
+	   return;
+
+	string $connectedChannels[], $imageName;
+	int $index, $count = 0;
+	for($index = 0; $index < size($itemList); $index++)
+	{
+			$imageName = psdCheckConnectionsForChannel($itemList[$index]);
+			if(size($imageName) > 0)
+			{
+				$connectedChannels[$count] = $itemList[$index];
+				$count++;
+			}
+	}
+	if($count == 0)
+	   return;
+
+	source psdConvertSolidTxPanel.mel;
+	psdConvertSolidTxPanel($connectedChannels);
+
+}
+
+
+global proc photoShopPaintTex()
+//
+//  Procedure Name:
+//      photoShopPaintTex
+//
+//  Description:
+//      Creates a window with some buttons, and two lists
+//
+//  Input Arguments:
+//		None.
+//
+//  Return Value:
+//      None.
+//
+{
+	global string $psdLeftWin, $psdRightWin, $psdUVListMenu ;
+	global string $psdResX, $psdFileNameTextField, $psdResY, $psdColorValueSlider;
+	global string $psdAspectRatio, $psdAntiAlias ;
+	global string $psdTextureWin, $psdIncludeUVSnapshot ;
+	global string $psdShortList, $psdUVLocation ;
+	global string $psdAttributeListLayout, $psdDetlShrtList;
+	global float $gPsdAspectRatio;
+	global string $psdOpenPhotoshopRowLayout, $psdOpenPhotoshop;
+
+
+	string $sList[] = `ls -sl`;
+	if (size($sList) > 1 || size($sList) == 0){
+		error (uiRes("m_photoShopPaintTex.kNoSelection"));
+		return;
+	}
+	string $psdShape = psdIsSelectedObjectProper($sList);
+	if($psdShape == "")
+		return;
+
+	if(`window -exists "psdTextureWindow"`) {
+		psdUpdateTextureWithSelectionChanged();
+		showWindow $psdTextureWin;
+		window -e -visible true $psdTextureWin;
+	} else {
+		$psdTextureWin = `window -ret -rtf true -h 580 -w 490
+												-title (uiRes("m_photoShopPaintTex.kCreatePSDNetworkOptions"))
+												psdTextureWindow`;
+		string $texMenubar = `menuBarLayout texMenubarLayout`;
+			string $aForm = `formLayout -p $texMenubar -numberOfDivisions 100 upperForm`;
+				scrollLayout -p $aForm  -childResizable true psdCreateScrollLayout;
+					columnLayout -p psdCreateScrollLayout  -adjustableColumn 1 psdCreateColumnLayut;
+						frameLayout -label (uiRes("m_photoShopPaintTex.kImageSettings"))  
+							-collapsable true -marginHeight 10 createFileDetailsFrameLayout;
+							columnLayout -rowSpacing 5 psdCreateImgDetailsLayout;
+								rowLayout -nc 2 psdRowImageLayout;
+									$psdFileNameTextField = `textFieldGrp
+																					-cw 1 115
+																					-cw 2 210
+																					-label (uiRes("m_photoShopPaintTex.kImageName"))
+																					psdFileName`;
+									symbolButton -image "navButtonBrowse.png"
+																		-command "psdSaveFile"
+																		psdBrowser;
+								setParent ..;
+
+								$psdOpenPhotoshop = `checkBoxGrp -numberOfCheckBoxes 1
+																					-cat 1 "left" 117
+																					-label1 (uiRes("m_photoShopPaintTex.kOpenAdobeRPhotoshopR"))
+																					psdOpenPhotoshopCheckBox`;
+
+								$psdResX = `intSliderGrp -label (uiRes("m_photoShopPaintTex.kSizeX"))
+																-cw 1 115
+																-field true
+       				 											-minValue 32 -maxValue 2048
+        														-fieldMinValue 32 -fieldMaxValue 2048
+        														-dragCommand ("psdChangeXResolutionDragCmd #1")
+																-changeCommand ("psdChangeXResolutionChCmd #1")
+        														-value 1024 psdXResolution`;
+
+								$psdResY = `intSliderGrp -label (uiRes("m_photoShopPaintTex.kSizeY"))
+																		-cw 1 115
+																		-field true
+       				 													-minValue 32 -maxValue 2048
+        																-fieldMinValue 32 -fieldMaxValue 2048
+        																-dragCommand ("psdChangeYResolutionDragCmd #1")
+        																-changeCommand ("psdChangeYResolutionChCmd #1")
+																		-value 1024 psdYResolution`;
+
+								$psdAspectRatio = `checkBoxGrp -numberOfCheckBoxes 1
+															-cat 1 "left" 117
+															-label1 (uiRes("m_photoShopPaintTex.kKeepAspectRatio"))
+															-value1 1
+															-cc1 ("psdKeepAspectRatioCmd #1 ")
+															psdAspectRatioChkBox`;
+								$gPsdAspectRatio = 1.0;
+
+							setParent ..; // columnLayout
+						setParent ..; // frameLayout
+
+						frameLayout -label (uiRes("m_photoShopPaintTex.kUVSettings"))  
+							-collapsable true -marginHeight 2 createUVDetailsFrameLayout;
+								columnLayout   -rowSpacing 5 psdCreateUVSnapColumnLayout ;
+									$psdIncludeUVSnapshot = `checkBoxGrp -numberOfCheckBoxes 1
+																			-cat 1 "left" 117
+																			-label1 (uiRes("m_photoShopPaintTex.kIncludeUVSnapshot"))
+																			-cc1 ("psdIncludeUVSnapShotCmd #1")
+																			-value1 1
+																			psdIncludeUVSnapshotChkBox`;
+									string $top = (uiRes("m_photoShopPaintTex.kTop"));
+
+									$psdUVLocation = `radioButtonGrp -numberOfRadioButtons 2
+																-cw 1 115
+																-cw 2 60
+																-cw 3 60
+																-select 1
+ 																-label (uiRes("m_photoShopPaintTex.kPosition"))
+ 																-annotation (uiRes("m_photoShopPaintTex.kPositionOfTheUVSnapshotLayerAnnot"))
+ 																-labelArray2 $top (uiRes("m_photoShopPaintTex.kBottom")) psdUVLocation`;
+
+ 									$psdUVListMenu = `optionMenuGrp
+																			-cw 1 115
+																			-label (uiRes("m_photoShopPaintTex.kUVSet"))
+																			psdUVSetList`;
+									$psdColorValueSlider = `colorSliderGrp
+														-cw 1 115
+														-cw 2 80
+														-label (uiRes("m_photoShopPaintTex.kColorValue"))
+														-rgb 1. 1. 1.
+														psdColorSlider`;
+
+									$psdAntiAlias = `checkBoxGrp
+														-numberOfCheckBoxes 1
+														-cat 1 "left" 117
+														-label1 (uiRes("m_photoShopPaintTex.kAntialiasLines"))
+														psdAntiAliasChkBox`;
+								setParent ..;
+						setParent ..;
+
+						frameLayout -label (uiRes("m_photoShopPaintTex.kAttributesSelection"))  
+							-collapsable true -marginWidth 10 -marginHeight 10 attrCreateDetailsFrameLayout;
+							columnLayout   -cat  "left" 10  -rowSpacing 5 psdCreateAttributesColumnLayout ;
+
+								rowLayout -nc 4
+											-cw4 195 20 20 195
+											-columnAttach 1 "both"  0
+											-columnAttach 2 "both"  0
+											-columnAttach 3 "both"  0;
+									columnLayout -adj true;
+										text -align "left" -label (uiRes("m_photoShopPaintTex.kAttributes")) ;
+
+										$psdAttributeListLayout = `tabLayout -tabsVisible false psdAttributeListLayout`;
+											columnLayout -adj true detailedListLayout;
+												$psdLeftWin = `nodeOutliner -showInputs true
+							 										-height 175
+							 										-showNonConnectable false
+																	-showConnectedOnly false
+							 										-showNonKeyable true
+																	-showHidden  false
+        					 										-ms true
+        					 										leftSideCW`;
+											setParent ..;
+
+											columnLayout -adj true shortListLayout;
+												$psdShortList = `psdChannelOutliner -height 175
+																	-doubleClickCommand "psdRightButtonCmd"
+        															psdShortTextScrollList`;
+											setParent ..;
+										setParent ..;
+
+										$psdDetlShrtList = `checkBoxGrp -numberOfCheckBoxes 1
+																		-cw 1 170
+																		-changeCommand "psdDetlShrtListCmd"
+																		-label1 (uiRes("m_photoShopPaintTex.kDetailedAttributeList"))
+																		psdDetlShrtListCheckBoxGrp`;
+									setParent ..;
+
+									button -label "<" -c "psdLeftButtonCmd" psdLeftButton;
+									button -label ">" -c "psdRightButtonCmd" psdRightButton;
+
+									columnLayout -adj true;
+										text -align "left" -label (uiRes("m_photoShopPaintTex.kSelectedAttributes")) ;
+
+										$psdRightWin = `psdChannelOutliner	-height 175
+															-doubleClickCommand "psdLeftButtonCmd"
+																rightSideCW`;
+
+										button -label (uiRes("m_photoShopPaintTex.kConvertToFileTextureOptions"))  -c "psdConvertSolidOptCmd" psdConvertSolidButton;
+									setParent ..;
+       							setParent ..;
+
+							setParent ..; // psdCreateAttributesColumnLayout
+
+						setParent ..; // attrCreateDetailsFrameLayout
+					setParent ..; // psdCreateColumnLayut
+				setParent ..; // scrollLayout
+
+					string $psdCreateButtonForm = `formLayout psdCreateButtonForm`;
+						button -label (uiRes("m_photoShopPaintTex.kCreate"))  -p $psdCreateButtonForm -c "psdCreateCmd" psdConvClButton;
+						button -label (uiRes("m_photoShopPaintTex.kApply"))  -p $psdCreateButtonForm  -c "psdApplyCmd" psdConvButton;
+						button -label (uiRes("m_photoShopPaintTex.kClose"))  -p $psdCreateButtonForm -c "psdCloseCmd" psdClButton;
+					setParent ..;
+
+					formLayout -edit
+							-af psdConvClButton "bottom" 5
+							-af psdConvClButton "left" 5
+							-ap psdConvClButton "right" 3 33
+
+							-af psdConvButton "bottom" 5
+							-ap psdConvButton "left" 2 33
+							-ap psdConvButton "right" 3 66
+
+							-af psdClButton "bottom" 5
+							-ap psdClButton "left" 2 66
+							-af psdClButton "right" 5
+					$psdCreateButtonForm;
+				setParent ..; // aForm
+
+				formLayout -e
+
+						-af  psdCreateScrollLayout "left" 0
+						-af  psdCreateScrollLayout "right" 0
+						-af  psdCreateScrollLayout "top" 0
+						-ac psdCreateScrollLayout "bottom" 5 $psdCreateButtonForm
+
+
+						-af $psdCreateButtonForm "left" 0
+						-af $psdCreateButtonForm "right" 0
+						-af $psdCreateButtonForm "bottom" 0
+
+					$aForm;
+
+			buildPsdTextureWindowMenu;
+
+			scriptJob -parent $psdTextureWin -event "SelectionChanged" "psdUpdateTextureWithSelectionChanged";
+			scriptJob -parent $psdTextureWin -event "NewSceneOpened" "psdUpdateTextureWithNewScene";
+
+			showWindow psdTextureWindow;
+			window -e -visible true $psdTextureWin;
+			setParent ..;
+			psdSetFactorySettings(0);
+
+	}
+	psdUpdateTextureWithSelectionChanged();
+}

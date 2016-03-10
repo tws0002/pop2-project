@@ -1,0 +1,310 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Sept 1996
+//
+//  Description:
+//		This script performs various startup related tasks.
+//		It is run in both batch and GUI modes.
+//
+//	Note:
+//		optionVars used in this file should be initialized
+//		in either createPreferencesOptVars.mel (if used
+//		in the Preferences window) or createGlobalOptVars.mel
+// 
+
+{
+	int $bWorkspaceOpened = false;
+
+	// Grab this first because opening a workspace may
+	// change it.
+	//
+	string $userProject = getenv("MAYA_PROJECT");
+
+	// Make sure that we have correctly read all the projects
+	//
+	workspace -update;
+
+	
+	// Create the default project environment if one doesn't exist.
+	//
+	string $projectsDir = `internalVar -uwd`;
+	string $workspaceFile = $projectsDir + "/default/workspace.mel";
+	if ( `filetest -r $workspaceFile` == 0 )
+	{
+		// The default project doesn't exist.
+		source createDefaultProject;
+	} 
+
+	// create the defaults for all projects.
+	source createProjectDefaults;
+
+    // Determine how to set the initial project/workspace by 
+    // checking external settings or stored preferences, in this order:
+    // 1. the value obtained from MAYA_PROJECT or the -proj command
+    //    line argument (command line argument will be already store in
+    //    MAYA_PROJECT)
+    // 2. the InitialProject optionVar (preference labelled "Always start in this project")
+    // 3. the lastLocalWS optionVar (stored automatically by maya at exit to remember the last active workspace) 
+    // 4. the default project
+    //
+    // Validation is done to determine if the workspaces are still valid
+    // and accessible before attempting to use them. 
+    // Note that any warning messages issued from this script 
+    // may not actually be seen by the user as it is run too early in the 
+    // initialization sequence and reporting mechanisms are not all available. 
+
+	// Open the default workspace.
+
+	string $noProjMsg = (uiRes("m_initialStartup.kNoProject"));
+	if ($userProject != "") {	// Open the user project
+		if (!initOpenWorkspace($userProject, false)) { 
+			warning `format -s $userProject $noProjMsg`;
+		} else {
+			$bWorkspaceOpened = true;
+		}
+	}
+
+	if (!$bWorkspaceOpened && (`optionVar -ex "InitialProject"`))
+	// envVar didn't exist or wasn't a valid workspace.
+	// What about the userPref InitialProject?
+	{	
+		$userProject = `optionVar -q "InitialProject"`;
+		if ( !initOpenWorkspace($userProject, false)) {
+			warning `format -s $userProject $noProjMsg`;
+		} else {
+			$bWorkspaceOpened = true;
+		}
+	}
+
+	if (!$bWorkspaceOpened && (`optionVar -ex "lastLocalWS"`)) 
+	{
+		// Open the last project - this optionVar is saved on quit
+		string $lastWS = `optionVar -q "lastLocalWS"`;
+		if ( !initOpenWorkspace($lastWS, false) ) {
+			warning `format -s $lastWS $noProjMsg`;
+		} else {
+			$bWorkspaceOpened = true;
+		}
+	}
+
+	if (!$bWorkspaceOpened) {
+		// Open the default project.
+		if (catch(`workspace -o "default"`)) {
+			// If this doesn't work the system's in a bad
+			// state, but an error here will prevent startup - 
+			// hopefully someone else can recover
+			warning `format -s "default" $noProjMsg`;
+		} else {
+			$bWorkspaceOpened = true;
+		}
+	}
+
+	if (!$bWorkspaceOpened) {
+		// Last resort.
+		workspace -o ".";
+		$bWorkspaceOpened = true;
+	}
+
+	// Ensure that some default workspace file-rules
+	// exist.
+	//
+//	if( $bWorkspaceOpened ) {
+//		checkDefaultFileRules();
+//	}
+
+	//
+	//	Set default naming and UI configuration options
+	//
+
+	file -defaultExtensions `optionVar -q useDefaultFileExtensions`;
+	file -uiConfiguration `optionVar -q useSaveScenePanelConfig`;
+	file -saveTextures `optionVar -q defaultTextureSaveAsType`;
+	file -saveDiskCache `optionVar -q defaultDiskCacheSaveAsType`;
+
+	//
+	//	Set the list of available languages
+	//	The list is a ':' delimited set of strings.  The first token
+	//	is the country code, the second token is the UI name
+	//  and the third token is the language code for MURLs
+
+	global string $gAvailableLanguages[] = {
+		"en_US:English:enu",
+		"ja_JP:Japanese:jpn",
+		"zh_CN:Simplified Chinese:chs"
+	};
+
+	// Initialize $gHelpLanguage
+	global string $gHelpLanguage;
+	$gHelpLanguage = `optionVar -query helpLanguage`;
+
+	// Check the HelpLocation.txt to check/update the Installed Local Help location
+	if(!`exists "getDefaultLocalHelpLocationFromTextFile"`)
+	{
+		eval("source \"createPrefWndUI.mel\"");
+	}
+
+	// Initialize Camera Sequencer Procedures
+	source sequencerUtils;
+
+	global string $gMayaVersionYear;
+	optionVar -sv ("localHelpUrl" + $gMayaVersionYear) (getDefaultLocalHelpLocationFromTextFile()); 
+
+	//
+	// Reset any browser related prefs for the startup workspace.
+	//
+	np_resetBrowserPrefs;
+
+	// 
+	//  Undo
+	//
+	undoInfo -state `optionVar -q undoIsEnabled`
+			 -infinity `optionVar -q undoIsInfinite`
+			 -length `optionVar -q undoLength`;
+	
+	//
+	//  Command Journal
+	//
+	if( ! `about -evalVersion` ) {
+	    journal -state `optionVar -q journalIsOn`;
+	}
+
+	//
+	//	Axis
+	//
+	upAxis -axis `optionVar -q upAxisDirection` -rv;
+
+	//
+	//  MEL
+	//
+	stackTrace -state `optionVar -q stackTraceIsOn`;
+	commandEcho -lineNumbers `optionVar -q showLineNumbersIsOn`;
+
+	melOptions -duplicateVariableWarnings `optionVar -q melDuplicateVariableWarnings`;
+	
+	//
+	//  Units
+	//
+    global string $gPreviousWorkingUnitLinear;
+    $gPreviousWorkingUnitLinear = `currentUnit -q -l`;
+
+    currentUnit 
+		-l `optionVar -q workingUnitLinear`
+		-a `optionVar -q workingUnitAngular`
+		-t `optionVar -q workingUnitTime`;
+
+	// for selection mask bitfield
+	if( `exists selectionMaskBitDefines` ) {
+		eval "source selectionMaskBitDefines";
+	}
+	// for visor examples with tutorial links
+	if( `exists webTutorialNotify` ) {
+		eval "source webTutorialNotify";
+	}
+
+	// Renderers
+	//
+	source initRenderers;
+
+	// Nice names for dynamic attrs added by Maya need to be added to the catalog
+	//
+	initAddAttr();
+
+	global string $AttrPaintPolyShapes[];
+	global int $AttrPaintPolyClr[];
+	global int $AttrPaintInstOn = 0;
+
+	file -f -new;
+
+	//
+	//  Dynamics
+	//
+
+	// Set the preferences into the "current preference" globals.
+	//
+	dynPref -ac `optionVar -q dynPrefAutoCreate`;
+	dynPref -rt `optionVar -q dynPrefRunupToCurrentTime`;
+	dynPref -rf `optionVar -q dynPrefRunupFrom`;
+	dynPref -sr `optionVar -q dynPrefSaveRuntimeState`;
+	dynPref -ec `optionVar -q dynPrefEchoCollision`;
+	
+	//Set the correct symmetry settings into the command
+	int $on			= `optionVar -q symmetricModellingOption`;
+	string $axis	= `optionVar -q symmetricModellingAxisOption`;
+	float $tol		= `optionVar -q symmetricModellingToleranceValue`;
+	string $space	= `optionVar -q symmetricModellingSpaceOption`;
+	int $seam		= `optionVar -q symmetricModellingSeamOption`;
+	float $seamTol	= `optionVar -q symmetricModellingSeamTolerance`;
+	string $seamFalloff	= `optionVar -q symmetricModellingSeamFalloffCurve`;
+	int $allowPartial	= `optionVar -q symmetricModellingAllowPartial`;
+	if ($space == "topo") {
+	   $on = 0;
+	   $space = "object";
+	}
+
+	symmetricModelling -e 
+		-symmetry $on
+		-axis $axis
+		-tolerance $tol
+		-about $space
+		-preserveSeam $seam
+		-seamTolerance $seamTol
+		-allowPartial $allowPartial
+		-seamFalloffCurve $seamFalloff;
+
+    // ADSK_CLR_MGT_BEGIN
+	
+	//
+	// This command reports an error if the rules file is not present.   However, this is OK.  The rules file 
+	// will be created during initialization in this case.  The error can be safely ignored here.
+	//
+	catchQuiet( `colorManagementFileRules -load` ) ;
+	
+    // ADSK_CLR_MGT_END
+
+	selectPref -trackSelectionOrder `optionVar -q TrackSelectionOrder`;
+
+	source initAdskAsset;
+
+	if (`exists DistSimCore`) {
+		eval "source DistSimCore";
+	}
+
+	//
+	//  What's New highlighting
+	//
+	if (`optionVar -query displayNewFeatureHighlights`) {
+		WhatsNewHighlightingOn;
+	} else {
+		WhatsNewHighlightingOff;
+	}
+
+	if (`optionVar -query showHighlightNewFeaturesWindowOnStartup`) {
+		WhatsNewStartupDialogOn;
+	} else {
+		WhatsNewStartupDialogOff;
+	}
+
+	float $color[] = `optionVar -query newFeatureHighlightColor`;
+	whatsNewHighlight -highlightColor $color[0] $color[1] $color[2];
+}

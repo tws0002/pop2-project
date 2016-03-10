@@ -1,0 +1,167 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+
+proc int dynSettingsInList(string $list[], string $name)
+//
+// Return whether $name is in $list.
+//
+{
+	int $inList = 0;
+	for ($i = 0; $i < size($list); $i++)
+	{
+		if ($name == $list[$i])
+		{
+			$inList = 1;
+			break;
+		}
+	}
+	return $inList;
+}
+
+global proc cacheControl( int $flag )
+//
+// Enable the cache for all the selected dynamic objects.
+{
+
+	// What's selected is probably a transform, so we probably have to find the particle,
+	// rigid body shapes in the transforms.
+	//
+	// Get selected particles and rigid bodies if there are any.
+	//
+	string $selectedParticles[] = `ls -sl -type particle`;
+	string $selectedRigidBodies[] = `ls -sl -type rigidBody`;
+	string $selectedTransforms[] = `ls -sl -transforms`;
+
+	// Get the particle shapes from all selected transforms that own
+	// particle shapes. 
+	//
+	for ($i = 0; $i < size($selectedTransforms); $i++)
+	{
+		string $kidShapes[] = `listRelatives -s $selectedTransforms[$i]`;
+		string $particleKids[] = `ls -type particle $kidShapes`;
+		int $particleCount = size($selectedParticles);
+		for ($j = 0; $j < size($particleKids); $j++)
+		{
+			if (!dynSettingsInList($selectedParticles, $particleKids[$j]))
+			{
+				$selectedParticles[$particleCount] = $particleKids[$j];
+				$particleCount++;
+			}
+		}
+	}
+
+	// Get the rigid body shapes from all selected transforms that own
+	// rigid body shapes. 
+	//
+	for ($i = 0; $i < size($selectedTransforms); $i++)
+	{
+		string $kidShapes[] = `listRelatives -s $selectedTransforms[$i]`;
+		string $rigidBodyKids[] = `ls -type rigidBody $kidShapes`;
+		int $rigidCount = size($selectedRigidBodies);
+		for ($j = 0; $j < size($rigidBodyKids); $j++)
+		{
+			if (!dynSettingsInList($selectedRigidBodies, $rigidBodyKids[$j]))
+			{
+				$selectedRigidBodies[$rigidCount] = $rigidBodyKids[$j];
+				$rigidCount++;
+			}
+		}
+	}
+
+	// Collect the list of unique rigid solvers related to the selected rigid
+	// bodies and set the solver names in one string for the feedback line,
+	// because the caching is done by the solver, rather than the rigid body.
+	//
+	string $rigidSolvers[];
+	string $rigidSolver;
+	string $rigidSolverNames;
+	int $solverCount = 0;
+
+	for ($i = 0; $i < size($selectedRigidBodies); $i++)
+	{
+		$rigidSolver = `rigidBody -q -solver $selectedRigidBodies[$i]`;
+		if (!dynSettingsInList($rigidSolvers, $rigidSolver))
+		{
+			$rigidSolvers[$solverCount] = $rigidSolver;
+			$rigidSolverNames = $rigidSolverNames + " " + $rigidSolver;
+			$solverCount++;
+		}
+	}
+
+	// Now set cache for each particle.
+	//
+	int $particleCount = size($selectedParticles);
+
+	string $cmd = "particle -e -cache " + $flag;
+	string $particleNames;
+	for ($i = 0; $i < $particleCount; $i++)
+	{
+		$cmd = "particle -e -cache " + $flag + " " + $selectedParticles[$i];
+		$particleNames = $particleNames + " " + $selectedParticles[$i];
+		evalEcho $cmd;
+
+	}
+
+	// Give the user feedback.
+	//
+	if ($particleCount > 0)
+	{
+		if ( $flag )
+		{	
+			string $msg = (uiRes("m_cacheControl.kResultCacheEnable")) ;
+	    		print `format -stringArg $particleNames $msg` ;			
+		}
+		else
+		{
+			string $msg = (uiRes("m_cacheControl.kResultCacheDisable")) ;
+			print `format -stringArg $particleNames $msg` ;	
+		}
+	}
+
+
+	// Now set cache for each rigid solver.
+	//
+	$solverCount = size($rigidSolvers);
+	for ($i = 0; $i < $solverCount; $i++)
+	{
+		$cmd = "rigidSolver -e -cacheData " + $flag + " " + $rigidSolvers[$i];
+		evalEcho $cmd;
+	}
+
+	// Give the user feedback.
+	//
+	if ($solverCount > 0)
+	{
+		if ( $flag )
+		{
+			string $msg = (uiRes("m_cacheControl.kResultCacheEnableAll")) ;
+			print `format -stringArg $rigidSolverNames $msg` ;
+		}
+		else
+		{
+			string $msg = (uiRes("m_cacheControl.kResultCacheDisableAll")) ;
+			print `format -stringArg $rigidSolverNames $msg` ;
+		}
+	}
+}

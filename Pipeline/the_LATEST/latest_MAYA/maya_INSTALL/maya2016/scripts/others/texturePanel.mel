@@ -1,0 +1,783 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// Script:    texturePanel.mel
+//
+// SYNOPSIS
+//		Creates a panel that contains the texture window
+//
+
+source texturePanelCommon;
+source texturePanelMenus;
+
+// The string prepended to the name of all controls that appear in
+// the menubar (as opposed to the pop up menu)
+//
+global string $gTextureEditorMenubarPrefix = "M";
+global int $gTextureEditorPopupType = 0;
+
+global proc texturePanel(string $panelName) 
+//
+// Description:
+//		Create a new scripted panel for the texture window
+// Arguments:
+//
+// Returns:
+//
+//
+{
+	global string $gMainPane;
+
+	if (!`scriptedPanelType -exists polyTexturePlacementPanel`) {
+		scriptedPanelType
+			-unique true
+			-createCallback "createTextureWindow" 
+			-addCallback "addTextureWindow" 
+			-removeCallback "removeTextureWindow" 
+			polyTexturePlacementPanel;
+
+		setParent $gMainPane;
+		scriptedPanel -unParent -type "polyTexturePlacementPanel" $panelName;
+	}
+}
+
+global proc createTextureWindow(string $whichPanel)
+//
+// Description:
+//		Create the window in the panel
+// Arguments:
+//
+// Returns:
+//
+//
+{
+    textureWindow -unParent $whichPanel;
+}
+
+global proc initUnfold3DContext()
+//
+// Description:
+//		Create the context from Unfold3D plug-in
+{
+	int $u3DLoaded = `pluginInfo -q -loaded Unfold3D`;
+	if( $u3DLoaded )
+	{
+		string $tool = "texUnfoldUVContext";
+		if( ! `Unfold3DContext -exists $tool` )
+		{
+			Unfold3DContext $tool;
+		}
+	}
+}
+
+proc reassignCmd(string $nameCommand, string $cbCmd) {
+	int $cmdIdx, $count = `assignCommand -query -numElements`;
+	for ($cmdIdx = 1; $cmdIdx <= $count; $cmdIdx++) {
+		$thisCmdName = `assignCommand -q -name $cmdIdx`;
+		if($thisCmdName == $nameCommand) {
+			string $curCmd = `assignCommand -q -c $cmdIdx`;
+			if(!gmatch($curCmd, $cbCmd)) {
+				assignCommand -e -i $cmdIdx -c $cbCmd;
+			}
+		}
+	}
+}
+
+global proc setupHotkeyForUnfold3DContext()
+//
+// Description:
+//		Setup the hotkey for Unfold3D Context
+{
+	reassignCmd("artisanModifyUpperRadius_press", "U3DBrushSizeOn");
+	reassignCmd("artisanModifyUpperRadius_release", "U3DBrushSizeOff");
+	reassignCmd("artisanModifyMaxDisplacement_press", "U3DBrushPressureOn");
+	reassignCmd("artisanModifyMaxDisplacement_release", "U3DBrushPressureOff");
+}
+
+global proc teardownHotkeyForUnfold3DContext()
+//
+// Description:
+//		Restore the hotkey to default
+{
+	if(`exists dR_brushResizeKeysCB`)
+		dR_brushResizeKeysCB;
+
+	reassignCmd("artisanModifyMaxDisplacement_press", "ModifyPaintValuePress");
+	reassignCmd("artisanModifyMaxDisplacement_release", "ModifyPaintValueRelease");
+}
+
+global float $orgUnfoldBrushSize;
+global int $UnfoldBrushSizeOverrided = 0;
+
+global proc Unfold3DContextHotkeyScriptJob()
+//
+// Description:
+// 		scriptJob to override the hotkey for Unfold3D brushes
+{
+	global float $orgUnfoldBrushSize;
+	global int $UnfoldBrushSizeOverrided;
+	string $currentCtx = `currentCtx`;
+	if ( `contextInfo -exists $currentCtx` )
+	{
+		string $ctxType = `contextInfo -c $currentCtx`;
+		if ($ctxType == "Unfold3DBrush")
+		{
+			if( $UnfoldBrushSizeOverrided )
+			{
+				Unfold3DContext -e -sizeuv $orgUnfoldBrushSize $currentCtx;
+				$UnfoldBrushSizeOverrided = 0;
+			}
+		}
+		else
+		{
+			if ($ctxType == "texSculptCacheContext")
+			{
+				$orgUnfoldBrushSize = `Unfold3DContext -q -sizeuv texUnfoldUVContext`;
+				float $newUnfoldBrushSize = `texSculptCacheContext -q -size $currentCtx`;
+				Unfold3DContext -e -sizeuv $newUnfoldBrushSize $currentCtx;
+				Unfold3DContext -e -optimize texUnfoldUVContext;
+				$UnfoldBrushSizeOverrided = 1;
+			}
+		}
+	}
+}
+
+
+global proc SetLastUVBrushTool()
+{
+	global string $currentUVBrushMode;
+	global string $lastUVBrushMode;
+	string $currentContext = `currentCtx`;
+	if ( `contextInfo -exists $currentContext` )
+	{
+		string $ctx = `contextInfo -c $currentContext`;
+		if( $ctx == "texSculptCacheContext" || $ctx == "texCutContext" )
+		{
+			string $newUVBrushMode = eval($ctx + "-q -mode " + $currentContext);
+			if( $currentUVBrushMode != $newUVBrushMode )
+			{
+				$lastUVBrushMode = $currentUVBrushMode;
+				$currentUVBrushMode = $newUVBrushMode;
+			}
+		}
+		else if($ctx == "Unfold3DBrush")
+		{
+			string $newUVBrushMode = eval("Unfold3DContext -q -u " + $currentContext);
+			int $setInt = $newUVBrushMode;
+			if ($setInt)
+				$newUVBrushMode = "Unfold";
+			else
+				$newUVBrushMode = "Optimize";
+			if( $currentUVBrushMode != $newUVBrushMode )
+			{
+				$lastUVBrushMode = $currentUVBrushMode;
+				$currentUVBrushMode = $newUVBrushMode;
+			}
+		}
+	}
+}
+
+global proc addTextureWindow(string $whichPanel)
+//
+// Description:
+//		Add the texture window + menus to the panel
+// Arguments:
+//
+// Returns:
+//
+//
+{
+	// create Unfold3D context
+	initUnfold3DContext();
+
+	// initialize texSculptCacheContextObj
+	initUVSculptTool();
+
+	//
+	// Build Menubar.
+	//
+	textureWindowCreateMenubar($whichPanel, "textureWindow");
+
+	string $formName = `formLayout`;
+
+	// Add in toolbar UI
+	// Create new frame and form
+
+    if (!`optionVar -exists textureEditorToolbarState`) 
+		optionVar -iv "textureEditorToolbarState" 0;
+    int $toolBarState = `optionVar -q textureEditorToolbarState`;
+
+    string $toolBar = `frameLayout
+        -visible true
+        -borderVisible false
+        -collapsable true
+		-labelVisible false
+        -collapse $toolBarState
+        textureEditorToolbarFrameLayout`;
+
+		string $toolForm = `flowLayout -visible true`;
+		textureWindowCreateToolBar ($toolForm, $whichPanel, "textureWindow");
+		setParent -m ..;
+	setParent -m ..;	
+
+	// Attach the editor to the UI
+	textureWindow -e -parent $formName $whichPanel;
+
+	string $textureEditorControl = `textureWindow -query -control $whichPanel`;
+
+	// Add a popup marking menu and a popup version of the menubar
+	//
+	string $popupPostMenuCmd = "textureWindowUpdatePopup( \"";
+	$popupPostMenuCmd += $whichPanel+"popupMenus\", \"";
+	$popupPostMenuCmd += $whichPanel+"\", \"";
+	$popupPostMenuCmd += "textureWindow\")";
+	popupMenu -parent $textureEditorControl -mm true -b 3 -aob true -pmc $popupPostMenuCmd ($whichPanel+"popupMenus");
+	textureWindowCreatePopupRadialMenu( $whichPanel, "textureWindow", 0 );
+	textureWindowCreatePopupMenubar( $whichPanel, "textureWindow" );
+	setParent -m ..;
+
+
+	// Add a popup marking menu for the (SHIFT) modified click to access
+	// quick selection conversion tools
+	//
+	//popupMenu -parent $textureEditorControl -mm true -sh true -b 3 -aob true ($whichPanel + "popupMenusShift");
+	//textureWindowCreatePopupContextMenu($whichPanel, "textureWindow");
+	//setParent -m ..;
+
+	string $contextMenuName = ($whichPanel + "popupMenusShift");
+	if (!`popupMenu -exists $contextMenuName`) {
+		popupMenu -parent $textureEditorControl -aob true $contextMenuName;
+		string $buildCommandMM = "textureWindowCreatePopupContextMenu";
+
+		popupMenu -edit
+			-markingMenu true 
+			-ctrlModifier false
+			-shiftModifier true
+			-button 3 
+			-postMenuCommand ($buildCommandMM + " \"" + $contextMenuName + "\"")
+			$contextMenuName;
+	}
+	setParent -m ..;
+
+	// Add a popup marking menu for the (CTRL) modified click to access
+	// quick selection conversion tools
+	//
+	popupMenu -parent $textureEditorControl -mm true -ctl true -b 3 -aob true ($whichPanel+"popupMenusCtl");
+	textureWindowCreatePopupConvertMenu($whichPanel, "textureWindow");
+	setParent -m ..;
+
+	//	 Constraints
+	formLayout -e 
+		-attachForm $toolBar top 0
+		-attachForm $toolBar right 0
+		-attachForm $toolBar left 0
+
+		-attachControl $whichPanel top 0 $toolBar
+		-af $whichPanel "top" 0
+		-af $whichPanel "right" 0
+		-af $whichPanel "left" 0
+		-ap $whichPanel "bottom"  0 100 
+
+		$formName;
+	//setParent -m ..;
+
+	// Add popup for tool options (shift ctrl)
+	//
+	string $toolOptionsMenuName = ( $whichPanel + "ToolOptionsPop" );
+	if (!`popupMenu -exists $toolOptionsMenuName`) 
+	{
+		string $fullToolOptionsMenuName = `popupMenu -parent $textureEditorControl -allowOptionBoxes true $toolOptionsMenuName`;
+		string $buildCommandMM = "buildToolOptionsMM";
+		popupMenu -edit
+			-markingMenu true
+			-ctrlModifier true
+			-shiftModifier true
+			-button 3 
+			-postMenuCommand ($buildCommandMM + " \"" + $fullToolOptionsMenuName + "\"")
+			$toolOptionsMenuName;
+	}
+
+	//
+	// If any changes goto update
+	//
+	textureWindow -e 
+		-cc "txtWndUpdateEditor" $whichPanel
+		"textureWindow" "null"
+		$whichPanel;
+
+	txtWndUpdateEditor($whichPanel,"textureWindow","null",101);
+
+	//
+	// change grid
+	//
+	if (`exists performTextureViewGridOptions`)
+		performTextureViewGridOptions 0;
+
+	// Change image range
+	if (`exists performTextureViewImageRangeOptions`)
+		performTextureViewImageRangeOptions 0;
+		
+	// Change texture bake
+	if (`exists performTextureViewBakeTextureOptions`)
+		performTextureViewBakeTextureOptions 0;
+		
+	// Change to baked texture mode to user's last pref
+	if ( `optionVar -exists displayEditorImage` )
+    {
+        int $display = `optionVar -q displayEditorImage`;
+        if ($display == 1)
+            textureWindow -e -vpi 0 $whichPanel;
+        else
+            textureWindow -e -vpi 1 $whichPanel;
+    }
+
+	// scriptJob to override the hotkey for Unfold3D brushes
+	int $u3DLoaded = `pluginInfo -q -loaded Unfold3D`;
+	if( $u3DLoaded )
+		scriptJob -event "ToolChanged" "Unfold3DContextHotkeyScriptJob";
+	scriptJob -event "ToolChanged" "SetLastUVBrushTool";
+}
+
+global proc removeTextureWindow(string $whichPanel)
+//
+// Description:
+//		Remove window from panel
+// Arguments:
+//
+// Returns:
+//
+//
+{
+    textureWindow -e -unParent $whichPanel;
+}
+
+global proc updateTextureWindow(int $reason)
+//
+// Description:
+//		Update texture window (unused ?)
+// Arguments:
+//
+// Returns:
+//
+//
+{;}
+
+//////////////////////////////////////////////////////////////////////
+// Popup menu and menubar routines
+//////////////////////////////////////////////////////////////////////
+
+
+global proc txtWndRelFacesMode(string $editor, string $editorCmd, int $internal)
+//
+// Description:
+//		Set face selection filter modes
+// Arguments:
+//
+// Returns:
+//
+//
+{
+	int	$state;
+	if ($internal)
+	{
+		$state = eval( $editorCmd + " -q -internalFaces " + $editor );
+		if ($state == 0){
+			eval ( $editorCmd + " -e -if 1 "+$editor );
+		}
+		else
+		{
+			eval ( $editorCmd + " -e -if 0 "+$editor);
+	}
+	}
+	else
+	{
+		$state = eval( $editorCmd + " -q -relatedFaces " + $editor );
+		if ($state == 0){
+			eval ( $editorCmd + " -e -rf 1 "+$editor );
+		}
+		else
+		{
+			eval ( $editorCmd + " -e -rf 0 "+$editor);
+	}
+}
+}
+
+global proc textureWindowShaderFacesMode(string $editor, 
+										 string $editorCmd, 
+										 int $isolate)
+//
+// Description:
+//		Set shaderFacesMode
+// Arguments:
+//
+// Returns:
+//
+//
+{
+	int $viewState = `optionVar -q textureWindowShaderFacesMode`;
+	//0 off
+	//1 view shaders
+	//2 view isolate
+
+	if ($isolate){
+		if ($viewState != 2){
+			optionVar -iv textureWindowShaderFacesMode 2;
+			eval ( $editorCmd + " -e -useFaceGroup 1 "+$editor );
+		}
+		else 
+		{
+			optionVar -iv textureWindowShaderFacesMode 0;
+			eval ( $editorCmd + " -e -useFaceGroup 0 "+$editor);
+		}
+	}
+	else
+	{
+		if ($viewState != 1){
+			optionVar -iv textureWindowShaderFacesMode 1;
+		eval ( $editorCmd + " -e -useFaceGroup 1 "+$editor );
+		}
+	else
+		{
+			optionVar -iv textureWindowShaderFacesMode 0;
+		eval ( $editorCmd + " -e -useFaceGroup 0 "+$editor);
+}
+	}
+	// force texture window update since both modes here use the 
+	// useFaceGroup flag
+	txtWndUpdateEditor($editor, $editorCmd, "Thanks Jey, for showing me the way!", 101);
+}
+
+
+global proc textureWindowToggleTextureImage(string $editor, string $editorCmd)
+//
+// Description:
+//		Toggle image display for the texture window
+// Arguments:
+//
+// Returns:
+//
+//
+{
+	int $draw = eval ( $editorCmd +" -q -imageDisplay "+ $editor ) ;
+	if ($draw == 0) {
+//		if ( `optionVar -exists displayEditorImage` && `optionVar -q displayEditorImage` ) {
+//	        textureWindow -e -vpi 0 $editor;
+//		}
+		eval( $editorCmd +" -e -imageDisplay 1 " + $editor ) ;
+	}
+	else {
+		eval( $editorCmd +" -e -imageDisplay 0 " + $editor ) ;
+	}
+}
+
+global proc textureWindowToggleImageDimming(string $editor, string $editorCmd)
+//
+// Description:
+//		Toggle image dimming for the texture window
+// Arguments:
+//
+// Returns:
+//
+//
+{
+	float $color[] = eval ( $editorCmd +" -q -imageBaseColor "+ $editor ) ;
+	if ($color[0] > 0.99) {
+		eval( $editorCmd +" -e -imageBaseColor 0.5 0.5 0.5 " + $editor ) ;
+	}
+	else {
+		eval( $editorCmd +" -e -imageBaseColor 1.0 1.0 1.0 " + $editor ) ;
+	}
+}
+
+global proc textureWindowToggleMapOverlay(string $editor, string $editorCmd)
+//
+// Description:
+//		Toggle map overlay for the texture window
+// Arguments:
+//
+// Returns:
+//
+//
+{
+	int $draw = eval ( $editorCmd +" -q -displaySolidMap "+ $editor ) ;
+	if ($draw == 0) {
+		eval( $editorCmd +" -e -displaySolidMap 1 " + $editor ) ;
+	}
+	else {
+		eval( $editorCmd +" -e -displaySolidMap 0 " + $editor ) ;
+	}
+}
+
+
+global proc textureWindowToggleUnfiltered(string $editor, string $editorCmd)
+{
+	int $unfiltered = eval ( $editorCmd +" -q -iuf "+ $editor ) ;
+	if ($unfiltered == 0) {
+		eval( $editorCmd +" -e -iuf 1 " + $editor ) ;
+	}
+	else {
+		eval( $editorCmd +" -e -iuf 0 " + $editor ) ;
+	}
+}
+
+global proc textureWindowToggleRatio(string $editor, string $editorCmd)
+{
+	int $ratio = eval ( $editorCmd +" -q -imr "+ $editor ) ;
+	if ($ratio == 0) {
+		eval( $editorCmd +" -e -imr 1 " + $editor ) ;
+	}
+	else {
+		eval( $editorCmd +" -e -imr 0 " + $editor ) ;
+	}
+}
+
+global proc textureWindowToggleSnap(string $editor, string $editorCmd)
+{
+	int $snap = eval ( $editorCmd +" -q -ip "+ $editor ) ;
+	if ($snap == 0) {
+		eval( $editorCmd +" -e -ip 1 " + $editor ) ;
+	}
+	else {
+		eval( $editorCmd +" -e -ip 0 " + $editor ) ;
+	}
+}
+
+global proc textureWindowToggleGrid(string $editor, string $editorCmd)
+//
+// Description:
+//		Toggle grid settings based on current state of grid toggle for
+//		window
+// Arguments:
+//
+// Returns:
+//
+//
+{
+	// textureView -q -tgl $editor (panelname)
+	int $draw = eval ( $editorCmd +" -q -tgl "+ $editor ) ;
+	if ($draw == 0) {
+		eval( $editorCmd +" -e -tgl 1 " + $editor ) ;
+	}
+	else {
+		eval( $editorCmd +" -e -tgl 0 " + $editor ) ;
+	}
+}
+
+global proc textureWindowToggleTileLabels(string $editor, string $editorCmd)
+//
+// Description:
+//		Toggle tile label display based on current state of toggle for window
+// Arguments:
+//
+// Returns:
+//
+//
+{
+	int $draw = eval ( $editorCmd +" -q -tlb "+ $editor ) ;
+	if ($draw == 0) {
+		eval( $editorCmd +" -e -tlb 1 " + $editor ) ;
+	}
+	else {
+		eval( $editorCmd +" -e -tlb 0 " + $editor ) ;
+	}
+}
+
+global proc textureWindowToggleToolbar()
+//
+// Description:
+//		Toggle toolbar based on current state of toolbar toggle for
+//		window
+//
+{
+	int $toolBarState = `optionVar -q textureEditorToolbarState`;
+	frameLayout -edit -collapse (!$toolBarState)
+		textureEditorToolbarFrameLayout;
+	optionVar -iv "textureEditorToolbarState" (!$toolBarState);
+}
+
+
+global proc updateNurbsEditUVModeMenuItem( string $menuitem )
+{
+	int $value = queryNurbsEditUVMode();
+	menuItem -e -checkBox $value $menuitem;
+}
+
+
+global proc textureWindowSelectImage(int $i, string $whichPanel)
+{
+	string $menuNames[] = `textureWindow -q -imageNames $whichPanel`;
+	
+	if (size($menuNames) == 0) return;
+
+	string $buffer[];
+	tokenize $menuNames[$i] " " $buffer;
+	if (size($buffer) == 0) return;
+
+	string $thisShader = $buffer[2];
+	//string $thisObject = $buffer[0];
+	if ($thisShader == "") return;
+
+	string $objGroups[] = `listConnections -p on ($thisShader+".dsm")`; 
+	string $shapes[] = `listConnections -sh on ($thisShader+".dsm")`;
+	//string $objects[] = `listConnections ($thisShader+".dsm")`;
+
+	int $j;
+	for ($j=0; $j<size($shapes); $j++) {
+		string $objGroup = $objGroups[$j];
+		int $gid = -99;
+		if (`objExists ($objGroup+".gid")`) {
+			if( catchQuiet( $gid = `getAttr ($objGroup+".gid")`))
+			{
+				int $gids[] = `getAttr ($objGroup+".gid")`;
+				if( size( $gids) > 0)
+					$gid = $gids[0];
+			}
+		} else {
+			//$gid = `getAttr ($objGroup+".cgid")`;
+			continue;
+		}
+		if (`nodeType $shapes[$j]` != "mesh") {
+			continue;
+		}
+		if( $gid != -99)
+			setAttr ($shapes[$j]+".dfgi") $gid;
+	}
+	
+	textureWindow -e -imageNumber $i $whichPanel;
+}
+
+global proc updateUVSetMenuWithCopyUVsCmd( 
+		string $menuName, string $prefix,
+		string $whichPanel)
+{
+	setParent -m $menuName;
+	string $menuItems[] = `menu -q -itemArray $menuName`;
+	string $menuNames[] = `textureWindow -q -uvs $whichPanel`;
+	int $numUVSets = size($menuNames);
+
+	// If there aren't any uv sets to display, then just return now.
+	if( $numUVSets == 0 ) {
+		return;
+	}
+
+	int $i;
+	for( $i=0; $i<$numUVSets; $i++ ) 
+	{
+		string $buf[];
+		tokenize $menuNames[$i] " " $buf;
+		
+		if( size($buf) == 0 ) continue;
+
+		// for each menu item, disable it if it's the active one
+		// or add a command to run the polyCopyUVs cmd
+		string $currUVSet[] = `polyUVSet -q -currentUVSet $buf[0]`;
+		string $destinationUVSet = $buf[size($buf) - 1];
+
+		if ($currUVSet[0] == $destinationUVSet)
+		{
+			menuItem -e -enable false $menuItems[$i];
+		} else {
+
+			//  Overwrite the existing command with a polyCopyUVs cmd
+			string $existingCmd = `menuItem -q -command $menuItems[$i]`;
+			string $copyCmd = ( "if( `performPolyCopyUVsToUVsetArgList " 
+				    + "\"1\" {"
+					+ $currUVSet[0] + ",  " 
+					+ $destinationUVSet + ", \"1\"}` > 0 ) { " 
+					+ $existingCmd + "}");
+			menuItem -e -command $copyCmd $menuItems[$i];
+		}
+	}
+}
+
+global proc textureWindowSelectConvert(int $toType)
+{
+	string $converted[];
+	string $convSubd[];
+	string $tokens[];
+	string $evalStr;
+	
+	// To Face
+	if ($toType == 1)
+	{
+		$converted = `polyListComponentConversion -in -fv -fe -fuv -fvf -tf`;
+		if (`isTrue "SubdivUIExists"`) {
+			$convSubd = `subdListComponentConversion -in -fv -fe -fuv -tf`;
+		}
+	}
+	
+	// To Edge
+	else if ($toType == 2)
+	{
+		$converted = `polyListComponentConversion -fv -ff -fuv -fvf -te`;
+		if (`isTrue "SubdivUIExists"`) {
+			$convSubd = `subdListComponentConversion -fv -ff -fuv -te`;
+		}
+	}
+	
+	// To Vertex
+	else if ($toType == 3)
+	{
+		$converted = `polyListComponentConversion -ff -fe -fuv -fvf -tv`;
+		if (`isTrue "SubdivUIExists"`) {
+			$convSubd= `subdListComponentConversion -ff -fe -fuv -tv`;
+		}
+	}
+	
+	// To UV
+	else if ($toType == 4)
+	{
+		$converted = `polyListComponentConversion -fv -fe -ff -fvf -tuv`;
+		if (`isTrue "SubdivUIExists"`) {
+			$convSubd = `subdListComponentConversion -fv -fe -ff -tuv`;
+		}
+	}
+	
+	int $numConv = size($converted);
+	int $numSubd = size($convSubd);
+	if ( ($numConv > 0) || ($numSubd > 0 ) )
+	{
+		$evalStr = "select -r";
+		for ( $i=0; $i<$numConv; $i++ )
+		{
+			$evalStr += " \"";
+			$evalStr += $converted[$i];
+			$evalStr += "\"";
+		}
+		for ( $i=0; $i<$numSubd; $i++ )
+		{
+			$evalStr += " \"";
+			$evalStr += $convSubd[$i];
+			$evalStr += "\"";
+		}
+
+		// Switching to the selection type they're converting to
+		// beforehand ensures the selection preservation buffers remain
+		// consistent.
+		if(`selectPref -q -selectTypeChangeAffectsActive`)
+		{
+			string $selectType = textureWindowChangeSelectTypeString($toType);
+			$evalStr = $selectType + $evalStr;
+		}
+		eval $evalStr;
+	}
+}

@@ -1,0 +1,302 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  August 14, 1996
+//
+//  Description:
+//      This is a helper script to perfrom the simplify command
+//	using the various options that have been set
+//
+//  Input Arguments:
+//		int action		0 - just execute the command
+//						1 - show the option box dialog
+//						2 - return the drag command
+//
+//  Return Value:
+//      None.
+//
+
+proc setOptionVars (int $forceFactorySettings)
+{
+	keySetOptionBoxCommon( { "simplify", 
+							 "unknown",
+							 "setOptionVars", 
+							 $forceFactorySettings } );
+
+	// timeTolerance
+	//
+	if ($forceFactorySettings || !`optionVar -exists simplifyTimeTolerance`) {
+		optionVar -floatValue simplifyTimeTolerance 0.05;
+	}
+	// valueTolerance
+	//
+	if ($forceFactorySettings || !`optionVar -exists simplifyValueTolerance`) {
+		optionVar -floatValue simplifyValueTolerance 0.01;
+	}
+	//
+	// simplify method
+	//
+	if ($forceFactorySettings || !`optionVar -exists curveSimplifyMethod`) {
+		optionVar -intValue curveSimplifyMethod 2;
+	}
+}
+
+global proc simplifySetup (string $parent, string $selectionConnection, int $forceFactorySettings)
+{
+	// Retrieve the option settings
+	//
+	setOptionVars ($forceFactorySettings);
+
+	setParent $parent;
+
+	keySetOptionBoxCommon( { "simplify", $selectionConnection, "setup", 0 } );
+
+	// simplify method
+	//
+	int $simplify = `optionVar -query curveSimplifyMethod`;
+	radioButtonGrp -edit -sl $simplify curveSimplifyMethodBtnGrp;
+
+	// -timeTolerance
+	//
+	float $timeTolerance = `optionVar -query simplifyTimeTolerance`;
+	floatFieldGrp -edit -value1 $timeTolerance timeTolerance;
+
+	// -valueTolerance
+	//
+	float $valueTolerance = `optionVar -query simplifyValueTolerance`;
+	floatFieldGrp -edit -value1 $valueTolerance valueTolerance;
+
+	simplifyWidgetsEnable ($selectionConnection);
+}
+
+
+global proc simplifyCallback( string $parent, int $doIt,
+							  string $selectionConnection, int $performAction )
+{
+    setParent $parent;
+
+	keySetOptionBoxCommon( { "simplify", $selectionConnection, "callback" } );
+
+	// 	Simplify method
+	//
+	int $simplify = `radioButtonGrp -q -sl curveSimplifyMethodBtnGrp`;
+	optionVar -intValue curveSimplifyMethod $simplify;
+
+	// -timeTolerance
+	//
+	optionVar
+		-floatValue
+		simplifyTimeTolerance
+		`floatFieldGrp -query -value1 timeTolerance`;
+
+	// -valueTolerance
+	//
+	optionVar
+		-floatValue
+		simplifyValueTolerance
+		`floatFieldGrp -query -value1 valueTolerance`;
+
+	if( $doIt ) {
+		performSimplify( $performAction, $selectionConnection);
+		string $tmpCmd = "performSimplify ";
+		$tmpCmd += "\"" + $performAction + "\", ";
+		$tmpCmd += "\"" + $selectionConnection + "\"";
+		addToRecentCommandQueue $tmpCmd "Simplify";
+	}
+}
+
+global proc simplifyWidgetsEnable(string $selectionConnection)
+{
+	keySetOptionBoxCommon( { "simplify", $selectionConnection, "enable" } );	
+}
+
+proc string simplifyWidgets( string $tabLayout, string $selectionConnection )
+{
+	setParent $tabLayout;
+
+	string $tabForm = `columnLayout -adjustableColumn true`;
+
+	keySetOptionBoxCommon( { "simplify", $selectionConnection, "widgets", 1, 0, 1 } );
+
+	radioButtonGrp -nrb 2 -label (uiRes("m_performSimplify.kSimplifyMethod"))  
+					-label1 (uiRes("m_performSimplify.kClassic"))  
+					-label2 (uiRes("m_performSimplify.kDenseData"))  
+					-sl 1 curveSimplifyMethodBtnGrp;
+	floatFieldGrp -label (uiRes("m_performSimplify.kTimeTolerance"))  -precision 2 -value1 0.05 timeTolerance;
+	floatFieldGrp -label (uiRes("m_performSimplify.kValueTolerance"))  -precision 2 -value1 0.01 valueTolerance;
+
+	return $tabForm;
+}
+
+global proc simplifyDoSelectionChanged(string $selectionConnection)
+//
+// Description:
+//	Since timeRange is irrelevant when there are 
+//	picked keyframes, collapse the timeRange
+//	when there are.  (This is hooked in to a SelectionChanged
+//	trigger.)
+//
+{
+	keySetOptionBoxCommon( { "simplify", $selectionConnection, "selectionChanged" } );
+	simplifyWidgetsEnable ($selectionConnection);
+}
+
+
+proc simplifyOptions( string $selectionConnection, int $performAction )
+{
+	// Customisation options
+	//
+	// Name of the command for this option box (think of it as the base class)
+	string $commandName = "simplify";
+	// Title for the option box window
+	string $optionBoxTitle = (uiRes("m_performSimplify.kSimplifyCurveOptions"));
+	// Title for the apply button
+	string $applyTitle = (uiRes("m_performSimplify.kSimplify"));
+
+	// Build the option box "methods"
+	//
+	string $callback = ($commandName + "Callback");
+	string $setup = ($commandName + "Setup");
+
+	// Build the window, with a tab layout
+	//
+	string $widgetList[] = `getStandardWindow $optionBoxTitle 0 "noOptions"`;
+	setUITemplate -pushTemplate DefaultTemplate;
+
+	// Make the form invisible while we create the widgets in the window
+	//
+	formLayout -e -vis false $widgetList[1];
+
+	// Attach each tab
+	//
+	simplifyWidgets $widgetList[2] $selectionConnection;
+
+	// Attach the standard buttons
+	//
+	string $buttonList[] = `addStandardButtons $commandName $applyTitle 
+		$widgetList[1] $widgetList[2] "noOptions"`;
+
+	// attach commands to the standard buttons
+	//
+	// Save
+	//
+	button -e -c ($callback + " " + $widgetList[0] + " false \"\" " + $performAction +
+				  "; hideOptionBox()") $buttonList[3];
+
+	// Close
+	//
+	button -edit -command hideOptionBox $buttonList[2];
+
+	// Reset
+	//
+	button -edit -command ($setup + " " + $widgetList[0] + " " + $selectionConnection + " true") $buttonList[1];
+
+	// Do It
+	//
+	button -edit -command ($callback + " " + $widgetList[0] + " true \"" +
+						   $selectionConnection + "\"" + $performAction) $buttonList[0];
+
+	// Make the form layout visible so we can see what we built, and
+	// reset the template
+	//
+	formLayout -e -vis true $widgetList[1];
+	setUITemplate -popTemplate;
+
+	//	Customize the 'Help' menu item text.
+	//	This is called from 3 different places so look at the selection
+	//	connection to try to figure out which one.
+	//
+	if (match ("graphEditor", $selectionConnection) != "") {
+		setOptionBoxHelpTag( "GraphSimplifyCurve" );
+	} else if (match ("dopeSheet", $selectionConnection) != "") {
+		setOptionBoxHelpTag( "DopeSimplifyCurve" );
+	} else {
+		setOptionBoxHelpTag( "" );
+	}
+
+	// Call the setup "method" to fill in the current settings
+	//
+	eval (($setup + " " + $widgetList[0] + " " + $selectionConnection + " false"));	
+	showOptionBox();
+    showWindow $widgetList[0];
+
+	simplifyDoSelectionChanged($selectionConnection);	
+	scriptJob -protected 
+		-event "SelectionChanged" ("simplifyDoSelectionChanged " + $selectionConnection) 
+		-parent $widgetList[2];
+}
+
+proc string assembleCmd( string $selectionConnection, string $options ) 
+{
+	string $cmd = "doSimplifyArgList 1 { " + 
+				"\"" + `optionVar -q simplifyWhichRange` + "\"" +
+				",\"" + `optionVar -q simplifyRange` + "\"" +
+				",\"" + `optionVar -q simplifyTimeTolerance` + "\"" +
+				",\"" + `optionVar -q simplifyValueTolerance` + "\"" +
+				",\"" + $selectionConnection + "\"" +
+				",\"" + $options + "\"" +	
+				",\"" + `optionVar -q curveSimplifyMethod` + "\"" +	
+			" };";		
+
+	return $cmd;
+}
+
+// The action variable means
+//		0 - do the command
+//		1 - show the option box
+//		2 - return the drag command
+//		3 - do the command (bufferCurve version)
+//		4 - show the option box (bufferCurve version)
+//		5 - return the drag command (bufferCurve version)
+global proc string performSimplify( int $action, string $selectionConnection )
+{
+	string $cmd = "";
+
+	switch( $action ) {
+	case 0:
+		setOptionVars( false );
+		$cmd = assembleCmd( $selectionConnection, "noOptions" );
+		eval( $cmd );
+		break;
+	case 1:
+		simplifyOptions( $selectionConnection, 0 );
+		break;
+	case 2:
+		setOptionVars( false );
+		$cmd = assembleCmd( $selectionConnection, "noOptions" );
+		break;
+	case 3:
+		setOptionVars( false );
+		$cmd = assembleCmd( $selectionConnection, "bufferCurve" );
+		eval( $cmd );
+		break;
+	case 4:
+		simplifyOptions( $selectionConnection, 3 );
+		break;
+	case 5:
+		setOptionVars( false );
+		$cmd = assembleCmd( $selectionConnection, "bufferCurve" );
+		break;
+	}
+	return ($cmd);
+}

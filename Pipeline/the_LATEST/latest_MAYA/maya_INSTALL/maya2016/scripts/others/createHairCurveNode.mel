@@ -1,0 +1,306 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+//<doc>
+//<name createHairCurveNode>
+//<owner "Autodesk">
+//
+//<synopsis>
+//		createHairCurveNode(
+//			string $hsys, 
+//			string $surface, 
+//			float $u, float $v, 
+//			int $numCvs, 
+//			int $doOut, 
+//			int $doStart,
+//			int $doRest,
+//			int $isPassive,
+//			string $startCurve,
+//			float $length,
+//			int $endHairSystemIndex[],
+//			string $hsysGroup,
+//			string $hsysOutHairGroup,
+//			int $simulationType )
+//
+//<returns>
+//		The name of the follicle's transform node.	
+//
+//<description>
+//	This is a low level mel routine that sets up a hair follicle and manages all the attachments. It is used
+//  by the "Create Hair" menu as well as "make selected curves dynamic".
+//  It is useful if one wishes to custom script creation of hairs or dynamic curves. Any strings passed
+//  into this routine should be the names of existing shape nodes of the type required by the arguments. In
+//  The argument $hsys requires a valid hairSystem node, however the other stringscan be set to "" and
+//  the hairsystem node will either not implement that node or create one.
+//  The argument $endHairSystemIndex is a simple 1 element int array that is used to keep track of the index
+//  we connect to between calls, so that it is faster when looping over large numbers of hairs.
+//  Initialize the first element of this array to zero, and if you are creating follicles in a loop then
+//	keep this initialization outside of the loop. For examples of the usage of this call look at createHair.mel.
+//
+//<flags>
+//		string $hys		name of the hair system node 
+//		string $surface surface or mesh to attach the follicle to (set to "" if there is no surface)
+//		float  $u $v	uv coordinates on the surface to attach the follicle to (if no surface 0,0 is OK)
+//		int $numCvs     number of cvs to create for the hair curve ( if a start curve is passed in it will override this value )
+//		int $doOut		if true then create output curves for the follice
+//		int $doStart	if true then create a start curve for the follicle
+//		int $doRest		if true then create a rest curve for the follicle
+//		int $isPassive  if true then make the follicle passive
+//		string $startCurve name of a curve to use for the start position(if "" then a curve will be created)
+//		float $length	length of hair curve to create (ignored if a start curve is specified)
+//		int $endHairSystemIndex[] this keeps track between calls of the index of the last hair created 
+//		string $hsysGroup			an existing group to parent the follices under (for no grouping set to "")
+//		string $hsysOutHairGroup	an existing group to parent the output hair curves under (for no grouping set to "")
+//		int $simulationType   1 = dynamic, 2 = static
+//
+//<examples>
+//
+//	sphere;
+//	string $hsys = `createNode hairSystem`;
+//	connectAttr time1.outTime ($hsys + ".currentTime");
+//	int $ind[1];
+//	$ind[0] = 0;
+//	int $i;
+//	for( $i = 0; $i < 10; $i++ ){
+//		float $v = 0;
+//		float $u = $i/10.0;
+//		string $newHair = createHairCurveNode( $hsys, "nurbsSphereShape1", $u,$v,10, true, true, false, false, "", 3.0, $ind, "","",1);
+//	}
+//
+//</doc>
+
+proc string polyLineCmd( int $numCvs, float $curveLength )
+{
+	if( $numCvs < 2 ){
+		return "";
+	}	
+
+	string $cmd = "curve -d 1";
+	int $i;
+	float $fac = $curveLength/(float)($numCvs-1);
+	for( $i = 0; $i < $numCvs; $i++ ){
+		$cmd += (" -p 0 0 " + ((float)$i * $fac));
+	}
+	for( $i = 0; $i < $numCvs; $i++ ){
+		$cmd += (" -k " + $i);
+	}
+	return $cmd;
+}
+
+global proc string createHairCurveNode( 
+	string $hsys, 
+	string $surface, 
+	float $u, float $v, 
+	int $numCvs, 
+	int $doOut, 
+	int $doStart,
+	int $doRest,
+	int $isPassive,
+	string $startCurve,
+	float $length,
+	int $endHairSystemIndex[],
+	string $hsysGroup,
+	string $hsysOutHairGroup,
+	int $simulationType
+)
+{
+	int $doStartCurve = false;
+	int $COS = false;
+	string $cmd = "";
+// TODO use "exists" here
+	if( $hsys == "" ){
+		return ""; 
+	}
+	string $hair = `createNode follicle`;
+	setAttr ($hair + ".parameterU" ) $u;
+	setAttr ($hair + ".parameterV" ) $v;
+	string $tforms[] = `listTransforms $hair`;
+	string $hairDag = $tforms[0];
+	int $attachedToSurface = false;
+	if( $surface != "" && objExists( $surface ) ){
+		string $nType = `nodeType $surface`;
+		connectAttr ($surface + ".worldMatrix[0]") ($hair + ".inputWorldMatrix");
+		if( "nurbsSurface" == $nType ){ 
+			connectAttr ($surface + ".local") ($hair + ".inputSurface");
+		} else if( "mesh" == $nType ){
+			connectAttr ($surface + ".outMesh") ($hair + ".inputMesh");
+			string $currentUVSet[] = `polyUVSet -q -currentUVSet $surface`;
+			setAttr ($hair + ".mapSetName") -type "string" $currentUVSet[0];
+			int $isValidUv = getAttr( $hair + ".validUv" );
+			if( !$isValidUv ){
+				delete $hairDag;
+				return "";
+			}
+		} 
+
+		connectAttr ($hair + ".outTranslate") ($hairDag + ".translate");
+		connectAttr ($hair + ".outRotate") ($hairDag + ".rotate");
+		setAttr -lock true  ($hairDag + ".translate");
+		setAttr -lock true  ($hairDag + ".rotate");
+	} else {
+		setAttr ($hair + ".startDirection" ) 1;
+	}
+
+	if( $doStart ){ 	
+		if( $startCurve != "" ){
+			if( `objExists $startCurve` ){
+				string $type = `nodeType $startCurve`;
+				if( $type == "nurbsCurve" ){
+					$doStartCurve = true;			
+				} else if( $type == "curveFromSurfaceCoS" ){
+					$doStartCurve = true;			
+					$COS = true;
+				}
+				if( $doStartCurve && !$COS ){
+					int $curveCvs = `getAttr -size ($startCurve + ".cp")`;
+					if( $curveCvs < 3 ){
+						setAttr ($hair + ".degree" ) 1;
+					}
+				}
+			}
+			if( !$doStartCurve ){
+				string $fmt = (uiRes("m_createHairCurveNode.kInvalidStartCurve"));
+				warning( `format -s $startCurve $fmt` );
+			}
+		}
+		if( !$doStartCurve ){
+			$cmd = polyLineCmd( $numCvs, $length );
+			if( $cmd == "" ){
+				delete $hair;
+				return "";
+			}
+			if( $numCvs < 3 ){
+				setAttr ($hair + ".degree" ) 1;
+			}
+		}
+	} else if( $doRest ){
+		$cmd = polyLineCmd( $numCvs, $length );
+		if( $cmd == "" ){
+			delete $hair;
+			return "";
+		}
+	}
+
+	if( $isPassive && !$doStart && $numCvs < 3){
+		setAttr ($hair + ".degree" ) 1;
+	}
+
+
+	if( $hsysGroup != "" ){
+		// Group the follicles into the passed in parent node.
+		// -relative here is simply in the hope that
+		// this might be slightly more efficient
+		string $reparent[] = `parent -relative $hairDag $hsysGroup`;
+		$hairDag = $reparent[0];
+	}
+	string $curve;
+	if( $doStart ){
+		if( $doStartCurve ){
+			if( $COS ){
+				$curve = $startCurve;
+			} else {
+				$tforms = `listTransforms $startCurve`;
+				$curve = $tforms[0];
+				$tforms = `listTransforms $curve`;
+				if( size( $tforms ) > 0 ){
+					string $curveParent = $tforms[0];
+					string $reparent[] = `parent -relative $hairDag $curveParent`;
+					$hairDag = $reparent[0];
+				}
+			}
+		} else {
+			$curve = eval( $cmd );
+			if( $isPassive ){
+				initHairCurveDisplay( $curve, "passive" );
+			} else {
+				initHairCurveDisplay( $curve, "start" );
+			}
+		}
+		if( $COS ){
+			connectAttr ($curve + ".oc") ($hair + ".startPosition");
+		} else {
+			if( $doStart == 2 ){
+				string $reparent[] = `parent -absolute $curve $hairDag`;
+				$curve = $reparent[0];
+			} else {
+				string $reparent[] = `parent -relative $curve $hairDag`;
+				$curve = $reparent[0];
+			}
+			//connectAttr ($curve + ".worldSpace[0]") ($hair + ".startPosition");
+			connectAttr ($curve + ".local") ($hair + ".startPosition");
+			connectAttr ($curve + ".worldMatrix[0]") ($hair + ".startPositionMatrix");
+
+		}
+	
+	} 
+	if( $doRest ){
+		string $rest;
+		if( $doStartCurve ){	
+			$rest = `duplicate -rr $curve`;
+		} else {
+			$rest = eval( $cmd );
+		}
+		initHairCurveDisplay( $rest, "rest" );
+		string $reparent[] = `parent -relative $rest $hairDag`;
+		$rest = $reparent[0];
+		connectAttr ($rest + ".worldSpace[0]") ($hair + ".restPosition");
+		// setAttr ($rest + ".intermediateObject") 1;
+		setAttr ($hair + ".restPose" ) 3;
+	}
+	
+	if($simulationType == 2)
+		setAttr ($hair + ".simulationMethod") 0;
+	else if( $isPassive )
+		setAttr ($hair + ".simulationMethod") 1;
+	
+	// connect hair to end of hsys array
+	// We use the following array so that the last index used can
+	// be passed back to the calling routine, so that we
+	// minimize searching. The calling routine should set 
+	// endHairSystemIndex to zero on the first call and then  
+	// and then allow it to track the last free slot. 
+	// The input hair is a sparce multi and holes can be created
+	// when some hairs are deleted. We always try to fill in the holes
+	// when creating new hairs.
+	$endHairSystemIndex[0] = getNextFreeMultiIndex( ($hsys + ".inputHair"), 
+								$endHairSystemIndex[0] );	
+	int $hairIndex = $endHairSystemIndex[0];
+	$endHairSystemIndex[0] += 1; // avoid checking this index twice
+	connectAttr ($hair + ".outHair") ($hsys + ".inputHair["+$hairIndex+"]");
+	if( $doOut ){
+		connectAttr ($hsys + ".outputHair["+$hairIndex+"]") ($hair + ".currentPosition");
+		string $crv = `createNode nurbsCurve`;
+		connectAttr ($hair + ".outCurve")  ($crv + ".create");
+		if( $isPassive ){
+			initHairCurveDisplay( $crv, "passive" );
+		} else {
+			initHairCurveDisplay( $crv, "current" );
+		}
+		if( $hsysOutHairGroup != "" ){
+			$tforms = `listTransforms $crv`;
+			string $reparent[] = `parent -relative $tforms[0] $hsysOutHairGroup`; 
+			$tforms[0] = $reparent[0];
+		}
+	}
+
+	return( $hairDag );
+}

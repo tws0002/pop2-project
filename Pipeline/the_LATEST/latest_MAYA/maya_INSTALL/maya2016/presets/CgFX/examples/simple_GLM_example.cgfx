@@ -1,0 +1,541 @@
+/*********************************************************************NVMH3****
+Path:  $Id: //sw/devtools/FXComposer2/Alpha4+/SDK/MEDIA/CgFX1.4/simple_GLM_example.cgfx#1 $
+
+Copyright NVIDIA Corporation 2005
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THIS SOFTWARE IS PROVIDED
+*AS IS* AND NVIDIA AND ITS SUPPLIERS DISCLAIM ALL WARRANTIES, EITHER EXPRESS
+OR IMPLIED, INCLUDING, BUT NOT LIMITED TO, IMPLIED WARRANTIES OF MERCHANTABILITY
+AND FITNESS FOR A PARTICULAR PURPOSE.  IN NO EVENT SHALL NVIDIA OR ITS SUPPLIERS
+BE LIABLE FOR ANY SPECIAL, INCIDENTAL, INDIRECT, OR CONSEQUENTIAL DAMAGES
+WHATSOEVER (INCLUDING, WITHOUT LIMITATION, DAMAGES FOR LOSS OF BUSINESS PROFITS,
+BUSINESS INTERRUPTION, LOSS OF BUSINESS INFORMATION, OR ANY OTHER PECUNIARY LOSS)
+ARISING OUT OF THE USE OF OR INABILITY TO USE THIS SOFTWARE, EVEN IF NVIDIA HAS
+BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+Comments:
+	* "GLM" is an acronym for "general lighting model" and represents a direct,
+		plain-vanilla but highly functional approach to material shading.
+	* You can use this shader as a handy platform for further experimentation. For example,
+		consider adding reflections, or normal mapping, or additional lamps. Change the BRDF
+		to be dielectric, or other more exotic materials.
+	* Both vertex-shaded and fragment-shaded variations are provided.
+	* GLM, in general, is our shorthand for "pass-per-light" -- that is, lay down
+		ambient lighting, Z, and any reflections in one render pass, then add the lighting
+		for each individual lamp in an additonal pass per lamp, alpha-blended into the frame.
+			Variations of this scheme can include expanding to two or more passes per light,
+		usually to provide shadowing (either shadow-maps or volume stencils) or glare (in 2D).
+			The advantage of GLM is flexibility -- you can add or subtract lights very
+		easily, simply by declaring their paramters and adding another pass or two. The
+		downside is a slight penalty in terms of efficiency, since you need to add additional
+		(cheap) passes and repeat the vertex-shader processing for each pass (vertex processing
+		is RARELY the bottleneck in real applications, however). Every design is always
+		a compromise between considerations! As an alternative, this effect also includes a
+		"unified" technique where all three portions of the lighting: ambience, point
+		lamp, and and distant lamp -- have been incorporated into a single pass. You'll find that
+		using Cg interfaces makes this process relatively painless.
+	* Note the compile-time texture flag.
+
+******************************************************************************/
+
+// compile-time flag
+#define TEXTURED_SURFACE
+
+#include <glm_interfaces.cgh>
+
+///////////////////////////////////////////////////////////////////////////////////////
+// UNTWEAKABLES -- global variables that will be automatically tracked by FXComposer //
+//      and other apps. You don't tweak these directly ////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////
+
+float4x4 WorldITXf : WorldInverseTranspose <string UIWidget = "none";>;
+float4x4 WVPXf : WorldViewProjection <string UIWidget = "none";>;
+float4x4 WorldXf : World <string UIWidget = "none";>;
+float4x4 ViewIXf : ViewInverse <string UIWidget = "none";>;
+
+///////////////////////////////////////////////////////////////////////////////////////
+// TWEAKABLES -- global variables that MAY be automatically tracked, or may be ////////
+//      manipulated by sliders and other forms of user input. /////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////
+
+// A point light source, defined by its location & color ///////
+// These values could be shared globally, but by passing them as uniform shader parameters (see
+//	the techniques below), we can handily add more lights without having to modify the
+//	shader programs.
+
+float4 PointLight0Pos : Position <
+	string UIName =  "Point Lamp 0 Position";
+	string Object = "PointLight";
+	string Space = "World";
+> = {-54.0f, 50.0f, 100.0f, 1.0f};
+
+float3 PointLight0Col : Diffuse <
+	string UIName =  "Point Lamp 0";
+	string UIWidget = "Color";
+	string Object = "PointLight";
+> = {1.0f, 0.95f, 0.85f};
+
+// A directional light source, defined by a direction vector & color ///////
+
+float4 DistLight0Dir : Direction <
+	string UIName =  "Distant Light 0 Direction";
+	string Object = "DirectionalLight";
+	string Space = "World";
+> = {-1.0f, -1.0f, 0.3f, 0.0f};
+
+float3 DistLight0Col : Diffuse <
+	string UIName =  "Distant Light 0 Color";
+	string UIWidget = "Color";
+	string Object = "DirectionalLight";
+> = {0.9f, 0.95f, 1.0f};
+
+// Ambient light in the scene //////////////////////////////////
+
+float3 AmbiColor : Ambient 
+<
+	string UIName =  "Ambient Light";
+	string UIWidget = "Color";
+> = {0.07f, 0.07f, 0.07f};
+
+// Surface attributes //////////////////////////
+
+float3 SurfColor : Diffuse 
+<
+	string UIName =  "Surface";
+	string UIWidget = "Color";
+> = {1.0f, 1.0f, 1.0f};
+
+float SpecExpon : SpecularPower
+<
+	string UIName =  "specular power";
+	string UIWidget = "Slider";
+	float UIMin = 1.0;
+	float UIMax = 128.0;
+	float UIStep = 1.0;
+> = 25.0;
+
+float Kd 
+<
+	string UIName =  "Diffuse (from dirt)";
+	string UIWidget = "Slider";
+	float UIMin = 0.0;
+	float UIMax = 1.0;
+	float UIStep = 0.05;
+> = 0.1;
+
+// Surface texture //////
+
+#ifdef TEXTURED_SURFACE
+texture ColorTexture : Diffuse
+<
+	string ResourceName = "default_color.dds";
+	string ResourceType = "2D";
+	string UIName =  "Surface Texture (if used)";
+>;
+
+sampler2D ColorSampler = sampler_state 
+{
+	Texture = <ColorTexture>;
+	MinFilter = LinearMipMapLinear;
+	MagFilter = Linear;
+};
+#endif /* TEXTURED_SURFACE */
+
+///////////////////////////////////////////////////////////////////////////////////
+// "CONNECTOR" STRUCTS -- how vertex buffer, vertex and fragment shaders combine //
+///////////////////////////////////////////////////////////////////////////////////
+
+//
+// The following struct represent data streams between the vertex bffer to the vertex program,
+//	and from the vertex program to the fragment program. These are set up in standard ways
+//	but remember, the architecture is generically programmable so we can pass whatever information
+//	we like in whichever registers.
+//
+// These values COULD be passed as individual parameters in and aout of the shaders,
+//	but practice has shown using structs to be easier to understand and less error-prone.
+//
+
+//
+// Why World?
+// These shaders perform their lighting math in WORLD coordinates. Some shaders may use
+//	alternative coordinate systems, usually for clightly-greater efficiency or to match
+//	some pre-existing setup in their render engine. We use World space here because it's the
+//	most-easily extensible -- particularly, if you add reflection cubemaps to these shaders,
+//	the world-space normal is exactly the vector you'll need.
+//
+
+//
+// This is the data fed to the effect's vertex shaders from the vertex buffer.
+//
+struct appdata 
+{
+	float3 Position	: POSITION;
+	float4 UV		: TEXCOORD0;
+	float4 Normal	: NORMAL0;
+	// float4 Tangent	: TANGENT0; 	// if we were normal mapping, we'd want these too
+	// float4 Binormal	: BINORMAL0;
+};
+
+//
+// This is the data that the vertex program will deliver to the rasterizer and pixel shader,
+//		for subsequent per-fragment shading.
+//
+struct vertexOutput 
+{
+	float4 HPosition		: POSITION;
+	float4 TexCoord			: TEXCOORD0;
+	float3 LightVec			: TEXCOORD1;
+	float3 WorldNormal		: TEXCOORD2; // why world space? see "Why World?" above
+	float3 WorldView		: TEXCOORD5;
+};
+
+//
+// This is an alternative vertex output, where simplified lighting is performed per-vertex,
+//		rather than per-fragment. Even if we do fragment shading for the main lightng,
+//		we use this format for ambient-light passes since ambience is constant across
+//		the model.
+//
+struct vertexOutputVShade 
+{
+	float4 HPosition	: POSITION;
+	float4 TexCoord0	: TEXCOORD0;
+	float4 diffCol		: COLOR0;
+	float4 specCol		: COLOR1;
+};
+
+stdSurf : StandardSurface;	// from glm_interfaces.cgh
+
+//////////////////////////////////////////////////////////////////////////////
+// Utility Functions /////////////////////////////////////////////////////////
+//////////////////////////////////////////////////////////////////////////////
+
+//
+// In this example, the diffuse value is left BLACK - zero. An obvious extension of this
+//	BRDF would be to add some non-zero diffuse layer.
+//
+// We use function overloading to support both vertex and fragment shader programs.
+//
+
+//
+// for vertex shaders - texturing is supplied later
+//
+SurfaceInfo new_metal_surf(appdata IN)
+{
+	SurfaceInfo s = (SurfaceInfo)0;
+    float4 Po = float4(IN.Position.xyz,1);
+    float3 Pw = mul(WorldXf, Po).xyz;
+    s.Nn = normalize(mul(WorldITXf, IN.Normal).xyz);		// global param "WorldITXf"
+    s.Vn = normalize(float3(ViewIXf[0].w, ViewIXf[1].w, ViewIXf[2].w) - Pw);	// global param "ViewIXf"
+	s.SpecExpon = SpecExpon;	// global param "SpecExpon"
+	s.SpecColor = SurfColor;	// global param "SurfColor"
+	return s;
+}
+
+//
+// for fragment shaders - include texturing
+//
+SurfaceInfo new_metal_surf(vertexOutput IN)
+{
+	SurfaceInfo s = (SurfaceInfo)0;
+	s.Nn = normalize(IN.WorldNormal);
+	s.Vn = normalize(IN.WorldView);
+	s.SpecExpon = SpecExpon;	// global param "SpecExpon"
+	s.SpecColor = SurfColor;	// global param "SurfColor"
+#ifdef TEXTURED_SURFACE
+	s.SpecColor *= tex2D(ColorSampler,IN.TexCoord.xy).xyz;	// global param "ColorSampler"
+#endif /* TEXTURED_SURFACE */
+	return s;
+}
+
+/////////////////////////////////////////////////////////////////////
+// SHADERS - VERTEX PROGRAMS ////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+//
+// use this shader for ambience in both vertex-shaded and fragment-shaded techniques
+//
+vertexOutputVShade ambiVS(appdata IN) 
+{
+    vertexOutputVShade OUT = (vertexOutputVShade)0;
+    float4 Po = float4(IN.Position.xyz,1);
+    OUT.HPosition = mul(WVPXf, Po);
+    OUT.TexCoord0 = IN.UV;
+    OUT.diffCol = float4(SurfColor*AmbiColor,1.0);
+    OUT.specCol = float4(0,0,0,0);
+    return OUT;
+}
+
+//
+// vertex-shaded point lighting
+//
+vertexOutputVShade metalPVS(appdata IN, 
+							uniform float4 LightPos,
+							uniform float3 LightColor)
+{
+    vertexOutputVShade OUT;
+	LightResult R = (LightResult)0;
+    float4 Po = float4(IN.Position.xyz,1);
+    float3 Pw = mul(WorldXf, Po).xyz;
+	LightInfo l;
+    l.Ln = normalize(LightPos.xyz - Pw);
+	l.Color = LightColor;
+	SurfaceInfo s = new_metal_surf(IN);
+	R = stdSurf.brdf(s,l,R);
+    OUT.diffCol = float4(R.DiffContrib,1.0);
+    OUT.specCol = float4(R.SpecContrib,1.0);
+    OUT.HPosition = mul(WVPXf, Po);
+    OUT.TexCoord0 = IN.UV;
+    return OUT;
+}
+
+//
+// vertex-shaded distant lighting
+//
+vertexOutputVShade metalDVS(appdata IN,
+							uniform float4 LightDir,
+							uniform float3 LightColor)
+{
+    vertexOutputVShade OUT;
+	LightResult R = (LightResult)0;
+    float4 Po = float4(IN.Position.xyz,1);
+	LightInfo l;
+    l.Ln = -LightDir.xyz;	 // already normalized
+	l.Color = LightColor;
+	SurfaceInfo s = new_metal_surf(IN);
+	R = stdSurf.brdf(s,l,R);
+    OUT.diffCol = float4(R.DiffContrib,1.0);
+    OUT.specCol = float4(R.SpecContrib,1.0);
+    OUT.HPosition = mul(WVPXf, Po);
+    OUT.TexCoord0 = IN.UV;
+    return OUT;
+}
+
+//
+// Vertex setup for fragment-shaded point lighting
+//
+vertexOutput pointlightVS(appdata IN,
+							uniform float4 LightPos) 
+{
+    vertexOutput OUT = (vertexOutput)0;
+    float4 normal = normalize(IN.Normal);
+    OUT.WorldNormal = mul(WorldITXf, normal).xyz;
+    float4 Po = float4(IN.Position.xyz,1);
+    float3 Pw = mul(WorldXf, Po).xyz;
+    OUT.LightVec = normalize(LightPos.xyz - Pw);
+    OUT.TexCoord = IN.UV;
+    OUT.WorldView = normalize(float3(ViewIXf[0].w, ViewIXf[1].w, ViewIXf[2].w) - Pw);
+    OUT.HPosition = mul(WVPXf, Po);
+    return OUT;
+}
+
+//
+// Vertex setup for fragment-shaded distant lighting
+//
+vertexOutput dirlightVS(appdata IN,
+							uniform float4 LightDir)
+{
+    vertexOutput OUT = (vertexOutput)0;
+    float4 normal = normalize(IN.Normal);
+    OUT.WorldNormal = mul(WorldITXf, normal).xyz;
+    float4 Po = float4(IN.Position.xyz,1);
+    float3 Pw = mul(WorldXf, Po).xyz;
+    OUT.LightVec = -normalize(LightDir.xyz); // not actually used 
+    OUT.TexCoord = IN.UV;
+    OUT.WorldView = normalize(float3(ViewIXf[0].w, ViewIXf[1].w, ViewIXf[2].w) - Pw);
+    OUT.HPosition = mul(WVPXf, Po);
+    return OUT;
+}
+
+/////////////////////////////////////////////////////////////////////
+// SHADERS - FRAGMENT (PIXEL) PROGRAMS //////////////////////////////
+/////////////////////////////////////////////////////////////////////
+
+//
+// for ambient passes we just use "IN.diffCol" and add optional texture
+//
+float4 ambiPS(vertexOutputVShade IN) : COLOR
+{
+	float4 c = IN.diffCol;
+#ifdef TEXTURED_SURFACE
+	c *= tex2D(ColorSampler,IN.TexCoord0.xy);
+#endif /* TEXTURED_SURFACE */
+	return c;
+}
+
+//
+// for vertex-shaded passes we use "IN.diffCol" and add optional texture
+//
+// note that for dielectric materials, we would probably NTO want to be mutliplying
+//	the specular value by texture! But this is good for metal
+//
+float4 vertShadedMetalPS(vertexOutputVShade IN) : COLOR
+{
+	float4 c = (IN.diffCol + IN.specCol);
+#ifdef TEXTURED_SURFACE
+	c *= tex2D(ColorSampler,IN.TexCoord0.xy);
+#endif /* TEXTURED_SURFACE */
+	return c;
+}
+
+//
+// fragment shading for point lights
+//
+float4 pointPS(vertexOutput IN,
+				uniform float3 LightColor) : COLOR 
+{
+	LightResult R = (LightResult)0;
+	// pointlight values
+	LightInfo l;
+	l.Ln = normalize(IN.LightVec);
+	l.Color = LightColor;
+	// surface values
+	SurfaceInfo s = new_metal_surf(IN);
+	R = stdSurf.brdf(s,l,R);
+	float3 result = R.DiffContrib + R.SpecContrib;
+	return float4(result,1);
+}
+
+//
+// fragment shadeing for distant (directional) lights
+//
+float4 dirPS(vertexOutput IN,
+				uniform float4 LightDir,	// we assume this is pre-normalized
+				uniform float3 LightColor) : COLOR 
+{
+	LightResult R = (LightResult)0;
+	// distant-light values
+	LightInfo l;
+	l.Ln = -LightDir.xyz;
+	l.Color = LightColor;
+	// surface values
+	SurfaceInfo s = new_metal_surf(IN);
+	R = stdSurf.brdf(s,l,R);
+	float3 result = R.DiffContrib + R.SpecContrib;
+	return float4(result,1);
+}
+
+//
+// unified fragment shading 
+//
+float4 all_in_onePS(vertexOutput IN,
+				uniform float3 PLightColor,
+				uniform float4 DLightDir,	// again, we assume this value is already normalized
+				uniform float3 DLightColor) : COLOR 
+{
+	LightResult R = (LightResult)0;
+	// surface info values
+	SurfaceInfo s = new_metal_surf(IN);
+	// point light values
+	LightInfo l;
+	l.Ln = normalize(IN.LightVec);	// from the point source
+	l.Color = PLightColor;
+	R = stdSurf.brdf(s,l,R);
+	// distnat light values
+	l.Ln = -DLightDir.xyz;
+	l.Color = DLightColor;
+	R = stdSurf.brdf(s,l,R);
+	// join spec and diffuse together
+	float3 result = (R.DiffContrib + R.SpecContrib);
+	// finally, we add-in ambience
+	result += (AmbiColor * s.SpecColor);
+	return float4(result,1);
+}
+
+/////////////////////////////////////////////////////////////////////////////////////
+// TECHNIQUES -- Putting the shaders together into a complete effect ////////////////
+/////////////////////////////////////////////////////////////////////////////////////
+
+//
+// fragment-shaded
+//
+technique fragmentThreePass
+{
+	pass ambi
+	{
+		VertexProgram = compile arbvp1 ambiVS();
+		DepthTestEnable = true;
+		DepthMask = true;
+		CullFaceEnable = false;
+		BlendEnable = false;
+		FragmentProgram = compile arbfp1 ambiPS();
+	}
+	pass p0
+	{
+		VertexProgram = compile arbvp1 pointlightVS(PointLight0Pos);
+		DepthTestEnable = true;
+		DepthMask = true;
+		DepthFunc = LEqual;
+		CullFaceEnable = false;
+		BlendEnable = true;
+		BlendFunc = int2(One, One);
+		FragmentProgram = compile arbfp1 pointPS(PointLight0Col);
+	}
+	pass d0
+	{
+		VertexProgram = compile arbvp1 dirlightVS(DistLight0Dir);
+		DepthTestEnable = true;
+		DepthMask = true;
+		DepthFunc = LEqual;
+		CullFaceEnable = false;
+		BlendEnable = true;
+		BlendFunc = int2(One, One);
+		FragmentProgram = compile arbfp1 dirPS(DistLight0Dir,DistLight0Col);
+	}
+}
+
+//
+// vertex-shaded: fast but lower-quality on most models
+//
+technique vertexThreePass
+{
+	pass ambi
+	{
+		VertexProgram = compile arbvp1 ambiVS();
+		DepthTestEnable = true;
+		DepthMask = true;
+		CullFaceEnable = false;
+		BlendEnable = false;
+		FragmentProgram = compile arbfp1 ambiPS();
+	}
+	pass p0
+	{
+		VertexProgram = compile arbvp1 metalPVS(PointLight0Pos,PointLight0Col);
+		DepthTestEnable = true;
+		DepthMask = true;
+		DepthFunc = LEqual;
+		CullFaceEnable = false;
+		BlendEnable = true;
+		BlendFunc = int2(One, One);
+		FragmentProgram = compile arbfp1 vertShadedMetalPS();
+	}
+	pass d0
+	{
+		VertexProgram = compile arbvp1 metalDVS(DistLight0Dir,DistLight0Col);
+		DepthTestEnable = true;
+		DepthMask = true;
+		DepthFunc = LEqual;
+		CullFaceEnable = false;
+		BlendEnable = true;
+		BlendFunc = int2(One, One);
+		FragmentProgram = compile arbfp1 vertShadedMetalPS();
+	}
+}
+
+//
+// Fragment shading combined into a single pass
+//
+technique unified
+{
+	pass one
+	{
+		VertexProgram = compile arbvp1 pointlightVS(PointLight0Pos);
+		DepthTestEnable = true;
+		DepthMask = true;
+		CullFaceEnable = false;
+		BlendEnable = false;
+		FragmentProgram = compile arbfp1 all_in_onePS(PointLight0Col,DistLight0Dir,DistLight0Col);
+	}
+}
+
+////////////////////////////////////
+//////////////////////////// eof ///
+////////////////////////////////////

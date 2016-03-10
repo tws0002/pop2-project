@@ -1,0 +1,449 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Mar 14, 1997
+//
+//  Description:
+//      This script is defines the option box for the fit Bspline menu item.
+//
+
+
+//
+//  Procedure Name:
+//      setOptionVars
+//
+//  Description:
+//		Initialize the option values.
+//
+//  Input Arguments:
+//		Whether to set the options to default values.
+//
+//  Return Value:
+//      None.
+//
+proc setOptionVars(int $forceFactorySettings)
+{
+    // Tolerance for fit Bspline - whether to use global or local
+    // tolerance (boolean), local tolerance (float)
+    if ($forceFactorySettings || 
+        !`optionVar -exists fitBsplineUseGlobalTolerance`) {
+        optionVar -intValue fitBsplineUseGlobalTolerance 1;
+    }
+    if ($forceFactorySettings || 
+        !`optionVar -exists fitBsplineLocalTolerance`) {
+        optionVar -floatValue fitBsplineLocalTolerance 0.01;
+    }
+}
+
+//
+//  Procedure Name:
+//      fitBsplineVisibility
+//
+//  Description:
+//		Depending on the options, some other options do or do not show.
+//
+//  Input Arguments:
+//      parent               - Top level parent layout of the option box UI.
+//                             Required so that UI object names can be 
+//                             successfully resolved.
+//  Return Value:
+//      None.
+//
+
+global proc fitBsplineVisibility( string $parent, int $useGlobalTol )
+{
+	if( $useGlobalTol < 0 ) {
+		$useGlobalTol = `radioButtonGrp -q -select toleranceRadioButtonGrp`;
+	}
+
+	if( $useGlobalTol == 1 ) {
+		tabLayout -e -vis false localToleranceTabLayout;
+	}
+	else {
+		tabLayout -e -vis true localToleranceTabLayout;
+	}
+}
+
+//
+//  Procedure Name:
+//      fitBsplineSetup
+//
+//  Description:
+//		Update the state of the option box UI to reflect the option values.
+//
+//  Input Arguments:
+//      parent               - Top level parent layout of the option box UI.
+//                             Required so that UI object names can be 
+//                             successfully resolved.
+//
+//		forceFactorySettings - Whether the option values should be set to
+//                             default values.
+//
+//  Return Value:
+//      None.
+//
+
+global proc fitBsplineSetup(string $parent,
+							int $forceFactorySettings,
+							string $goToTool)
+{
+	//	Retrieve the option settings
+	//
+	setOptionVars($forceFactorySettings);
+	fitBsplineToolSetup( $forceFactorySettings, $goToTool );
+
+	setParent $parent;
+
+	//	Query the optionVar's and set the values into the controls.
+
+	// Query the optionVar's and set the values into the controls
+	//
+	int $useGlobalTol = `optionVar -query fitBsplineUseGlobalTolerance`;
+	float $localTol = `optionVar -query fitBsplineLocalTolerance`;
+
+	radioButtonGrp -edit -select $useGlobalTol toleranceRadioButtonGrp;
+	floatSliderGrp -edit -value $localTol localTolFloatFieldGrp;
+
+	if( "" != $goToTool ) { 
+		checkBoxGrp -e -v1 `scriptCtx -q -euc $goToTool`
+		  scriptToolExtraWidget;
+		checkBoxGrp -e -v2 `scriptCtx -q -lac $goToTool`
+		  scriptToolExtraWidget;
+	}
+
+	fitBsplineVisibility $parent $useGlobalTol;
+}
+
+//
+//  Procedure Name:
+//      fitBsplineCallback
+//
+//  Description:
+//		Update the option values with the current state of the option box UI.
+//
+//  Input Arguments:
+//      parent - Top level parent layout of the option box UI.  Required so
+//               that UI object names can be successfully resolved.
+//
+//		doIt   - Whether the command should execute.
+//
+//  Return Value:
+//      None.
+//
+
+global proc fitBsplineCallback(string $parent, int $doIt, string $goToTool)
+{
+	if( "" != $goToTool ) {
+		optionVar -iv fitBsplineEuc `scriptCtx -q -euc $goToTool`;
+		optionVar -iv fitBsplineLac `scriptCtx -q -lac $goToTool`;
+	}
+    setParent $parent;
+
+	// Set the optionVar's from the current control values, and then perform 
+	// the command
+	//
+	int $useGlobalTol = `radioButtonGrp -q -select toleranceRadioButtonGrp`;
+	float $localtol = `floatSliderGrp -q -value localTolFloatFieldGrp`;
+
+	optionVar -intValue fitBsplineUseGlobalTolerance $useGlobalTol;
+	optionVar -floatValue fitBsplineLocalTolerance $localtol;
+
+	if( 1 == $doIt ) {
+		performFitBspline( 0, $goToTool ); 
+		string $tmpCmd = "performFitBspline( 0, \"" + $goToTool + "\")";
+		addToRecentCommandQueue $tmpCmd "Fit B-spline";
+	}
+	else if( $doIt ) {
+		setToolTo $goToTool;
+	}
+}
+
+//
+//  Procedure Name:
+//      fitBsplineOptions
+//
+//  Description:
+//		Construct the option box UI.  Involves accessing the standard option
+//		box and customizing the UI accordingly.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+
+proc fitBsplineOptions( int $inTheTool, string $goToTool )
+{
+	//	Name of the command for this option box.
+	//
+	string $commandName = "fitBspline";
+
+	//	Build the option box actions.
+	//
+	string $callback = ($commandName + "Callback");
+	string $setup = ($commandName + "Setup");
+
+	global string $gOptionBoxActionToolItem;
+	$gOptionBoxActionToolItem = "modelWithToolFitBspline";
+	global string $gOptionBoxActionToolItemCB;
+	$gOptionBoxActionToolItemCB = "fitBsplineToolScript 3";
+
+	//	Step 1:  Get the option box.
+	//	============================
+	string $layout = getOptionBox();
+	setParent $layout;
+	
+	//	Step 2:  Pass the command name to the option box.
+	//	=================================================
+	setOptionBoxCommandName($commandName);
+	
+	//	Step 3:  Activate the default UI template.
+	//	==========================================
+	setUITemplate -pushTemplate DefaultTemplate;
+
+	//	Step 4: Create option box contents.
+	//	===================================
+	
+	//	Turn on the wait cursor.
+	//
+	waitCursor -state 1;
+
+	tabLayout -scr true -tv false;
+	
+	string $parent = `columnLayout -adjustableColumn 1`;
+	
+	tabLayout -tabsVisible false toleranceTabLayout;
+		columnLayout toleranceGroups;
+			radioButtonGrp
+				-numberOfRadioButtons 2
+				-label (uiRes("m_performFitBspline.kUseTolerance")) 
+				-label1 (uiRes("m_performFitBspline.kGlobal")) 
+				-label2 (uiRes("m_performFitBspline.kLocal")) 
+				toleranceRadioButtonGrp;
+		
+			tabLayout -tabsVisible false localToleranceTabLayout;
+				columnLayout localToleranceSlider;
+					floatSliderGrp -label (uiRes("m_performFitBspline.kPositionalTolerance"))  
+						-min 0.001 -max 1.0 -fmn 0.00001 -fmx 1000.0
+						localTolFloatFieldGrp;
+				setParent ..;
+			setParent ..;
+		setParent ..;
+	setParent ..;
+
+	// Set the tolerance radio button up so that when "Global" is
+	// selected, then the local tolerance slider is disabled.
+	// When "Local" is selected then the local tolerance slider is enabled.
+	//
+	radioButtonGrp -edit
+		-cc1 ("fitBsplineVisibility " + $parent + " 1")
+		-cc2 ("fitBsplineVisibility " + $parent + " 0")
+		toleranceRadioButtonGrp;
+
+	if( $inTheTool ) {
+		separator;
+		checkBoxGrp -ncb 2 -label (uiRes("m_performFitBspline.kToolBehavior")) 
+		  -label1 (uiRes("m_performFitBspline.kExitOnCompletion")) 
+		  -v1 off
+		  -on1 ("scriptCtx -e -euc true " + $goToTool)
+		  -of1 ("scriptCtx -e -euc false " + $goToTool)
+
+		  -label2 (uiRes("m_performFitBspline.kAutoCompletion")) 
+		  -v2 on
+		  -on2 ("scriptCtx -e -lac true " + $goToTool)
+		  -of2 ("scriptCtx -e -lac false " + $goToTool)
+		  scriptToolExtraWidget;
+	}
+
+	//	Turn off the wait cursor.
+	//
+	waitCursor -state 0;
+	
+	//	Step 5: Deactivate the default UI template.
+	//  ===========================================
+	//
+	setUITemplate -popTemplate;
+
+	//	Step 6: Customize the buttons.  
+	//	==============================
+
+	//	'Apply' button.
+	//
+	string $applyBtn = getOptionBoxApplyBtn();
+	if( $inTheTool ) {
+		button -edit -label (uiRes("m_performFitBspline.kFitBsplineTool")) 
+			-command ($callback + " " + $parent + " 3 \"" + $goToTool + "\"")
+			$applyBtn;
+	}
+	else {
+		button -edit -label (uiRes("m_performFitBspline.kFitBspline")) 
+			-command ($callback + " " + $parent + " 1 \"" + $goToTool + "\"")
+			$applyBtn;
+	}
+
+	//	'Save' button.
+	//
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + $parent + " 0 \"" +
+				  $goToTool + "\"; hideOptionBox")
+		$saveBtn;
+
+	//	'Reset' button.
+	//
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + " " + $parent + " 1 \"" + $goToTool + "\"")
+		$resetBtn;
+
+	//	Step 7: Set the option box title.
+	//	=================================
+	//
+	if( $inTheTool ) {
+		setOptionBoxTitle (uiRes("m_performFitBspline.kFitBSplineToolOptions"));
+	}
+	else {
+		setOptionBoxTitle (uiRes("m_performFitBspline.kFitBSplineOptions"));
+	}
+
+	//	Step 8: Customize the 'Help' menu item text.
+	//	============================================
+	//
+	setOptionBoxHelpTag( "FitBSpline" );
+
+	//	Step 9: Set the current values of the option box.
+	//	=================================================
+	//
+	eval ($setup + " " + $parent + " 0 \"" + $goToTool + "\"");	
+	
+	//	Step 10: Show the option box.
+	//	=============================
+	//
+	showOptionBox();
+}
+
+//
+//  Procedure Name:
+//      fitBsplineHelp
+//
+//  Description:
+//		Return a short description about this command.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      string.
+//
+
+proc string fitBsplineHelp()
+{
+	return 
+	"  Command: Fit B-spline - fit a spline to a list of cvs\n" +
+	"Selection: curve, surface isoparm";
+}
+
+//
+//  Procedure Name:
+//      assembleCmd
+//
+//  Description:
+//		Construct the command that will apply the option box values.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+proc string assembleCmd()
+{
+	string $cmd = "fitBsplinePreset";
+
+	setOptionVars(false);
+
+	int $doHistory = `constructionHistory -q -tgl`;
+	float $globalTol = `optionVar -q positionalTolerance`;;
+
+	int $crvUseGlobalTol = `optionVar -q fitBsplineUseGlobalTolerance`;
+	float $crvLocalTol = `optionVar -q fitBsplineLocalTolerance`;
+
+	$cmd = ( $cmd + " " +
+			 $doHistory + " " +
+			 $globalTol + " " +
+			 $crvUseGlobalTol + " " +
+			 $crvLocalTol );
+	return $cmd;
+}
+
+//
+//  Procedure Name:
+//      performFitBspline
+//
+//  Description:
+//		Perform the fitBspline command using the corresponding 
+//		option values.  This procedure will also show the option box
+//		window if necessary as well as construct the command string
+//		that will invoke the fitBspline command with the current
+//		option box values.
+//
+//  Input Arguments:
+//      0 - Execute the command.
+//      1 - Show the option box dialog.
+//      2 - Return the command.
+//
+//  Return Value:
+//      None.
+//
+
+global proc string performFitBspline(int $action, string $goToTool )
+{
+	int $inTheTool = false;
+	if( 3 == $action ) {
+		$action = 1;
+		$inTheTool = true;
+	}
+
+	string $cmd = "";
+	switch ($action) {
+
+	  case 0:
+		setOptionVars(false);
+		$cmd = `assembleCmd`;
+		eval($cmd);
+		break;
+
+	  case 1:
+		fitBsplineOptions( $inTheTool, $goToTool );
+		break;
+
+	  case 2:
+	  default:
+		setOptionVars (false);
+		$cmd = `assembleCmd`;
+		break;
+	}
+	return $cmd;
+}
+

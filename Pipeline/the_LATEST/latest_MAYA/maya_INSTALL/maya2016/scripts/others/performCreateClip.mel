@@ -1,0 +1,575 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  July 16, 1999
+//
+//  Description:
+//      This script is the create clip option box dialogs.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+
+proc setOptionVars (int $forceFactorySettings)
+{
+	// Clip name
+	//
+	if ($forceFactorySettings || !`optionVar -exists createClipName`) {
+		optionVar -stringValue createClipName "clip1";
+	}	
+
+	if ($forceFactorySettings || !`optionVar -exists createClipSchedule`) {
+		optionVar -intValue createClipSchedule 1;
+	}	
+
+	if ($forceFactorySettings || !`optionVar -exists createClipSubChar`) {
+		optionVar -intValue createClipSubChar 1;
+	}	
+
+	if( $forceFactorySettings || !`optionVar -exists createClipStart` ) {
+		optionVar -floatValue createClipStart 0;
+	} 
+	
+	if( $forceFactorySettings || !`optionVar -exists createClipEnd` ) {
+		optionVar -floatValue createClipEnd 10;
+	} 
+	
+	//	createClipTimeWarp
+	// 	0: No Warp Curve Created
+	//	1: Time Warp Curve Created
+	//
+	if ( $forceFactorySettings || !`optionVar -exists createClipTimeWarp`) {
+		optionVar -intValue createClipTimeWarp 0;
+	}
+
+	//	createClipRangeMethodWhich:
+	//	1: set the clip for the selected range
+	//	2: set the clip for the time slider range
+	//	3: set the clip for the length of the anim curves
+	//	4: set the clip for the specified start and end times (default)
+	//
+	if ( $forceFactorySettings || !`optionVar -exists createClipRangeMethodWhich`) {
+		optionVar -intValue createClipRangeMethodWhich 3;
+	}
+
+	if ($forceFactorySettings || !`optionVar -exists clipHierarchy`) {
+		// use hierarchy: default is true
+		optionVar -intValue clipHierarchy 1;
+	}
+
+	if ($forceFactorySettings || !`optionVar -exists clipAbsolute`) {
+		// 1 = absolute, 2 = relative, 3 = absolute rotates
+		optionVar -intValue clipAbsolute 1;
+	}
+}
+
+//
+//  Procedure Name:
+//      createClipSetup
+//
+//  Description:
+//		Update the state of the option box UI to reflect the option values.
+//
+//  Input Arguments:
+//      parent               - Top level parent layout of the option box UI.
+//                             Required so that UI object names can be 
+//                             successfully resolved.
+//
+//	forceFactorySettings     - Whether the option values should be set to
+//                             default values.
+//
+//  Return Value:
+//      None.
+//
+global proc createClipSetup (string $parent, int $forceFactorySettings)
+{
+	// Retrieve the option settings.
+	setOptionVars( $forceFactorySettings );
+
+	setParent $parent;
+	
+	// Set the clip name.
+	string $name = `optionVar -query createClipName`;
+	textFieldGrp -edit -text $name clipNameWidget;
+
+	// Set the schedule flag
+	int $scheduleIt = `optionVar -query createClipSchedule`;
+
+	// Set the subcharacter flag
+	int $useSubcharacters = `optionVar -query createClipSubChar`;
+	checkBoxGrp -edit -value1 $useSubcharacters useSubCharWidget;
+
+	switch ($scheduleIt) {
+	case 1:
+			radioButtonGrp -edit -select 1 scheduleMethod;
+			break;
+	default:
+	case 2:
+	case 3:			
+			radioButtonGrp -edit -select 1 moveToLibraryMethod;
+			break;
+	}
+	
+	// 1 == Remove character's existing animation & add clip to track editor
+	// 2 == Remove character's existing animation and add clip to library
+    // 3 == Keep existing animation and add clip to library
+	//
+	if ($scheduleIt == 3) {
+		checkBoxGrp -edit -value1 true leaveKeysWidget;
+		radioButtonGrp -edit -enable false scheduleMethod;
+	} else {
+		radioButtonGrp -edit -enable true scheduleMethod;		
+		checkBoxGrp -edit -value1 false leaveKeysWidget;		
+	}
+
+	//	Set the start and end times.
+	float $start = `optionVar -query createClipStart`;
+	float $end   = `optionVar -query createClipEnd`;
+	floatFieldGrp -edit -value1 $start -enable false frameStartValue;
+	floatFieldGrp -edit -value1 $end -enable false frameEndValue;	
+
+    // Set the correct radio button.
+	int $whichMethod = `optionVar -query createClipRangeMethodWhich`;
+	switch($whichMethod) {
+		case 1:
+			radioButtonGrp -edit -select 1 selectedMethod;
+			break;
+		case 2:
+			radioButtonGrp -edit -select 1 timeSliderMethod;
+			break;
+		case 3:
+			radioButtonGrp -edit -select 1 animCurveMethod;
+			break;
+		case 4:
+		default:
+			radioButtonGrp -edit -select 1 startEndMethod;
+			floatFieldGrp -edit -enable true frameStartValue;
+			floatFieldGrp -edit -enable true frameEndValue;
+			break;
+	}
+
+	// Set the correct warp curve radio button.
+	//
+	int $whichWarp = `optionVar -query createClipTimeWarp`;
+	checkBoxGrp -edit -value1 $whichWarp createTimeWarpGrp;
+
+	checkBoxGrp -edit -value1 `optionVar -query clipHierarchy` clipHierWidget;
+
+	radioButtonGrp -e -sl `optionVar -query clipAbsolute` clipAbsGrp;
+}
+
+//
+//  Procedure Name:
+//      createClipCallback
+//
+//  Description:
+//		Update the option values with the current state of the option box UI.
+//
+//  Input Arguments:
+//      parent - Top level parent layout of the option box UI.  Required so
+//               that UI object names can be successfully resolved.
+//
+//	doIt       - Whether the command should execute.
+//
+//  Return Value:
+//      None.
+//
+global proc createClipCallback (string $parent, int $doIt)
+{
+    setParent $parent;
+
+	// Name
+	//
+	optionVar -stringValue createClipName
+		`textFieldGrp -query -text clipNameWidget`;
+
+	// Set the schedule flag
+	int $leaveKeys = `checkBoxGrp -query -value1 leaveKeysWidget`;	
+
+	int $useSubChar = `checkBoxGrp -query -value1 useSubCharWidget`;	
+	optionVar -intValue createClipSubChar $useSubChar;
+
+	// if the user selects leaveKeys, dim the scheduleMethod widget, since
+	// we only allow you add add the clip to the library if you leave the
+	// keys
+	//
+	if ($leaveKeys) {
+		optionVar -intValue createClipSchedule 3;
+		radioButtonGrp -edit -enable false scheduleMethod;
+		radioButtonGrp -edit -select 1 moveToLibraryMethod;		
+	} else {
+		radioButtonGrp -edit -enable true scheduleMethod;		
+		if (`radioButtonGrp -query -select scheduleMethod` == 1) {
+			optionVar -intValue createClipSchedule 1;
+		} else if (`radioButtonGrp -query -select moveToLibraryMethod` == 1) {
+			optionVar -intValue createClipSchedule 2;
+		}
+	}
+	
+	if (`radioButtonGrp -query -select selectedMethod` == 1) {
+		optionVar -intValue createClipRangeMethodWhich 1;
+	} else if (`radioButtonGrp -query -select timeSliderMethod` == 1) {
+		optionVar -intValue createClipRangeMethodWhich 2;
+	} else if (`radioButtonGrp -query -select animCurveMethod` == 1) {
+		optionVar -intValue createClipRangeMethodWhich 3;
+	} else {
+		optionVar -intValue createClipRangeMethodWhich 4;
+	}
+
+    optionVar -floatValue  createClipStart `floatFieldGrp -query -value1 frameStartValue`;
+    optionVar -floatValue  createClipEnd `floatFieldGrp -query -value1 frameEndValue`;
+
+	int $warpOption = `checkBoxGrp -query -value1 createTimeWarpGrp`;
+	optionVar -intValue createClipTimeWarp $warpOption;
+
+	optionVar -intValue clipHierarchy `checkBoxGrp -query -value1 clipHierWidget`;
+
+	optionVar -intValue clipAbsolute `radioButtonGrp -q -sl clipAbsGrp`; 
+
+	if ($doIt)
+		performCreateClip false;
+}
+
+
+proc string createClipWidgets( string $parent )
+{
+	setParent $parent;
+	
+	string $tabForm = `columnLayout -adjustableColumn true`;
+
+	textFieldGrp 	-label (uiRes("m_performCreateClip.kName"))
+			// Clip names are used as node names and don't need to be translated.	  
+			-text "clip1" 
+			-parent $tabForm
+	        	clipNameWidget;
+
+	// clip start & duration
+	radioButtonGrp -numberOfRadioButtons 1
+		-label (uiRes("m_performCreateClip.kTimeRange")) 
+		-label1 (uiRes("m_performCreateClip.kSelected")) 
+		-annotation (uiRes("m_performCreateClip.kSelectedAnnot")) 
+		selectedMethod;
+
+	radioButtonGrp -numberOfRadioButtons 1
+		-label1 (localizedUIComponentLabel("Time Slider"))
+		-annotation (uiRes("m_performCreateClip.kTimeSliderAnnot")) 
+		-shareCollection selectedMethod
+		timeSliderMethod;
+
+	radioButtonGrp -numberOfRadioButtons 1
+		-label1 (uiRes("m_performCreateClip.kAnimCurve")) 
+		-annotation (uiRes("m_performCreateClip.kAnimCurveAnnot")) 
+		-shareCollection selectedMethod
+		animCurveMethod;
+
+	radioButtonGrp -numberOfRadioButtons 1
+		-label1 (uiRes("m_performCreateClip.kStartEnd")) 
+		-annotation (uiRes("m_performCreateClip.kStartEndAnnot")) 
+		-select 1
+		-shareCollection selectedMethod
+		-onCommand "floatFieldGrp -edit -enable true frameStartValue; floatFieldGrp -edit -enable true frameEndValue;"
+		-offCommand "floatFieldGrp -edit -enable false frameStartValue; floatFieldGrp -edit -enable false frameEndValue;"
+		startEndMethod;
+
+	frameLayout -borderVisible no -labelVisible no
+		-collapsable no startEndFrame;
+		columnLayout -adjustableColumn true;
+		floatFieldGrp -label (uiRes("m_performCreateClip.kStartTime"))
+			-value1 0.0 frameStartValue;
+		floatFieldGrp -label (uiRes("m_performCreateClip.kEndTime"))
+			-value1 10.0 frameEndValue;
+		setParent ..;
+		setParent ..;
+	setParent ..;
+
+	// absolute, relative, etc...
+	radioButtonGrp -numberOfRadioButtons 3
+		-label (uiRes("m_performCreateClip.kOffset")) 
+		-label1 (uiRes("m_performCreateClip.kAbsolute"))
+		-label2 (uiRes("m_performCreateClip.kRelative"))
+		-label3 (uiRes("m_performCreateClip.kRelativeRoot"))
+		-annotation (uiRes("m_performCreateClip.kOffsetAnnot"))
+		clipAbsGrp;
+	
+	// whether to include subcharacters in the clip
+	checkBoxGrp
+		-label (uiRes("m_performCreateClip.kSubChars")) 
+		-label1 (uiRes("m_performCreateClip.kIncludeSubchars")) 
+		-annotation (uiRes("m_performCreateClip.kIncludeSubcharsAnnot")) 
+		-numberOfCheckBoxes 1
+		useSubCharWidget;
+
+	checkBoxGrp
+		-label ""
+		-label1 (uiRes("m_performCreateClip.kIncludeHierarchy")) 
+		-annotation (uiRes("m_performCreateClip.kHierarchyAnnot")) 
+		-numberOfCheckBoxes 1
+		clipHierWidget;
+
+	separator;
+	
+	// schedule it
+	checkBoxGrp
+		-label (uiRes("m_performCreateClip.kKeys")) 
+		-label1 (uiRes("m_performCreateClip.kLeaveKeys")) 
+		-annotation (uiRes("m_performCreateClip.kKeaveKeysAnnot")) 
+		-onCommand "radioButtonGrp -edit -enable false scheduleMethod; radioButtonGrp -edit -select 1 moveToLibraryMethod;"
+		-offCommand "radioButtonGrp -edit -enable true scheduleMethod;"
+		-numberOfCheckBoxes 1
+		leaveKeysWidget;
+	
+	// how to schedule it
+	radioButtonGrp -numberOfRadioButtons 1
+		-label (uiRes("m_performCreateClip.kClip")) 
+		-label1 (uiRes("m_performCreateClip.kPutClipInVisor")) 
+		-annotation (uiRes("m_performCreateClip.kPutClipInVisorAnnot")) 
+		moveToLibraryMethod;
+
+	radioButtonGrp -numberOfRadioButtons 1
+		-label1 (uiRes("m_performCreateClip.kPutClipinTraxAndVisor")) 
+		-annotation (uiRes("m_performCreateClip.kPutClipInTraxAndVisorAnnot")) 		
+		-shareCollection moveToLibraryMethod
+		scheduleMethod;
+
+	// clip time warps
+	checkBoxGrp
+		-label (uiRes("m_performCreateClip.kTimeWarp")) 
+		-label1 (uiRes("m_performCreateClip.kTimeWarpCurve")) 
+		-annotation (uiRes("m_performCreateClip.kCreateTimeWarpCurveAnnot")) 
+		-numberOfCheckBoxes 1
+		createTimeWarpGrp;
+
+	return $tabForm;
+}
+
+global proc createClipOptions ()
+{
+	string $commandName = "createClip";
+
+	// Build the option box "methods"
+	//
+	string $callback = ($commandName + "Callback");
+	string $setup = ($commandName + "Setup");
+
+	//	Get the option box.
+	//
+	//  The value returned is the name of the layout to be used as
+	//	the parent for the option box UI.
+	//
+	string $layout = getOptionBox();
+	setParent $layout;
+
+	setOptionBoxCommandName("clip");
+
+	setUITemplate -pushTemplate DefaultTemplate;
+	waitCursor -state 1;
+	tabLayout -scrollable true -tabsVisible false;	// To get the scroll bars
+
+	string $parent = `columnLayout -adjustableColumn 1`;
+
+	createClipWidgets $parent;
+
+	waitCursor -state 0;
+	setUITemplate -popTemplate;
+
+	//	'Apply' button.
+	//
+	string $applyBtn = getOptionBoxApplyBtn();
+	button -edit
+		-label (uiRes("m_performCreateClip.kCreateClip")) 
+		-command ($callback + " " + $parent + " " + 1)
+		$applyBtn;
+
+	//	'Save' button.
+	//
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + $parent + " " + 0 + "; hideOptionBox")
+		$saveBtn;
+
+	//	'Reset' button.
+	//
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + " " + $parent + " " + 1)
+		$resetBtn;
+
+	//	Set the option box title.
+	//
+	setOptionBoxTitle((uiRes("m_performCreateClip.kCreateClipOptions")));
+
+	//	Customize the 'Help' menu item text.
+	//
+	setOptionBoxHelpTag( "CreateClip" );
+
+	//	Set the current values of the option box.
+	//
+	eval (($setup + " " + $parent + " " + 0));	
+	
+	//	Show the option box.
+	//
+	showOptionBox();
+}
+
+
+//
+//  Procedure Name:
+//      assembleCmd
+//
+//  Description:
+//		Construct the command that will apply the option box values.
+//
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+proc string assembleCmd()
+{
+	string $cmd;
+
+	setOptionVars(false);
+
+	// get the partition name
+	string $clipName = "clip1";
+	if (`optionVar -exists createClipName`) {
+		$clipName = `optionVar -query createClipName`;
+	}
+
+	int $scheduleIt = 1;
+	if (`optionVar -exists createClipSchedule`) {
+		$scheduleIt = `optionVar -query createClipSchedule`;
+	}
+
+	int $useSubChar = 1;
+	if (`optionVar -exists createClipSubChar`) {
+		$useSubChar = `optionVar -query createClipSubChar`;
+	}
+
+	string $createMethod = "startEndMethod";
+	int $whichMethod = `optionVar -query createClipRangeMethodWhich`;
+	switch ($whichMethod) {
+		case 1:
+			$createMethod = "selectedMethod";
+			break;
+		case 2:
+			$createMethod = "timeSliderMethod";
+			break;
+		case 3:
+			$createMethod = "animCurveMethod";
+			break;
+	}
+
+	string $warpMethod = "noWarp";
+	int $timeWarp = `optionVar -query createClipTimeWarp`;
+	if ($timeWarp > 0) {
+		$warpMethod = "enabledWarp";
+	}
+
+	int $useHierarchy = 0;
+	if (`optionVar -exists clipHierarchy`) {
+		$useHierarchy = `optionVar -query clipHierarchy`;
+	}
+
+	string $absType = "allAbsolute";
+	if (`optionVar -q clipAbsolute` == 2) {
+		$absType = "allRelative";
+	} else if (`optionVar -q clipAbsolute` == 3) {
+		$absType = "defaultAbsolute";
+	}
+
+	// doCreateClipArgList takes a string array 
+	//
+	$cmd =	"doCreateClipArgList 6 { " +
+				"\"" + $clipName + "\"" +
+				",\"" + $scheduleIt + "\"" +		
+				",\"" + $createMethod + "\"" +
+				",\"" + `optionVar -query createClipStart` + "\"" +
+				",\"" + `optionVar -query createClipEnd` + "\"" +
+				",\"" + $useSubChar + "\"" +
+				",\"" + $warpMethod + "\"" +
+				",\"" + $useHierarchy + "\"" +
+				",\"" + "animation" + "\"" +
+				",\"" + $absType + "\"" +		
+			" };";
+
+	return $cmd;
+}
+
+//
+//  Procedure Name:
+//      performCreateClip
+//
+//  Description:
+//		Create a clip and add the animatable attributes from the 
+//      selected nodes.  This procedure will also show the option box
+//		window if necessary as well as construct the command string
+//		that will create a clip with the current option box values.
+//
+//  Input Arguments:
+//      0 - Execute the command.
+//      1 - Show the option box dialog.
+//      2 - Return the command.
+//
+//  Return Value:
+//      None.
+//
+global proc string performCreateClip (int $action)
+{
+	string $cmd = "";
+
+	switch ($action) {
+
+		//	Execute the command.
+		//
+		case 0:
+			//	Retrieve the option settings
+			//
+			setOptionVars(false);
+
+			//	Get the command.
+			//
+			$cmd = `assembleCmd`;
+
+			//	Execute the command with the option settings.
+			//
+			if ($cmd != "")
+			    eval($cmd);
+			break;
+
+		//	Show the option box.
+		//
+		case 1:
+			createClipOptions;
+			break;
+		case 2:
+			//	Get the command.
+			//
+			$cmd = `assembleCmd`;
+	}
+	return $cmd;
+}

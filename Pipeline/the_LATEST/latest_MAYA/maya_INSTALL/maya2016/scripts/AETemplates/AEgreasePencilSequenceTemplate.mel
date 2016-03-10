@@ -1,0 +1,183 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+
+// A utility function for generating the strings we need for the frame time and alpha
+// attributes.  We return plugName, controlName, niceName for both attributes
+//
+proc string[] getNamesForIndex( string $frameMulti, string $attribute, int $frameIndex, int $uiIndex )
+{
+	string $result[];
+
+	$result[0] = ( $frameMulti + "[" + string($frameIndex) + "].frameTime" );
+	$result[1] = ( $attribute+"_time"+string($uiIndex) );
+	$result[2] = ( `attributeName -nice $result[0]` + "["+string($frameIndex)+"]" );
+
+	$result[3] = ( $frameMulti + "[" + string($frameIndex) + "].frameAlpha" );
+	$result[4] = ( $attribute+"_alpha"+string($uiIndex) );
+	$result[5] = ( `attributeName -nice $result[3]` + "["+string($frameIndex)+"]" );
+
+	return $result;
+}
+
+// This function is called to create a new set of controls for the frame multi
+//
+global proc AEgreasePencilSequenceFrameNew( string $frameMulti )
+{
+	string $buffer[];
+	tokenize($frameMulti, ".", $buffer);
+	string $nodeName = $buffer[0];
+	string $att	 = $buffer[1];
+
+	int $indices[] = `getAttr -multiIndices $frameMulti`;
+
+	setUITemplate -pst attributeEditorTemplate;
+
+	columnLayout ($att+"Column");
+
+	int $i;
+	for ($i=0; $i < size($indices); $i++)
+	{
+		setUITemplate -pst attributeEditorTemplate;	
+		
+		// Returns: 
+		// - 0 frameTime plug, 1 name for the slider grp, 2 nice name
+		// - 3 frameAlpha plug, 4 name for the slider grp, 5 nice name
+		string $naming[] = getNamesForIndex( $frameMulti, $att, $indices[$i], $i );
+		// Frame time
+		attrFieldSliderGrp -label $naming[2] -at $naming[0] $naming[1];
+		// Frame alpha ( not enabled )
+		attrFieldSliderGrp -enable false -label $naming[5] -at $naming[3] $naming[4];
+
+		setUITemplate -ppt;
+	}
+
+	setParent ..;
+	setUITemplate -ppt;
+	AEgreasePencilSequenceFrameReplace $frameMulti;
+}
+
+// This function is called to update an existing frame multi display with the new
+// info for another node. The replacement algorithm is based on code that 
+// I found in: AEblendShapeAttrNew.mel
+//
+global proc AEgreasePencilSequenceFrameReplace( string $frameMulti )
+{
+	string $buffer[];
+	tokenize($frameMulti, ".", $buffer);
+	string $nodeName = $buffer[0];
+	string $att	 = $buffer[1];
+
+	setUITemplate -pst attributeEditorTemplate;
+
+	setParent ($att+"Column");
+	$layoutName=`setParent -query`;
+	int $oldCount= (`columnLayout -query -numberOfChildren $layoutName` ) / 2;
+
+	int $indices[] = `getAttr -multiIndices $frameMulti`;
+	int $i;
+	for ($i=0; $i < size($indices); $i++)
+	{
+		// Returns: 
+		// - 0 frameTime plug, 1 name for the slider grp, 2 nice name
+		// - 3 frameAlpha plug, 4 name for the slider grp, 5 nice name
+		string $naming[] = getNamesForIndex( $frameMulti, $att, $indices[$i], $i );
+		int $timeExists = `attrFieldSliderGrp -exists $naming[1]`;
+		int $alphaExists = `attrFieldSliderGrp -exists $naming[4]`;
+		if (  $timeExists || $alphaExists )
+		{
+			// Edit operation if the control already exists
+			if ( $timeExists )
+				attrFieldSliderGrp -edit -label $naming[2] -at $naming[0] $naming[1];
+			if ( $alphaExists )
+				attrFieldSliderGrp -edit -enable false -label $naming[5] -at $naming[3] $naming[4];
+		} else {
+			// Make a new control
+			setUITemplate -pst attributeEditorTemplate;
+			// Time field
+			attrFieldSliderGrp -label $naming[2] -at $naming[0] $naming[1];
+			// Alpha field  ( not enabled )
+			attrFieldSliderGrp -enable false -label $naming[5] -at $naming[3] $naming[4];
+			setUITemplate -ppt;
+		}
+	}
+	// Remove any unused items
+	for ($i=size($indices); $i < $oldCount; $i++)
+	{
+		// We are only getting the UI name is this call so the frameIndex
+		// does not matter
+		string $naming[] = getNamesForIndex( $frameMulti, $att, 0, $i );
+		if ( `attrFieldSliderGrp -exists $naming[1]` )
+			deleteUI $naming[1];
+		if ( `attrFieldSliderGrp -exists $naming[4]` )
+			deleteUI $naming[4];
+	}
+	setParent ..;
+
+	setUITemplate -ppt;
+}
+
+// Implemented custom function calls for the color button since
+// we do not want the "Create RenderNode" button showing up.
+//
+global proc AEgreaseSequenceColorNew( string $plug )
+{               
+	attrColorSliderGrp
+			-label (uiRes("m_AEgreasePencilSequenceTemplate.kCurveColor")) 
+			-showButton false
+			curveColorCtrl;
+
+	AEgreaseSequenceColorReplace( $plug );
+}
+
+global proc AEgreaseSequenceColorReplace( string $plug )
+{
+	attrColorSliderGrp
+			-edit
+			-attribute $plug
+			curveColorCtrl;
+}
+
+// Main AE call
+//
+global proc AEgreasePencilSequenceTemplate ( string $nodeName )
+{
+	editorTemplate -beginScrollLayout;
+
+		editorTemplate -beginLayout (uiRes("m_AEgreasePencilSequenceTemplate.kGreasePencilAttributes"))  -collapse 0;
+			editorTemplate -addControl "preGhost";
+			editorTemplate -addControl "postGhost";
+			editorTemplate -addControl "preFrames";
+			editorTemplate -addControl "postFrames";
+			editorTemplate -addControl "alphaMultiplier";
+			editorTemplate -callCustom "AEgreaseSequenceColorNew" "AEgreaseSequenceColorReplace" "color";
+		editorTemplate -endLayout;
+
+		editorTemplate -beginLayout (uiRes("m_AEgreasePencilSequenceTemplate.kAdvanced"))  -collapse 1;
+			editorTemplate -callCustom "AEgreasePencilSequenceFrameNew" "AEgreasePencilSequenceFrameReplace" "frame";
+		editorTemplate -endLayout;
+
+		AEdependNodeTemplate $nodeName;
+
+	editorTemplate -addExtraControls;
+	editorTemplate -endScrollLayout;
+}
+

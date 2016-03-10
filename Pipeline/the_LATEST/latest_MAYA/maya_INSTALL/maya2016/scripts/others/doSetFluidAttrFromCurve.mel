@@ -1,0 +1,391 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Oct 21, 2002
+//
+//  Description:
+//      Sets fluid properties at locations
+//      determined by a NURBS curve intersecting
+//      the voxel grid.
+//      
+//		
+//  Input Arguments:
+//      None.
+//
+//  Return Vaalue:
+//      None.
+//
+proc int[] voxelFromPosition( string $fluid, float $pos[], float $radius )
+{
+	int $voxels[] = `fluidVoxelInfo -radius $radius -objectSpace false -cb 
+					-voxel $pos[0] $pos[1] $pos[2] $fluid`;
+	return $voxels;
+}
+
+proc setTangentVelocity( string $fluid, string $parent,
+						 float $tan[], int $vox[], 
+						 float $value, int $absolute )
+//
+// Description:
+//	Set the velocity values in voxels that intersect the 
+//	curve (at the current curveInfo position) based on the
+//	tangent direction of the curve at the point.
+//	
+{
+	// Convert to fluid space
+	//
+	float $inverse[] = `getAttr($parent + ".worldInverseMatrix[0]")`;
+	$tan = pointMatrixMult( $tan, $inverse );
+	
+	float $vel[] = { $value*$tan[0], $value*$tan[1], $value*$tan[2] };
+
+	if( !$absolute ) {
+		float $oldVel[] = `getFluidAttr -at "velocity" 
+			-xi $vox[0] -yi $vox[1] -zi $vox[2] $fluid`;
+
+		$vel[0] = $vel[0] + $oldVel[0];
+		$vel[1] = $vel[1] + $oldVel[1];
+		$vel[2] = $vel[2] + $oldVel[2];
+	}
+
+	eval( "setFluidAttr -lf -at velocity -vv " + 
+		  $vel[0] + " " + $vel[1] + " " + $vel[2] + " " + 
+		  " -xi " + $vox[0] + " -yi " + $vox[1] + " -zi " + $vox[2] 
+		  + " " + $fluid );
+
+	setAttr ($parent + ".velocityDraw") 1;
+}
+
+proc setScalar( string $fluid, int $vox[], string $attr, 
+				float $value, int $absolute )
+//
+// Description:
+//	Sets a scalar-valued attribute at the voxel intersecting
+//	the current curve position.
+//	
+{
+	int $i;
+	for( $i = 0; $i < size( $vox ); $i += 3 ) {
+		int $x = $vox[$i+0];
+		int $y = $vox[$i+1];
+		int $z = $vox[$i+2];
+
+		float $newValue = $value;
+		if( !$absolute ) {
+			float $oldVal[] = `getFluidAttr -at $attr 
+				-xi $x -yi $y -zi $z $fluid`;
+			
+			$newValue += $oldVal[0];
+		}
+
+		string $cmd = ( "setFluidAttr -at " + $attr + " -fv " + $newValue +
+			  " -xi " + $x + " -yi " + $y + " -zi " + $z + 
+			  " " + $fluid );
+		eval( $cmd );
+	}
+}
+
+proc setColor( string $fluid, int $vox[],
+			   float $color[], int $absolute )
+//
+// Description:
+//	Sets voxel color at the intersection with the current
+//	curve position.
+//	
+{
+	if( !$absolute ) {
+		float $oldVal[] = `getFluidAttr -at "color"
+			-xi $vox[0] -yi $vox[1] -zi $vox[2] $fluid`;
+
+		$color[0] += $oldVal[0];
+		$color[1] += $oldVal[1];
+		$color[2] += $oldVal[2];
+	}
+
+	eval( "setFluidAttr -at color -vv " + 
+		  $color[0] + " " + $color[1] + " " + $color[2] +
+		  " -xi " + $vox[0] + " -yi " + $vox[1] + " -zi " + $vox[2] + 
+		  " " + $fluid );
+}
+
+proc addUniqueVoxelsToTargets( int $newVox[], int $voxels[], 
+							   float $newTan[], float $tangents[],
+							   string $fluid, 
+							   float $position[], float $distances[] )
+//
+// Description:
+//	Voxels could be added multiple times because of
+//	small parametric step values along the curve, or
+//	because of high radii values.  This could cause 
+//	problems in add mode (processing the added value
+//	once for each repeated occurrence).
+//	
+//	So, before adding any voxel to the list of targets to
+//	process, search the existing target list first to see if
+//	it's already there.  (This is slow due to lack of
+//  good array utility procs in MEL, but probably
+//	acceptable for most usable fluid resolutions.)
+//	
+//	We also pass in the current position and the distances 
+//	to that position as each voxel is processed.  This way,
+//	we can make sure the values stuffed into a voxel come
+//	from the closest current position, and not some further
+//	away voxel processed because of a high radius, for 
+//	instance.  This is necessary only for velocity tangent 
+//	info, since the values put into the voxels depend on
+//	tangent information at the closest point.
+//	
+{
+	int $i, $j; 
+	for( $i = 0; $i < size( $newVox ); $i+=3 ) {
+		int $found = false;
+
+		// Get the position of the voxel center.
+		//
+		float $voxPos[] = `fluidVoxelInfo -vc -xi $newVox[$i] -objectSpace 0
+			-yi $newVox[$i+1] -zi $newVox[$i+2] $fluid`;
+		
+		// How far away is it from the current position
+		// for which we're accumulating voxels?
+		//
+		float $dist = sqrt( pow( $voxPos[0] - $position[0], 2 ) +
+							pow( $voxPos[1] - $position[1], 2 ) +
+							pow( $voxPos[2] - $position[2], 2 ) );
+		
+		for( $j = 0; $j < size( $voxels ); $j+=3 ) {
+			if( $newVox[$i+0] == $voxels[$j+0] &&
+				$newVox[$i+1] == $voxels[$j+1] &&
+				$newVox[$i+2] == $voxels[$j+2] )
+			{
+				$found = true;
+
+				// If the voxel was already in the list, update
+				// its distance values, if this voxel is closer
+				// to the current position than the last current
+				// position that added this particular voxel.
+				//
+				if( $dist < $distances[$j] ) {
+					$distances[$j+0] = $dist;
+					$distances[$j+1] = $dist;
+					$distances[$j+2] = $dist;
+
+					$tangents[$j+0] = $newTan[0];
+					$tangents[$j+1] = $newTan[1];
+					$tangents[$j+2] = $newTan[2];
+				}
+
+				break;
+			}
+		}
+
+		if( !$found ) {
+			$voxels[ size($voxels) ] = $newVox[$i+0];
+			$voxels[ size($voxels) ] = $newVox[$i+1];
+			$voxels[ size($voxels) ] = $newVox[$i+2];
+
+			$tangents[ size($tangents) ] = $newTan[0];
+			$tangents[ size($tangents) ] = $newTan[1];
+			$tangents[ size($tangents) ] = $newTan[2];
+
+			$distances[ size($distances) ] = $dist;
+			$distances[ size($distances) ] = $dist;
+			$distances[ size($distances) ] = $dist;
+		}
+	}
+
+	if( size( $voxels ) != size( $tangents ) ) {
+		error( (uiRes("m_doSetFluidAttrFromCurve.kArraySizeMismatchErr")));
+	}
+}
+
+global proc doSetFluidAttrFromCurve( int $version,
+									 string $args[] )
+{
+	if(( $version < 1 ) || ( size( $args ) < 17 )) {
+		error(uiRes("m_doAppendHairCache.kIncorrectVersion"));
+		return;
+	}
+
+	int   $doAttr[] = { int( $args[0] ), $args[1], $args[2], 
+						$args[3], $args[4], $args[5] };
+	float $values[] = { float($args[6]), $args[7], $args[8], $args[9], 
+						$args[10], $args[11], $args[12], $args[13]};
+	int   $absolute = ($args[14] == 2);		// 1 is relative (add)
+
+	float $numSteps = (float) $args[15];
+	if( $numSteps < 1.0 ) {
+		$numSteps = 1.0;
+	}
+	if( $numSteps > 1000.0 ) {
+		$numSteps = 1000.0;
+	}
+
+	float $radius = (float) $args[16];
+
+	float $percentageStep = 1.0 / $numSteps; // have num steps,  need .001 to 1
+	int   $normalizeTangents = $args[17];
+	int   $setInitialState = $args[18];
+
+	string $fluids[] = `ls -dag -sl -type fluidShape`;
+	string $curves[] = `ls -dag -sl -type nurbsCurve`;
+
+	if(( size( $fluids ) != 1 ) || ( size( $curves ) < 1 ))
+	{
+		error((uiRes("m_doSetFluidAttrFromCurve.kSelectFluidAndCurve")));
+		return;
+	}
+
+	waitCursor -state on;
+
+	string $fluid = $fluids[0];
+	string $selection[] = `ls -sl`;
+
+	string $curve;
+	for( $curve in $curves ) {
+		string $curveInfo = `createNode pointOnCurveInfo`;
+		string $inAttr = $curve + ".ws[0]";
+		string $outAttr = $curveInfo + ".ic";
+		connectAttr $inAttr $outAttr;
+		
+		setAttr ( $curveInfo + ".turnOnPercentage" ) true;
+
+		// Figure out the inverse matrix of the fluid for later.
+		//
+		select $fluid;
+		string $parents[] = `pickWalk -d up`;
+		string $parent = $parents[0];
+		
+		string $attributes[] = { "density", 
+								 "velocity", 
+								 "temperature", 
+								 "fuel",
+								 "color",
+								 "falloff" };
+
+		int $whichAttr = -1;
+		int $whichValue = -1;
+		for( $attr in $attributes ) {
+			$whichAttr++;
+			$whichValue++;
+			if( !$doAttr[$whichAttr] ) {
+				// If color, bump the whichAttr counter by the two
+				// extra values
+				//
+				if( $attr == "color" ) {
+					$whichValue+=2;
+				}
+				continue;
+			}
+
+			string $createGridCmd[];
+			if( !fluidsVerifyGrid( $fluid, $attr, $createGridCmd ) ) {
+				string $fmt = (uiRes("m_doSetFluidAttrFromCurve.kNoContentMethod"));
+				warning( `format -s $attr -s $fluid $fmt`);
+				continue;
+			}
+
+			float $value = 1.0;
+			if( $whichValue < size( $values ) ) {
+				$value = $values[$whichValue];
+			}
+			
+			int $voxels[];
+			float $tangents[];
+			float $distances[];
+			float $i;
+
+			// Accumulate all the voxels we'll have to set
+			// values for...  We can prune out the duplicates,
+			// and save time processing each voxel only once.
+			//
+			for( $i = 0.0; $i <= 1.0; $i += $percentageStep ) {
+				setAttr ( $curveInfo + ".parameter" ) $i;
+
+				// Get the tangent in world space
+				//
+				float $newTan[];
+				if( $normalizeTangents == 1 ) {	// constant
+					$newTan = `getAttr($curveInfo + ".normalizedTangent")`;
+				} else {							// tangential
+					$newTan = `getAttr($curveInfo + ".tangent")`;
+				}
+
+				// Get the point position along the curve
+				//
+				float $curr[] = `getAttr ( $curveInfo + ".position" )`;
+				int $newVox[] = voxelFromPosition( $fluid, $curr, $radius );
+			
+				addUniqueVoxelsToTargets( $newVox, $voxels, 
+										  $newTan, $tangents,
+										  $fluid, $curr, $distances );
+			}
+
+			int $j;
+			for ($j = 0; $j < size( $voxels ); $j+=3 ) {
+				int $vox[] = { 	$voxels[$j+0], 
+								$voxels[$j+1], 
+								$voxels[$j+2] } ;
+
+
+				float $tan[] = { $tangents[$j+0],
+								 $tangents[$j+1],
+								 $tangents[$j+2] };
+	
+				if( $attr == "velocity" ) {
+					setTangentVelocity( $fluid, $parent, $tan,
+										$vox, $value, $absolute );
+				} else if( $attr == "color" ) {
+					float $color[] = { $value, 
+									   $values[$whichValue+1], 
+									   $values[$whichValue+2] };
+					setColor( $fluid, $vox, $color, $absolute );
+				} else {
+					setScalar( $fluid, $vox, $attr, $value, $absolute );
+				}
+			}
+
+			// If color, bump the whichAttr counter by the two
+			// extra values
+			//
+			if( $attr == "color" ) {
+				$whichValue+=2;
+			}
+		}
+
+		// Cleanup and select fluid.
+		//
+		delete $curveInfo;
+	}
+
+	select $selection;
+
+	// Optionally set the initial state, if the user
+	// requests to, so he doesn't lose the values coming
+	// from the curve if he rewinds.
+	//
+	if( $setInitialState ) {
+		SetInitialState;
+	}
+
+	waitCursor -state off;
+}

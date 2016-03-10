@@ -1,0 +1,102 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+global proc launchUserAppCmd( string $fileName, int $sequence )
+//Description
+// This procedure starts the user defined application to view an image or a sequence
+// $fileName is the absolute path to an image
+// $sequence = 0 is an image
+// $sequence = 1 is a sequence
+{
+	//Substitute the Image file name in the user defined command
+	string $fileNameSyntax = "%f" ;
+	string $cmd, $newCmd ;
+	
+	if ( $sequence  ) {	// View Sequence
+		string $filePathBuffer[];					//array to store file path into pieces
+		string $fileNameBuffer[];					//array to store  the file name into pieces
+		int $numFilePathComponents, $numFileNameComponents;		//number of pieces to the path / file name																
+		// Break the file path
+		$numFilePathComponents = `tokenize $fileName "//" $filePathBuffer`;
+		// Break the file name
+		$numFileNameComponents = `tokenize $filePathBuffer[$numFilePathComponents-1] "." $fileNameBuffer`;
+		
+		//Findout the start frame and the position of the frame number field in the file name
+		string $upper, $lower;
+		int $startFrame, $endFrame;
+		int $frameNumberPosition, $frameNumberPositionCounter = 0 ;
+		for ($fileNameComponent in $fileNameBuffer){
+		   // A preliminary check to see if the string is a number or not.
+		   $lower = tolower($fileNameComponent);
+		   $upper = toupper($fileNameComponent);
+		   if ($lower == $upper){  // Will be true only for a number.
+				$startFrame = $fileNameComponent;
+				$endFrame = $startFrame ;
+				$frameNumberPosition = $frameNumberPositionCounter ;
+		   }
+		   $frameNumberPositionCounter ++ ;
+		}
+		
+		//Collect the sequence of files in the folder and findout the last frame number
+		// Replace "*" for the frame number field to start a search for files of that format.
+		// ex : scene.0001.iff wiill be scene.*.iff
+		string $fileFormatForSearch = `substitute $fileNameBuffer[$frameNumberPosition] $filePathBuffer[$numFilePathComponents-1] "*"`;
+		
+		//Get the file path by excluding the file name from $fileName
+		string $filePath = `substitute $filePathBuffer[$numFilePathComponents-1] $fileName ""`;
+		string $arrayOfFileNames[]= `getFileList -folder $filePath -filespec $fileFormatForSearch`;
+		string $tmpFileNameBuffer[], $tmpFileName ;
+		int $frameNumber, $tmpNumFileNameComponents ;
+		for ($tmpFileName in $arrayOfFileNames)
+		{
+			$tmpNumFileNameComponents = `tokenize $tmpFileName "." $tmpFileNameBuffer`;
+			if ($tmpNumFileNameComponents == $numFileNameComponents)
+			{
+				$frameNumber = $tmpFileNameBuffer[$frameNumberPosition] ;
+				if ($frameNumber > $startFrame) 
+					$endFrame = $frameNumber ;
+			}
+		}
+		
+		string $start = $startFrame ; //Convert the numeric to string
+		string $end = $endFrame ;   //Convert the numeric to string
+		string $cmdFormat = `optionVar -query "ViewSequenceCmdFormat"` ;
+		string $tmpCmdFormat1 = `substitute "%s" $cmdFormat $start` ;
+		string $tmpCmdFormat2 = `substitute "%e" $tmpCmdFormat1 $end` ;
+	
+		$cmd = `optionVar -query "ViewSequenceDir"` +" "+ $tmpCmdFormat2;
+		
+	} else {		// View Single Image
+		$cmd = `optionVar -query "ViewImageDir"` +" "+`optionVar -query "ViewImageCmdFormat"`;
+	}
+	
+	$fileName = "\"" + $fileName + "\"";
+        if (`about -linux`) {
+                 $newCmd = `substitute $fileNameSyntax $cmd $fileName` ;
+                 $newCmd += " >/dev/null 2>&1";
+        }else{
+	$newCmd = "start " ;
+	$newCmd += `substitute $fileNameSyntax $cmd $fileName` ;
+        }
+
+	system( $newCmd ) ;	
+
+}

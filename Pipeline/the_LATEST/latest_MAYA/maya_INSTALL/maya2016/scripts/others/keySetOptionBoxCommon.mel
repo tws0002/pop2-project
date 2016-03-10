@@ -1,0 +1,679 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+proc int
+hasCharacter (string $selectionConnection)
+//
+//	Procedure Name:
+//		hasCharacter
+//
+//	Description:
+//		Examine the member of a selection connection to see if a character
+//	is selected
+//
+//  Input Arguments:
+//		string hasCharacter		The name of the selection connection
+//
+//  Return Value:
+//      int true if the selection connection contains a character
+//
+{
+	if (!`selectionConnection -exists $selectionConnection`) {
+		return (false);
+	}
+	// For now we just need to examine whether or not there are characters
+	// in the highlightList, assuming the option box is listening to
+	// highlightList or animationList
+	//
+	if (($selectionConnection != "animationList") 
+	&& ($selectionConnection != "highlightList")) 
+	{
+		return (false);
+	}
+	if (!`selectionConnection -exists highlightList`) {
+		return (false);
+	}
+	string $objects[] = `selectionConnection -query -object highlightList`;
+	for ($object in $objects) {
+		if (`nodeType $object` == "character") {
+			return (true);
+		}
+	}
+	return (false);
+}
+
+proc keySetSetOptionVars( string $cmd, 
+						  int $forceFactory,
+						  int $allAnimCurves ) 
+//
+// Description:
+//	Generic proc shared by most animation command option boxes.
+//	
+// Arguments:
+//	$cmd 			: Name of the prefix for the optionVars.
+//	$forceFactory	: Reset the optionVars to the factory-default settings.
+//	$allAnimCurves	: 0 / 1 : Can this cmd work on all animCurves?
+//	
+{
+	// all anim curves as targets
+	//
+	if( $allAnimCurves ) {
+		if( $forceFactory 
+		||! `optionVar -exists ($cmd + "AllAnimCurves")` )
+		{
+			optionVar -intValue ($cmd + "AllAnimCurves") 0;
+		}
+	}
+
+	// time range: 1: all, 2: playbackRange, 3: start/end
+	//
+	if( $forceFactory 
+	||! `optionVar -exists ($cmd + "WhichRange")` ) 
+	{
+		optionVar -intValue ($cmd + "WhichRange") 1;
+	}
+
+	// start/end values
+	//
+	if( $forceFactory 
+	||! `optionVar -exists ($cmd + "Range")` )
+	{
+		optionVar -stringValue ($cmd + "Range") "0:10";
+	}
+
+	// -hierarchy
+	//
+	if( $forceFactory 
+	||! `optionVar -exists ($cmd + "Hierarchy")` ) 
+	{
+		optionVar -stringValue ($cmd + "Hierarchy") "none";
+	}
+
+	// -controlPoints
+	//
+	if( $forceFactory 
+	||! `optionVar -exists ($cmd + "ControlPoints")` )
+	{
+		optionVar -intValue ($cmd + "ControlPoints") 0;
+	}
+
+	// -shape
+	//
+	if( $forceFactory 
+	||! `optionVar -exists ($cmd + "Shapes")` )
+	{
+		optionVar -intValue ($cmd + "Shapes") 1;
+	}
+
+	// use channel box attrs
+	//
+	if( $forceFactory 
+	||! `optionVar -exists ($cmd + "UseChannelBox")` )
+	{
+		optionVar -intValue ($cmd + "UseChannelBox") 0;
+	}
+
+	// use set driven channels
+	//
+	if( $forceFactory 
+	||! `optionVar -exists ($cmd + "Driven")` )
+	{
+		optionVar -intValue ($cmd + "Driven") 0;
+	}
+
+}
+
+proc keySetSetup( string $cmd, int $doAllAnimCurves, float $startOverride, float $endOverride )
+//
+// Description:
+//	Setup widgets from optionVars.
+//	
+{
+	// all anim curves
+	//
+	if( $doAllAnimCurves ) {
+		int $allCurves = `optionVar -q ( $cmd + "AllAnimCurves" )`;
+		radioButtonGrp -e -select ( $allCurves + 1 ) allAnimCurves;
+	}
+
+	// -hierarchy
+	//
+	string $hierarchy = `optionVar -query ( $cmd + "Hierarchy" )`;
+	if ($hierarchy == "below") {
+		radioButtonGrp
+			-edit
+			-select 2
+			hierarchy;
+	}
+	else {
+		radioButtonGrp
+			-edit
+			-select 1
+			hierarchy;
+	}
+
+	// use channel box attrs
+	//
+	int $boxAttrs = `optionVar -q ( $cmd + "UseChannelBox" )`;
+	radioButtonGrp -e -select ( $boxAttrs + 1 ) channels;
+
+	// use set driven attrs
+	//
+	int $drivenAttrs = `optionVar -q ( $cmd + "Driven" )`;
+	checkBoxGrp -e -value1 $drivenAttrs driven;
+
+	// -controlPoints
+	//
+	int $controlPoints = `optionVar -q ( $cmd + "ControlPoints" )`;
+	checkBoxGrp -e -value1 $controlPoints controlPoints;
+
+	// -shape
+	//
+	int $shapes = `optionVar -q ( $cmd + "Shapes" )`;
+	checkBoxGrp -e -value1 $shapes shapes;
+
+	// time range: optionVar 1: all, 2: playback range 3: start/end
+	//
+	int $select = 1;
+	int $optionVal = `optionVar -query ( $cmd + "WhichRange" )`;
+	switch( $optionVal ) {
+		case 1:
+			$select = 1;
+			break;
+		case 2:
+			$select = 3;
+			break;
+		case 3:
+			$select = 2;
+			break;
+		default:
+			break;
+	}
+	radioButtonGrp -edit -select $select timeRange;
+
+	// start/end times
+	//
+	float $start = $startOverride;
+	float $end   = $endOverride;
+	if( $startOverride == -1 && $endOverride == -1 ) {
+		string $time = `optionVar -query ( $cmd + "Range" )`;
+		string $range[];
+		tokenize ($time, ":", $range);
+		$start = float ($range[0]);
+		$end   = float ($range[1]);
+	}
+	floatFieldGrp -edit -value1 $start frameStart;
+	floatFieldGrp -edit -value1 $end frameEnd;
+}
+
+proc keySetCallback( string $cmd )
+//
+// Description:
+//	Set the option vars from the widget settings.
+//	
+{
+	// use all anim curves as targets
+	//
+	if( `radioButtonGrp -q -exists allAnimCurves` ) {
+		int $allAnimCurves = `radioButtonGrp -query -select allAnimCurves`;
+		optionVar -intValue ( $cmd + "AllAnimCurves" ) ($allAnimCurves - 1);
+	}
+
+	// -hierarchy
+	//
+	string $hierarchy;
+	int $selected = `radioButtonGrp -query -select hierarchy`;
+	if ($selected == 2) {
+		$hierarchy = "below";
+	}
+	else {
+		$hierarchy = "none";
+	}
+	optionVar -stringValue ( $cmd + "Hierarchy" ) $hierarchy;
+
+	// use channel box attrs
+	//
+	int $boxAttrs = `radioButtonGrp -query -select channels`;
+	optionVar -intValue ( $cmd + "UseChannelBox" ) ($boxAttrs - 1);
+
+	// use driven attrs
+	//
+	int $drivenAttrs = `checkBoxGrp -query -value1 driven`;
+	optionVar -intValue ( $cmd + "Driven" ) $drivenAttrs;
+
+	// -controlPoints
+	//
+	int $controlPoints = `checkBoxGrp -query -value1 controlPoints`;
+	optionVar -intValue ( $cmd + "ControlPoints" ) $controlPoints;
+
+	// -shapes
+	//
+	int $shapes = `checkBoxGrp -query -value1 shapes`;
+	optionVar -intValue ( $cmd + "Shapes" ) $shapes;
+
+	// which time range: optionVar 1: All, 2: Time Slider, 3: Start/End
+	//
+	int $select = 1; 
+	int $radioVal = `radioButtonGrp -q -select timeRange`;
+	switch( $radioVal ) {
+		case 1:
+			$select = 1;
+			break;
+		case 2:
+			$select = 3;
+			break;
+		case 3:
+			$select = 2;
+			break;
+		default:
+			break;
+	}
+	optionVar -intValue ( $cmd + "WhichRange" ) $select;
+
+	// -time
+	//
+	string $time = string (`floatFieldGrp -query -value1 frameStart`) + ":" +
+		string (`floatFieldGrp -query -value1 frameEnd`);
+	optionVar -stringValue ( $cmd + "Range" ) $time;
+}
+
+
+proc keySetWidgetsEnable(string $selectionConnection)
+//
+// Description:
+//	
+//	
+{
+	int $hasCharacter = hasCharacter ($selectionConnection);
+
+	int $enableIt = true;
+	if( `radioButtonGrp -q -exists allAnimCurves` ) {
+		$enableIt = ( `frameLayout -q -collapse allAnimCurvesFrame` ||
+					( `radioButtonGrp -q -select allAnimCurves` == 1 ) &&
+					( `radioButtonGrp -q -enable allAnimCurves` ) );
+		checkBoxGrp -e -enable $enableIt driven;
+		if ($enableIt && $hasCharacter) {
+			$enableIt = false;
+		}
+		// Hierarchy, Channels
+		//
+		radioButtonGrp -e -enable $enableIt hierarchy;
+		radioButtonGrp -e -enable $enableIt channels;
+	}
+	else {
+		radioButtonGrp -edit -enable (!$hasCharacter) hierarchy;
+		radioButtonGrp -edit -enable (!$hasCharacter) channels;
+	}
+
+	// Control points and shapes
+	//
+	$enableIt = (( `radioButtonGrp -q -select channels` == 1 ) &&
+				 ( `radioButtonGrp -q -enable channels` ));
+	checkBoxGrp -edit -enable $enableIt controlPoints;
+	checkBoxGrp -edit -enable $enableIt shapes;
+
+	// Start/End fields
+	//
+	int $useStartEnd = ( `radioButtonGrp -q -sl timeRange` == 2 ) &&
+					   ( `radioButtonGrp -q -enable timeRange` );
+
+	frameLayout -e -enable $useStartEnd startEndFrame;
+}
+
+proc keySetWidgets( string $cmd,
+					string $selectionConnection,
+					int $fromGraphEditor, 
+					int $doAllAnimCurves,
+					int $drivenChannels,
+					int $timeRangeAll )
+//
+// Description:
+//	
+//	
+{
+	int $hasCharacter = hasCharacter ($selectionConnection);
+
+	string $parent = `setParent -q`;
+	string $all		 = (uiRes("m_keySetOptionBoxCommon.kAll")); 
+	string $selected = (uiRes("m_keySetOptionBoxCommon.kSelected"));			
+	if( $doAllAnimCurves ) {
+		frameLayout -bv no -lv no -collapsable yes 
+			-collapse $fromGraphEditor 
+			allAnimCurvesFrame;
+		
+			columnLayout -adjustableColumn true;
+				radioButtonGrp -numberOfRadioButtons 2 -label (uiRes("m_keySetOptionBoxCommon.kObjects")) 
+					-label1 $selected  
+					-cc1 ($cmd + "WidgetsEnable " + $selectionConnection)
+					-label2 $all  
+					-cc2 ($cmd + "WidgetsEnable " + $selectionConnection)
+					-enable (!$fromGraphEditor)
+					allAnimCurves;
+				
+				separator;
+
+				setParent ..;
+			setParent ..;
+	}
+
+	frameLayout -bv no -lv no -collapsable yes -collapse $fromGraphEditor
+		hierChanAttrFrame;
+
+		string $below = (uiRes("m_keySetOptionBoxCommon.kBelow"));
+		columnLayout -adjustableColumn true;
+			radioButtonGrp
+				-numberOfRadioButtons 2 -label (uiRes("m_keySetOptionBoxCommon.kHierarchy"))  
+				-label1 $selected  -label2 $below  
+				-enable (!$fromGraphEditor && !$hasCharacter )
+				hierarchy;
+
+			radioButtonGrp
+				-numberOfRadioButtons 2 -label (uiRes("m_keySetOptionBoxCommon.kChannels"))  
+				-label1 (uiRes("m_keySetOptionBoxCommon.kAllKeyable"))  
+				-cc1 ($cmd + "WidgetsEnable " + $selectionConnection)
+				-label2 (uiRes("m_keySetOptionBoxCommon.kFromChannelBox"))  
+				-cc2 ($cmd + "WidgetsEnable " + $selectionConnection)
+				-enable (!$fromGraphEditor && !$hasCharacter)
+				channels;
+
+					frameLayout -bv no -lv no -collapsable yes
+						-collapse (!$drivenChannels) drivenFrame;
+						checkBoxGrp -value1 0  -ncb 1 -label (uiRes("m_keySetOptionBoxCommon.kDrivenChannels")) 
+							-label1 "" 	driven;
+						setParent ..;
+
+					checkBoxGrp -label (uiRes("m_keySetOptionBoxCommon.kControlPoints"))  -ncb 1 
+						-value1 off -label1 "" -enable (!$hasCharacter) controlPoints;
+					checkBoxGrp -label (uiRes("m_keySetOptionBoxCommon.kShapes"))  -ncb 1 
+						-value1 on -label1 "" -enable (!$hasCharacter) shapes;
+					setParent ..;
+				setParent ..;
+
+			separator;
+
+
+	frameLayout -bv no -lv no -collapsable no timeRangeFrame;
+
+		columnLayout -adjustableColumn true;
+
+			int $nrb = 2;
+			if( $timeRangeAll == 1) {
+				$nrb = 3;
+			}
+
+			radioButtonGrp -numberOfRadioButtons $nrb -label (uiRes("m_keySetOptionBoxCommon.kTimeRange"))  
+				-enable true -onc ($cmd + "WidgetsEnable " + 
+								   $selectionConnection) timeRange;
+
+			string $startEnd	= (uiRes("m_keySetOptionBoxCommon.kStartEnd"));
+			string $timeSlider	=  (localizedUIComponentLabel("Time Slider"));
+			if( $nrb == 2 ) {
+				radioButtonGrp -e 
+					-label1 $timeSlider  
+					-label2 $startEnd  
+					timeRange;
+			} else if( $nrb == 3 ) {
+				radioButtonGrp -e 
+					-label1 $all  
+					-label2 $startEnd  
+					-label3 $timeSlider  
+					timeRange;
+			}
+
+
+			frameLayout -bv no -lv no -collapsable no startEndFrame;
+				columnLayout -adjustableColumn true;
+					floatFieldGrp -label (uiRes("m_keySetOptionBoxCommon.kStartTime"))  -value1 0.0 frameStart;
+					floatFieldGrp -label (uiRes("m_keySetOptionBoxCommon.kEndTime"))  -value1 10.0 frameEnd;
+
+					separator;
+
+
+					setParent ..;
+				setParent ..;
+			setParent ..;
+		setParent ..;
+	//setParent ..;
+
+	// We should be back to the level from which we were called.
+	// Just in case, set the parent to what it was when we started
+	//
+	setParent $parent;	
+}
+
+proc keySetOptionBoxDoSelectionChanged(string $selectionConnection)
+//
+// Description:
+//	
+//	
+{
+	keySetWidgetsEnable ($selectionConnection);
+
+	int $keys = `keyframe -q -sl -kc`;
+	int $isStartEnd = (`radioButtonGrp -q -select timeRange` == 2 );
+
+	frameLayout -e -enable $isStartEnd startEndFrame;
+}
+
+proc string keySetOptionBoxChannelBoxSyntax()
+//
+// Description:
+//	Append to syntaxString the proper "-at attrName" + objects
+//	syntax for any command working with selected channelBox attrs
+//	
+{
+	string $result;
+	string $attrs[] = `selectedChannelBoxAttributes`;
+
+	for( $attr in $attrs ) {
+		$result = ( $result + " -at \"" + $attr + "\"");
+	}
+
+	// Now add the specific objects from the channel box
+	//
+	string $objList[] = selectedChannelBoxObjects();
+	for( $object in $objList ) {
+		$result = $result + " " + $object;
+	}
+
+	return $result;
+}
+
+global proc string[] keySetOptionBoxCommon( string $argList[] )
+//
+// Description:
+//	Multi-purpose proc to handle much of the common 
+//	functionality in animation commands because of their
+//	common cmd-flags and optionBox-widgets.  (The resulting
+//	values in the string array returned by this proc depend
+//	on the "action" specified in $argList[2].)
+//	
+//	The first element of $argList is the name of the command.
+//	Note that this name is not the MEL-name of the command;
+//	it's just a prefix used to uniquely identify option settings. 
+//	
+//	The second element of $argList is the name of the selection
+//	connection that the command is going to operate upon.
+//
+//	The remainder of the elements of $argList are determined by
+//	the second element of the array, the element identifying the "action"
+//	to perform.  What follows is a description of the possible "actions"
+//	and their required arguments.
+// 	
+// 	Arguments marked with a "*" indicate optional arguments.  They 
+// 	will not cause an error in script execution when omitted, and 
+//	will be set to their default values.
+//	
+//	// This action sets up values for the optionVars involved in this
+//	// this option box's default settings.  Can optionally force them 
+//	// to be the factory default settings.
+//	//
+//	$argList[2] == "setOptionVars"
+//		$argList[3] 	: 1/0 		reset options to factory settings 
+//		$argList[4] 	: 1/0 		operate on all animation curves
+//		Returns an empty string array.
+//		
+//	// Sets the initial value of widgets in the option box to their
+//	// saved optionVar (preference) settings.
+//	//
+//	$argList[2] == "setup"
+//	  * $argList[3] 	: 1/0 		operate on all animation curves [Def: 0]
+//		$arglist[4]		: -1/float	a float value to override the start time of the optionBox
+//		$arglist[5]		: -1/float	a float value to override the end time of the optionBox
+//									these 2 values default to -1 in which case they are ignored
+//		Returns an empty string array.
+//		
+//	// Sets the optionVar (preference) settings to the current
+//	// state of the widgets displayed in the optionBox.  Note: this
+//	// action requires no additional arguments.
+//	//
+//	$argList[2] == "callback"
+//		Returns an empty string array.
+//	  
+//	// Various widget states require other widgets to enable or disable
+//	// accordingly.  This action ensures that any widgets created and/or
+//	// managed by keySetOptionBoxCommon are correctly enabled or
+//	// disabled.  Note: this action requires no additional arguments.
+//	//
+//	$argList[2] == "enable"
+//		Returns an empty string array.
+//
+//	// Various widget states require other widgets to enable or disable
+//	// accordingly.  This action ensures that any widgets created and/or
+//	// managed by keySetOptionBoxCommon are correctly enabled or
+//	// disabled.  Note: this action requires no additional arguments.
+//	//
+//	$argList[2] == "widgets"
+//		$argList[3] 	: 2/1/0 	invoked from the DopeSheet or GraphEditor?
+//	  * $argList[4] 	: 1/0 		include all animation curves? [Def: 0]
+//	  * $argList[5] 	: 1/0 		include the "do driven" widget? [Def: 1]
+//		Returns an empty string array.
+//	  
+//	// Various widget states require updates on Selection List changes.
+//	// Most notably, the Time Range widgets in GraphEditor versions of 
+//	// option boxes: they disable when there's an active key.  No additional
+//	// required.
+//	//
+//	$argList[2] == "selectionChanged"
+//		Returns an empty string array.
+//	  
+//	// Many animation option boxes generate a command based on the
+//	// attributes that are currently selected in the channel box.
+//	// The resulting command syntax is returned as the first (and only)
+//	// element of the string[] result.
+//	//
+//	$argList[2] == "channelBoxSyntax"
+//		Returns a one-element array containing the desired syntax.
+//
+{
+	string $result[];
+
+	if( size( $argList ) < 3 ) {
+		error (uiRes("m_keySetOptionBoxCommon.kKeySetOptionError"));
+	}
+
+	string $cmd 				= $argList[0];
+	string $selectionConnection = $argList[1];
+	string $action				= $argList[2];
+
+	if( $action == "setOptionVars" ) {
+		// They at least have to specify $forceFactory.
+		// We'll be more leanient on a missing $allAnim,
+		// since it's less common.
+		//
+		if( size( $argList ) < 4 ) {
+			string $ketSetOptionError = (uiRes("m_keySetOptionBoxCommon.kKeySetArgError"));
+			error(`format -s $cmd $ketSetOptionError`);
+		}
+
+		int $forceFactory 		= $argList[3];
+		int $allAnim			= size( $argList ) > 4 ? $argList[4] : 0;
+
+		keySetSetOptionVars( $cmd, $forceFactory, $allAnim );
+	}
+	else if( $action == "setup" ) {
+		int $allAnim			= size( $argList ) > 3 ? $argList[3] : 0;
+		float $startOverride = -1;
+		float $endOverride = -1;
+		if( size( $argList ) > 5 ) {
+			$startOverride = $argList[4];
+			$endOverride   = $argList[5];
+		}
+
+		keySetSetup( $cmd, $allAnim, $startOverride, $endOverride );
+	}
+	else if( $action == "callback" ) {
+		keySetCallback( $cmd );
+	}
+	else if( $action == "enable" ) {
+		keySetWidgetsEnable($selectionConnection);
+	}
+	else if( $action == "widgets" ) {
+		// They at least have to specify $fromGraphEditor.
+		//
+		if( size( $argList ) < 4 ) {
+			string $keySetWidgetError = (uiRes("m_keySetOptionBoxCommon.kKeySetWidgetError"));
+			error(`format -s $cmd $keySetWidgetError`);
+		} 
+
+		int $fromGraphEditor 	= $argList[3];
+		int	$doAllAnimCurves    = 0;
+		int	$driven             = 1;
+		int	$timeRangeAll       = 1;
+
+		if( size( $argList ) > 4 ) {
+			$doAllAnimCurves = $argList[4];
+		}
+
+		if( size( $argList ) > 5 ) {
+			$driven = $argList[5];
+		}
+
+		if( size( $argList ) > 6 ) {
+			$timeRangeAll = $argList[6];
+		}
+
+		keySetWidgets( $cmd, $selectionConnection, $fromGraphEditor, $doAllAnimCurves, $driven,
+					   $timeRangeAll );
+	}
+	else if( $action == "selectionChanged" ) {
+		if( size( $argList ) != 3 ) {
+			string $selectionError = (uiRes("m_keySetOptionBoxCommon.kSelectionError"));
+			error(`format -s $cmd $selectionError`);
+		}
+
+		keySetOptionBoxDoSelectionChanged $selectionConnection;
+	}
+	else if( $action == "channelBoxSyntax" ) {
+		if( size( $argList ) != 3 ) {
+			string $channelBoxError = (uiRes("m_keySetOptionBoxCommon.kChannelBoxError"));
+			error(`format -s  $cmd $channelBoxError`);
+		}
+
+		$result[0] = keySetOptionBoxChannelBoxSyntax();
+	}
+	else {
+		string $invalidAction = (uiRes("m_keySetOptionBoxCommon.kInvalidAction"));
+		error(`format -s $action $invalidAction`);
+	}
+
+	return $result;
+}

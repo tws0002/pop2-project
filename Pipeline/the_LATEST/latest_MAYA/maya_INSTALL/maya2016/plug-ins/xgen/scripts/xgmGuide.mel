@@ -1,0 +1,493 @@
+// Copyright (C) 1997-2013 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+/**
+* @file xgmGuide.mel
+* @brief Contains the MEL API for working with XGen objects.
+*
+* <b>CONFIDENTIAL INFORMATION: This software is the confidential and
+* proprietary information of Walt Disney Animation Studios ("WDAS").
+* This software may not be used, disclosed, reproduced or distributed
+* for any purpose without prior written authorization and license
+* from WDAS. Reproduction of any section of this software must include
+* this legend and all copyright notices.
+* Copyright Disney Enterprises, Inc. All rights reserved.</b>
+*
+* @author Thomas V Thompson II
+* @author Patrick Witting
+* @author Stephen D. Bowline
+* @author Ying Liu
+*
+* @version Created 10/19/04
+*/
+
+global proc xgmSetGuideAttrFromCurve( string $guide, string $curve )
+{
+	global string $xgmGuideAttrList[];
+
+	if ( !`objExists $curve` ) return;
+
+	if ( `nodeType $curve` == "nurbsCurve" ){
+		string $parent[] = `listTransforms $curve`;
+		$curve = $parent[0];
+	}
+
+	for ( $attr in $xgmGuideAttrList ) {
+		if ( `attributeQuery -ex -node $curve $attr` ){
+			float $val = `getAttr ( $curve + "." + $attr )`;
+			setAttr ( $guide + "." + $attr ) $val;
+		}
+	}
+}
+
+
+global proc string xgmBuildGuideTypeArgList( string $type )
+{
+	string $xgmPrimitiveList[] = { "Card", "Sphere", "Spline", "Archive" };
+	string $typeStr;
+	if ( $type == "" ) {
+		for ( $guideType in $xgmPrimitiveList ) {
+			$typeStr += ("-type \"xgm" + $guideType + "Guide\" ");
+		}
+	} else {
+		$typeStr = "-type \"xgm" + $type + "Guide\"";
+	}
+
+	return $typeStr;
+}
+
+
+global proc int[] xgmGuideNcvArray( string $gList[] )
+{
+
+	int $ncvList[];
+	int $i=0;
+	for ( $guide in $gList ){
+		float $data[] = `xgmGuideGeom -guide $guide -numVertices`;
+		$ncvList[$i] = $data[0];
+		$i++;
+	}
+	return $ncvList;
+}
+
+
+global proc string xgmGuideMakeGuide( string $guide )
+{
+	if ( `objExists $guide` ) {
+		if ( `attributeQuery -ex -node $guide "message"` ) {
+			string $makeGuide[] = `listConnections ($guide+".toMakeGuide")`;
+			return $makeGuide[0];
+		} else {
+		        string $fmt = "^1s is not an XGen guide.";
+			warning( `format -s $guide $fmt`);
+		}
+	} else {
+	        string $fmt = "^1s does not exist.";
+		warning( `format -s $guide $fmt` );
+	}
+
+	return "";
+}
+
+
+/**
+* Return the description for the given guide. The description transform is
+* returned and not the description shape. 
+*
+* @param guide  the guide of interest
+*/
+global proc string xgmGuideDescription( string $guide )
+{
+	string $patchXform = xgmGuidePatch( $guide );
+	string $descXform[] = `listRelatives -p -path $patchXform`;
+
+	return $descXform[0];
+}
+
+
+/**
+* Returns contiguous range of guide cv positions in world space
+*/
+global proc float[] xgmGuidePositions( string $guide, int $start, int $end )
+{
+	float $result[];
+	int   $j=0;
+
+	// get cv positions
+	int $i;
+	int $i0 = max( $start, 0 );
+	float $data[] = `xgmGuideGeom -guide $guide -numVertices`;
+	int $i1 = min( $end, $data[0] -1 );
+	for ( $i=$i0; $i<=$i1; $i++ ) {
+		float $y[3] = `pointPosition -world ( $guide + ".vtx[" + $i + "]" )`;
+		$result[$j ]  = $y[0];
+		$result[$j+1] = $y[1];
+		$result[$j+2] = $y[2];
+		$j+=3;
+	}
+
+	return $result;
+}
+
+
+/**
+* This function will return a packed array of world space points for each CV
+* of the specified guides including any tweaks and deformations.
+*
+* @param $gList        The list of guides
+* @param $ncvList      The number of CVs in each guide
+*/
+global proc float[] xgmGuidePositionsArray( string $gList[],
+											int $ncvList[] )
+{
+	float $points[];
+
+	int $i=0;  // guide index
+	int $j=0;  // float array index
+
+	for ( $guide in $gList ) {
+
+		int $ncvs = $ncvList[$i];
+		for ( $k=0; $k<$ncvs; $k++ ) {
+			float $x[3] = `pointPosition ( $guide + ".vtx[" + $k + "]" )`;
+			$points[$j] = $x[0]; $j++;
+			$points[$j] = $x[1]; $j++;
+			$points[$j] = $x[2]; $j++;
+		}
+
+		$i++;
+	}
+
+	return $points;
+}
+
+global proc string xgmGuideShape( string $xform, string $type )
+{
+	string $typeStr = xgmBuildGuideTypeArgList( $type );
+
+	string $cmd = "ls -dag " + $typeStr + " " + $xform;
+	string $sh[] = `eval($cmd)`;
+	if ( size($sh) == 0 ) return "";
+
+	// make sure it is connected to a makeGuide (i.e. not an Orig)
+	for ( $guide in $sh )
+		if ( `xgmGuideMakeGuide $guide` != "" )
+		return $guide;
+
+	// no guides connected to makeGuides found
+	return "";
+}
+
+
+global proc string xgmCurveShape( string $xform, string $type )
+{
+	string $cmd = "ls -dag nurbsCurve " + $xform;
+	string $sh[] = `eval($cmd)`;
+	if ( size($sh) == 0 ) return "";
+	for ( $item in $sh )
+		if( `nodeType  $item` ==  "nurbsCurve" )
+			return $item;
+	return "";
+}
+
+/**
+* Convert the selected curves back into guides and use the name to deterime
+* which guide will get overriden by which curve.
+*/
+global proc xgmSelectedCurvesToGuidesByName()
+{
+	string $curves[] = xgmSelectedCurves( 1 );
+	if ( $curves[0] == "" ){
+		warning (uiRes("m_xgmGuide.kNoCurvesSelectedUnableToConvertToGuides"));
+		return;
+	}
+
+	string $curveXfer;
+	string $guideList[];
+	string $tempCurves[];
+	int $ii=0;
+	for ( $curve in $curves ) {
+
+		string $parent[] = `listTransforms $curve`;
+
+		string $buffer[];
+		int    $n = `tokenize $parent[0] "|" $buffer`;
+		string $name = $buffer[$n-1];
+		string $guide = `substitute "_tempCurve" $name ""`;
+
+		if ( !`objExists $guide` ) {
+		        string $fmt = (uiRes("m_xgmGuide.kTheAssociatedGuideDoesNotExist"));
+			warning( `format -s $guide $fmt` );
+			continue;
+		}
+
+		// store the temp curves names to be deleted later
+		$tempCurves[$ii] = $parent[0];
+
+		float $data[] = `xgmGuideGeom -guide $guide -numVertices`;
+		int $ncv = $data[0];
+
+		showHidden -a $guide;
+
+		// rebuild the curve if needed
+	int $rebuild = 0;
+		int $spans = `getAttr ( $curve + ".spans" )`;
+		int $degree = `getAttr ( $curve + ".degree" )`;
+		int $currentCount = $spans + $degree;
+		
+		if ( $currentCount == $ncv ) {
+			$curveXfer = $curve;
+		} else {
+			int $nSpans = $ncv - 2;
+			string $getName[]=`rebuildCurve -d 2 -rpo 0 -spans $nSpans $curve`;
+			$curveXfer = $getName[0];
+		$rebuild = 1;
+		}
+
+		for ( $i=0; $i<$ncv; $i++ ) {
+
+			float $x[3] = `pointPosition ($guide + ".vtx[" + $i + "]")`;
+			float $cv[3] = `pointPosition ($curveXfer + ".cv[" + $i + "]")`;
+			float $w[3];
+			for ( $q=0; $q<3; $q++ )
+				$w[$q] = $cv[$q] - $x[$q];
+
+		move -r $w[0] $w[1] $w[2] ( $guide + ".vtx[" + $i + "]" );
+		}
+
+	if ( $rebuild ) delete $curveXfer;
+
+		// put xform in list of guides
+		string $xform[] = `listTransforms $guide`;
+		$guideList[$ii++] = $xform[0];
+	}
+
+	// Delete the temp object and clean up the groom hierarchy
+	if ( `size $tempCurves` ) 
+	xgmDeleteGroomObjects( $tempCurves );    
+}
+
+
+proc addGuideAttrToCurve( string $guide, string $curve )
+{
+	global string $xgmGuideAttrList[];
+
+	if ( !`objExists $curve` )  return;
+
+	$shape = xgmGuideShape( $guide, "" );
+	for ( $attr in $xgmGuideAttrList ) {
+		if ( `attributeQuery -ex -node $shape $attr` ){
+			float $val = `getAttr ( $shape + "." + $attr )`;
+			addAttr -ln $attr -at double -dv $val -k true $curve;
+		}
+	}
+}
+
+proc connectAnim( string $guideShape, string $attr, string $curveShape )
+{
+	// Connect the fcurve
+	string $list[] = `listConnections -t "animCurveTU" -d off -s on ($guideShape +"."+ $attr)`;
+	if ( size($list) != 0 )
+		connectAttr -f ($list[0]+".output") ($curveShape +"."+ $attr);
+	
+	string $list[] = `listConnections -t "expression" -d off -s on ($guideShape +"."+ $attr)`;
+	if ( size($list) != 0 )
+	{
+		string $expr = `expression -q -s $list[0]`;
+		string $expr2 = `substring $expr (size($guideShape) +1 )  (size($expr))` ; 
+		$expr = $curveShape + $expr2;
+		expression -s $expr;
+	}
+}
+
+proc addGuideCustomAttrToCurve( string $guide, string $curve )
+{
+
+	if ( !`objExists $curve` )  return;
+
+	// Get the shapes
+	$guideShape = xgmGuideShape( $guide, "" );
+	$curveShape = xgmCurveShape( $curve, "" );
+
+	// Copy custom attr
+	string	$dynAttrs[] = `listAttr -ud $guideShape`;
+	for ( $attr in $dynAttrs ) {
+		string $parent[] = `attributeQuery -lp -n  $guideShape $attr`;
+		// Exist on guide, doesn't on curve and not a child attribute 
+		if ( `attributeQuery -ex -node $guideShape $attr` && !`attributeQuery -ex -node $curveShape $attr` && (`size($parent)` == 0) ){
+			string $type = `getAttr -type ( $guideShape + "." + $attr )`;
+			if( $type == "double" )
+			{
+				float $val = `getAttr ( $guideShape + "." + $attr )`;
+				addAttr -ln $attr -at double -dv $val -k true $curveShape;
+				connectAnim( $guideShape, $attr, $curveShape );
+			}
+			else if ( $type == "double3" )
+			{
+				addAttr -ln $attr -at $type  -k true $curveShape;
+				string $attrX = ($attr + "X"); string $attrY = ($attr + "Y"); string $attrZ = ($attr + "Z"); 
+				// Create the children attributes
+				float $val = `getAttr ( $guideShape + "." + $attrX )`;
+				addAttr -ln $attrX -at double -dv $val -p $attr -k true $curveShape;
+				float $val = `getAttr ( $guideShape + "." + $attrY )`;
+				addAttr -ln $attrY -at double -dv $val -p $attr -k true $curveShape;
+				float $val = `getAttr ( $guideShape + "." + $attrZ )`;
+				addAttr -ln $attrZ -at double -dv $val -p $attr -k true $curveShape;
+				// Copy animation
+				connectAnim( $guideShape, $attrX, $curveShape );
+				connectAnim( $guideShape, $attrY, $curveShape );
+				connectAnim( $guideShape, $attrZ, $curveShape );
+			}
+		}
+	}
+}
+
+/**
+* This function will create Maya NURBS curves from the current selection.
+*
+* @param $guideStat   Actions taken to the guides after the curves are created
+*                     0 - Keep; 1 - Hide; 2 - Delete
+* @param $lockLength  If true, lock the length of the NURBS curves.
+* @param $group       The group name for the new curves.
+*                     If empty, a default name will be provided.
+*/
+global proc string[] xgmCreateCurvesFromGuidesOption( int $guideStat, 
+													int $lockLength,
+													string $group )
+{
+	string $gList[] = xgmSelectedGuides( "", 1 );
+	if ( $gList[0] == "" ) {
+		warning( (uiRes("m_xgmGuide.kUnableToCreateCurvesFromGuidesNoGuidesSelected")) );
+		return {};
+	}
+
+	int $i;
+	int $n = 0;
+	string $newCurveNames[] = {};
+	float $sum[3] = { 0, 0, 0 };
+
+	for ( $guide in $gList ) {
+
+		string $curveStr = "curve -d ";
+		string $shape = xgmGuideShape($guide,"Spline");
+		if ($shape=="")
+			$curveStr += "1";
+		else
+			$curveStr += "2";
+		float $data[] = `xgmGuideGeom -guide $guide -numVertices`;
+		int $ncv = $data[0];
+		for ( $i=0; $i<$ncv; $i++ ){
+			float $x[3] = `pointPosition ( $guide + ".vtx[" + $i + "]" )`;
+			$curveStr += ( " -p " + $x[0] + " " + $x[1] + " " + $x[2] );
+		}
+		
+		string $origCurveName = `eval( $curveStr )`;
+		string $newCurveName = ( $guide + "_tempCurve" );
+		string $curveName = `rename $origCurveName $newCurveName`;
+		addGuideAttrToCurve $guide $curveName;
+		addGuideCustomAttrToCurve $guide $curveName;
+		$newCurveNames[$n] = $curveName;
+
+		if ( $lockLength ) {
+			LockCurveLength;
+			setCurveLengthLock 1;
+		}
+
+		if ( $guideStat == 1 )  
+			hide $guide;
+		else if ( $guideStat == 2 )  
+			delete $guide;
+
+		float $x[3] = `pointPosition ($curveName+".cv[0]")`;
+		setAttr ($curveName+".rotatePivot") $x[0] $x[1] $x[2]; 
+		setAttr ($curveName+".scalePivot") $x[0] $x[1] $x[2];
+		for ( $q=0; $q<3; $q++ )
+			$sum[$q] += $x[$q];
+		$n++;   
+	}
+
+	if ( !`size $newCurveNames` )
+		return {};
+
+	// Use the default group name if none is given
+	if ( $group == "" ) {
+		$group = `group -empty -name "xgCurvesFromGuides#"`;
+		xgmGroomParent $group;    
+	} else if ( !`objExists $group` ) {
+		$group = `group -empty -name $group`;
+		xgmGroomParent $group;    
+	}
+
+	parent $newCurveNames $group;
+
+	float $x[3];
+	for ( $q=0; $q<3; $q++ )
+		$x[$q] = $sum[$q] / (float) $n;
+
+	setAttr ( $group + ".rotatePivot" ) $x[0] $x[1] $x[2]; 
+	setAttr ( $group + ".scalePivot" ) $x[0] $x[1] $x[2];
+
+	return $newCurveNames;
+}
+
+
+global proc string[] xgmCreateCurvesFromGuides( int $guideStat, int $lockLength )
+{
+	return xgmCreateCurvesFromGuidesOption( $guideStat, $lockLength, "" );
+}
+
+
+/**
+* Restore the temporary curves originally converted from guides back to guides.
+* No changes will be made to the original guides. 
+* Temporary curves will be deleted
+* 
+* This is usually used in the Cancel action for the guide to curve commands, 
+* such as GuideReshapeTool, GuideAsCurves.
+* 
+* @param curves    The list of curves to restore guides from
+* 
+* @return          The restored guide names
+*/
+global proc string[] xgmRestoreGuidesFromCurves( string $curves[] )
+{
+	int $i = 0;    
+	string $guides[];
+	string $tempCurves[];
+
+	for ( $curve in $curves ) {
+		string $parent[] = `listTransforms $curve`;        
+		string $buffer[];
+		int $n = `tokenize $parent[0] "|" $buffer`;
+		string $name = $buffer[$n-1];
+		$guides[$i] = `substitute "_tempCurve" $name ""`;
+
+		// store the temp curves names to be deleted later (transform)
+		$tempCurves[$i++] = $parent[0];
+	}
+
+	// Delete the temp curves and clean up the groom hierarchy
+	xgmDeleteGroomObjects( $tempCurves );    
+
+	showHidden -a $guides;
+
+	return $guides;
+}

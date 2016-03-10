@@ -1,0 +1,596 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  11 January 2002
+//
+//  Procedure Name:
+//      buildKeyframeMM
+//
+//  Description:
+//  Creates a marking menu that allows the user
+//  to edit keyframes (cut/paste/delete etc. - reuses
+//  the name tempMM for the name of the menu, to
+//  ensure that there's only one of these at
+//  any one time.
+//
+//  Input Arguments:
+//      None
+//
+//  Return Value:
+//      None.
+
+
+// isMotionTrailSelected:
+//  Return # of motion trail points or motion trail objects
+//  selected, along with arrays containing the selected motion
+//  trail points, transforms and shapes.
+//
+//  The returned arrays will be of the same size.
+//
+global proc int isMotionTrailSelected(string $points[],
+									  string $transforms[],
+									  string $shapes[])
+{
+	string $sel[] = `ls -sl`;
+	int $count = 0;
+	for ($obj in $sel) {
+		if (`objectType -isa motionTrailShape $obj`) {
+			// check for the case of a selected key
+			//
+			string $buffer[];
+			tokenize($obj,".",$buffer);
+			if (size($buffer) == 2) {
+				$points[$count] = $obj;
+				$transforms[$count] = $buffer[0];
+				string $mshapes[] = `listRelatives -pa -type motionTrailShape $buffer[0]`;
+				if (size($mshapes) > 0) {
+					$shapes[$count] = $mshapes[0];
+				}
+				$count++;
+			}
+		} else {
+			// check for the case of a selected trail
+			//
+			string $child[] = `listRelatives $obj`;
+			if (size($child) > 0 &&
+				`objectType -isa motionTrailShape $child[0]`) {
+				$points[$count] = "";
+				$transforms[$count] = $obj;
+				$shapes[$count] = $child[0];
+				$count++;
+			}
+		}
+	}
+	return ($count > 0);
+}
+									  
+global proc setTangentFromMM(string $tangentType)
+{
+	// check if 1 or more motion trail keys are selected
+	//
+	string $trailKeys[];
+	string $trailTransform[];
+	string $trailShape[];
+	isMotionTrailSelected($trailKeys,$trailTransform,$trailShape);
+	int $count = size($trailKeys);
+	
+	if ($count > 0) {
+		for ($ii = 0; $ii < $count; $ii++) {
+			string $info[];
+			getSelectedMotionTrailKeyInfo($trailTransform[$ii],
+										  $trailShape[$ii],
+										  $info);
+			string $cmd = ("keyTangent -ott "+$tangentType+" ");
+			if ($tangentType != "step" &&
+				$tangentType != "stepnext" &&
+				$tangentType != "plateau") {
+				$cmd += ("-itt "+$tangentType+" ");
+			}
+			$cmd += ("-t "+$info[1]+" ");
+			$cmd += $info[0];
+			evalEcho $cmd;
+		}
+	} else {
+		timeSliderSetTangent $tangentType;
+	}
+}
+
+global proc keyOperationFromMM(int $whichOperation)
+//
+// $whichOperation = 1: delete keys
+//				   = 2: copy keys	
+{
+	// check if 1 or more motion trail keys are selected
+	//
+	string $trailKeys[];
+	string $trailTransform[];
+	string $trailShape[];
+	isMotionTrailSelected($trailKeys,$trailTransform,$trailShape);
+	int $count = size($trailKeys);
+	
+	if ($count > 0) {
+		for ($ii = 0; $ii < $count; $ii++) {
+			string $info[];
+			int $wasKey = (size($trailKeys[$ii]) > 0);
+			if ($wasKey) {
+				getSelectedMotionTrailKeyInfo($trailTransform[$ii],
+											  $trailShape[$ii],
+											  $info);
+			} else {
+				string $object[] = `listConnections ($trailShape[$ii] + ".transformToMove")`;
+				$info[0] = $object[0];
+			}
+			string $cmd;
+			switch ($whichOperation) {
+			case 1: {
+				if ($wasKey) {
+					$cmd = ("cutKey -iub false -an objects -o keys -t ");
+					$cmd += $info[1];
+				}
+			}
+				break;
+			case 2: {
+				if ($wasKey) {
+					$cmd = ("copyKey -iub false -an objects -o keys -t ");
+					$cmd += $info[1];
+				}
+			}
+				break;
+			case 3: {
+				if ($wasKey) {
+					$cmd = ("cutKey -iub false -an objects -o keys -t ");
+					$cmd += $info[1];
+				}
+			}
+				break;
+			case 4: {
+				string $currentTime = `currentTime -q`;
+				$cmd = ("keyframe -relative -timeChange -1 -option over -t ");
+				$cmd += ("\""+$currentTime+":\" ");
+			}
+				break;
+			case 5: {
+				string $currentTime = `currentTime -q`;
+				$cmd = ("keyframe -relative -timeChange 1 -option over -t ");
+				$cmd += ("\""+$currentTime+":\" ");
+			}
+				break;
+			}
+
+			if (size($cmd) > 0) {
+				$cmd += (" "+$info[0]);
+				evalEcho $cmd;
+			}
+		}
+	} else {
+			switch ($whichOperation) {
+			case 1:
+				timeSliderClearKey;
+				break;
+			case 2: 
+				timeSliderCopyKey;
+				break;
+			case 3:
+				timeSliderCutKey;
+				break;
+			case 4:
+				timeSliderEditKeys removeInbetween;
+				break;
+			case 5:
+				timeSliderEditKeys addInbetween;
+				break;
+			}
+	}
+}
+
+global proc pasteKeyFromMM()
+{
+	// check if 1 or more motion trail keys are selected
+	//
+	string $trailKeys[];
+	string $trailTransform[];
+	string $trailShape[];
+	isMotionTrailSelected($trailKeys,$trailTransform,$trailShape);
+	int $count = size($trailKeys);
+	
+	if ($count > 0) {
+		for ($ii = 0; $ii < $count; $ii++) {
+			string $info[];
+			getSelectedMotionTrailKeyInfo($trailTransform[$ii],
+										  $trailShape[$ii],
+										  $info);
+
+			float $time = `currentTime -query`;
+			string $cmd = ("pasteKey -animation objects -option replace -connect 0 -time \"" + $time+":"+($time+0.99)+"\" ");
+			$cmd += $info[0];
+			evalEcho $cmd;
+		}
+	} else {
+		timeSliderPasteKey false;
+	}
+}
+
+
+
+global proc keyTypeChangeFromMM(int $toBreakdown)
+{
+	// check if 1 or more motion trail keys are selected
+	//
+	string $trailKeys[];
+	string $trailTransform[];
+	string $trailShape[];
+	isMotionTrailSelected($trailKeys,$trailTransform,$trailShape);
+	int $count = size($trailKeys);
+	
+	if ($count > 0) {
+		for ($ii = 0; $ii < $count; $ii++) {
+			string $info[];
+			getSelectedMotionTrailKeyInfo($trailTransform[$ii],
+										  $trailShape[$ii],
+										  $info);
+			if ($toBreakdown != $info[2]) {
+				string $cmd = ("keyframe -at \"translateX\" -at \"translateY\" -at \"translateZ\"");
+				$cmd += (" -t "+$info[1]+" ");
+				$cmd += (" -breakdown "+$toBreakdown+" ");
+				$cmd += $info[0];
+				evalEcho $cmd;
+			}
+		}
+	} else {
+		if ($toBreakdown) {
+			timeSliderEditKeys makeBreakdown;
+		} else {
+			timeSliderEditKeys makeKey;
+		}
+	}
+}
+
+
+global proc buildKeyframeTangentMM( )
+{
+	
+	if( `popupMenu -exists tempMM` )
+	{
+		deletePopupMenu;
+	} 
+	
+	//	MM will be different in graph editor than other windows
+	//	so determine the window and build MM appropriately. In
+	//	graphEditor, MM should work on active key. In other windows
+	//	MM works on all keys at frame for active objects.
+	
+	string $currentPanel = `getPanel -withFocus`;
+	
+	if ($currentPanel == "graphEditor1") {
+		//	build keyframe MM on button 1
+		//
+		//	Note that shift is on for all the popupMenus in this 
+		//	procedure. The default hotkey setup defines these
+		//	menus to use "S". Remove "-sh 1" in all cases if the
+		//	marking menu is to be used without the shift key.
+		popupMenu -markingMenu true 
+			-button 1 
+			-shiftModifier true 
+			-parent `findPanelPopupParent` 
+			-allowOptionBoxes true 
+			tempMM;
+
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kKeys"))
+			-subMenu 1
+			-tearOff 0
+			-radialPosition "W"
+			-allowOptionBoxes 1;
+			
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kGEMMDeleteKeys"))  
+			-command ("performClearKeyArgList 1 {\"3\", " +
+				"\"graphEditor1GraphEd\", \"0\", \"1\"};")
+			-radialPosition "N" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kGEMMDeleteKeysAnnot"))
+			;
+			menuItem -optionBox true
+				-command ("performClearKeyArgList 1 {\"4\", " +
+				"\"graphEditor1GraphEd\", \"0\", \"1\"};")
+				-annotation (uiRes("m_buildKeyframeTangentMM.kGEMMDeleteKeysOptionsAnnot")) 
+				;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kGEMMConvertToKey"))  
+			-command "keyframe -breakdown false;" 
+			-radialPosition "NE" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kGEMMConvertToKeyAnnot")) 
+			;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kGEMMPasteKeys"))  
+			-command ("performPasteKeyArgList 1 {\"3\", " +
+				"\"graphEditor1GraphEd\", \"1\"};") 
+			-radialPosition "E" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kGEMMPasteKeysAnnot")) 
+			;
+			menuItem -optionBox true
+				-command ("performPasteKeyArgList 1 {\"4\", " +
+					"\"graphEditor1GraphEd\", \"1\"};")
+				-annotation (uiRes("m_buildKeyframeTangentMM.kGEMMPasteKeysOptionsAnnot")) 
+				;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kGEMMConvertToBreakdown"))  
+			-command "keyframe -breakdown true;" 
+			-radialPosition "NW"
+			-annotation (uiRes("m_buildKeyframeTangentMM.kGEMMConvertToBreakDownAnnot"))
+			;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kGEMMCopyKeys"))  
+			-command ("performCopyKeyArgList 1 {\"3\", " +
+				"\"graphEditor1GraphEd\", \"1\"};")
+			-radialPosition "S" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kGEMMCopyKeysAnnot")) 
+			;
+			menuItem -optionBox true
+				-command ("performCopyKeyArgList 1 {\"4\", " +
+					"\"graphEditor1GraphEd\", \"1\"};")
+				-annotation (uiRes("m_buildKeyframeTangentMM.kGEMMCopyKeysOptionsAnnot")) 
+				;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kGEMMRemoveInbetween"))  
+			-command "timeSliderEditKeys removeInbetween;" 
+			-radialPosition "SW" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kGEMMRemoveInbetweenAnnot")) 
+			;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kGEMMCutKeys"))  
+			-command ("performCutKeyArgList 1 {\"3\", " +
+				"\"graphEditor1GraphEd\", \"1\"};")
+			-radialPosition "W" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kGEMMCutKeysAnnot")) 
+			;
+			menuItem -optionBox true
+				-command ("performCutKeyArgList 1 {\"4\", " +
+					"\"graphEditor1GraphEd\", \"1\"};")
+				-annotation (uiRes("m_buildKeyframeTangentMM.kGEMMCutKeysOptionsAnnot")) 
+				;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kGEMMAddInbetween"))  
+			-command "timeSliderEditKeys addInbetween;" 
+			-radialPosition "SE"
+			-annotation (uiRes("m_buildKeyframeTangentMM.kGEMMAddInbetweenAnnot")) 
+			;
+		
+		setParent -menu ..;
+
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kGEMTangents"))  
+			-subMenu 1
+			-tearOff 0
+			-radialPosition "E"
+			-allowOptionBoxes 1
+			tmpTangentsMM;
+
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kSplineTangents"))  
+			-command "keyTangent -inTangentType  spline -ott spline;" 
+			-radialPosition "N" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kSplineTangentsAnnot")) 
+			;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kFlatTangents"))  
+			-command "keyTangent -inTangentType flat -outTangentType flat;" 
+			-radialPosition "E" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kFlatTangentsAnnot")) 
+			;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kLinearTangents"))  
+			-command "keyTangent -inTangentType linear -outTangentType linear;" 
+			-radialPosition "S" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kLinearTangentsAnnot")) 
+			;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kClampedTangents"))  
+			-command "keyTangent -inTangentType clamped -outTangentType clamped;" 
+			-radialPosition "W" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kClampedTangentsAnnot")) 
+			;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kStepTangents"))  
+			-command "keyTangent -edit -outTangentType step;" 
+			-radialPosition "NW" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kStepTangentsAnnot")) 
+			;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kStepNextTangents"))  
+			-command "keyTangent -edit -outTangentType stepnext;" 
+			-radialPosition "SW" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kStepNextTangentsAnnot")) 
+			;
+
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kPlateauTangents"))
+			-command "keyTangent -edit -outTangentType plateau;" 
+			-radialPosition "SE" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kPlateauTangentsAnnot")) 
+			;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kFixedTangents"))  
+			-command ("keyTangent -edit -inTangentType fixed " +
+				"-outTangentType  fixed;")
+			-radialPosition "NE" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kFixedTangentsAnnot")) 
+			;
+		
+		setParent -menu ..;
+
+		
+	} else {
+		//	build keyframe MM on button 1
+		popupMenu -markingMenu true 
+			-button 1
+			-shiftModifier true
+			-parent `findPanelPopupParent` 
+			tempMM;		
+
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kGEMKeys"))
+			-subMenu 1
+			-tearOff 0
+			-radialPosition "W"
+			-allowOptionBoxes 1;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kDeleteKeys"))  
+			-command "keyOperationFromMM 1"
+			-radialPosition "N" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kDeleteKeysAnnot"))
+			;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kConvertToKey"))  
+			-command "keyTypeChangeFromMM 0"
+			-radialPosition "NE" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kConvertToKeyAnnot")) 
+			;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kPasteKeys"))
+			-command "pasteKeyFromMM"
+			-radialPosition "E" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kPasteKeysAnnot")) 
+			;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kConvertToBreakdown"))
+			-command "keyTypeChangeFromMM 1"			
+			-radialPosition "NW" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kConvertToBreakdownAnnot")) 
+			;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kCopyKeys"))
+			-command "keyOperationFromMM 2"			
+			-radialPosition "S" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kCopyKeysAnnot")) 
+			;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kRemoveInbetween"))
+			-command "keyOperationFromMM 4"			
+			-radialPosition "SW"
+			-annotation (uiRes("m_buildKeyframeTangentMM.kRemoveInbetweenAnnot")) 
+			;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kCutKeys"))  
+			-command "keyOperationFromMM 3"
+			-radialPosition "W" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kCutKeysAnnot")) 
+			;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kAddInbetween"))  
+			-command "keyOperationFromMM 5"
+			-radialPosition "SE" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kAddInbetweenAnnot")) 
+			;
+
+		setParent -menu ..;
+	
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kTangents"))
+			-subMenu 1
+			-tearOff 0
+			-radialPosition "E"
+			-allowOptionBoxes 1;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kInOutSplineTangents"))  
+			-command "setTangentFromMM spline;" 
+			-radialPosition "N" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kInOutSplineTangentsAnnot")) 
+			;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kInOutFlatTangents"))  
+			-command "setTangentFromMM flat;" 
+			-radialPosition "E" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kInOutFlatTangentsAnnot")) 
+			;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kInOutLinearTangents"))  
+			-command "setTangentFromMM linear;" 
+			-radialPosition "S" 
+			-enableCommandRepeat 1
+			-annotation (uiRes("m_buildKeyframeTangentMM.kInOutLinearTangentsAnnot")) 
+			;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kInOutClampedTangents"))  
+			-command "setTangentFromMM clamped;" 
+			-radialPosition "W" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kInOutClampedTangentsAnnot")) 
+			;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kInOutStepTangents"))  
+			-command "setTangentFromMM step;" 
+			-radialPosition "NW" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kInOutStepTangentsAnnot")) 
+			;
+
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kInOutStepNextTangents"))
+			-command "setTangentFromMM stepnext;"
+			-radialPosition "SW" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kInOutStepNextTangentsAnnot")) 
+			;
+
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kInOutPlateauTangents"))
+			-command "setTangentFromMM plateau;"
+			-radialPosition "SE" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kInOutPlateauTangentsAnnot"))
+			;
+		
+		menuItem
+			-label (uiRes("m_buildKeyframeTangentMM.kInOutFixedTangents"))  
+			-command "setTangentFromMM fixed;" 
+			-radialPosition "NE" 
+			-annotation (uiRes("m_buildKeyframeTangentMM.kInOutFixedTangentsAnnot")) 
+			;
+		setParent -menu ..;		
+	}
+	
+	setParent -menu ..;
+	
+}

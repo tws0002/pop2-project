@@ -1,0 +1,1630 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//	Procedure Name:
+//	AEfluidAttrTemplate
+//
+//	Description
+//		Creates the attribute editor controls for the fluidShape node
+//		and nodes derived from fluidShape
+//
+//	Input Value:
+//		nodeName
+//
+//	Output Value:
+//		None
+//
+
+global proc int AEfsAssignTextureCB( string $fileAttribute,
+						             string $filename,
+							         string $fileType )
+{
+	setAttr $fileAttribute -type "string" $filename;
+
+	string $currentDir = `workspace -q -dir`;
+    retainWorkingDirectory ($currentDir);
+
+	return true;
+}
+
+global proc AEfluidShapeInitNew( string $dummy )
+{
+	setUITemplate -pst attributeEditorTemplate;
+
+		rowLayout -nc 2;
+
+			text -l "";
+
+			button -label (uiRes("m_AEfluidAttrTemplate.kInitialize")) 
+				   -c ("fluids -initialize") fluidsInitBtn;
+
+		setParent ..;
+
+	setUITemplate -ppt;
+}
+
+global proc AEfluidShapeInitReplace( string $dummy )
+{
+}
+
+global proc AEfluidShapeDimDynamicSim( string $nodeName ) 
+{
+	int $density = `getAttr ($nodeName + ".densityMethod")`;
+	int $velocity = `getAttr ($nodeName + ".velocityMethod")`;
+	int $temperature = `getAttr ($nodeName + ".temperatureMethod")`;
+	int $reaction = `getAttr ($nodeName + ".fuelMethod")`;
+	int $isDyn = ($density == 2) || ($velocity==2) 
+				|| ($temperature == 2) || ($reaction == 2);
+	editorTemplate -dimControl $nodeName "gravity" ($isDyn==0);
+	editorTemplate -dimControl $nodeName "viscosity" ($velocity != 2);
+	editorTemplate -dimControl $nodeName "friction" ($velocity != 2);
+	editorTemplate -dimControl $nodeName "velocityDamp" ($isDyn==0);
+	editorTemplate -dimControl $nodeName "solver" ($isDyn==0);
+	editorTemplate -dimControl $nodeName "highDetailSolve" ($isDyn==0);
+	editorTemplate -dimControl $nodeName "solverQuality" ($isDyn==0);
+	editorTemplate -dimControl $nodeName "gridInterpolator" ($isDyn==0);
+	editorTemplate -dimControl $nodeName "startFrame" ($isDyn==0);
+	editorTemplate -dimControl $nodeName "timeStepSize" ($isDyn==0);
+	editorTemplate -dimControl $nodeName "conserveMass" ($isDyn==0);
+	editorTemplate -dimControl $nodeName "doEmission" ($isDyn==0);
+	editorTemplate -dimControl $nodeName "doFields" ($isDyn==0);
+	editorTemplate -dimControl $nodeName "collide" ($isDyn==0);
+	editorTemplate -dimControl $nodeName "substeps" ($isDyn==0);
+	editorTemplate -dimControl $nodeName "forwardAdvection" ($isDyn==0);
+}
+
+global proc _setVisible( string $node, string $attr, int $state )
+{
+	string $controls[] = `editorTemplate -queryName $node $attr`;
+	if( size($controls) == 1 ){
+		string $controlName = $controls[0];
+		if( `control -exists $controlName` ){
+			control -e -m $state $controlName;
+		}
+	}
+
+}
+
+global proc AEfluidShapeMandelDimType( string $nodeName )
+{
+	int $value = `getAttr ($nodeName + ".textureType")`;
+	int $isJulia = false;
+	int $isMandelBox = false;
+
+	if( $value == 5 && 
+		(getAttr ($nodeName + ".colorTexture") || 
+		getAttr ($nodeName + ".incandTexture") ||
+		getAttr ($nodeName + ".opacityTexture")) ){
+		int $type = `getAttr ($nodeName + ".mandelbrotType")`;
+		$isJulia = $type == 0 || $type == 3;
+		$isMandelBox = $type == 2 || $type == 3 || $type == 4;
+	}
+	_setVisible( $nodeName, "juliaU", $isJulia);
+	_setVisible( $nodeName, "juliaV", $isJulia);
+	
+	_setVisible( $nodeName, "boxRadius", $isMandelBox);
+	_setVisible( $nodeName, "boxMinRadius", $isMandelBox);
+	_setVisible( $nodeName, "boxRatio", $isMandelBox);
+}
+
+global proc AEfluidShapeShaderTexture( string $nodeName ) 
+{
+	int $color = `getAttr ($nodeName + ".colorTexture")`;
+	int $incand = `getAttr ($nodeName + ".incandTexture")`;
+	int $opacity = `getAttr ($nodeName + ".opacityTexture")`;
+	int $state = ($color == 0) && ($incand == 0) && ( $opacity == 0 );
+	int $value = `getAttr ($nodeName + ".textureType")`;
+	int $isBillow		= $value == 1 && (!$state);
+	int $isWave			= $value == 2 && (!$state);
+	int $isMandelbrot	= $value == 5 && (!$state);
+	int $isJulia = false;
+	int $isMandelBox = false;
+	if( $isMandelbrot){
+		int $type = `getAttr ($nodeName + ".mandelbrotType")`;
+		$isJulia = $type == 0 || $type == 3;
+		$isMandelBox = $type == 2 || $type == 3 || $type == 4;
+	}
+	
+	editorTemplate -dimControl $nodeName "colorTexGain" ($color==0);
+	editorTemplate -dimControl $nodeName "incandTexGain" ($incand==0);
+	editorTemplate -dimControl $nodeName "opacityTexGain" ($opacity==0);
+	editorTemplate -dimControl $nodeName "densityTexOffset" $state;
+	editorTemplate -dimControl $nodeName "densityTexGain" $state;
+	editorTemplate -dimControl $nodeName "threshold" $state;
+	editorTemplate -dimControl $nodeName "amplitude" $state;
+	editorTemplate -dimControl $nodeName "ratio" $state;
+	editorTemplate -dimControl $nodeName "frequencyRatio" $state;
+	editorTemplate -dimControl $nodeName "depthMax" $state;
+	editorTemplate -dimControl $nodeName "inflection" $state;
+	editorTemplate -dimControl $nodeName "invertTexture" $state;
+	editorTemplate -dimControl $nodeName "textureTime" $state;
+	editorTemplate -dimControl $nodeName "frequency" $state;
+	editorTemplate -dimControl $nodeName "textureScale" $state;
+	editorTemplate -dimControl $nodeName "textureOriginX" $state;
+	editorTemplate -dimControl $nodeName "textureOriginY" $state;
+	editorTemplate -dimControl $nodeName "textureOriginZ" $state;
+	editorTemplate -dimControl $nodeName "textureRotate" $state;
+	editorTemplate -dimControl $nodeName "implode" $state;
+	editorTemplate -dimControl $nodeName "implodeCenter" $state;
+	
+	_setVisible( $nodeName, "billowDensity", $isBillow );
+	_setVisible( $nodeName, "spottyness", $isBillow );
+	_setVisible( $nodeName, "sizeRand", $isBillow );
+	_setVisible( $nodeName, "randomness", $isBillow );
+	_setVisible( $nodeName, "falloff", $isBillow );
+	
+	_setVisible( $nodeName, "numWaves", $isWave );
+	_setVisible( $nodeName, "billowDensity", $isBillow );
+	_setVisible( $nodeName, "billowDensity", $isBillow );
+	
+	_setVisible( $nodeName, "mandelbrotType", $isMandelbrot);
+	_setVisible( $nodeName, "mandelbrotShadeMethod", $isMandelbrot);
+	_setVisible( $nodeName, "mandelbrotInsideMethod", $isMandelbrot);
+	_setVisible( $nodeName, "mandelbrotDepth", $isMandelbrot);
+	_setVisible( $nodeName, "zoomFactor", $isMandelbrot);
+	_setVisible( $nodeName, "focus", $isMandelbrot);
+	_setVisible( $nodeName, "lobes", $isMandelbrot);
+	_setVisible( $nodeName, "escapeRadius", $isMandelbrot);
+	_setVisible( $nodeName, "leafEffect", $isMandelbrot);
+	_setVisible( $nodeName, "checker", $isMandelbrot);
+	_setVisible( $nodeName, "points", $isMandelbrot);
+	_setVisible( $nodeName, "circles", $isMandelbrot);
+	_setVisible( $nodeName, "circleRadius", $isMandelbrot);
+	_setVisible( $nodeName, "circleSizeRatio", $isMandelbrot);
+	_setVisible( $nodeName, "stalksU", $isMandelbrot);
+	_setVisible( $nodeName, "stalksV", $isMandelbrot);
+	_setVisible( $nodeName, "lineOffsetU", $isMandelbrot);
+	_setVisible( $nodeName, "lineOffsetV", $isMandelbrot);
+	_setVisible( $nodeName, "lineOffsetRatio", $isMandelbrot);
+	_setVisible( $nodeName, "lineFocus", $isMandelbrot);
+	_setVisible( $nodeName, "lineBlending", $isMandelbrot);
+	
+	_setVisible( $nodeName, "juliaU", $isJulia);
+	_setVisible( $nodeName, "juliaV", $isJulia);
+	
+	_setVisible( $nodeName, "boxRadius", $isMandelBox);
+	_setVisible( $nodeName, "boxMinRadius", $isMandelBox);
+	_setVisible( $nodeName, "boxRatio", $isMandelBox);
+
+	_setVisible( $nodeName, "ratio", (!$isMandelbrot));
+	_setVisible( $nodeName, "frequencyRatio", (!$isMandelbrot));
+	_setVisible( $nodeName, "depthMax", (!$isMandelbrot));
+	//_setVisible( $nodeName, "implode", (!$isMandelbrot));
+	//_setVisible( $nodeName, "implodeCenter", (!$isMandelbrot));
+
+	
+/*
+	if ( $value == 0 || $value == 3) {
+		editorTemplate -dimControl $nodeName "billowDensity" true;
+		editorTemplate -dimControl $nodeName "spottyness" true;
+		editorTemplate -dimControl $nodeName "sizeRand" true;
+		editorTemplate -dimControl $nodeName "randomness" true;
+		editorTemplate -dimControl $nodeName "falloff" true;
+		editorTemplate -dimControl $nodeName "numWaves" true;
+	} else if ( $value == 1 || $value == 5) {
+		editorTemplate -dimControl $nodeName "billowDensity" false;
+		editorTemplate -dimControl $nodeName "spottyness" false;
+		editorTemplate -dimControl $nodeName "sizeRand" false;
+		editorTemplate -dimControl $nodeName "randomness" false;
+		editorTemplate -dimControl $nodeName "falloff" false;
+		editorTemplate -dimControl $nodeName "numWaves" true;
+	} else {
+		editorTemplate -dimControl $nodeName "billowDensity" true;
+		editorTemplate -dimControl $nodeName "spottyness" true;
+		editorTemplate -dimControl $nodeName "sizeRand" true;
+		editorTemplate -dimControl $nodeName "randomness" true;
+		editorTemplate -dimControl $nodeName "falloff" true;
+		editorTemplate -dimControl $nodeName "numWaves" false;
+	} 
+*/
+}
+
+global proc AEfluidShapeCoordMethod( string $nodeName ) 
+{
+	int $method = `getAttr ($nodeName + ".coordinateMethod")`;
+	editorTemplate -dimControl $nodeName "coordinateSpeed" ($method == 0);
+}
+
+global proc AEfluidShapeVolDraw( string $nodeName ) 
+{
+	string $nodeAttr = $nodeName + ".surfaceRender";
+	int $sr = `getAttr $nodeAttr`;
+	$sd = `getAttr($nodeName + ".shadedDisplay")`;
+	int $volDraw = ($sr == 0) && ($sd > 0 );
+	editorTemplate -dimControl $nodeName "slices" ($volDraw==0);
+}
+
+global proc AEfluidShapeSurfaceRender( string $fullAttrName ) 
+{
+	string	$nameBits[];
+	tokenize($fullAttrName, ".", $nameBits);
+	string	$nodeName = $nameBits[0];
+
+	string $nodeAttr = $nodeName + ".surfaceRender";
+	int $sr = `getAttr $nodeAttr`;
+	$nodeAttr = $nodeName + ".sampleMethod";
+	int $sm = `getAttr $nodeAttr`;
+	$sd = $nodeName + ".shadedDisplay";
+
+	editorTemplate -dimControl $nodeName "sampleMethod" ($sr != 0  );
+
+	if( $sr == 0 ){
+		editorTemplate -dimControl $nodeName "contrastTolerance" ($sm < 2);
+		editorTemplate -dimControl $nodeName "softSurface" true;
+		editorTemplate -dimControl $nodeName "environment" true;
+		editorTemplate -dimControl $nodeName "environment_Interp" true;
+	// surface threshold is also useful if connected to an output mesh, so don't grey out
+	// editorTemplate -dimControl $nodeName "surfaceThreshold" true;
+		editorTemplate -dimControl $nodeName "surfaceTolerance" true;
+		editorTemplate -dimControl $nodeName "specularColor" true;
+		editorTemplate -dimControl $nodeName "cosinePower" true;
+		editorTemplate -dimControl $nodeName "refractiveIndex" true;
+	} else {
+		editorTemplate -dimControl $nodeName "contrastTolerance" true;
+		editorTemplate -dimControl $nodeName "softSurface" false;
+		editorTemplate -dimControl $nodeName "environment" false;
+		editorTemplate -dimControl $nodeName "environment_Interp" false;
+	//	editorTemplate -dimControl $nodeName "surfaceThreshold" false;
+		editorTemplate -dimControl $nodeName "surfaceTolerance" false;
+		editorTemplate -dimControl $nodeName "specularColor" false;
+		editorTemplate -dimControl $nodeName "cosinePower" false;
+		editorTemplate -dimControl $nodeName "refractiveIndex" false;
+	}
+	AEfluidShapeVolDraw( $nodeName );
+}
+
+global proc AEfluidShapeShadedDisplay( string $nodeName ) 
+{
+	int $sd = `getAttr ($nodeName + ".shadedDisplay")`;
+	editorTemplate -dimControl $nodeName "opacityPreviewGain" ($sd < 2);
+	AEfluidShapeVolDraw( $nodeName );
+}
+
+global proc AEfluidShapeWireframeDisplay( string $nodeName ) 
+{
+	int $wd = `getAttr ($nodeName + ".wireframeDisplay")`;
+	editorTemplate -dimControl $nodeName "drawSaturation" ($wd < 2);
+}
+
+global proc AEfluidShapeVelocityDraw( string $nodeName ) 
+{
+	int $vd = `getAttr ($nodeName + ".velocityDraw")`;
+	editorTemplate -dimControl $nodeName "drawHeads" ($vd == 0);
+	editorTemplate -dimControl $nodeName "velocityDrawSkip" ($vd == 0);
+	editorTemplate -dimControl $nodeName "velocityDrawLength" ($vd == 0);
+}
+
+global proc AEfluidShapeDrawSubVolume( string $nodeName ) 
+{
+	int $sv = `getAttr ($nodeName + ".drawSubVolume")`;
+	editorTemplate -dimControl $nodeName "subVolumeCenter" ($sv == 0);
+	editorTemplate -dimControl $nodeName "subVolumeSize" ($sv == 0);
+}
+
+global proc AEfluidShapeSampleMethod( string $nodeName ) 
+{
+	string $nodeAttr = $nodeName + ".surfaceRender";
+	int $sr = `getAttr $nodeAttr`;
+	$nodeAttr = $nodeName + ".sampleMethod";
+	int $sm = `getAttr $nodeAttr`;
+	editorTemplate -dimControl $nodeName "contrastTolerance" (($sm < 1)||($sr != 0));
+}
+
+global proc AEfluidShapeDropoffShape( string $nodeName ) 
+{
+	string $nodeAttr = $nodeName + ".dropoffShape";
+	int $value = `getAttr $nodeAttr`;
+	editorTemplate -dimControl $nodeName "edgeDropoff" ($value == 0);
+}
+
+
+global proc AEfluidShapeMatteOpacity( string $nodeName ) 
+{
+	string $nodeAttr = $nodeName + ".matteOpacityMode";
+	int $value = `getAttr $nodeAttr`;
+	editorTemplate -dimControl $nodeName "matteOpacity" ($value == 0);
+}
+
+global proc AEfluidShapeEmissionNew( string $attr )
+{
+	string $buffer[];
+	tokenize $attr "." $buffer;
+	setUITemplate -pst attributeEditorTemplate;
+
+		rowLayout -nc 2;
+
+			text -l "";
+
+			button -label (uiRes("m_AEfluidAttrTemplate.kEmissionEditor")) 
+				   -c ( "AEfsEmissionEditor \"" + $buffer[0] + "\"" ) fluidsEmitEditorBtn;
+
+		setParent ..;
+
+	setUITemplate -ppt;
+}
+
+global proc AEfluidShapeEmissionReplace( string $attr )
+{
+	string $buffer[];
+	tokenize $attr "." $buffer;
+	button -e -c ("AEfsEmissionEditor \"" + $buffer[0] + "\"") fluidsEmitEditorBtn;
+}
+
+
+global proc AEfluidShapeHideControl( string $control )
+{
+	//
+	// In theory, we should just be able to unmanage the control and
+	// that will stop it from using up space. In practice, MEL only
+	// does this correctly if the control is at the end of a layout.
+	//
+	// The workaround is to shrink the control's height to 1, unmanage
+	// it, then set it's height back to normal.
+	//
+	int $height = `control -q -height $control`;
+
+	control -e -height 1 $control;
+	control -e -manage false $control;
+	control -e -height $height $control;
+}
+
+
+//
+// Create two integer field groups: one having 2 int fields, and one
+// having 3 int fields.
+//
+global proc AEfluidShape2d3dIntFldNew( string $label, string $fullAttrName )
+{
+	string	$nameBits[];
+	tokenize($fullAttrName, ".", $nameBits);
+
+	string	$nodeName = $nameBits[0];
+	string	$attrName = $nameBits[1];
+
+	string	$fieldName2d = ($attrName + "2dFld");
+	string	$fieldName3d = ($attrName + "3dFld");
+
+	setUITemplate -pst attributeEditorTemplate;
+
+	intFieldGrp -l $label -numberOfFields 2 $fieldName2d;
+	intFieldGrp -l $label -numberOfFields 3 $fieldName3d;
+
+	setUITemplate -ppt;
+
+	AEfluidShape2d3dIntFldReplace($fullAttrName);
+}
+
+
+global proc AEfluidShapeConfirmSetResolution( string $attr,
+											  string $field,
+											  int $is2d )
+//
+// Description:
+//	The user has typed into the XYZ int fields
+//	to change the fluid resolution.  We might need to
+//	post a confirm box to give the user a chance to 
+//	bail if the proposed resolution is too large.
+//	
+//	$attr is the compound parent "resolution" attribute
+//	$field is the name of the intFieldGrp 
+//	$is2d indicates whether $field has two fields or three
+//
+{
+	string	$nameBits[];
+	tokenize($attr, ".", $nameBits);
+
+	string	$nodeName = $nameBits[0];
+
+	int $resX = `intFieldGrp -q -v1 $field`;
+	int $resY = `intFieldGrp -q -v2 $field`;
+	int $resZ = 1;
+
+	if ($resX < 3){
+		$resX = 3;
+		intFieldGrp -e -v1 $resX $field;
+	}
+	if ($resY < 3){
+		$resY = 3;
+		intFieldGrp -e -v2 $resY $field;
+	}
+	if( !$is2d ) {
+		$resZ = `intFieldGrp -q -v3 $field`;
+		if ($resZ < 3){
+			$resZ = 3;
+			intFieldGrp -e -v3 $resZ $field;
+		}
+	}
+
+	if( verifyFluidResolution( $nodeName, $resX, $resY, $resZ ) ) {
+		evalEcho( "setAttr " + $attr + " " + $resX + " " + $resY + " " + $resZ );
+	} else {
+		AEfluidShapeUpdateResolution( $attr, $field, $is2d );
+	}
+}
+
+global proc AEfluidShapeUpdateResolution( string $attr,
+										  string $field,
+										  int $is2d )
+//
+// Description:
+//	Query the resolution attribute and stuff the current
+//	values into the intFieldGrp.
+//
+{
+	float $res[] = `getAttr $attr`;
+
+	intFieldGrp -e -v1 $res[0] -v2 $res[1] $field;
+
+	if( !$is2d ) {
+		intFieldGrp -e -v3 $res[2] $field;
+	}
+}
+
+//
+// If this is a 3D fluid, then enable the 3-integer field group and connect
+// it to the attribute's W, H and D components.
+//
+// If this is a 2D fluid, then enable the 2-integer field group and connect
+// it to the attribute's W and H components.
+//
+global proc AEfluidShape2d3dIntFldReplace( string $fullAttrName )
+{
+	string	$nameBits[];
+	tokenize($fullAttrName, ".", $nameBits);
+
+	string	$nodeName = $nameBits[0];
+	string	$attrName = $nameBits[1];
+
+	string	$fieldName2d = ($attrName + "2dFld");
+	string	$fieldName3d = ($attrName + "3dFld");
+	string	$activeField;
+	string	$inactiveField;
+
+	int		$is2d = getAttr($nodeName + ".is2d");
+
+	if ($is2d)
+	{
+		$activeField = $fieldName2d;
+		$inactiveField = $fieldName3d;
+	}
+	else
+	{
+		$activeField = $fieldName3d;
+		$inactiveField = $fieldName2d;
+	}
+
+	AEfluidShapeHideControl($inactiveField);
+
+	intFieldGrp -e 
+		-manage true 
+		-cc ( "AEfluidShapeConfirmSetResolution " + 
+			  $fullAttrName + " " +
+			  $activeField + " " + $is2d )
+		$activeField;
+
+	if( !$is2d ) {
+		intFieldGrp -e 
+			-v3 `getAttr ($fullAttrName + "D")`
+			$activeField;
+	}
+
+	string $callback = 	( "AEfluidShapeUpdateResolution " + 
+						  $fullAttrName + " " + 
+						  $activeField + " " + $is2d );
+
+	// Make sure to always use the same widget for the
+	// scriptJob parent, so old jobs are replaced properly;
+	// it doesn't matter that the widget might not be
+	// visible, since $fieldName2d and $fieldName3d are both
+	// created and destroyed together.  (Setting the parent
+	// to whichever widget is visible could result in an
+	// extra scriptJob hanging around when selecting between
+	// 2D and 3D fluids.
+	//
+	scriptJob 
+		-attributeChange $fullAttrName $callback
+		-parent $fieldName3d
+		-replacePrevious;
+	
+	AEfluidShapeUpdateResolution( $fullAttrName, $activeField, $is2d );
+}
+
+
+global proc AEfluidShapeHideVectorNew( string $label, string $fullAttrName )
+{
+	string	$nameBits[];
+	tokenize($fullAttrName, ".", $nameBits);
+
+	string	$nodeName = $nameBits[0];
+	string	$attrName = $nameBits[1];
+
+	setUITemplate -pst attributeEditorTemplate;
+
+	attrFieldGrp -l $label -attribute $fullAttrName $attrName;
+
+	setUITemplate -ppt;
+
+	AEfluidShapeHideVectorReplace($fullAttrName);
+}
+
+
+//
+// If this is a 3D fluid, then hide this field.
+//
+global proc AEfluidShapeHideVectorReplace( string $fullAttrName )
+{
+	string	$nameBits[];
+	tokenize($fullAttrName, ".", $nameBits);
+
+	string	$nodeName = $nameBits[0];
+	string	$attrName = $nameBits[1];
+
+	int		$is2d = getAttr($nodeName + ".is2d");
+
+	if ($is2d)
+		AEfluidShapeHideControl($attrName);
+	else
+		attrFieldGrp -e -attribute $fullAttrName -manage true $attrName;
+}
+
+
+global proc AEfluidShapeHideCheckBoxNew( string $label, string $fullAttrName )
+{
+	string	$nameBits[];
+	tokenize($fullAttrName, ".", $nameBits);
+
+	string	$nodeName = $nameBits[0];
+	string	$attrName = $nameBits[1];
+
+	setUITemplate -pst attributeEditorTemplate;
+
+	checkBoxGrp -l1 $label -ncb 1 $attrName;
+
+	setUITemplate -ppt;
+
+	AEfluidShapeHideCheckBoxReplace($fullAttrName);
+}
+
+
+//
+// If this is a 2D fluid, then hide this field, otherwise connect it to
+// the specified attribute.
+//
+global proc AEfluidShapeHideCheckBoxReplace( string $fullAttrName )
+{
+	string	$nameBits[];
+	tokenize($fullAttrName, ".", $nameBits);
+
+	string	$nodeName = $nameBits[0];
+	string	$attrName = $nameBits[1];
+
+	int		$is2d = getAttr($nodeName + ".is2d");
+	if( $attrName == "heightField" ){
+		// this is hidden if not 2D
+		$is2d = !$is2d;
+	}
+	if ($is2d)
+		AEfluidShapeHideControl($attrName);
+	else
+	{
+		control -e -manage true $attrName;
+		connectControl -index 2 $attrName $fullAttrName;
+	}
+}
+
+
+global proc AEfluidShapeHideIntSliderNew(string $label, string $fullAttrName)
+{
+	string	$nameBits[];
+	tokenize($fullAttrName, ".", $nameBits);
+
+	string	$nodeName = $nameBits[0];
+	string	$attrName = $nameBits[1];
+
+	setUITemplate -pst attributeEditorTemplate;
+
+	intSliderGrp -l $label -max 12 $attrName;
+
+	setUITemplate -ppt;
+
+	AEfluidShapeHideIntSliderReplace($fullAttrName);
+}
+
+
+//
+// If this is a 2D fluid, then hide this field, otherwise connect it to
+// the specified attribute.
+//
+global proc AEfluidShapeHideIntSliderReplace(string $fullAttrName)
+{
+	string	$nameBits[];
+	tokenize($fullAttrName, ".", $nameBits);
+
+	string	$nodeName = $nameBits[0];
+	string	$attrName = $nameBits[1];
+
+	int		$is2d = getAttr($nodeName + ".is2d");
+
+	if ($is2d)
+		AEfluidShapeHideControl($attrName);
+	else
+	{
+		control -e -manage true $attrName;
+		connectControl $attrName $fullAttrName;
+	}
+}
+
+
+global proc AEfluidShapeImplicitNew(string $fullAttrName)
+{
+	setUITemplate -pst attributeEditorTemplate;
+
+	frameLayout
+		-l Implicit -collapsable true -collapse true
+		AEfluidImplicitFrame;
+
+	floatSliderGrp -label (uiRes("m_AEfluidAttrTemplate.kBlobbyThreshold"))  AEfluidBlobbyThresholdFld;
+
+	setParent ..;
+
+	setUITemplate -ppt;
+
+	AEfluidShapeImplicitReplace($fullAttrName);
+}
+
+
+global proc AEfluidShapeImplicitReplace(string $fullAttrName)
+{
+	string	$nameBits[];
+	tokenize($fullAttrName, ".", $nameBits);
+
+	string	$nodeName = $nameBits[0];
+	int		$is2d = getAttr($nodeName + ".is2d");
+
+	if ($is2d)
+		AEfluidShapeHideControl("AEfluidImplicitFrame");
+	else
+	{
+		control -e -manage true AEfluidImplicitFrame;
+
+		connectControl AEfluidBlobbyThresholdFld
+					($nodeName + ".blobbyThreshold");
+	}
+}
+
+
+global proc AEfluidShapeDepthNew(string $fullAttrName)
+{
+	string	$nameBits[];
+	tokenize($fullAttrName, ".", $nameBits);
+
+	string	$nodeName = $nameBits[0];
+	string	$attrName = $nameBits[1];
+
+	setUITemplate -pst attributeEditorTemplate;
+
+	attrFieldSliderGrp -label (uiRes("m_AEfluidAttrTemplate.kDepth"))  -attribute $fullAttrName AEfluidDepthFld;
+
+	setUITemplate -ppt;
+
+	AEfluidShapeDepthReplace($fullAttrName);
+}
+
+
+
+global proc AEfluidShapeDepthReplace(string $fullAttrName)
+{
+	string	$nameBits[];
+	tokenize($fullAttrName, ".", $nameBits);
+
+	string	$nodeName = $nameBits[0];
+	string	$attrName = $nameBits[1];
+
+	int		$is2d = getAttr($nodeName + ".is2d");
+
+	if ($is2d)
+	{
+		control -e -manage true AEfluidDepthFld;
+		attrFieldSliderGrp -e -attribute $fullAttrName AEfluidDepthFld;
+	}
+	else
+		AEfluidShapeHideControl("AEfluidDepthFld");
+}
+
+global proc AEfluidShapeBoundaryNew( string $fullAttrName )
+{
+	string	$nameBits[];
+	tokenize($fullAttrName, ".", $nameBits);
+
+	string	$nodeName = $nameBits[0];
+	string	$attrName = $nameBits[1];
+	string  $control2DName = "AEfluidShape2D" + $attrName;
+	string  $control3DName = "AEfluidShape3D" + $attrName;
+
+	setUITemplate -pst attributeEditorTemplate;	
+
+	// 2D fluids don't have all the draw modes that 3D fluids do:
+	// Those darned ei flags aren't editable, so we create
+	// two controls and swap between them
+	//
+	string $boundaryDraw = (uiRes("m_AEfluidAttrTemplate.kBoundaryDraw"));
+ 	attrEnumOptionMenuGrp -attribute $fullAttrName -label $boundaryDraw $control3DName;
+ 	attrEnumOptionMenuGrp -attribute $fullAttrName 
+		-enumeratedItem 2 (uiRes("m_AEfluidAttrTemplate.kOutline"))
+		-enumeratedItem 3 (uiRes("m_AEfluidAttrTemplate.kFull"))
+		-enumeratedItem 4 (uiRes("m_AEfluidAttrTemplate.kBBox"))
+		-enumeratedItem 5 (uiRes("m_AEfluidAttrTemplate.kNone"))
+		-label $boundaryDraw  $control2DName;
+    setUITemplate -ppt;
+
+	AEfluidShapeBoundaryReplace $fullAttrName;
+}
+
+global proc AEfluidShapeBoundaryReplace( string $fullAttrName )
+{
+	string	$nameBits[];
+	tokenize($fullAttrName, ".", $nameBits);
+
+	string	$nodeName = $nameBits[0];
+	string	$attrName = $nameBits[1];
+	string  $control2DName = "AEfluidShape2D" + $attrName;
+	string  $control3DName = "AEfluidShape3D" + $attrName;
+
+	int		$is2d = getAttr($nodeName + ".is2d");
+
+	if ($is2d){
+		control -e -manage true $control2DName;
+		AEfluidShapeHideControl($control3DName);
+		attrEnumOptionMenuGrp -e -attribute $fullAttrName $control2DName;
+	}
+	else {
+		AEfluidShapeHideControl($control2DName);
+		control -e -manage true $control3DName;
+		attrEnumOptionMenuGrp -e -attribute $fullAttrName $control3DName;
+	}
+
+}
+
+
+global proc AEfluidShapeAttrEnumNew( string $label, string $fullAttrName )
+{
+	string	$nameBits[];
+	tokenize($fullAttrName, ".", $nameBits);
+
+	string	$nodeName = $nameBits[0];
+	string	$attrName = $nameBits[1];
+	string  $control3DName = 	"AEfluidShape" + $attrName;
+
+	setUITemplate -pst attributeEditorTemplate;	
+ 	attrEnumOptionMenuGrp -attribute $fullAttrName -l $label $control3DName;
+    setUITemplate -ppt;
+
+	AEfluidShapeAttrEnumReplace $fullAttrName;
+}
+
+global proc AEfluidShapeAttrEnumReplace( string $fullAttrName )
+{
+	string	$nameBits[];
+	tokenize($fullAttrName, ".", $nameBits);
+
+	string	$nodeName = $nameBits[0];
+	string	$attrName = $nameBits[1];
+	string  $control3DName = 	"AEfluidShape" + $attrName;
+
+	int		$is2d = getAttr($nodeName + ".is2d");
+
+	if ($is2d) 
+		AEfluidShapeHideControl($control3DName);
+	else {
+		control -e -manage true $control3DName;
+		attrEnumOptionMenuGrp -e -attribute $fullAttrName $control3DName;
+	}
+
+}
+
+global proc AEfluidShapeSurfaceRenderUpdate( string $fullAttrName )
+//
+// Description:
+//  The attribute value has changed; update the radio button display
+//	
+{
+	int $isSurface = `getAttr $fullAttrName`;
+	radioButtonGrp -e -sl ($isSurface+1) AEfluidSurfRendRadio;
+	AEfluidShapeSurfaceRender( $fullAttrName );
+}
+
+global proc AEfluidShapeSurfaceRenderChanged( string $fullAttrName )
+//
+// Description:
+//  Binking on the radio button should update the attr value
+//	
+{
+	int $isSurfRender = `radioButtonGrp -q -sl AEfluidSurfRendRadio` == 2;
+	if( $isSurfRender != `getAttr $fullAttrName` ) {
+		evalEcho ("setAttr " + $fullAttrName + " " + $isSurfRender );
+	}
+}
+
+global proc AEfluidShapeSurfaceRenderNew( string $fullAttrName )
+{
+	setUITemplate -pst attributeEditorTemplate;
+	radioButtonGrp 
+		-numberOfRadioButtons 2 -l "" 
+		-label1 (uiRes("m_AEfluidAttrTemplate.kVolumeRender"))
+		-label2 (uiRes("m_AEfluidAttrTemplate.kSurfaceRender"))  
+		AEfluidSurfRendRadio;
+	setUITemplate -ppt ;
+	
+	AEfluidShapeSurfaceRenderReplace( $fullAttrName );
+}
+
+global proc AEfluidShapeSurfaceRenderReplace( string $fullAttrName )
+{
+	radioButtonGrp -e 
+		-cc ( "AEfluidShapeSurfaceRenderChanged " + $fullAttrName )
+		AEfluidSurfRendRadio;
+
+	scriptJob 
+		-attributeChange $fullAttrName ("AEfluidShapeSurfaceRenderUpdate " +
+										$fullAttrName)
+		-parent AEfluidSurfRendRadio
+		-replacePrevious;
+
+	// This *must* be deferred because in the case when
+	// we're creating new widgets, executing the update
+	// proc right away can try to dim things that don't
+	// exist yet.  This wound up creating some very bizarre
+	// attachment behaviour, reversing the locations and 
+	// sizes of the map buttons and value sliders for attrs
+	// like tolerance, cosine power, refractive index, etc.
+	//
+	evalDeferred( "AEfluidShapeSurfaceRenderUpdate " + $fullAttrName );
+}
+
+global proc AEfluidShapeCloudSurfaceUpdate( string $fullAttrName ) 
+//
+// Description:
+//  The attribute value has changed; update the radio button display
+//	
+{
+	int $isCloud = `getAttr $fullAttrName`;
+	radioButtonGrp -e -sl ($isCloud+1) AEfluidCloudSurfRadio;
+}
+
+global proc AEfluidShapeCloudSurfaceChanged( string $fullAttrName ) 
+//
+// Description:
+//  Binking on the radio button should update the attr value
+//	
+{
+	int $isCloud = `radioButtonGrp -q -sl AEfluidCloudSurfRadio` == 2;
+	if( $isCloud != `getAttr $fullAttrName` ) {
+		evalEcho( "setAttr " + $fullAttrName + " " + $isCloud );
+	}
+}
+
+global proc AEfluidShapeCloudSurfaceNew( string $fullAttrName )
+{
+	setUITemplate -pst attributeEditorTemplate;
+	radioButtonGrp 
+		-numberOfRadioButtons 2 -l "" 
+		-label1 (uiRes("m_AEfluidAttrTemplate.kHardSurface"))
+		-label2 (uiRes("m_AEfluidAttrTemplate.kSoftSurface"))  
+		AEfluidCloudSurfRadio;
+	setUITemplate -ppt ;
+	
+	AEfluidShapeCloudSurfaceReplace( $fullAttrName );
+}
+
+global proc AEfluidShapeCloudSurfaceReplace( string $fullAttrName )
+{
+	radioButtonGrp -e 
+		-cc ( "AEfluidShapeCloudSurfaceChanged " + $fullAttrName )
+		AEfluidCloudSurfRadio;
+
+	scriptJob 
+		-attributeChange $fullAttrName ("AEfluidShapeCloudSurfaceUpdate " +
+										$fullAttrName)
+		-parent AEfluidCloudSurfRadio
+		-replacePrevious;
+
+	AEfluidShapeCloudSurfaceUpdate( $fullAttrName );
+}
+
+global proc AEfluidShapeUpdateDensity( string $nodeName ) 
+{
+		int		$method = getAttr($nodeName + ".densityMethod");
+		int		$vmethod = getAttr($nodeName + ".velocityMethod");
+		int $dynGrid = ($method == 2); 
+		int $dynVel = ($vmethod == 2);
+		int $grid = $dynGrid || ($method == 1); 
+		int $vOff =  ($method == 0);
+		editorTemplate -dimControl $nodeName "densityScale" $vOff;
+		editorTemplate -dimControl $nodeName "densityBuoyancy" (!$dynVel || $vOff);
+		editorTemplate -dimControl $nodeName "densityDissipation" (!$grid);
+		editorTemplate -dimControl $nodeName "densityDiffusion" (!$dynGrid);
+		editorTemplate -dimControl $nodeName "densityGradient" ($grid || $vOff);
+		editorTemplate -dimControl $nodeName "densityTension" (!$grid);
+		editorTemplate -dimControl $nodeName "tensionForce" (!$dynGrid || $vOff);
+		editorTemplate -dimControl $nodeName "densityGradientForce" (!$dynGrid || $vOff);
+		editorTemplate -dimControl $nodeName "densityPressure" (!$dynGrid || $vOff);
+		editorTemplate -dimControl $nodeName "densityPressureThreshold" (!$dynGrid || $vOff);
+		editorTemplate -dimControl $nodeName "densityNoise" (!$dynGrid || !$dynVel || $vOff);
+		editorTemplate -dimControl $nodeName "liquidMethod" (!$dynVel || !$grid);
+		editorTemplate -dimControl $nodeName "enableLiquidSimulation" (!$dynVel || !$grid);
+		AEfluidShapeDimDynamicSim( $nodeName ) ;
+		AEfluidShapeLiquidMethod( $nodeName );
+}
+
+global proc AEfluidShapeUpdateVelocity( string $nodeName ) 
+{
+		int		$method = getAttr($nodeName + ".velocityMethod");
+		int $dynGrid = ($method == 2); 
+		int $grid = $dynGrid || ($method == 1); 
+		int $vOff =  ($method == 0);
+		editorTemplate -dimControl $nodeName "velocityScale" $vOff;
+		editorTemplate -dimControl $nodeName "velocitySwirl" (!$dynGrid);
+		editorTemplate -dimControl $nodeName "velocityNoise" (!$dynGrid);
+		editorTemplate -dimControl $nodeName "velocityGradient" ($grid || $vOff);
+		AEfluidShapeDimDynamicSim( $nodeName ) ;
+		// velocity method can affect whether buoyancy and temperature turbulence apply
+		AEfluidShapeUpdateDensity( $nodeName ) ;
+		AEfluidShapeUpdateTemperature( $nodeName ) ;
+}
+
+global proc AEfluidShapeUpdateTemperature( string $nodeName ) 
+{
+		int		$method = getAttr($nodeName + ".temperatureMethod");
+		int		$rMethod = getAttr($nodeName + ".fuelMethod");
+		int		$vmethod = getAttr($nodeName + ".velocityMethod");
+		int $dynGrid = ($method == 2); 
+		int $dynVel = ($vmethod == 2);
+		int $grid = $dynGrid || ($method == 1); 
+		int $vOff =  ($method == 0);
+		int $rOff =  ($rMethod == 0);
+		editorTemplate -dimControl $nodeName "temperatureScale" $vOff;
+		editorTemplate -dimControl $nodeName "buoyancy" (!$dynVel || $vOff);
+		editorTemplate -dimControl $nodeName "temperatureDissipation" (!$grid);
+		editorTemplate -dimControl $nodeName "temperatureDiffusion" (!$dynGrid);
+		editorTemplate -dimControl $nodeName "temperatureTurbulence" (!$dynVel || !$grid);
+		editorTemplate -dimControl $nodeName "heatReleased" (!$grid || $rOff);
+		editorTemplate -dimControl $nodeName "temperatureGradient" ($grid || $vOff);
+		editorTemplate -dimControl $nodeName "temperatureTension" (!$grid);
+		editorTemplate -dimControl $nodeName "temperaturePressure" (!$grid);
+		editorTemplate -dimControl $nodeName "temperaturePressureThreshold" (!$grid);
+		editorTemplate -dimControl $nodeName "temperatureNoise" (!$dynGrid || !$dynVel || $vOff);
+		AEfluidShapeDimDynamicSim( $nodeName ) ;
+}
+
+global proc AEfluidShapeUpdateReaction( string $nodeName ) 
+{
+		int	$method = getAttr($nodeName + ".fuelMethod");
+		int $dynGrid = ($method == 2); 
+		// at the moment, reaction is never static, but just in case...
+		int $grid = $dynGrid || ($method == 1); 
+		int $vOff =  ($method == 0);
+		int	$tmethod = getAttr($nodeName + ".temperatureMethod");
+		int $tGrid = ($tmethod == 2) || ($tmethod == 1 );
+
+		editorTemplate -dimControl $nodeName "fuelScale" $vOff;
+		editorTemplate -dimControl $nodeName "reactionSpeed" (!$grid);
+		editorTemplate -dimControl $nodeName "fuelIgnitionTemp" (!$grid);
+		editorTemplate -dimControl $nodeName "maxReactionTemp" (!$grid);
+		editorTemplate -dimControl $nodeName "airFuelRatio" (!$grid);
+		editorTemplate -dimControl $nodeName "heatReleased" (!$tGrid || $vOff);
+		editorTemplate -dimControl $nodeName "lightReleased" $vOff;
+		editorTemplate -dimControl $nodeName "lightColor" $vOff;
+		editorTemplate -dimControl $nodeName "fuelGradient" ($grid || $vOff);
+		AEfluidShapeDimDynamicSim( $nodeName ) ;
+}
+
+global proc AEfluidShapeUpdateColor( string $nodeName ) 
+{
+		int	$method = getAttr($nodeName + ".colorMethod");
+		int		$useColor = ($method > 0);
+		editorTemplate -dimControl $nodeName "colorDissipation" (!$useColor);
+		editorTemplate -dimControl $nodeName "colorDiffusion" (!$useColor);
+		editorTemplate -dimControl $nodeName "color" ($useColor);
+		editorTemplate -dimControl $nodeName "color_Interp" ($useColor);
+		editorTemplate -dimControl $nodeName "colorInput" ($useColor);
+		editorTemplate -dimControl $nodeName "colorInputBias" ($useColor);
+}
+
+global proc AEfluidShapeSelfShadow( string $nodeName ) 
+{
+		int		$shadow = getAttr($nodeName + ".selfShadowing");
+		editorTemplate -dimControl $nodeName "hardwareSelfShadow" (!$shadow);
+		editorTemplate -dimControl $nodeName "shadowOpacity" (!$shadow);
+}
+
+global proc AEfluidShapeLightType( string $nodeName ) 
+{
+		int		$type = getAttr($nodeName + ".lightType");
+		editorTemplate -dimControl $nodeName "directionalLight" ($type != 1);
+		editorTemplate -dimControl $nodeName "pointLight" ($type != 2);
+		editorTemplate -dimControl $nodeName "pointLightDecay" ($type != 2);
+}
+
+global proc AEfluidShapeSquareVoxels( string $nodeName ) 
+{
+		int		$sv = getAttr($nodeName + ".squareVoxels");
+		int		$ar = getAttr($nodeName + ".autoResize");
+		editorTemplate -dimControl $nodeName "baseResolution" (!$sv && !$ar);
+		editorTemplate -dimControl $nodeName "resolution" ($sv || $ar);
+}
+
+global proc AEfluidShapeAutoResize( string $nodeName )
+{
+		int		$sv = getAttr($nodeName + ".squareVoxels");
+		int		$ar = getAttr($nodeName + ".autoResize");
+		editorTemplate -dimControl $nodeName "baseResolution" (!$sv && !$ar);
+		editorTemplate -dimControl $nodeName "resolution" ($sv || $ar);
+		editorTemplate -dimControl $nodeName "autoResizeThreshold" (!$ar);
+		editorTemplate -dimControl $nodeName "autoResizeMargin" (!$ar);
+		editorTemplate -dimControl $nodeName "resizeClosedBoundaries" (!$ar);
+		editorTemplate -dimControl $nodeName "dynamicOffset" (!$ar);
+		editorTemplate -dimControl $nodeName "squareVoxels" ($ar);
+		editorTemplate -dimControl $nodeName "resizeToEmitter" (!$ar);
+		editorTemplate -dimControl $nodeName "resizeInSubsteps" (!$ar);
+		editorTemplate -dimControl $nodeName "maxResolution" (!$ar);
+}
+
+global proc AEfluidShapeSelfForce( string $nodeName )
+{
+		int		$sf = getAttr($nodeName + ".selfForce");
+		int $dim = ($sf == 0);
+		editorTemplate -dimControl $nodeName "equilibriumValue" $dim;
+		editorTemplate -dimControl $nodeName "selfAttract" $dim;
+		editorTemplate -dimControl $nodeName "selfRepel" $dim;
+		editorTemplate -dimControl $nodeName "selfForceDistance" $dim;
+}
+
+global proc AEfluidShapeLiquidMethod( string $nodeName )
+{
+		int		$sim = getAttr($nodeName + ".enableLiquidSimulation");
+		int		$lm = getAttr($nodeName + ".liquidMethod");
+		int		$dm = getAttr($nodeName + ".densityMethod");
+		int		$vm = getAttr($nodeName + ".velocityMethod");
+		int		$dim = ($sim == 0 || $dm == 0 || $vm != 2);
+
+		editorTemplate -dimControl $nodeName "liquidMinDensity" $dim ;
+		editorTemplate -dimControl $nodeName "liquidMistFall" $dim ;
+		editorTemplate -dimControl $nodeName "massRange" ($dim || $lm != 2);
+}
+
+global proc AEfluidShapeEnableLiquid( string $nodeName )
+{
+		 AEfluidShapeLiquidMethod( $nodeName );
+}
+
+/*
+global proc AEfluidShapeRealLights( string $nodeName ) 
+{
+		int		$realLights = getAttr($nodeName + ".realLights");
+		editorTemplate -dimControl $nodeName "directionalLight" ($realLights);
+}
+*/
+
+global proc AEfluidAttrTemplate( string $nodeName, string $nodeType )
+{
+	int $debug = 0;
+	editorTemplate -beginScrollLayout;
+		editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kDisableEvaluation"))  "disableInteractiveEval";
+		editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kContainerProperties"))  -collapse false;
+			editorTemplate -suppress "is2d";
+			
+			string $boundZ = (uiRes("m_AEfluidAttrTemplate.kBoundaryZ"));	
+			string $useHeight = (uiRes("m_AEfluidAttrTemplate.kUseHeightField"));	
+			string $resolution = (uiRes("m_AEfluidAttrTemplate.kResolution"));
+			
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kSquareVoxels")) "squareVoxels" "AEfluidShapeSquareVoxels";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kBaseResolution")) "baseResolution";
+//			editorTemplate -addControl -label _L10N( kIs2d, "2D" )  "is2d";
+			editorTemplate -callCustom
+				( "AEfluidShape2d3dIntFldNew \"" + $resolution + "\"" )
+				AEfluidShape2d3dIntFldReplace
+				resolution;
+
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kSize"))  "dimensions";
+				editorTemplate -addControl "boundaryX";
+				editorTemplate -addControl "boundaryY";
+				
+			editorTemplate -callCustom
+				("AEfluidShapeAttrEnumNew \"" + $boundZ + "\"")
+				AEfluidShapeAttrEnumReplace boundaryZ;
+
+			editorTemplate -callCustom
+				("AEfluidShapeHideCheckBoxNew \"" + $useHeight + "\"")
+				AEfluidShapeHideCheckBoxReplace heightField;
+
+			editorTemplate -endLayout;
+
+			editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kContentsMethod"))  -collapse false;
+
+			editorTemplate -addSeparator;
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kDensity"))  "densityMethod"
+											"AEfluidShapeUpdateDensity";
+			editorTemplate -addControl "densityGradient";
+			editorTemplate -addSeparator;
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kVelocity"))  "velocityMethod" 
+											"AEfluidShapeUpdateVelocity";
+			editorTemplate -addControl "velocityGradient";
+			editorTemplate -addSeparator;
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kTemperature"))  "temperatureMethod"
+											"AEfluidShapeUpdateTemperature";
+			editorTemplate -addControl "temperatureGradient";
+			editorTemplate -addSeparator;
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kFuel"))  "fuelMethod"
+											"AEfluidShapeUpdateReaction";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kFuelGradient"))  "fuelGradient";
+			editorTemplate -addSeparator;
+
+			editorTemplate -addControl "colorMethod"
+											"AEfluidShapeUpdateColor";
+
+			editorTemplate -addSeparator;
+			editorTemplate -addControl "falloffMethod";
+
+		editorTemplate -endLayout;
+
+		editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kDisplay"))  -collapse true;
+			string $slicesPerVoxel = (uiRes("m_AEfluidAttrTemplate.kSlicesPerVoxel"));
+			editorTemplate -addControl "shadedDisplay" "AEfluidShapeShadedDisplay";
+			editorTemplate -addControl "opacityPreviewGain";
+			editorTemplate -callCustom
+				("AEfluidShapeHideIntSliderNew \""+$slicesPerVoxel+"\"")
+				AEfluidShapeHideIntSliderReplace
+				slices;
+			editorTemplate -addControl "voxelQuality";
+			editorTemplate -addSeparator;
+			editorTemplate -callCustom
+				"AEfluidShapeBoundaryNew"
+				AEfluidShapeBoundaryReplace
+				boundaryDraw;
+			editorTemplate -addControl "numericDisplay";
+			editorTemplate -addControl "wireframeDisplay" "AEfluidShapeWireframeDisplay";
+
+			editorTemplate -addSeparator;
+
+			editorTemplate -suppress subVolumeCenter;
+			editorTemplate -suppress subVolumeSize;
+			editorTemplate -suppress drawSubVolume;
+
+			editorTemplate -addControl "velocityDraw" "AEfluidShapeVelocityDraw";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kDrawArrowheads"))  "drawHeads";
+			editorTemplate -addControl "velocityDrawSkip";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kDrawLength"))  "velocityDrawLength";
+
+		editorTemplate -endLayout;
+
+		editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kDynamicSimulation"))  -collapse true;
+			editorTemplate -suppress "currentTime";
+			editorTemplate -addControl "gravity";
+			editorTemplate -addControl "viscosity";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kFriction"))  "friction";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kDamp"))  "velocityDamp";
+			editorTemplate -addSeparator;
+			// editorTemplate -suppress "solver";
+			editorTemplate -addControl "solver";
+			editorTemplate -addControl "highDetailSolve";
+
+			editorTemplate -addControl "substeps";
+			
+			editorTemplate -addControl "solverQuality";
+
+			editorTemplate -addControl "gridInterpolator";
+				
+			editorTemplate -addControl "startFrame";
+
+			// this is to set the simulation step
+			editorTemplate -suppress "overrideTimeStep";
+			editorTemplate -addControl "simulationRateScale";
+			
+
+			// This needs to be generic solver attr instead
+			editorTemplate -addSeparator;
+			editorTemplate -beginNoOptimize;
+			editorTemplate -addControl "forwardAdvection";	
+			editorTemplate -addControl "conserveMass";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kUseCollisions"))  "collide";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kUseEmission"))  "doEmission";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kUseFields"))  "doFields";
+			editorTemplate -addControl "emitInSubsteps";
+			editorTemplate -endNoOptimize;
+
+			// unused dynamic attributes(add eventually??)
+			editorTemplate -suppress "inheritFactor";
+			editorTemplate -suppress "seed";
+			editorTemplate -suppress "inputForce";
+			editorTemplate -suppress "emissionFunction";
+			editorTemplate -suppress "massConversion";
+	
+
+		editorTemplate -endLayout;
+		
+		editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kLiquidsBlock"))  -collapse true;
+			editorTemplate -addControl "enableLiquidSimulation" "AEfluidShapeEnableLiquid"; 
+			editorTemplate -addControl "liquidMethod" "AEfluidShapeLiquidMethod";
+			editorTemplate -addControl "liquidMinDensity";
+			editorTemplate -addControl "liquidMistFall";
+			editorTemplate -addControl "massRange";
+			editorTemplate -addControl "densityTension";
+			editorTemplate -addControl "tensionForce";
+			editorTemplate -addControl "densityPressure";
+			editorTemplate -addControl "densityPressureThreshold";
+		editorTemplate -endLayout;
+		
+		editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kAutoResizeBlock"))  -collapse true;
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kAutoResize"))  "autoResize" "AEfluidShapeAutoResize";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kResizeClosedBoundaries")) "resizeClosedBoundaries";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kResizeToEmitter")) "resizeToEmitter";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kResizeInSubsteps")) "resizeInSubsteps";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kMaxResolution")) "maxResolution";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kDynamicOffset")) "dynamicOffset";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kAutoResizeThreshold")) "autoResizeThreshold";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kAutoResizeMargin")) "autoResizeMargin";
+		editorTemplate -endLayout;
+		
+		editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kSelfAttractBlock"))  -collapse true;
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kSelfForce"))  "selfForce" "AEfluidShapeSelfForce";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kSelfAttract")) "selfAttract";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kSelfRepel")) "selfRepel";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kEquilibriumValue")) "equilibriumValue";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kSelfForceDistance")) "selfForceDistance";
+		editorTemplate -endLayout;
+		
+		editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kContentsDetails"))  -collapse true;
+			editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kDensity2"))  -collapse true;
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kDensityScale"))  "densityScale";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kBuoyancy"))  "densityBuoyancy";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kDissipation"))  "densityDissipation";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kDiffusion"))  "densityDiffusion";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kDensityPressure"))  "densityPressure";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kDensityPressureThreshold"))  "densityPressureThreshold";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kDensityNoise"))  "densityNoise";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kDensityTension"))  "densityTension";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kTensionForce"))  "tensionForce";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kDensityGradientForce"))  "densityGradientForce";
+			editorTemplate -endLayout;
+			editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kVelocity2"))  -collapse true;
+				editorTemplate -addControl "velocityScale";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kSwirl"))  "velocitySwirl";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kVelocityNoise"))  "velocityNoise";
+			editorTemplate -endLayout;
+			editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kTurbulence"))  -collapse true;
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kStrength"))  "turbulenceStrength";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kFrequency"))  "turbulenceFrequency";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kSpeed"))  "turbulenceSpeed";
+				editorTemplate -suppress "turbulenceRes";
+				editorTemplate -suppress "velocityAdvect";
+				editorTemplate -suppress "velocityProject";
+			editorTemplate -endLayout;
+			editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kTemperature2"))  -collapse true;
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kTemperatureScale"))  "temperatureScale";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kBuoyancy2"))  "buoyancy";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kTemperaturePressure"))  "temperaturePressure";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kTemperaturePressureThreshold"))  "temperaturePressureThreshold";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kDissipation2"))  "temperatureDissipation";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kDiffusion2"))  "temperatureDiffusion";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kTurbulence2"))  "temperatureTurbulence";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kTemperatureNoise"))  "temperatureNoise";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kTemperatureTension"))  "temperatureTension";
+			editorTemplate -endLayout;
+			editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kFuel2"))  -collapse true;
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kFuelScale"))  "fuelScale";
+				editorTemplate -addControl "reactionSpeed";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kAirFuelRatio"))  "airFuelRatio";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kIgnitionTemperature"))  "fuelIgnitionTemp";
+	 			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kMaxTemperature"))  "maxReactionTemp";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kHeatReleased"))  "heatReleased";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kLightReleased"))  "lightReleased";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kLightColor"))  "lightColor";
+			editorTemplate -endLayout;
+			editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kColor"))  -collapse true;
+					editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kColorDissipation"))  "colorDissipation";
+					editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kColorDiffusion"))  "colorDiffusion";
+			editorTemplate -endLayout;
+		editorTemplate -endLayout;
+		editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kGridsCache"))  -collapse true;
+			editorTemplate -suppress "cacheDensity";
+			editorTemplate -suppress "cacheVelocity";
+			editorTemplate -suppress "cacheTemperature";
+			editorTemplate -suppress "cacheReaction";
+			editorTemplate -suppress "cacheColor";
+			editorTemplate -suppress "cacheTextureCoordinates";
+			editorTemplate -suppress "cacheFalloff";
+			editorTemplate -endNoOptimize;
+			editorTemplate -beginNoOptimize;
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kReadDensity"))  "loadDensity";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kReadVelocity"))  "loadVelocity";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kReadTemperature"))  "loadTemperature";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kReadFuel"))  "loadReaction";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kReadColor"))  "loadColor";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kReadTextureCoordinates"))  "loadTextureCoordinates";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kReadFalloff"))  "loadFalloff";
+			editorTemplate -endNoOptimize;
+		editorTemplate -endLayout;
+
+		if( $nodeType == "fluidShape" ){
+			editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kSurface"))  -collapse true;
+				editorTemplate -callCustom AEfluidShapeSurfaceRenderNew
+					AEfluidShapeSurfaceRenderReplace surfaceRender;
+
+				editorTemplate -callCustom AEfluidShapeCloudSurfaceNew
+					AEfluidShapeCloudSurfaceReplace softSurface;
+
+				editorTemplate -addControl "surfaceThreshold";
+				editorTemplate -addControl "surfaceTolerance";
+				editorTemplate -addControl "specularColor";
+				editorTemplate -addControl "cosinePower";
+				AEaddRampControl ($nodeName+".environment");
+				editorTemplate -addControl "refractiveIndex";
+			editorTemplate -endLayout;	
+			editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kOutputMesh"))  -collapse true;
+				editorTemplate -addControl "meshMethod";
+				editorTemplate -addControl "meshResolution";
+				editorTemplate -addControl "meshSmoothingIterations";
+				editorTemplate -addControl "colorPerVertex";
+				editorTemplate -addControl "opacityPerVertex";
+				editorTemplate -addControl "incandescencePerVertex";
+				editorTemplate -addControl "velocityPerVertex";
+				editorTemplate -addControl "uvwPerVertex";
+				editorTemplate -addControl "useGradientNormals";
+			editorTemplate -endLayout;
+			
+		} else {
+			editorTemplate -suppress "surfaceRender";
+			editorTemplate -suppress "softSurface";
+			editorTemplate -suppress "surfaceThreshold";
+			editorTemplate -suppress "surfaceTolerance";
+			editorTemplate -suppress "specularColor";
+			editorTemplate -suppress "cosinePower";
+			editorTemplate -suppress "environment";
+			editorTemplate -suppress "refractiveIndex";
+		}
+
+		editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kShading"))  -collapse true;
+			editorTemplate -addControl "transparency";
+			if( $nodeType == "fluidShape" ){
+				editorTemplate -addControl "glowIntensity";
+			} else {
+				editorTemplate -suppress "glowIntensity";
+			}
+			editorTemplate -addSeparator;
+			editorTemplate -addControl "dropoffShape" "AEfluidShapeDropoffShape";
+			editorTemplate -addControl "edgeDropoff";
+
+			AEaddRampControl ($nodeName+".color");
+			// editorTemplate -addControl "colorInputBias";
+
+			AEaddRampControl ($nodeName+".incandescence");
+			// editorTemplate -addControl "incandescenceInputBias";
+
+			AEaddRampControl ($nodeName+".opacity");
+			// editorTemplate -addControl "opacityInputBias";
+
+			editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kMatteOpacity"))  -collapse true;
+				editorTemplate -addControl "matteOpacityMode" "AEfluidShapeMatteOpacity";
+				editorTemplate -addControl "matteOpacity";
+			editorTemplate -endLayout;
+		editorTemplate -endLayout;
+
+		editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kShadingQuality"))  -collapse true;
+			if( $nodeType == "fluidShape" ){
+				editorTemplate -addControl "quality";
+				editorTemplate -addControl "contrastTolerance";
+				editorTemplate -addControl "sampleMethod" "AEfluidShapeSampleMethod";
+			} else {
+				editorTemplate -suppress "quality";
+				editorTemplate -suppress "contrastTolerance";
+				editorTemplate -suppress "sampleMethod";
+			}
+			editorTemplate -addControl "renderInterpolator";
+		editorTemplate -endLayout;
+
+		editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kTextures"))  -collapse true;
+			editorTemplate -beginNoOptimize;
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kTextureColor"))  "colorTexture" "AEfluidShapeShaderTexture";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kTextureIncandescence"))  "incandTexture" "AEfluidShapeShaderTexture";
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kTextureOpacity"))  "opacityTexture" "AEfluidShapeShaderTexture";
+			editorTemplate -addControl "textureType" "AEfluidShapeShaderTexture";
+			
+			// mandelbrot attrs 1
+			editorTemplate -addControl "mandelbrotType" "AEfluidShapeMandelDimType";
+			editorTemplate -addControl "mandelbrotShadeMethod";
+			editorTemplate -addControl "mandelbrotInsideMethod";
+
+			
+			editorTemplate -endNoOptimize;
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kCoordinateMethod"))  "coordinateMethod" "AEfluidShapeCoordMethod";
+			editorTemplate -addControl "coordinateSpeed";
+			editorTemplate -addSeparator;
+			editorTemplate -addControl "colorTexGain";
+			editorTemplate -addControl "incandTexGain";
+			editorTemplate -addControl "opacityTexGain";
+			editorTemplate -addSeparator;
+			editorTemplate -addControl "threshold";
+			editorTemplate -addControl "amplitude";
+			editorTemplate -addControl "ratio";
+			editorTemplate -addControl "frequencyRatio";
+			editorTemplate -addControl "depthMax";
+			
+			// mandelbrot attrs 2
+			editorTemplate -addControl "mandelbrotDepth";
+			editorTemplate -addControl "focus";
+			
+			editorTemplate -beginNoOptimize;
+			editorTemplate -addControl "invertTexture";
+			editorTemplate -addControl "inflection";
+			editorTemplate -endNoOptimize;
+			editorTemplate -addSeparator;
+			editorTemplate -addControl "textureTime";
+			editorTemplate -addControl "zoomFactor";
+			editorTemplate -addControl "frequency";
+			editorTemplate -addControl "textureOriginX";
+			editorTemplate -addControl "textureOriginY";
+			editorTemplate -addControl "textureOriginZ";
+			editorTemplate -addControl "textureScale";
+			editorTemplate -addControl "textureRotate";
+			editorTemplate -addSeparator;
+			editorTemplate -addControl "implode";
+			editorTemplate -addControl "implodeCenter";
+			
+			// mandelbrot attrs 3
+			editorTemplate -addControl "zoomFactor";	
+			editorTemplate -addControl "lobes";
+			editorTemplate -addControl "escapeRadius";
+			editorTemplate -addControl "leafEffect";
+			editorTemplate -addControl "checker";					
+			editorTemplate -addSeparator;			
+
+			editorTemplate -addControl "billowDensity";
+			editorTemplate -addControl "spottyness";
+			editorTemplate -addControl "sizeRand";
+			editorTemplate -addControl "randomness";
+			editorTemplate -addControl "falloff";
+			
+			// mandelbrot attrs 4
+			editorTemplate -addControl "points";
+			editorTemplate -addControl "circles";
+			editorTemplate -addControl "circleRadius";
+			editorTemplate -addControl "circleSizeRatio";
+			editorTemplate -addControl "stalksU";
+			editorTemplate -addControl "stalksV";
+			editorTemplate -addControl "lineOffsetU";
+			editorTemplate -addControl "lineOffsetV";
+			editorTemplate -addControl "lineOffsetRatio";
+			editorTemplate -addControl "lineFocus";
+			editorTemplate -addControl "lineBlending";	
+					
+			editorTemplate -addSeparator;			
+
+
+			editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kNumberOfWaves"))  "numWaves";
+			
+			// mandelbrot attrs 5
+			editorTemplate -addControl "juliaU";
+			editorTemplate -addControl "juliaV";
+			
+			editorTemplate -addControl "boxRadius";
+			editorTemplate -addControl "boxMinRadius";
+			editorTemplate -addControl "boxRatio";
+			
+		editorTemplate -endLayout;
+
+		if( $nodeType == "fluidShape" ){
+			editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kLighting"))  -collapse true;
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kSelfShadow"))  "selfShadowing" "AEfluidShapeSelfShadow";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kHardwareShadow"))  "hardwareSelfShadow";
+				editorTemplate -addControl "shadowOpacity";
+				editorTemplate -addControl "shadowDiffusion";
+				editorTemplate -addControl "lightType" "AEfluidShapeLightType";
+				editorTemplate -addControl "lightBrightness";
+				editorTemplate -addControl -label (uiRes("m_AEfluidAttrTemplate.kFluidLightColor")) "fluidLightColor";
+				editorTemplate -addSeparator;
+				editorTemplate -addControl "ambientBrightness";
+				editorTemplate -addControl "ambientDiffusion";
+				editorTemplate -addControl "ambientColor";
+				editorTemplate -addSeparator;
+				editorTemplate -addControl "realLights"; // "AEfluidShapeRealLights";
+				editorTemplate -addControl "directionalLight";
+				editorTemplate -addControl "pointLight";
+				editorTemplate -addControl "pointLightDecay";
+			editorTemplate -endLayout;
+		} else {
+				editorTemplate -suppress selfShadowing;
+				editorTemplate -suppress hardwareSelfShadow;
+				editorTemplate -suppress shadowOpacity;
+				editorTemplate -suppress realLights;
+				editorTemplate -suppress directionalLight;
+		}
+		if( $nodeType != "fluidShape" ){
+			// Standard texture color controls
+			editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kColorBalance"))  -collapse true;
+				editorTemplate -addControl "defaultColor";
+				editorTemplate -addControl "alphaGain";
+				editorTemplate -addControl "alphaOffset";
+			editorTemplate -endLayout;
+		}
+
+		if ( $debug ) {
+			editorTemplate -beginLayout (uiRes("m_AEfluidAttrTemplate.kOutput"))  -collapse false;
+			editorTemplate -endLayout;
+		}
+
+		// Suppress attrs not currently used or not editable
+		editorTemplate -suppress "diskCache";
+		editorTemplate -suppress "diskCacheIC";
+		editorTemplate -suppress "objectType";
+		editorTemplate -suppress "surfaceShaderDepth";
+
+		// Suppress Cloth Collision Ramps
+		editorTemplate -suppress "collisionOffsetVelocityIncrement";
+		editorTemplate -suppress "collisionDepthVelocityIncrement";
+		editorTemplate -suppress "collisionOffsetVelocityMultiplier";
+		editorTemplate -suppress "collisionDepthVelocityMultiplier";
+
+		// include/call base class/node attributes
+		if( $nodeType == "fluidShape" ){
+			AEsurfaceShapeTemplate $nodeName;
+		} else {
+			AEshapeTemplate $nodeName;
+			editorTemplate -suppress "ignoreSelfShadowing";
+			editorTemplate -suppress "controlPoints";
+			editorTemplate -suppress "weights";
+			editorTemplate -suppress "tweak";
+			editorTemplate -suppress "relativeTweak";
+			editorTemplate -suppress "currentUVSet";
+			editorTemplate -suppress "uvSet";
+			editorTemplate -suppress "compInstObjGroups";
+			editorTemplate -suppress "smoothShading";
+			editorTemplate -suppress "castsShadows";
+			editorTemplate -suppress "receiveShadows";
+			editorTemplate -suppress "motionBlur";
+			editorTemplate -suppress "primaryVisibility";
+			editorTemplate -suppress "visibleInReflections";
+			editorTemplate -suppress "visibleInRefractions";
+			editorTemplate -suppress "doubleSided";
+        	editorTemplate -suppress "opposite";
+			editorTemplate -suppress "geometryAntialiasingOverride";
+			editorTemplate -suppress "antialiasingLevel";
+			editorTemplate -suppress "shadingSamplesOverride";
+			editorTemplate -suppress "shadingSamples";
+			editorTemplate -suppress "maxShadingSamples";
+			editorTemplate -suppress "volumeSamplesOverride";
+			editorTemplate -suppress "volumeSamples";
+			editorTemplate -suppress "depthJitter";
+			editorTemplate -suppress "maxVisibilitySamplesOverride";
+			editorTemplate -suppress "maxVisibilitySamples";
+			editorTemplate -suppress "boundingBoxScale"; 
+			editorTemplate -suppress "featureDisplacement";
+			editorTemplate -suppress "initialSampleRate";
+			editorTemplate -suppress "extraSampleRate";
+			editorTemplate -suppress "textureThreshold";
+			editorTemplate -suppress "normalThreshold";
+			editorTemplate -suppress "displayImmediate";
+		}
+
+	editorTemplate -addExtraControls;
+	editorTemplate -endScrollLayout;
+}
+

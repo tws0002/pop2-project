@@ -1,0 +1,1087 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+// This string is used as an optionVar value for the
+// directory when we want to indicate that the preference is to
+// use the current project's data directory.
+//
+global string $gAnimImportCurrentProject             = "CurrentProject";
+global string $gAtomImportTemplateCurrentProject     = "CurrentProject";
+global int    $gAtomImportTemplateSetFileWithBrowser = 0;
+global string $gAtomImportMapCurrentProject          = "CurrentProject";
+global int    $gAtomImportMapSetFileWithBrowser      = 0;
+global string $gAtomImportViewMenu                   = "";
+
+proc atomImportCleanOptionMenu( )
+{
+	global string $gAtomImportViewMenu;
+	string $item, $items[] = `optionMenuGrp -query -itemListLong $gAtomImportViewMenu`;
+	for($item in $items)
+		deleteUI $item;
+}
+
+proc atomImportPopulateOptionMenuWithViews(string $fullname, string $templateName)
+{
+	global string $gAtomImportViewMenu;
+	if (`optionMenuGrp -q -exists $gAtomImportViewMenu`) {
+
+		//clean it first
+		atomImportCleanOptionMenu();
+		//None always first
+		string $menu = $gAtomImportViewMenu + "|OptionMenu";
+
+		menuItem -parent $menu -label  (uiRes("m_importAnimSharedOptions.kNone")) ;
+		string $template = basename($templateName,".template");
+		if(size($template) >0)
+		{
+			//make sure it's loaded.
+			string $cmd  = "containerTemplate -silent -force -load -fileName ";
+			$cmd += ("\""+$fullname+"\"") + " " + $template + ";";
+			//we don't check the catch here since DNA returns 			//error messages here that screws up catchQuiet
+			//though the template loads
+			catchQuiet(`eval $cmd`);
+
+			string $cmdList = "containerTemplate -silent -query -viewList " + $template;
+			string $strings[];
+			if(catchQuiet($strings = eval($cmdList)) == 0)
+			{
+				string $s;
+				for($s in $strings)
+				{
+					if(size($s) >0)
+						menuItem -parent $menu -label $s ;
+				}
+			}
+
+		}
+	}
+}
+
+global proc string atomImportMapGetCurrentDir()
+//
+// Return a string corresponding to the current directory preference.
+// Use the current project's data directory by default.
+//
+{
+	global string $gAtomImportMapCurrentProject;
+
+	// first find the current project directory, if it is defined
+	//
+	string $currentProj = (`workspace -q -rd`+"data");
+
+	// check what the user has as their preference
+	//
+	if (`optionVar -exists atomImportMapDirName`)
+	{
+		string $mapVar = `optionVar -q atomImportMapDirName`;
+		if ($mapVar != $gAtomImportMapCurrentProject) {
+			$currentProj = $mapVar;
+		}
+	}
+
+	return $currentProj;
+}
+
+global proc atomImportMapSetDirOptionVar()
+//
+// Set the optionVar based on the user's entry in the option box
+//
+{
+	global string $gAtomImportMapCurrentProject;
+
+	if ( `textFieldGrp -q -en importMapWidget` )
+	{
+		string $filename = "";
+		string $dirname  = $gAtomImportMapCurrentProject;
+
+		string $value = `textFieldGrp -q -tx importMapWidget`;
+		if (size($value))
+		{
+			$filename = basename($value,"");
+			$dirname  = dirname($value);
+
+			string $currentProj = (`workspace -q -rd` + "data\/");
+			if ($currentProj == $dirname)
+				$dirname = $gAtomImportMapCurrentProject;
+		}
+
+		optionVar -sv atomImportMapFileName $filename;
+		optionVar -sv atomImportMapDirName  $dirname;
+	}
+}
+
+global proc int atomImportMapSetFile( string $file )
+{
+	textFieldGrp -e -tx $file importMapWidget;
+	atomImportMapSetDirOptionVar();
+	string $filename = basename($file,"");
+	optionVar -stringValue atomImportMapFileName $filename;
+
+	return 1;
+}
+
+global proc string atomImportTemplateGetCurrentDir()
+//
+// Return a string corresponding to the current directory preference.
+// Use the current project's data directory by default.
+//
+{
+	global string $gAtomImportTemplateCurrentProject;
+		
+	// first find the current project directory, if it is defined
+	//
+	string $currentProj = (`workspace -q -rd`+"data");
+	
+	// check what the user has as their preference
+	//
+	if (`optionVar -exists atomImportTemplateDirName`)
+	{
+		string $templateVar = `optionVar -q atomImportTemplateDirName`;
+		if ($templateVar != $gAtomImportTemplateCurrentProject) {
+			$currentProj = $templateVar;
+		}
+	}
+
+	return $currentProj;
+}
+
+global proc atomImportTemplateSetDirOptionVar()
+//
+// Set the optionVar based on the user's entry in the option box
+//
+{
+	global string $gAtomImportTemplateCurrentProject;
+
+	if ( `textFieldGrp -q -en importTemplateWidget` )
+	{
+		string $value = `textFieldGrp -q -tx importTemplateWidget`;
+		if (size($value))
+		{
+			string $filename = basename($value,"");
+			optionVar -stringValue atomImportTemplateFileName $filename;
+			
+			string $dir = dirname($value);
+			string $currentProj = (`workspace -q -rd`+"data\/");
+			if ($currentProj == $dir) {
+				$value = $gAtomImportTemplateCurrentProject;
+			}
+			optionVar -sv atomImportTemplateDirName $dir;
+		}
+		else
+		{
+			optionVar -sv atomImportTemplateFileName "";
+			optionVar -sv atomImportTemplateDirName $gAtomImportTemplateCurrentProject;
+		}
+	}
+}
+
+global proc int atomImportTemplateSetFile( string $file, string $type )
+{
+	textFieldGrp -e -tx $file importTemplateWidget;
+	atomImportTemplateSetDirOptionVar();
+	string $filename = basename($file,"");
+	optionVar -stringValue atomImportTemplateFileName $filename;
+
+	string $dirToUse = atomImportTemplateGetCurrentDir();
+	string $fullname = ($dirToUse+"\/"+$filename);
+
+	atomImportPopulateOptionMenuWithViews($fullname,$filename);
+
+	return 1;
+}
+
+global proc atomImportTemplateBrowseForFile()
+{
+	string $callBack = "atomImportTemplateSetFile ";
+	string $action = (uiRes("m_importAnimSharedOptions.kSetDir"));
+	string $startInDir;
+	$startInDir = `textFieldGrp -q -tx importTemplateWidget`;
+	if ( size( $startInDir ) == 0 )
+	{
+		$startInDir = `internalVar -uwd`;
+	} else {
+		$startInDir = dirname($startInDir);
+	}
+
+	if ( `file -q -ex $startInDir` ) {
+		workspace -dir $startInDir;
+	}
+
+	global int $gAtomImportTemplateSetFileWithBrowser;
+	$gAtomImportTemplateSetFileWithBrowser= 1;
+	string $template = (uiRes("m_importAnimSharedOptions.kTemplateFiles"));
+	string $filter = $template + " (*.template)";
+	string $caption = (uiRes("m_importAnimSharedOptions.kATOMTemplate"));
+	string $fileCmd = ("fileDialog2 ");
+	$fileCmd += (" -caption \"" + $caption + "\"");
+	//$fileCmd += (" -okCaption \"" + $options[0] + "\"");
+	$fileCmd += (" -fileMode 1");
+	$fileCmd += (" -startingDirectory \"" + $startInDir + "\"");
+	$fileCmd += (" -returnFilter 0");
+	$fileCmd += (" -fileFilter \"" + $filter + "\"");
+	$fileCmd += (" -selectFileFilter \"" + $template + "\"");
+
+	string $file[] = `eval $fileCmd`;
+	if (0 < size($file) && "" != $file[0])
+	{
+		string $path = fromNativePath($file[0]);
+		string $cmd = ($callBack + "\"" + $path + "\"");
+
+		if (1 < size($file) && "" != $file[1])
+		{
+			string $filterType = "template";
+			$cmd += (" \"" + $filterType + "\"");
+		}
+		else
+		{
+			$cmd += (" \"\"");
+		}
+
+		eval $cmd;
+	}
+}
+
+global proc string animImportGetCurrentDir()
+//
+// Return a string corresponding to the current directory preference.
+// Use the current project's data directory by default.
+//
+{
+	global string $gAnimImportCurrentProject;
+
+	// first find the current project directory, if it is defined
+	//
+	string $currentProj = (`workspace -q -rd` + "data\/");
+
+	// check what the user has as their preference
+	//
+	if (`optionVar -exists animImportDirName`)
+	{
+		string $dir = `optionVar -q animImportDirName`;
+		if ($dir != $gAnimImportCurrentProject)
+			$currentProj = $dir;
+	}
+
+	// Ensure the directory name ends with a trailing directory separator
+	$currentProj = fromNativePath($currentProj);
+	string $separator = "\/";
+	if (!endsWith($currentProj, $separator))
+		$currentProj += $separator;
+
+	return $currentProj;
+}
+
+global proc animImportSetDirOptionVar()
+//
+// Set the optionVar based on the user's entry in the option box
+//
+{
+	global string $gAnimImportCurrentProject;
+
+	if ( `textFieldGrp -q -en importFileWidget` == false)
+		return;
+
+	string $filename = "";
+	string $dirname  = $gAnimImportCurrentProject;
+
+	string $value = `textFieldGrp -q -tx importFileWidget`;
+	if (size($value))
+	{
+		$filename = basename($value,"");
+		$dirname  = dirname($value);
+
+		string $currentProj = (`workspace -q -rd` + "data\/");
+		if ($currentProj == $dirname)
+			$dirname = $gAnimImportCurrentProject;
+	}
+
+	optionVar -sv animImportDirName  $dirname;
+	optionVar -sv animImportFileName $filename;
+}
+
+//if the file has an export edit file then disable hierarchy
+global proc atomImportHierarchyOptionEnable()
+{
+	string $filename = `optionVar -q animImportFileName`;
+	if (size($filename) == 0)
+		return;
+
+	string $dirname = animImportGetCurrentDir();
+	string $fullPath = ($dirname + $filename);
+	int $fileId=`fopen $fullPath "r"`;
+	if($fileId == 0)
+		return;
+
+	int $hasEdit = 0;
+
+	string $nextWord = `fgetword $fileId`;
+	while ( size( $nextWord ) > 0 ) {
+		if($nextWord == "offlineFile")
+			$hasEdit =1;
+		
+		//if we get a dagNode the header is done so bail
+		if($hasEdit || $nextWord == "dagNode")
+			break;
+
+		$nextWord = `fgetword $fileId`;
+	}
+
+	fclose $fileId;
+
+	//if we have an edit then make sure hierarchy isn't selected.
+	if($hasEdit ==1)
+	{
+		//if the option is hierarchy change it to matchByName
+		int $match = importAnimMatchMethod();
+		if($match == 1)
+		{
+			optionVar -intValue animImportMatchBy 2;
+			if (`radioButtonGrp -exists matchMethod`) 
+			{
+				radioButtonGrp -e -sl 2 matchMethod;
+			}
+		}
+	}
+
+	//and set the state of hierarchy
+	int $enableHierarchy = !$hasEdit;
+	if (`radioButtonGrp -exists matchMethod`) 
+		radioButtonGrp -e -en1 $enableHierarchy matchMethod;
+}
+
+
+global proc animImportOptionsEnable()
+//
+// Description:
+//	These are the widgets that get enabled and
+//	disabled based on the certain states.  Put them
+//	here so they're all in one place.
+//	
+{
+	global string $gAtomImportViewMenu;
+	// Start/End value fields are enabled by the Start/End option
+	//
+	int $enableStartEnd = (1 == `radioButtonGrp -q -select timeRange`);
+	int $timeSlider = (2 == `radioButtonGrp -q -select timeRange`);
+
+	floatField -e -enable $enableStartEnd srcFrameStart;
+	floatField -e -enable $enableStartEnd srcFrameEnd;
+	floatField -e -enable $enableStartEnd dstFrameStart;
+	floatField -e -enable $enableStartEnd dstFrameEnd;
+
+	// Disable/enable widgets according to the Match technique
+	//
+	int $matchBy = `radioButtonGrp -q -select matchMethod`;
+	textFieldGrp -e -enable ($matchBy == 3) importMapWidget;
+	symbolButton -e -enable ($matchBy == 3) importMapWidgetBrowser;
+
+	int $enableTextFields = ($matchBy == 2);
+	textFieldGrp -e -enable $enableTextFields searchText;
+	textFieldGrp -e -enable $enableTextFields replaceText;
+	textFieldGrp -e -enable $enableTextFields prefixText;
+	textFieldGrp -e -enable $enableTextFields suffixText;	
+	
+	// Disable/enable widgets according to the import method
+	//
+	int $importMethod = `radioButtonGrp -q -select importMethod`;
+	textFieldGrp -e -enable ($importMethod == 3) importTemplateWidget;
+	symbolButton -e -enable ($importMethod == 3) importTemplateWidgetBrowser;
+
+	optionMenuGrp -e -enable ($importMethod == 3) $gAtomImportViewMenu;
+	
+	//if the file has an export edit file then disable hierarchy
+	atomImportHierarchyOptionEnable();
+
+}
+
+//
+// Create the command string otions to send to ATOM c++ plugin
+//
+global proc string importAnimGetCommand()
+//
+{
+	global string $gAtomImportTemplateCurrentProject;
+        global string $gAtomImportViewMenu; 
+
+	if (`textFieldGrp -q -exists importTemplateWidget`) {
+		// Since the changed callback is not invoked if the user does not
+		// hit enter, update the value now
+		//
+		atomImportTemplateSetDirOptionVar();
+
+	}
+	$gAtomImportTemplateSetFileWithBrowser= 0;
+
+	if (`textFieldGrp -q -exists importMapWidget`) {
+		// Since the changed callback is not invoked if the user does not
+		// hit enter, update the value now
+		//
+		atomImportMapSetDirOptionVar();
+
+	}
+	$gAtomImportMapSetFileWithBrowser = 0;
+	
+	string $dirname = `optionVar -query atomImportTemplateDirName`;
+	if ($dirname == $gAtomImportTemplateCurrentProject) {
+		$dirname = (`workspace -q -rd`+"data\/");
+	}
+	string $filename = `optionVar -query atomImportTemplateFileName`;
+	if (size($filename) == 0) {
+		error((uiRes("m_importAnimSharedOptions.kMustSpecifyFilename")));
+		return "";
+	}
+	string $templateName = $filename;
+	$filename = ($dirname + "\/" + $filename);
+
+	string $currentOptions = ";";
+	$currentOptions += createTimeOptionString();
+
+	string $match = "";
+	int $selected = importAnimMatchMethod();
+	if ($selected == 1) {
+		$match = "hierarchy";
+	} else if ($selected == 2) {
+		$match = "string";
+	} else if ($selected == 3) {
+		$match = "mapFile";
+	}
+
+	$currentOptions += ("match=" + $match);
+	$currentOptions += ";";
+
+	// To do: add support for template-handling
+	//	
+	int $includeHierarchy = importAnimImportMethod();
+	string $optsSelection =  "selectedOnly";
+
+	if ($includeHierarchy == 3)
+	{
+		$optsSelection = "template";
+		string $base = basename($templateName,".template");
+		//make sure it's loaded
+		string $cmd = "containerTemplate -silent -force -load -fileName ";
+		$cmd += ("\""+$filename+"\"") + " " + $base + ";";
+		int $status = catchQuiet(`eval $cmd`);
+		if($status ==0) //loaded fine, so it's okay
+			$currentOptions +=(";template="+$base +";");
+	}
+	else if($includeHierarchy ==2)
+		$optsSelection = "childrenToo";
+	$currentOptions += 	(";selected=" + $optsSelection);
+	$currentOptions += ";";
+
+	if (`textFieldGrp -exists searchText`)
+	{
+		int $selectedView = `optionMenuGrp -query -select $gAtomImportViewMenu`; 
+		
+		if($selectedView != 1) //1 is always None
+		{
+			string $item  = `optionMenuGrp -query -value $gAtomImportViewMenu`;
+			$currentOptions += (";view=" + $item);
+        	$currentOptions += ";";
+		}
+		
+		$currentOptions += 
+			("search=" + `textFieldGrp -q -tx searchText`);
+		$currentOptions += ";";
+		
+		$currentOptions += 
+			("replace=" + `textFieldGrp -q -tx replaceText`);
+		$currentOptions += ";";
+		
+		$currentOptions += 
+			("prefix=" + `textFieldGrp -q -tx prefixText`);
+		$currentOptions += ";";
+		
+		$currentOptions += 
+			("suffix=" + `textFieldGrp -q -tx suffixText`);
+		$currentOptions += ";";
+		string $mapFName = `textFieldGrp -q -tx importMapWidget`;
+		if( $match == "mapFile")
+		{
+			//still need to make sure the filename is not a directory
+			//otherwise crashes will occur on MacOS or Unix.
+			if ( `filetest -f $mapFName` == 0  )
+			{
+				error((uiRes("m_importAnimSharedOptions.kBadMapFile")));
+				return "";
+			}
+
+		}
+
+		$currentOptions += 
+			("mapFile=" + $mapFName);
+		$currentOptions += ";";
+	}
+	
+	return $currentOptions;
+}
+
+global proc setImportAnimSharedOptionVars(int $forceFactorySettings)
+{
+	if( $forceFactorySettings || !`optionVar -exists animImportInsert` ) {
+		// This option will be either: "insert" or "replace" with the
+		// new UI and is used instead of the animImportPaste option.
+		//
+		optionVar -stringValue animImportInsert "insert";
+	}
+
+	// Time Range:
+	//  1 = Start/End, 2 = Time Slider, 3 = From File (Clipboard)
+	//
+	if( $forceFactorySettings
+		|| !`optionVar -exists animImportTimeRange`
+		|| (`optionVar -q animImportTimeRange` > 3) ) {
+		optionVar -intValue animImportTimeRange 1;
+	}
+
+	if( $forceFactorySettings || !`optionVar -exists animImportStartTime`)
+		optionVar -floatValue animImportStartTime 1;
+
+	if( $forceFactorySettings || !`optionVar -exists animImportEndTime`)
+		optionVar -floatValue animImportEndTime 10;
+
+	if( $forceFactorySettings || !`optionVar -exists animImportDestinationStartTime`)
+		optionVar -floatValue animImportDestinationStartTime 1;
+
+	if( $forceFactorySettings || !`optionVar -exists animImportDestinationEndTime`)
+		optionVar -floatValue animImportDestinationEndTime 10;        
+        
+	// Match method
+	//
+	if( $forceFactorySettings || !`optionVar -exists animImportMatchBy` ) {
+		// 1 == hierarchy, 2 == string, 3 == map file
+		//
+		optionVar -intValue animImportMatchBy 1;
+	}
+	
+	// Import method
+	//
+	if( $forceFactorySettings || !`optionVar -exists animImportMethod` ) {
+		// 1 = selected, 2 == hierarchy, 3 == template
+		//
+		optionVar -intValue animImportMethod 1;
+	}
+	
+	// Search / replace
+	//
+	if( $forceFactorySettings || !`optionVar -exists animImportSearch` ) {
+		optionVar -stringValue animImportSearch "";
+	}
+	if( $forceFactorySettings || !`optionVar -exists animImportReplace` ) {
+		optionVar -stringValue animImportReplace "";
+	}
+}
+
+global proc importAnimUpdateSharedOptions()
+{
+	if (`checkBoxGrp -exists animInsertReplace`) {
+		int $val = (`optionVar -q animImportInsert` != "insert");
+		checkBoxGrp -e -value1 $val animInsertReplace;
+	}
+
+	if (`radioButtonGrp -exists animAdjustment`) {
+		radioButtonGrp -e -select `optionVar -q animImportTimeAdjust` animAdjustment;
+	}
+
+	if (`radioButtonGrp -exists timeRange`) {
+		int $timeOpt = `optionVar -query animImportTimeRange`;
+		radioButtonGrp -e -sl $timeOpt timeRange;
+		
+		floatField -e -v `optionVar -query animImportStartTime` srcFrameStart;
+		floatField -e -v `optionVar -query animImportEndTime` srcFrameEnd;
+
+		floatField -e -v `optionVar -query animImportDestinationStartTime` dstFrameStart;
+		floatField -e -v `optionVar -query animImportDestinationEndTime` dstFrameEnd;
+	}
+
+	if (`radioButtonGrp -exists matchMethod`) {
+		radioButtonGrp -e -sl `optionVar -query animImportMatchBy` matchMethod;
+	}
+
+	if (`radioButtonGrp -exists importMethod`) {
+		radioButtonGrp -e -sl `optionVar -query animImportMethod` importMethod;
+	}
+	
+	if (`textFieldGrp -exists searchText`) {
+		textFieldGrp -e -tx `optionVar -q animImportSearch` searchText;
+	}
+
+	if (`textFieldGrp -exists replaceText`) {
+		textFieldGrp -e -tx `optionVar -q animImportReplace` replaceText;
+	}
+
+	//template
+	string $dirToUse = atomImportTemplateGetCurrentDir();
+	string $filename = `optionVar -q atomImportTemplateFileName`;
+	string $fullName = ($dirToUse+"\/"+$filename) ;
+	textFieldGrp -e -tx $fullName importTemplateWidget;
+
+	atomImportPopulateOptionMenuWithViews($fullName, $filename);
+}
+
+global proc importAnimSharedOptionsCallback()
+{
+	if (`radioButtonGrp -exists timeRange`) {
+		int $timeMode = `radioButtonGrp -q -sl timeRange`;
+
+		optionVar -iv animImportTimeRange $timeMode;
+		optionVar -iv animImportMatchBy `radioButtonGrp -q -sl matchMethod`;
+
+		optionVar -iv animImportMethod `radioButtonGrp -q -sl importMethod`;
+		
+		optionVar -fv animImportStartTime `floatField -q -v srcFrameStart`;
+		optionVar -fv animImportEndTime `floatField -q -v srcFrameEnd`;
+
+		optionVar -fv animImportDestinationStartTime `floatField -q -v dstFrameStart`;
+		optionVar -fv animImportDestinationEndTime `floatField -q -v dstFrameEnd`;        
+        
+		optionVar -sv animImportSearch `textFieldGrp -q -tx searchText`;
+		optionVar -sv animImportReplace `textFieldGrp -q -tx replaceText`;
+	}
+
+	if (`checkBoxGrp -exists animInsertReplace`) {
+		if (`checkBoxGrp -q -v1 animInsertReplace`) {
+			optionVar -sv animImportInsert "replace";
+		} else {
+			optionVar -sv animImportInsert "insert";
+		}
+	}
+}
+
+global proc string createTimeOptionString()
+{
+	//  1 = Start/End, 2 = Time Slider, 3 = From File (Clipboard)
+	//
+	importAnimSharedOptionsCallback();
+	int $timeRangeVal = `optionVar -q animImportTimeRange`;
+
+	string $timeString = (";targetTime="+$timeRangeVal+";");
+	string $insert = `optionVar -q animImportInsert`;
+	string $option;
+	if ($insert == "insert") {
+		// In the newUI, only insert/replace are supported.
+		//
+		// Insert does not work with a time range so when the user
+		// chooses Start/End or TimeSlider, we switch to "scaleInsert"
+		//
+		switch ($timeRangeVal) {
+		case 1: 
+			// Start/End
+
+            // Add source frame range            
+			if (`importAnimGetSourceEnd` <= `importAnimGetSourceStart`) {
+				$timeString+= ("srcTime="+string(`importAnimGetSourceStart`)+";");
+			} else {
+				$timeString+= ("srcTime="+string(`importAnimGetSourceStart`)+":");
+				$timeString+= (string(`importAnimGetSourceEnd`)+";");
+			}
+            
+            // Add destination frame range
+            if (`importAnimGetDestinationEnd` <= `importAnimGetDestinationStart`) 
+            {
+				$option = "insert";
+				$timeString+= ("dstTime="+string(`importAnimGetDestinationEnd`)+";");
+			} 
+            else 
+            {
+                $option = "scaleInsert";
+				$timeString+= ("dstTime="+string(`importAnimGetDestinationStart`)+":");
+				$timeString+= (string(`importAnimGetDestinationEnd`)+";");
+			}
+			break;
+		case 2:
+			// time slider
+			$start = `playbackOptions -q -min`;
+			$end = `playbackOptions -q -max`;
+			$timeString += ("dstTime="+string($start) + ":" + string($end)+";");
+			$option = "scaleInsert";
+			break;
+		case 3:
+		default:
+			$option = "insert";
+			// from file, no time range needed
+			break;
+		}
+	} else {
+		switch ($timeRangeVal) {
+		case 1: 
+			// Start/End
+			//
+			$timeString+= ("srcTime="+string(`importAnimGetSourceStart`)+":");
+			$timeString+= (string(`importAnimGetSourceEnd`)+";");
+            
+            $timeString+= ("dstTime="+string(`importAnimGetDestinationStart`)+":");
+            $timeString+= (string(`importAnimGetDestinationEnd`)+";");            
+			break;
+		case 2:
+			// time slider
+			$start = `playbackOptions -q -min`;
+			$end = `playbackOptions -q -max`;
+			$timeString += ("dstTime="+string($start) + ":" + string($end)+";");
+			break;
+		case 3:
+		default:
+			// from file, no time range needed
+			break;
+		}
+
+		$option += "scaleReplace";
+	}
+
+	$timeString += ("option=" + $option);
+	$timeString += ";";
+	
+	
+	return $timeString;
+}
+
+
+global proc int importAnimGetTimeRange()
+{
+	importAnimSharedOptionsCallback();
+	return `optionVar -q animImportTimeRange`;
+}
+
+global proc float importAnimGetSourceStart()
+{
+	importAnimSharedOptionsCallback();
+	return `optionVar -q animImportStartTime`;
+}
+
+global proc float importAnimGetSourceEnd()
+{
+	importAnimSharedOptionsCallback();
+	return `optionVar -q animImportEndTime`;
+}
+
+
+// Get the destination frame start to import in Maya
+global proc float importAnimGetDestinationStart()
+{
+	importAnimSharedOptionsCallback();
+	return `optionVar -q animImportDestinationStartTime`;
+}
+
+// Get the destination frame end to import in Maya
+global proc float importAnimGetDestinationEnd()
+{
+	importAnimSharedOptionsCallback();
+	return `optionVar -q animImportDestinationEndTime`;
+}
+
+
+
+global proc int importAnimMatchMethod()
+{
+	importAnimSharedOptionsCallback();
+	return `optionVar -q animImportMatchBy`;
+}
+
+global proc int importAnimImportMethod()
+{
+	importAnimSharedOptionsCallback();
+	return `optionVar -q animImportMethod`;
+}
+
+global proc updateOptionsAndUiBasedOnFileSettings(string $optionList[])
+{
+	int $index;
+	string $optionBreakDown[];
+	for ($index = 0; $index < size($optionList); $index++) {
+
+        tokenize($optionList[$index], "=", $optionBreakDown);
+		
+		if ($optionBreakDown[0] == "targetTime") {
+			
+			int $whichTime = $optionBreakDown[1];
+			optionVar -intValue animImportTimeRange $whichTime;
+
+		} else if ($optionBreakDown[0] == "srcTime") {
+			
+			string $time = $optionBreakDown[1];
+			string $range[];
+			tokenize ($time, ":", $range);
+			
+			// Only one time
+			//
+			if( size( $range ) == 1 ) {
+				optionVar -fv animImportStartTime (float($range[0]));
+			}
+			// A time range
+			//
+			else if( size( $range ) > 1 ) {
+				optionVar -fv animImportStartTime (float($range[0]));
+				optionVar -fv animImportEndTime (float($range[1]));
+			}
+			
+		} else if ($optionBreakDown[0] == "option") {
+			string $option = $optionBreakDown[1];
+			
+			// pasteInsert
+			//
+			if ($option == "insert") {
+				optionVar -iv animImportPaste 1;
+				optionVar -iv animImportTimeAdjust 1;
+				optionVar -iv animImportReplaceRegion 1;
+				optionVar -sv animImportInsert "insert";
+			}
+			// scaleInsert
+			else if ($option == "scaleInsert") {
+				optionVar -iv animImportPaste 1;
+				optionVar -iv animImportTimeAdjust 2;
+				optionVar -iv animImportReplaceRegion 1;				
+			}
+			// fitInsert
+			else if ($option == "fitInsert") {
+				optionVar -iv animImportPaste 1;
+				optionVar -iv animImportTimeAdjust 3;
+				optionVar -iv animImportReplaceRegion 1;
+			}
+			// replace
+			else if ($option == "replace") {
+				optionVar -iv animImportPaste 2;
+				optionVar -iv animImportTimeAdjust 1;
+				optionVar -iv animImportReplaceRegion 1;
+				optionVar -sv animImportInsert "replace";
+			}
+			// replaceCompletely
+			else if ($option == "replaceCompletely") {
+				optionVar -iv animImportPaste 2;
+				optionVar -iv animImportTimeAdjust 1;
+				optionVar -iv animImportReplaceRegion 2;
+			}
+			// scaleReplace
+			else if ($option == "scaleReplace") {
+				optionVar -iv animImportPaste 2;
+				optionVar -iv animImportTimeAdjust 2;
+				optionVar -iv animImportReplaceRegion 1;
+			}
+			// fitReplace
+			else if ($option == "fitReplace") {
+				optionVar -iv animImportPaste 2;
+				optionVar -iv animImportTimeAdjust 3;
+				optionVar -iv animImportReplaceRegion 1;
+			}
+			// pasteMerge
+			else if ($option == "merge") {
+				optionVar -iv animImportPaste 3;
+				optionVar -iv animImportTimeAdjust 1;
+				optionVar -iv animImportReplaceRegion 1;
+			}
+			// scaleMerge
+			else if ($option == "scaleMerge") {
+				optionVar -iv animImportPaste 3;
+				optionVar -iv animImportTimeAdjust 2;
+				optionVar -iv animImportReplaceRegion 1;
+			}
+			// fitMerge
+			else if( $option == "fitMerge" ) {
+				optionVar -iv animImportPaste 3;
+				optionVar -iv animImportTimeAdjust 3;
+				optionVar -iv animImportReplaceRegion 1;
+			}
+			
+		} else if ($optionBreakDown[0] == "match") {
+			string $match = $optionBreakDown[1];
+			
+			// pasteInsert
+			//
+			if ($match == "hierarchy") {
+				optionVar -iv animImportMatchBy 1;
+			}
+			else if ($match == "string") {
+				optionVar -iv animImportMatchBy 2;
+			}
+			else if ($match == "mapFile") {
+				optionVar -iv animImportMatchBy 3;
+			}
+		}
+	}
+	importAnimUpdateSharedOptions();
+	animImportOptionsEnable();
+}
+
+
+global proc animImportGetMapFile(string $controlName)
+//	Description:
+//		Get The Map File Name From the specified controlName
+//  Paremeters:
+//      $ controlName- name of the text field we will set with the file name.
+{
+	if(`textFieldGrp -ex $controlName`)
+	{
+		string $startDirectory;
+		$startDirectory = `textFieldGrp -q -tx importMapWidget`;
+		if ( size( $startDirectory ) == 0 )
+		{
+			$startDirectory = `internalVar -uwd`;
+		} else {
+			$startDirectory = dirname($startDirectory);
+		}
+		
+		if ( `file -q -ex $startDirectory` ) {
+			workspace -dir $startDirectory;
+		}
+		
+		string $captionName = (uiRes("m_importAnimSharedOptions.kSelectMapFile"));
+		string $mapFilter   = (uiRes("m_importAnimSharedOptions.kMapFiles")) + " (*.map)";
+
+		string $file[] = `fileDialog2 -caption $captionName -dir $startDirectory -fileMode 1 -fileFilter $mapFilter -ds 2`;
+
+		if (0 < size($file) && "" != $file[0])
+		{
+			string $filePath = fromNativePath($file[0]);
+			textFieldGrp -e -text $filePath $controlName;
+
+			atomImportMapSetFile $filePath;
+		}
+
+		global int $gAtomImportMapSetFileWithBrowser;
+		$gAtomImportMapSetFileWithBrowser= 1;
+	}
+}
+
+// If $includeExtras is shown, we also display the extra UI such as
+// Replace Region, Connect, Copies and "Help Images"
+//
+global proc importAnimSharedOptions(int $includeExtras)
+{
+	global string $gAtomImportViewMenu;
+	radioButtonGrp
+		-numberOfRadioButtons 3
+
+		-label (uiRes("m_importAnimSharedOptions.kImportMethod"))
+		-label1 (uiRes("m_importAnimSharedOptions.kSelected"))
+		-label2 (uiRes("m_importAnimSharedOptions.kHierarchy"))
+		-label3 (uiRes("m_importAnimSharedOptions.kTemplateOption"))
+		-cc "animImportOptionsEnable"
+		importMethod;
+
+	radioButtonGrp
+		-numberOfRadioButtons 3
+		-label (uiRes("m_importAnimSharedOptions.kReplaceMethod")) 
+		-label1 (uiRes("m_importAnimSharedOptions.kByHierarchy"))
+		-label2 (uiRes("m_importAnimSharedOptions.kByString"))
+		-label3 (uiRes("m_importAnimSharedOptions.kByMapFile"))
+		-cc "animImportOptionsEnable"
+		matchMethod;
+	
+
+	rowLayout -nc 3
+		-cw3 425 5 50
+		-adjustableColumn 1
+		-cal 1 "both"
+		-cal 2 "both"
+		-cal 3 "left"
+		-ct3 "both" "both" "left";
+
+		string $dirToUse = atomImportTemplateGetCurrentDir();
+		string $filename = `optionVar -q atomImportTemplateFileName`;
+		string $fullname = ($dirToUse+"\/"+$filename);
+	
+		textFieldGrp
+			-label (uiRes("m_importAnimSharedOptions.kTemplateFile"))
+			-tx $fullname
+			-adjustableColumn 2
+			importTemplateWidget;
+		separator -w 5 -style "none";
+		symbolButton -image "navButtonBrowse.png"
+			-c ( "atomImportTemplateBrowseForFile" )
+			importTemplateWidgetBrowser;
+	setParent ..;
+	$gAtomImportViewMenu = `optionMenuGrp -label (uiRes("m_importAnimSharedOptions.kView")) -adj 2`;
+	atomImportPopulateOptionMenuWithViews($fullname,$filename);
+	
+	checkBoxGrp -label "" -label1 (uiRes("m_importAnimSharedOptions.kReplace2")) animInsertReplace;
+
+	radioButtonGrp -numberOfRadioButtons 3
+		-label (uiRes("m_importAnimSharedOptions.kTimeRange"))
+		-label1 (uiRes("m_importAnimSharedOptions.kStartEnd"))
+		-label2 (uiRes("m_importAnimSharedOptions.kTimeSlider"))
+		-label3 (uiRes("m_importAnimSharedOptions.kFromFile"))
+		-cc "animImportOptionsEnable"
+		timeRange;
+	
+
+    rowLayout -nc 4
+		-cw4 170 100 125 100
+		-cal 1 "right"
+		-cal 2 "both"
+		-cal 3 "both"
+		-cal 4 "left"
+		-ct4 "both" "both" "both" "both";  
+        
+		text - label (uiRes("m_importAnimSharedOptions.kStartTime"));
+        floatField -value 0.0  srcFrameStart;
+        text - label (uiRes("m_importAnimSharedOptions.kDstStartTime"));
+		floatField -value 0.0  dstFrameStart;
+	setParent ..;
+    
+    rowLayout -nc 4   
+		-cw4 170 100 125 100
+		-cal 1 "right"
+		-cal 2 "both"
+		-cal 3 "both"
+		-cal 4 "left"
+		-ct4 "both" "both" "both" "both";    
+        text - label (uiRes("m_importAnimSharedOptions.kEndTime"));
+		floatField -value 10.0 srcFrameEnd;
+        text - label (uiRes("m_importAnimSharedOptions.kDstEndTime"));
+		floatField -value 10.0 dstFrameEnd;
+	setParent ..;
+
+	separator;
+
+	textFieldGrp -label (uiRes("m_importAnimSharedOptions.kSearchText")) -tx "" searchText;
+	textFieldGrp -label (uiRes("m_importAnimSharedOptions.kReplaceText")) -tx "" replaceText;
+	textFieldGrp -label (uiRes("m_importAnimSharedOptions.kPrefix")) -tx "" prefixText;
+	textFieldGrp -label (uiRes("m_importAnimSharedOptions.kSuffix")) -tx "" suffixText;
+
+	$dirToUse = atomImportMapGetCurrentDir();
+	if (! `optionVar -exists atomImportMapFileName`) {
+		optionVar -stringValue atomImportMapFileName "";
+	}
+	$filename = `optionVar -q atomImportMapFileName`;
+	$fullname = ($dirToUse+"\/"+$filename);
+	
+	string $browseCmd = "animImportGetMapFile importMapWidget";
+	rowLayout -nc 3
+		-cw3 425 5 50
+		-adjustableColumn 1
+		-cal 1 "both"
+		-cal 2 "both"
+		-cal 3 "left"
+		-ct3 "both" "both" "left";
+
+		textFieldGrp
+			-label (uiRes("m_importAnimSharedOptions.kMapFile"))
+			-tx $fullname
+			-cc $browseCmd
+			-adjustableColumn 2
+			importMapWidget;
+		separator -w 5 -style "none";
+		symbolButton -image "navButtonBrowse.png" 
+			-c $browseCmd
+			importMapWidgetBrowser;
+	setParent ..;
+}
+

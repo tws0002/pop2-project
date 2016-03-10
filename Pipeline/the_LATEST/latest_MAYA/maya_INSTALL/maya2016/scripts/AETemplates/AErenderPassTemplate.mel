@@ -1,0 +1,751 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//  Creation Date:  Feb 26, 2008
+//
+//  Procedure Name:
+//  AErenderPassTemplate
+//
+//  Description:
+//  Creates the attribute editor controls for the renderPass Node
+//
+//  Input Value:
+//  nodeName
+//
+//  Output Value:
+//  None
+//
+
+// bring in the necessary procedures for the color profile controls
+source "colorProfileProcedures";
+
+proc string getParentMenu(string $menuName)
+{
+    //look for correct parent
+    //
+    string $curParent = `setParent -q`;
+    string $menu = ($curParent+$menuName);
+    return $menu;
+}
+
+//set the attribute "NumChannels" 
+//
+global proc setNumChannelsAttr(string $menu, string $numChannelsAttr)
+{
+    int $selectedItem = `optionMenuGrp -q -v $menu`;
+    string $cmd = "setAttr " + $numChannelsAttr +" " + $selectedItem;
+    evalEcho($cmd);
+}
+
+//insert $value into the array
+//if the $value has existed in the array, it will not be inserted into the array
+//
+global proc insertIntArray(int $array[], int $value)
+{
+    int $i;
+    for($i = 0; $i < size($array); $i++)
+    {
+        if($value == $array[$i])
+            return;
+    }
+    $array[size($array)] = $value;
+}
+
+//Called by AErenderPassTypesNew andAErenderPassTypesReplace
+//
+global proc updateRenderPassTypesMenus(string $menu, string $passIDAttr)
+{
+    string $buffer[];
+    tokenize($passIDAttr,".|",$buffer);
+    if(`attributeExists $buffer[1] $buffer[0]` == 0)
+        return;
+    
+    //obtain the render pass types supported by the current renderer
+    //
+	string $renderPassTypes[] = 
+		`renderPassRegistry  -supportedRenderPasses`;
+    string $renderPassNames[] = getSortedRenderPassTypeList("");
+    
+    string $passIDValue = `getAttr $passIDAttr`;
+    if(size($passIDValue) != 0)
+    {
+        //after changing renderer from A to B, although the passID's value may be not 
+        //supported by B, the pull down menu will also display the passID's value.
+        //
+        if(stringArrayContains($passIDValue, $renderPassTypes) == 0)
+        {
+            string $passName = `renderPassRegistry -passID $passIDValue -passName`;
+             
+            //If the pass does not have a name, display its ID in the menu
+            //
+            if(size($passName) == 0)
+            {
+                 $passName = $passIDValue;
+            }
+            $renderPassTypes[size($renderPassTypes)] = $passIDValue;
+            $renderPassNames[size($renderPassNames)] = $passName;
+        }
+    }
+    else
+    {
+        //insert tips when the value of passID is null
+        //
+        string $selectTypes = (uiRes("m_AErenderPassTemplate.kSelectTypes"));
+        stringArrayInsertAtIndex(0, $renderPassNames, $selectTypes);
+    }
+        
+    int $i;
+
+    //rebuild the menuItems now
+    //
+    setParent -m ($menu+"|OptionMenu");
+    string $menuItems[] = `optionMenuGrp -q -ils $menu`;
+    int $numMenuItems = size($menuItems);
+    for ($i=0; $i<size($renderPassNames); $i++) {
+    	if ($i < $numMenuItems) {
+    		menuItem -edit -label $renderPassNames[$i] $menuItems[$i];
+    	} else {
+    		menuItem -label $renderPassNames[$i];
+    	}
+    }
+	for (; $i<$numMenuItems; $i++) {
+		deleteUI -mi $menuItems[$i];
+	}
+    setParent -m ..;
+    
+    //the attribute "passID" has not default value, so we must check it
+    //
+    if (size($passIDValue) != 0) 
+    {
+        string $passName = `renderPassRegistry -passID $passIDValue -passName`;
+        //If the pass does not have a name, use it's ID to select
+        if(size($passName) == 0)
+        {
+            $passName = $passIDValue;
+        }
+        optionMenuGrp -e -v $passName $menu;
+    }
+    else
+    {
+        if(size($renderPassNames) > 0)
+            optionMenuGrp -e -v $renderPassNames[0] $menu;
+    }
+
+    if(size($renderPassNames) <= 1)
+        optionMenuGrp -e -en 0 $menu;
+    else
+        optionMenuGrp -e -en 1 $menu;
+}
+
+global proc setPassIDAttr(string $menu, string $passIDAttr)
+{
+    //get the nodeName
+    //
+    string $buffer[];
+    tokenize($passIDAttr,".|",$buffer);
+    string $nodeName = $buffer[0];
+
+    string $renderPassTypes[] = 
+        `renderPassRegistry  -supportedRenderPasses`;
+    string $selectedPass = `optionMenuGrp -q -v $menu`;
+
+	for ($id in $renderPassTypes)
+    {
+        string $name = `renderPassRegistry -passID $id -passName`;
+        if ($name == $selectedPass) {
+            string $cmd = "setRenderPassType -type " + "\"" + $id + "\" " +$nodeName;
+            evalEcho($cmd);
+        	break;
+        }
+    }
+}
+
+global proc AErenderPassTypesNew(string $passIDAttr)
+{
+    //get the nodeName
+    //
+    string $buffer[];
+    tokenize($passIDAttr,".|",$buffer);
+    string $nodeName = $buffer[0];
+
+    //build the optionMenuGrp
+    //
+    string $menu = 
+        `optionMenuGrp  -label (uiRes("m_AErenderPassTemplate.kTypes")) TypeMenu`;
+
+    optionMenuGrp -e 
+        -cc ("setPassIDAttr "+$menu+" "+$passIDAttr) $menu;
+    
+    //build optionMenuGrp
+    //
+    updateRenderPassTypesMenus($menu, $passIDAttr);
+
+    //build the call back mechanisms
+    //
+    string $cmd = "updateRenderPassTypesMenus " + $menu + " "+ $passIDAttr;
+    scriptJob -rp -p $menu -attributeChange defaultRenderGlobals.currentRenderer $cmd;
+    scriptJob -p $menu -attributeChange $passIDAttr $cmd;
+    
+}
+
+global proc AErenderPassTypesReplace(string $passIDAttr)
+{
+    // get the nodeName
+    //
+    string $buffer[];
+    tokenize($passIDAttr,".|",$buffer);
+    
+    //get parent
+    //
+    string $menu = getParentMenu("|TypeMenu");
+    optionMenuGrp -e 
+        -cc ("setPassIDAttr "+$menu+" "+$passIDAttr) $menu;
+
+    //build the optionMenuGrp
+    //
+    updateRenderPassTypesMenus($menu, $passIDAttr);
+
+    //update the optionMenuGrp and callback mechanisms
+    string $cmd = "updateRenderPassTypesMenus " + $menu + " "+ $passIDAttr;
+    scriptJob -rp -p $menu -attributeChange defaultRenderGlobals.currentRenderer $cmd;
+    scriptJob -p $menu -attributeChange $passIDAttr $cmd;
+
+}
+
+
+//will be called by AEnumChannelsNew andAEnumChannelsReplace
+//
+global proc updateNumChannelsMenus(string $menu, string $numChannelsAttr)
+{
+    string $buffer[];
+    tokenize($numChannelsAttr,".|",$buffer);
+    if(`attributeExists $buffer[1] $buffer[0]` == 0)
+        return;
+    
+    //obtain the numbers of channels supported by the current renderer
+    //
+    int $channelsNums[];
+    int $numChannelsValue;
+
+    string $passIDAttr = $buffer[0]+".passID";
+    string $passIDValue = `getAttr $passIDAttr`;
+    //check $passID 
+    //
+    if(size($passIDValue) != 0)
+    {
+        $channelsNums = 
+            `renderPassRegistry -passID $passIDValue -supportedChannelCounts`;
+    }
+        
+    //although the current renderer does not support the value of numChannels,
+    //we also display the value.
+    //
+    $numChannelsValue = `getAttr $numChannelsAttr`;
+    
+    insertIntArray($channelsNums, $numChannelsValue);
+    $channelsNums = `sort $channelsNums`;
+    
+    int $i;
+
+    //rebuild the menuItems now
+    //
+    setParent -m ($menu+"|OptionMenu");
+    string $menuItems[] = `optionMenuGrp -q -ils $menu`;
+    int $numMenuItems = size($menuItems);
+    for ($i=0; $i<size($channelsNums); $i++) {
+    	if ($i < $numMenuItems) {
+    		menuItem -edit -label $channelsNums[$i] $menuItems[$i];
+    	} else {
+    		menuItem -label $channelsNums[$i];
+    	}
+    }
+	for (; $i<$numMenuItems; $i++) {
+		deleteUI -mi $menuItems[$i];
+	}
+    setParent -m ..;
+
+    optionMenuGrp -e -v `getAttr $numChannelsAttr` $menu;
+    if(size($channelsNums) <= 1)
+        optionMenuGrp -e -en 0 $menu;
+    else
+        optionMenuGrp -e -en 1 $menu;
+    
+}
+
+global proc AEnumChannelsNew(string $numChannelsAttr)
+{
+    //get the nodeName
+    //
+    string $buffer[];
+    tokenize($numChannelsAttr,".|",$buffer);
+    string $nodeName = $buffer[0];
+
+    //build the optionMenuGrp
+    //
+    string $menu = 
+        `optionMenuGrp  -label (uiRes("m_AErenderPassTemplate.kNumChannels")) numChannelsMenu`;
+
+    optionMenuGrp -e 
+        -cc ("setNumChannelsAttr "+$menu+" "+$numChannelsAttr) $menu;
+    
+    //update optionMenuGrp
+    //
+    updateNumChannelsMenus($menu, $numChannelsAttr);
+
+    //build the call back mechanisms
+    //
+    string $passIDAttr = $buffer[0]+".passID";
+    string $cmd = "updateNumChannelsMenus " + $menu + " "+ $numChannelsAttr;
+    //note: when two attributeChange will be attached to the same menu, the flag -rp
+    //must be marked in the first scriptJob so that the command will not duplicate
+    //
+    scriptJob -rp -p $menu -attributeChange defaultRenderGlobals.currentRenderer $cmd;
+    scriptJob -p $menu -attributeChange $passIDAttr $cmd;
+    scriptJob -p $menu -attributeChange $numChannelsAttr $cmd;
+
+}
+
+global proc AEnumChannelsReplace(string $numChannelsAttr)
+{
+    // get the nodeName
+    //
+    string $buffer[];
+    tokenize($numChannelsAttr,".|",$buffer);
+    string $nodeName = $buffer[0];
+
+    //get parent
+    //
+    string $menu = getParentMenu("|numChannelsMenu");
+    optionMenuGrp -e 
+        -cc ("setNumChannelsAttr "+$menu+" "+$numChannelsAttr) $menu;
+
+    //build the optionMenuGrp
+    //
+    updateNumChannelsMenus($menu, $numChannelsAttr);
+
+    //update the optionMenuGrp and callback mechanisms
+    string $cmd = "updateNumChannelsMenus " + $menu + " " +$numChannelsAttr;
+    //note: when two attributeChange will be attached to the same menu, the flag -rp
+    //must be marked in the first scriptJob so that the command will not duplicate
+    //
+    scriptJob -rp -p $menu -attributeChange defaultRenderGlobals.currentRenderer $cmd;
+    string $passIDAttr = $nodeName+".passID";
+    scriptJob -p $menu -attributeChange $passIDAttr $cmd;
+    scriptJob -p $menu -attributeChange $numChannelsAttr $cmd;
+}
+
+//Given the attribute integer value for frame buffer type, return the localized UI string
+//
+global proc string frameBufferTypeOptions_AttrToUI(int $attrVal)
+{
+    string $frameBufferType;
+    switch($attrVal)
+    {
+        case 0x1:
+            $frameBufferType = (uiRes("m_AErenderPassTemplate.kUInt8"));
+            break;
+        case 0x2:
+            $frameBufferType = (uiRes("m_AErenderPassTemplate.kUInt16"));
+            break;
+        case 0x4:
+            $frameBufferType = (uiRes("m_AErenderPassTemplate.kUInt32"));
+            break;
+        case 0x8:
+            $frameBufferType = (uiRes("m_AErenderPassTemplate.kUInt64"));
+            break;
+        case 0x10:
+            $frameBufferType = (uiRes("m_AErenderPassTemplate.kInt8"));
+            break;
+        case 0x20:
+            $frameBufferType = (uiRes("m_AErenderPassTemplate.kInt16"));
+            break;
+        case 0x40:
+            $frameBufferType = (uiRes("m_AErenderPassTemplate.kInt32"));
+            break;
+        case 0x80:
+            $frameBufferType = (uiRes("m_AErenderPassTemplate.kInt64"));
+            break;
+        case 0x100:
+            $frameBufferType = (uiRes("m_AErenderPassTemplate.kFloat16"));
+            break;
+        case 0x200:
+            $frameBufferType = (uiRes("m_AErenderPassTemplate.kFloat32"));
+            break;
+        case 0x400:
+            $frameBufferType = (uiRes("m_AErenderPassTemplate.kFloat64"));
+            break;
+        case 0x800:
+            $frameBufferType = (uiRes("m_AErenderPassTemplate.kBit"));
+            break;
+        default:
+            $frameBufferType = (uiRes("m_AErenderPassTemplate.kOther"));
+            break;
+    }
+    return $frameBufferType;
+}
+
+//Given the localized UI string for a frame buffer type, return
+//the attribute integer value
+global proc int frameBufferTypeOptions_UIToAttr(string $ui)
+{
+    int $result;
+    if($ui == (uiRes("m_AErenderPassTemplate.kUInt8")))
+    {
+        $result = 0x1;
+    }
+    else if($ui == (uiRes("m_AErenderPassTemplate.kUInt16")))
+    {
+        $result = 0x2;
+    }
+    else if($ui == (uiRes("m_AErenderPassTemplate.kUInt32")))
+    {
+        $result = 0x4;
+    }
+    else if($ui == (uiRes("m_AErenderPassTemplate.kUInt64")))
+    {
+        $result = 0x8;
+    }
+    else if($ui == (uiRes("m_AErenderPassTemplate.kInt8")))
+    {
+        $result = 0x10;
+    }
+    else if($ui == (uiRes("m_AErenderPassTemplate.kInt16")))
+    {
+        $result = 0x20;
+    }
+    else if($ui == (uiRes("m_AErenderPassTemplate.kInt32")))
+    {
+        $result = 0x40;
+    }
+    else if($ui == (uiRes("m_AErenderPassTemplate.kInt64")))
+    {
+        $result = 0x80;
+    }
+    else if($ui == (uiRes("m_AErenderPassTemplate.kFloat16")))
+    {
+        $result = 0x100;
+    }
+    else if($ui == (uiRes("m_AErenderPassTemplate.kFloat32")))
+    {
+        $result = 0x200;
+    }
+    else if($ui == (uiRes("m_AErenderPassTemplate.kFloat64")))
+    {
+        $result = 0x400;
+    }
+    else if($ui == (uiRes("m_AErenderPassTemplate.kBit")))
+    {
+        $result = 0x800;
+    }
+    //other type
+    //
+    else
+    {
+        $result = 0x1000;
+    }
+
+    return $result;
+
+}
+
+//set the attribute "frameBufferType" 
+//
+global proc setFrameBufferTypeAttr(string $menu, string $frameBufferTypeAttr)
+{
+    string $selectedItem = `optionMenuGrp -q -v $menu`;
+    int $frameBufferTypeValue = frameBufferTypeOptions_UIToAttr($selectedItem);
+    string $cmd = "setAttr " + $frameBufferTypeAttr + " " + $frameBufferTypeValue;
+    evalEcho($cmd);
+}
+
+//will be called by AEnumChannelsNew andAEnumChannelsReplace
+//
+global proc updateframeBufferTypesMenus(string $menu, string $frameBufferTypeAttr)
+{
+    string $buffer[];
+    tokenize($frameBufferTypeAttr,".|",$buffer);
+    if(`attributeExists $buffer[1] $buffer[0]` == 0)
+        return;
+    
+    //obtain the dataTypes supported by the current renderer
+    //
+    int $frameBufferTypes[];
+    string $frameBufferNames[];
+    int $frameBufferTypeValue;
+
+    string $passIDAttr = $buffer[0]+".passID";
+    string $passIDValue = `getAttr $passIDAttr`;
+    string $numChannelsAttr = $buffer[0] + ".numChannels";
+    int $numChannelsValue = `getAttr $numChannelsAttr`;
+
+    //check $passID 
+    //
+    if(size($passIDValue) != 0)
+    {
+        $frameBufferTypes = 
+            `renderPassRegistry -passID $passIDValue -channels $numChannelsValue 
+            -supportedDataTypes`;
+
+        // only enable the color profile menu if the pass has a color semantic
+        int $frameBufferSemantics[] = `renderPassRegistry -passID $passIDValue -supportedPassSemantics`;
+        int $colorSemantic = false;
+        for ($currentSemantic in $frameBufferSemantics){
+            if ($currentSemantic == 1){
+                $colorSemantic = true;
+                break;
+            }
+        }
+        editorTemplate -dc $buffer[0] "colorProfile" (!$colorSemantic);
+    }
+    
+    //although the current renderer does not support the value of dataTypes,
+    //we display the current value.
+    //
+    $frameBufferTypeValue = `getAttr $frameBufferTypeAttr`;
+    insertIntArray($frameBufferTypes, $frameBufferTypeValue);
+
+    $frameBufferTypes = `sort $frameBufferTypes`;
+
+    //value the name array
+    //
+    int $i;
+    for($i = 0; $i < size($frameBufferTypes); $i++)
+    {
+        $frameBufferNames[size($frameBufferNames)] = 
+            frameBufferTypeOptions_AttrToUI($frameBufferTypes[$i]);
+    }
+    
+    //rebuild the menuItems now
+    //
+    setParent -m ($menu+"|OptionMenu");
+    string $menuItems[] = `optionMenuGrp -q -ils $menu`;
+    int $numMenuItems = size($menuItems);
+    for ($i=0; $i<size($frameBufferNames); $i++) {
+    	if ($i < $numMenuItems) {
+    		menuItem -edit -label $frameBufferNames[$i] $menuItems[$i];
+    	} else {
+    		menuItem -label $frameBufferNames[$i];
+    	}
+    }
+	for (; $i<$numMenuItems; $i++) {
+		deleteUI -mi $menuItems[$i];
+	}
+    setParent -m ..;
+
+    string $frameBufferTypeString = frameBufferTypeOptions_AttrToUI($frameBufferTypeValue);
+    optionMenuGrp -e -v $frameBufferTypeString $menu;
+    if( size($frameBufferNames) <= 1)
+        optionMenuGrp -e -en 0 $menu;
+    else
+        optionMenuGrp -e -en 1 $menu;
+}
+
+global proc AEframeBufferTypesNew(string $frameBufferTypeAttr)
+{
+    //get the nodeName
+    //
+    string $buffer[];
+    tokenize($frameBufferTypeAttr,".|",$buffer);
+    string $nodeName = $buffer[0];
+
+    //build the optionMenuGrp
+    //
+    string $menu = 
+        `optionMenuGrp  -label (uiRes("m_AErenderPassTemplate.kFrameBufferTypes")) frameBufferTypesMenu`;
+
+    optionMenuGrp -e 
+        -cc ("setFrameBufferTypeAttr "+$menu+" "+$frameBufferTypeAttr) $menu;
+
+
+    //update optionMenuGrp
+    //
+    updateframeBufferTypesMenus($menu, $frameBufferTypeAttr);
+
+    //build the call back mechanisms
+    //
+    string $passIDAttr = $buffer[0]+".passID";
+    string $passIDValue = `getAttr $passIDAttr`;
+    string $numChannelsAttr = $buffer[0] + ".numChannels";
+    string $cmd = "updateframeBufferTypesMenus " + $menu + " "+ $frameBufferTypeAttr;
+    //note: when two attributeChange will be attached to the same menu, the flag -rp
+    //must be marked in the first scriptJob so that the command will not duplicate
+    //
+    scriptJob -rp -p $menu -attributeChange defaultRenderGlobals.currentRenderer $cmd;
+    scriptJob -p $menu -attributeChange $passIDAttr $cmd;
+    scriptJob -p $menu -attributeChange $numChannelsAttr $cmd;
+    scriptJob -p $menu -attributeChange $frameBufferTypeAttr $cmd;
+}
+
+global proc AEframeBufferTypesReplace(string $frameBufferTypeAttr)
+{
+    global string $gAErenderPassFrameBufferTypesMenus[];
+    // get the nodeName
+    //
+    string $buffer[];
+    tokenize($frameBufferTypeAttr,".|",$buffer);
+    string $nodeName = $buffer[0];
+
+    //get parent
+    //
+    string $menu = getParentMenu("|frameBufferTypesMenu");
+    optionMenuGrp -e 
+        -cc ("setFrameBufferTypeAttr "+$menu+" "+$frameBufferTypeAttr) $menu;
+
+    //build the optionMenuGrp
+    //
+    updateframeBufferTypesMenus($menu, $frameBufferTypeAttr);
+    //update the optionMenuGrp and callback mechanisms
+    //
+    string $cmd = "updateframeBufferTypesMenus " + $menu + " " +$frameBufferTypeAttr;
+    //note: when two attributeChange will be attached to the same menu, the flag -rp
+    //must be marked in the first scriptJob so that the command will not duplicate
+    //
+    scriptJob -rp -p $menu -attributeChange defaultRenderGlobals.currentRenderer $cmd;
+    string $passIDAttr = $nodeName+".passID";
+    scriptJob -p $menu -attributeChange $passIDAttr $cmd;
+    string $numChannelsAttr = $nodeName + ".numChannels";
+    scriptJob -p $menu -attributeChange $numChannelsAttr  $cmd;
+    scriptJob -p $menu -attributeChange $frameBufferTypeAttr $cmd;
+}
+
+global proc AEAOPassAttrsActivate(string $node)
+{
+    string $passType = `getAttr ($node + ".passID")`;
+    if ($passType == "AO") {
+        int $enableLoc = `getAttr ($node + ".useLocalSettings")`;
+		int $enableGPU = `getAttr ($node + ".useGpu")`;
+		// Most of the local setting parameters (except rays and maxDistance) should be disabled when useGpu is on.
+		int $enable = $enableLoc && (!$enableGPU ); 
+        editorTemplate -dimControl $node "rays" (!$enableLoc);
+        editorTemplate -dimControl $node "brightColor" (!$enable);
+        editorTemplate -dimControl $node "darkColor" (!$enable);  
+        editorTemplate -dimControl $node "spread" (!$enable);
+		// editorTemplate -dimControl $node "spreadExponent" (!$enable);
+        editorTemplate -dimControl $node "maxDistance" (!$enableLoc);
+        editorTemplate -dimControl $node "reflective" (!$enable);
+        editorTemplate -dimControl $node "cachePoints" (!$enable);
+        editorTemplate -dimControl $node "occInAlpha" (!$enable);
+        editorTemplate -dimControl $node "outputMode" (!$enable);
+		
+		// Disable shadingEngine related UIs when useGpu is on.
+		int $exists = `attributeExists "useShadingEngineThreshold" $node`;
+		if ($exists)
+			editorTemplate -dimControl $node "useShadingEngineThreshold" ($enableGPU);
+		editorTemplate -dimControl $node "transparencyThreshold" ($enableGPU);
+    }
+}
+
+global proc AEThresholdAttrActivate(string $node)
+{
+    int $exists = `attributeExists "useShadingEngineThreshold" $node`;
+    if ($exists){
+        int $useSE = `getAttr ($node + ".useShadingEngineThreshold")`;
+        editorTemplate -dimControl $node "transparencyThreshold" ($useSE);
+    }
+}
+
+global proc AErenderPassTemplate(string $node)
+{
+    editorTemplate -beginScrollLayout;
+        editorTemplate -beginLayout (uiRes("m_AErenderPassTemplate.kRenderPassOptions")) 
+                   -beginNoOptimize -collapse 0;
+        editorTemplate -ac "renderable";
+        editorTemplate -addSeparator;
+        editorTemplate -ccu "AErenderPassTypesNew"
+                    "AErenderPassTypesReplace" "passID";
+        editorTemplate -ccu "AEnumChannelsNew"
+            "AEnumChannelsReplace" "numChannels";
+        editorTemplate -ccu "AEframeBufferTypesNew"
+            "AEframeBufferTypesReplace" "frameBufferType";
+		editorTemplate -ccu "AEcolorProfileNew" "AEcolorProfileReplace" "colorProfile";
+        editorTemplate -ac "filtering";
+        editorTemplate -ac "passGroupName";
+        editorTemplate -endNoOptimize;
+        editorTemplate -beginLayout (uiRes("m_AErenderPassTemplate.kRenderPassParameters")) 
+                   -collapse 0;
+			// Placing the dynamic attribute explicitly
+			// keeps them out of the Extra Attributes section
+			// and guarantees they are always displayed in the 
+			// right order
+
+			// Material/Non-material Pass General Attributes
+			editorTemplate -addDynamicControl "useGpu"
+                            "AEAOPassAttrsActivate";
+            editorTemplate -addDynamicControl "useShadingEngineThreshold"
+                            "AEThresholdAttrActivate";
+            editorTemplate -addDynamicControl "transparencyThreshold";
+			editorTemplate -addDynamicControl "holdout";
+			editorTemplate -addDynamicControl "useTransparency";
+            editorTemplate -addDynamicControl "reflectHidden";
+			editorTemplate -addDynamicControl "refractHidden";
+			editorTemplate -addDynamicControl "hiddenReflect";
+			editorTemplate -addDynamicControl "hiddenRefract";
+			editorTemplate -addDynamicControl "transparentAttenuation";
+			editorTemplate -addDynamicControl "minReflectionLevel";
+			editorTemplate -addDynamicControl "maxReflectionLevel";
+			editorTemplate -addDynamicControl "minRefractionLevel";
+			editorTemplate -addDynamicControl "maxRefractionLevel";
+            editorTemplate -addDynamicControl "computeShadows";
+            editorTemplate -addDynamicControl "hiddenShadows";
+			// Camera Depth Pass Attributes
+			editorTemplate -addDynamicControl "remap";
+			editorTemplate -addDynamicControl "znear";
+			editorTemplate -addDynamicControl "zfar";
+			editorTemplate -addDynamicControl "minbuffer";
+			editorTemplate -addDynamicControl "maxbuffer";
+			// Normal Vector Pass Attributes
+			editorTemplate -addDynamicControl "space";
+			editorTemplate -addDynamicControl "integerUserParameter1";
+			// Motion Vector Pass Attributes
+			editorTemplate -addDynamicControl "automatic";
+			editorTemplate -addDynamicControl "maxDisplacement";
+			editorTemplate -addDynamicControl "min";
+			editorTemplate -addDynamicControl "max";
+			editorTemplate -addDynamicControl "extractMagnitude";
+			// AO Pass Attributes
+            editorTemplate -addDynamicControl "useLocalSettings"
+                            "AEAOPassAttrsActivate";
+            editorTemplate -addDynamicControl "rays";
+            editorTemplate -addDynamicControl "brightColor";
+            editorTemplate -addDynamicControl "darkColor";
+            editorTemplate -addDynamicControl "spread";
+//            editorTemplate -addDynamicControl "spreadExponent"; // Not fully supported by mental ray - hiding
+            editorTemplate -addDynamicControl "maxDistance";
+            editorTemplate -addDynamicControl "reflective";
+            editorTemplate -addDynamicControl "cachePoints";
+            editorTemplate -addDynamicControl "occInAlpha";
+            editorTemplate -addDynamicControl "outputMode";
+			// UV Pass Attributes
+            editorTemplate -annotation (uiRes("m_AErenderPassTemplate.kStoreIDInBlue")) -addDynamicControl "storeIDInBlue";
+			
+			editorTemplate -endLayout; 
+		editorTemplate -endLayout; 
+
+
+
+    // include/call base class/node attributes
+    AEdependNodeTemplate $node;
+
+    editorTemplate -addExtraControls;
+
+    editorTemplate -endScrollLayout;
+
+}

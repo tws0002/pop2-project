@@ -1,0 +1,250 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//
+//
+//  Proc:   polyRotateUVsByVertex
+//
+//  Description:        
+//
+//              The UVs of the selected face are cyclically shifted 
+//              by one vertex position.
+//
+//      Input arguments
+//      
+//              None (The selection list should contain a face)
+//
+//      Return value
+//      None
+//
+
+proc int polyComponentId(string $selection)
+{
+        int $id;
+        string $result[];
+        tokenize $selection "[]" $result;
+        if (size($result) < 1) return -1;
+        if ($result[1] == "") return -1;
+        $id = $result[1];
+        return $id;
+}
+
+proc int[] buildEdgeTable(string $F, int $left)
+{
+        select -r $F;   
+        string $result[];
+        $result = getEdges();
+        int $nEdges = size($result);
+        int $vertArr[];
+        for ($edge in $result) {
+                select -r $edge;
+                string $endVerts[] = getVerts();
+                if ($left) 
+                        $vertArr[size($vertArr)] =
+polyComponentId($endVerts[0]);
+                else 
+                        $vertArr[size($vertArr)] =
+polyComponentId($endVerts[1]);
+        }
+        return $vertArr;
+}
+
+proc int getOtherVertex(int $lArr[], int $rArr[], int $endV, int $prev)
+{
+        int $i;
+        int $limit;
+
+        //      Search through the $lArr, and 
+        //      get the corresponding element in $rArr
+
+        $i = 0;
+        $limit = size($lArr);
+        for ( ; $i < $limit; $i++) {    
+                if ( ($lArr[$i] == $endV) && ($rArr[$i] != $prev) )
+                        return $rArr[$i];
+        }
+        return -1;
+}
+
+global proc string[] getLoopVertices()
+{
+        string $outV[], $dummyArr[];
+
+        string $sList[]=getFaces();
+        if (size($sList) != 1) return $outV;
+        string $F=$sList[0];
+        if (size($sList) > 1) { 
+				string $fmt = ((uiRes("m_polyRotateUVsByVertex.kMultipleFacesWarn")));
+				warning (`format -s $sList[0] $fmt`);
+        }
+
+        // Remember the vertex Array...
+        string $vertArr[];
+        select -r $F;   
+        $vertArr = getVerts();
+        int $nVerts = size($vertArr);
+
+		string $unknownError = (uiRes("m_polyRotateUVsByVertex.kUnkownError"));
+        if ($nVerts < 3) {
+            error($unknownError);
+			return $outV;
+        }
+
+        int $leftVerts[], $rightVerts[];
+        $leftVerts =  buildEdgeTable($F, 1);
+        $rightVerts = buildEdgeTable($F, 0);
+
+        string $result[];
+        string $v, $obj;
+
+        $v = $vertArr[0];
+
+        tokenize $v "." $result;
+        if (size($result) < 1) {
+                error($unknownError);
+                return $outV;
+        }
+        $obj = $result[0];              // Get the poly name
+
+        int $curId, $prevId, $lv, $rv;
+        $prevId = -1;
+        //
+        do {
+                $outV[size($outV)] = $v;        // First in the loop
+                $curId = polyComponentId($v);
+                $lv = getOtherVertex($leftVerts,  $rightVerts, $curId, $prevId);
+                $rv = getOtherVertex($rightVerts, $leftVerts,  $curId, $prevId);
+                if ($lv != -1 && $prevId != $lv) 
+                        $v = $obj + ".vtx[" + $lv + "]";
+                else 
+                        $v = $obj + ".vtx[" + $rv + "]";
+                if ($lv == -1 && $rv == -1) {
+                        error($unknownError);
+                        return $dummyArr;
+                }
+                $prevId = $curId;
+        } while (size($outV) < $nVerts);
+
+        return $outV;
+}
+
+global proc string[] getUVsForVertsInFace(string $fVerts[], string $face)
+{
+        select -r $face;
+        string $fUVs[] = getUVs();
+        string $loopUVs[];
+        for ($verts in $fVerts) {
+                select -r $verts;
+                string $vUVs[] = getUVs();
+                string $thisUV = "";
+                for ($vUV in $vUVs) {
+                        // For each UV, find the one thats in that face 
+                        // That is, if this UV is in fUVs, use this.
+                        for ($thisFaceUV in $fUVs) {
+                                if ($thisFaceUV == $vUV) {
+                                        $thisUV = $thisFaceUV;
+                                        break; 
+                                }
+                        }
+                        if ($thisUV != "") break;
+                }
+                $loopUVs[size($loopUVs)] = $thisUV;
+        }
+        return $loopUVs;
+}
+
+global proc polyRotateUVsByVertex()
+{
+        int $num = 1;
+        // The face should have been selected...
+        string $sList[]=getFaces();
+        if (size($sList) == 0) {
+                warning ((uiRes("m_polyRotateUVsByVertex.kNoFacesSelected")));
+                return;
+        }
+        string $F=$sList[0];
+        if (size($sList) > 1) { 
+				string $fmt = ((uiRes("m_polyRotateUVsByVertex.kMultipleFacesWarn2")));
+				warning (`format -s $sList[0] $fmt`);
+        }
+
+		//cut edges so there are no connected UVs to get twisted
+		select -replace $F;
+		ConvertSelectionToEdges;
+		CutUVs;
+		select -replace $F;
+
+		string $unknownError = (uiRes("m_polyRotateUVsByVertex.kUnkownError2"));
+		
+        string $loopVerts[]=getLoopVertices();
+        string $loopUVs[] = getUVsForVertsInFace($loopVerts, $F);
+        if ((size($loopVerts) == 0) || (size($loopUVs) == 0)) {
+                error($unknownError);
+                return;
+        }
+        if (size($loopVerts) != size($loopUVs)) {
+                error($unknownError);
+                return;
+        }
+        //      Traverse through each vert, and 
+        //      store its UV value to a temp
+        //      and set its UV value to the prev stored value
+        string $vert, $cmd, $arr[];
+        float $UVs[], $U, $V, $oldU, $oldV;
+        int $first = 1;
+        int $i = 0;
+
+        for ($vert in $loopVerts) {
+                $UV = $loopUVs[$i]; $i++;
+                //select -r $vert;
+                //$UVs=`polyEvaluate -bc2`;
+                select -r $UV;
+                $UVs=`polyEvaluate -bc2`;
+                $U = $UVs[1];
+                $V = $UVs[2];
+                if ($first == 1) {
+                        $first = 0;
+                } else {
+                        // Set the $oldU, $oldV to the current Vertex....
+                        //$arr = getUVs();
+                        //select -r $arr;       
+						// Only one UV should be selected.
+                        select -r $UV;
+                        $cmd = "polyEditUV -r false -u " + $oldU + " -v " + $oldV;
+                        eval($cmd);
+                }
+                $oldU = $U; $oldV = $V;
+        }
+        // Now select the first Vertex and set its UV
+        //select -r $loopVerts[0];
+        //$arr = getUVs();
+        //select -r $arr;       
+		// Only one UV should be selected.
+        select -r $loopUVs[0];
+        $cmd = "polyEditUV -r false -u " + $oldU + " -v " + $oldV;
+        eval($cmd);
+
+		//select the original face
+		select -replace $F;
+}
+

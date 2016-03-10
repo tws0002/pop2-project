@@ -1,0 +1,105 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+global proc makeReferenceObject()
+//
+// Description
+//		Looks at the selection list for the first piece of
+//		geometry and then proceeeds to:
+//				duplicate it
+//				translate it slightly
+//				template it
+//				make it a reference object of the original
+//				surface.
+//
+{
+	// Get the relevant selected objects (transforms or geometryShapes)
+	string $selectedObjects[] = `ls -sl -type transform -type geometryShape`;
+
+	if (size($selectedObjects) >= 1) {
+
+		// Get the geometryShapeNodes for the first selected object.
+
+		string $allShapeNodes[] = 
+			`ls -sl -dagObjects -type geometryShape $selectedObjects[0]`;
+		string $originalShapeNodes[];
+
+		int $i = 0;
+		for ($shape in $allShapeNodes) {
+			int $intermediate = `getAttr ($shape + ".intermediateObject")`;
+
+			if (!$intermediate) {
+				$originalShapeNodes[$i] = $shape;
+				$i++;
+			}
+		}
+		
+		if (size($originalShapeNodes) >= 1) {
+			// There is at least one geometryShape node so proceed
+
+			// Duplicate the object we are working on
+			string $duplicatedObj[] = 
+				`duplicate -n ($selectedObjects[0] + "_reference") $selectedObjects[0]`;
+
+			// Move the object slightly and template it.
+			// (commenting out the move to fix bug 115663
+			//move -r 5 0 0 $duplicatedObj[0];
+			setAttr ($duplicatedObj[0] + ".template") true;
+			string $listOfParents[] = `listRelatives -p $duplicatedObj[0]`;
+			if (size($listOfParents) > 0) {
+				parent -w $duplicatedObj[0];
+			}
+
+			// Get a list of geometryShape nodes for the duplicated object
+			string $duplicatedShapeNodesTmp[] = 
+				`ls -sl -dagObjects -type geometryShape $duplicatedObj[0]`;
+			// This list will have the duplicated objects.  Cull them.
+			string $duplicatedShapeNodes[];
+			int $i=0;
+			for ($shape in $duplicatedShapeNodesTmp) {
+				int $intermediate = `getAttr ($shape + ".intermediateObject")`;
+				if (!$intermediate) {
+					$duplicatedShapeNodes[$i] = $shape;
+					$i++;
+				}
+			}
+			
+			// The originalShapeNodes and duplicatedShapeNodes are arrays
+			// that must have the same elements or we are in big trouble
+			
+			if (size($originalShapeNodes) == size($duplicatedShapeNodes)) {
+
+				int $i = 0;
+				for ($shapeNode in $originalShapeNodes) {
+
+					connectAttr ($duplicatedShapeNodes[$i] + ".msg") 
+						($shapeNode + ".referenceObject");
+
+					rename $duplicatedShapeNodes[$i] ($shapeNode + "_reference");
+
+					$i++;
+				}
+			} else {
+				warning  (uiRes("m_makeReferenceObject.kReferenceObjectHasDifferentTopology"));
+			}
+		}
+	}
+}

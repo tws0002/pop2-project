@@ -1,0 +1,135 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  2005
+//
+//  Description:
+//      Delete Disk Cache
+//		
+//
+proc deleteFilesForCacheNode(string $cacheFileNode)
+{
+	string $files[] = `cacheFile -q -f $cacheFileNode`;
+	for ($file in $files) {
+		sysFile -del $file;
+	}
+	string $directory = `getAttr ($cacheFileNode+".cachePath")`;
+	sysFile -removeEmptyDir $directory;
+}
+
+global proc int deleteCacheFileOnObj(string $obj, int $deleteFiles)
+{
+	string $stillExists[] = `ls $obj`;
+	if (size($stillExists) == 0) {
+		// previous operation deleted this object
+		//
+		return 0;
+	}
+	
+	int $count = 0;
+	string $hist[] = `listHistory -pdo 1 $obj`;
+	for ($histNode in $hist) {
+		if (nodeType($histNode) == "cacheFile") {
+			$count++;
+
+			if ($deleteFiles) {
+				// disable first so they won't give an error message about
+				// the missing files
+				//
+				setAttr ($histNode+".enable") 0;
+				deleteFilesForCacheNode($histNode);
+			}
+			delete $histNode;
+		}
+	}
+	return $count;
+}
+
+global proc deleteCacheFile( int $version, string $args[] )
+//
+// Description:
+//	Delete the cache file on the selected objects.
+//	$version 1:
+//		$args[0] = "delete" or "keep" the cache files on disk	
+//  $version 2:
+//		$args[1] =  a comma separated list of cache nodes to delete.
+//  $version 3:
+//		$args[2] =  a comma separated list of cache file types to delete.
+//					This is only used when $args[1] is an empty array.
+//					Valid types are: "nCloth" and "geometry".	
+//	
+{
+	string $sel[] = `ls -sl`;
+	int $cacheCount = 0;
+
+	int $deleteFiles = 1;
+	if (size($args) > 0) {
+		if ($args[0] == "keep") {
+			$deleteFiles = 0;
+		}
+	}
+	string $cachesToDelete[];
+	if( $version > 1 ) {
+		string $cacheArray[] = stringToStringArray($args[1], "," );
+		$cachesToDelete = stringArrayRemoveDuplicates($cacheArray);
+	}
+
+	waitCursor -state 1;
+	if( size($cachesToDelete) > 0 ) {
+		for( $cache in $cachesToDelete ) {
+			$cacheCount++;
+			if($deleteFiles) {
+				// disable first so they won't give an error message about
+				// the missing files
+				//
+				setAttr ($cache+".enable") 0;
+				deleteFilesForCacheNode($cache);
+			}
+			delete $cache;
+		}
+	}
+	else {
+		string $cacheTypeAsString = "nCloth,geometry"; // all types
+		if ($version > 2) {
+			$cacheTypeAsString = $args[2];
+		}
+		string $cacheTypes[] = stringToStringArray($cacheTypeAsString, ",");
+
+		if (stringArrayContains("nCloth",$cacheTypes)) {
+			string $ncloths[] = `getNclothObjectsToCache 0`;
+			for ($object in $ncloths) {
+				$cacheCount += deleteCacheFileOnObj($object, $deleteFiles);
+			}
+		}
+		if (stringArrayContains("geometry",$cacheTypes)) {
+			for ($object in $sel) {
+				$cacheCount += deleteCacheFileOnObj($object, $deleteFiles);
+			}
+		}
+	}
+	waitCursor -state 0;
+
+	if (0 == $cacheCount) {
+		error( (uiRes("m_deleteCacheFile.kNothingSelected")));
+	}
+}

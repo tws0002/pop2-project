@@ -1,0 +1,278 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Nov, 1999
+//
+//  Procedure Name:
+//      doDuplicateClipArgList
+//
+//  Description:
+//      Duplicate a clip
+//
+//  Input Arguments:
+//  $version: The version of this option box.  Used to know how to 
+//  interpret the $args array.
+//
+//  $args
+//  Version 1
+//  [0]     $scheduleIt : whether or not to place the clip in the track editor
+//  [1]     $editor : editor containing the clip
+//  [2]     $warpMode : 0: Create clip without time warp
+//                      1: duplicate time warp
+//                      2: instance time warp
+//  Version 2
+//  [0]     $scheduleIt : whether or not to place the clip in the track editor
+//  [1]     $warpMode : 0: Create clip without time warp
+//                      1: duplicate time warp
+//                      2: instance time warp
+//  [2]     $duplicateSource : whether to duplicate or instance the source
+//  [3]     $clip : If empty, duplicate selected clips. Else, duplicate
+//                  this clip. This argument is optional for version 2.
+//  Version 3
+//  [4]     $timeMethod : additional time method supported -> "specify"
+//  [5]     $time : the time to use if $timeMethod = specify
+//  [6]     $track : track to paste to (-1 means next available)
+//  [7]     $group : group to paste to
+//
+
+proc string
+instanceCommand(int $clipIndex, string $sch, string $instanceSource, int $duplicateSource, string $newClipName, float $currentTime)
+{
+	string $cmd;
+	
+	float $srcStart = `clipSchedule -ci $clipIndex -q -sourceStart $sch`;
+	float $srcEnd = `clipSchedule -ci $clipIndex -q -sourceEnd $sch`;
+	float $wt = `clipSchedule -ci $clipIndex -q -weight $sch`;
+	float $scale = `clipSchedule -ci $clipIndex -q -scale $sch`;
+	float $preCycle = `clipSchedule -ci $clipIndex -q -preCycle $sch`;
+	float $postCycle = `clipSchedule -ci $clipIndex -q -postCycle $sch`;
+	int $hold = `clipSchedule -ci $clipIndex -q -hold $sch`;
+	int $weightStyle = `clipSchedule -ci $clipIndex -q -weightStyle $sch`;
+	int $enabled = `clipSchedule -ci $clipIndex -q -enable $sch`;
+
+	$cmd = ("clipSchedule -instance "+$instanceSource);
+
+	float $clipStart = $currentTime+$preCycle*$scale*($srcEnd-$srcStart);
+
+	$cmd += (" -start "+$clipStart);
+	$cmd += (" -sourceStart "+$srcStart);
+	$cmd += (" -sourceEnd "+$srcEnd);
+	
+	if ($duplicateSource)
+	{
+		$cmd += (" -name "+$newClipName);
+	}
+	
+	$cmd += (" -preCycle "+$preCycle);
+	$cmd += (" -postCycle "+$postCycle);
+	$cmd += (" -hold "+$hold);
+	$cmd += (" -scale "+$scale);
+	$cmd += (" -en "+$enabled);
+	$cmd += (" -weight "+$wt);
+	$cmd += (" -weightStyle "+$weightStyle);
+	$cmd += (" "+$sch);
+	
+	return $cmd;
+}
+
+proc
+handleTimeWarp(int $warpMode, string $newClip, string $oldClip)
+{
+	if (size($newClip) > 0 && ($warpMode != 0)) {
+		int $enabled = `getAttr ($oldClip+".timeWarpEnable")`;
+		setAttr ($newClip+".timeWarpEnable") $enabled;
+
+		string $cnxs[] = `listConnections -type "animCurve" ($oldClip+".timeWarp")`;
+		if (size($cnxs) > 0) {
+			string $timeWarpCurve = "";
+			
+			if ($warpMode == 1)
+			{
+				string $newWarp[] = `duplicate $cnxs[0]`;
+				if (size($newWarp) > 0)
+				{
+					$timeWarpCurve = $newWarp[0];
+				}
+			}
+			else
+			{
+				$timeWarpCurve = $cnxs[0];
+			}
+		
+			if (size($timeWarpCurve) > 0) {
+				setAttr -k on ($newClip+".timeWarpEnable");
+				setAttr -k on ($newClip+".timeWarp");
+				connectAttr ($timeWarpCurve+".o") ($newClip+".tw");
+			}
+		}
+	}
+}
+
+global proc string
+doDuplicateClipArgList( string $version, string $args[] )
+{
+	if( !`exists getClipScheduler`) {
+		source "ClipEdMenu.mel";
+	}
+	
+	int $versionNum = $version;
+	int $scheduleIt = $args[0];
+	int $warpMode   = 0;
+	int $duplicateSource = 0;
+	string $timeMethod = "";
+	int $toTrack = -1;
+	string $toGroup;
+	string $startFlags = "";
+	float $time = `currentTime -q`;
+
+	string $selClips[];
+	if ($versionNum <= 1)
+	{
+		// the editor flag is obsolete with the new trax editor in 6.0
+		//
+		string $editor = $args[1];
+		$warpMode = $args[2];
+		$selClips = getSelectedClips("noOptions");
+	}
+	else
+	{
+		// $args handling for $versionNum greater than 1
+		//
+		$warpMode = $args[1];
+		$duplicateSource = $args[2];
+
+		// use the $clip specified in $args[3], or the selection list
+		//
+		if (size($args) > 3 && size($args[3]) > 0)
+			$selClips[0] = $args[3];
+		else
+			$selClips = getSelectedClips("noOptions");
+
+		if ($versionNum >= 3)
+		{
+			$timeMethod = $args[4];
+			if ($timeMethod != "" &&
+				$timeMethod != "specify")
+			{
+				string $errString = (uiRes("m_doDuplicateClipArgList.kNotAValidPasteTimeErr")); 
+				$errString = `format -s $timeMethod $errString`;
+				error($errString);
+			}
+		}
+
+		if ($versionNum >= 3)
+		{
+			$toTrack = $args[6];
+			$toGroup = $args[7];
+		}
+
+		if ($timeMethod == "specify")
+			$time = $args[5];
+	}
+
+	string $newClip;
+	int $instanceClip = ($duplicateSource && $scheduleIt) || (!$duplicateSource);
+
+	int $nclips = size($selClips);
+	if ($nclips == 0)
+		error( (uiRes("m_doDuplicateClipArgList.kSelectTheClipErr")) );
+
+	string $clip;
+	for ($clip in $selClips)
+	{
+		string $sch = getClipScheduler($clip);
+		int    $clipIndex = getClipIndex($clip, $sch);
+		string $clipSourceName = `clip -q -scn $clip`;
+		string $clipName = $clip;
+
+		string $ch[] = `clipSchedule -q -character $sch`;
+		if (size($ch) == 0)
+			error( (uiRes("m_doDuplicateClipArgList.kSchedulerIsNotAttachErr")) );
+
+		string $cmd;
+		string $instanceSource;
+		string $newClipName;
+
+		if ($duplicateSource)
+		{
+			$cmd = ("clip -duplicate -name "+$clipSourceName);
+			$cmd += (" -scheduleClip "+0);
+			$cmd += (" -ignoreSubcharacters ");
+			if ($scheduleIt) 
+			{
+				$cmd += (" -newName "+$clipName);
+				$cmd += (" "+$ch[0]);
+				$instanceSource = `evalEcho $cmd`;
+				$newClipName = $clipName;
+
+				string $sourceString = match("Source.*",$clipName);
+				int $sizediff = (size($clipName)-size($sourceString));
+				if ($sizediff > 0)
+					$newClipName = substring($clipName,1,$sizediff);
+			}
+		}
+		else
+		{
+			// If we're here we're instancing the clip without duplicating the source.
+			$instanceSource = $clipName;
+			$newClipName = $clipName;
+		}
+
+		if ($instanceClip)
+			$cmd = instanceCommand($clipIndex, $sch, $instanceSource, $duplicateSource, $newClipName, $time);
+		else
+			$cmd += (" "+$ch[0]);
+
+		$newClip = `evalEcho $cmd`;
+
+		if (($toGroup != "") || ($toTrack != -1))
+		{
+			$clipIndex = getClipIndex ($newClip, $sch);
+			if ($toGroup != "")
+			{
+				if ($toTrack != -1)
+					clipSchedule -group true -groupIndex $clipIndex -track $toTrack -groupName $toGroup $sch;
+				else
+					clipSchedule -group true -groupIndex $clipIndex -groupName $toGroup $sch;
+			}
+			else if ($toTrack != -1)
+			{
+				clipSchedule -clipIndex $clipIndex -track $toTrack $sch;
+			}
+		}
+
+		handleTimeWarp($warpMode, $newClip, $clipName);
+		copyAbsoluteChannelsClipData($newClip, $clipName);
+		ghostAppendedClip $sch { $clip, $newClip } 1;
+		string $ghost = getGhostShapeForClip($newClip);
+		if (size($ghost))
+			select -d $ghost;
+	}
+
+	string $selBlends[] = getSelectedBlends();
+	int $nblends = size($selBlends);
+	if ($nblends != 0)
+		warning( (uiRes("m_doDuplicateClipArgList.kSelectedBlendsWarn")) );
+
+	return $newClip;
+}

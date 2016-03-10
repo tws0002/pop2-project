@@ -1,0 +1,92 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  2005
+//
+//  Description:
+//      Get a list of Ccloth or nParticle objects for caching.
+//		
+//
+global proc string[] getNclothObjectsToCache(int $showError)
+{
+	string $shapes[] = getGeometriesToCache();
+	string $objsToCache[];
+
+	// look for the xforms of hair systems and pfx hairs as well
+	// because getGeometries to cache only gets deformable shapes
+	string $obj;
+ 	string $sel[] = `ls -sl -type transform`;
+ 	for ($selObj in $sel) {
+		string $objects[] = `listRelatives -pa -ni -shapes -type hairSystem -typ pfxHair $selObj`;
+ 		for( $obj in $objects ) {
+	 		$shapes[size($shapes)] = $obj;
+        	}
+	}
+
+	if (0 == size($shapes)) {
+		$objsToCache = `ls -sl -type nBase`;
+	} else {
+		string $shape;
+		for ($shape in $shapes) {
+			string $nType = nodeType( $shape );
+			if($nType != "hairSystem" && $nType != "pfxHair") {
+				// don't want to find cloth or particles from hair by accident
+				string $nBase = findTypeInHistory($shape,"nBase", 0, 1);
+				if (size($nBase)) {
+					$objsToCache[size($objsToCache)] = $nBase;
+				}
+			}
+			string $nHair = findTypeInHistory($shape,"hairSystem", 0, 1);
+			if (size($nHair)) {
+				$objsToCache[size($objsToCache)] = $nHair;
+			}
+		}
+	}
+
+	// append any additional geometries that are in cache groups with
+	// the specified geometries
+	//
+	int $ii, $objCount = size($objsToCache);
+	for ($ii = 0; $ii < $objCount; $ii++) {
+		string $caches[] = findExistingCaches($objsToCache[$ii]);
+		for ($cache in $caches) {
+			string $geoms[] = `cacheFile -q -geometry $cache`;
+			for ($geom in $geoms) {
+				string $isNBase[] = `ls -type nBase $geom`;
+				if (size($isNBase) > 0) {
+					if (0 == stringArrayCount($geom,$objsToCache)) {
+						$objsToCache[size($objsToCache)] = $geom;
+					}
+				}
+			}
+		}
+	}
+
+	// if both the mesh and the nCloth node were selected, there could be duplicates in this list
+	$objsToCache = stringArrayRemoveDuplicates( $objsToCache );
+	
+	if ($showError && 0 == size($objsToCache)) {
+		error((uiRes("m_getNclothObjectsToCache.kSelectClothError")));
+	}
+	return $objsToCache;
+}

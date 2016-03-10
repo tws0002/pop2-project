@@ -1,0 +1,160 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:	Jan 29, 1999
+//
+//  Procedure Name:
+//	AEshaderTypeNew
+//
+//  Description Name;
+//	Change the type of the current shader.
+//
+
+global proc AEshaderTypeNew( string $messagePlug )
+{
+	string $shaderNode = plugNode($messagePlug);
+    callbacks -executeCallbacks -hook "addHeaderContentToMayaLambertianShadersAE" $shaderNode;
+
+	setUITemplate -pushTemplate attributeEditorTemplate;
+
+    optionMenuGrp -label (uiRes("m_AEshaderTypeNew.kType"))  typeMenu;
+
+        // Create a menu item for each type of shader. Make sure to
+        // name each menu item after its shader type.
+
+        string $excludedMaterialTypes[] = `callbacks -executeCallbacks -hook "provideClassificationStrings"`;
+        string $excludedMaterialTypesAsString = "";
+	
+        for ($materialTypes in $excludedMaterialTypes) {
+		    $excludedMaterialTypesAsString = ($excludedMaterialTypesAsString + ":" + $materialTypes);
+        }
+
+        string $nodes[] = `listNodeTypes -ex $excludedMaterialTypesAsString "shader/surface"`;
+        for ($item in $nodes) {
+			if (`shouldAppearInNodeCreateUI($item)`)
+				menuItem -label `nodeTypeNiceName($item)` $item;
+        }
+
+    AEshaderTypeReplace($messagePlug);
+
+	setUITemplate -popTemplate;
+}
+
+global proc AEshaderTypeReplace( string $messagePlug )
+{
+    // Get the shader node
+    //
+
+    string $shaderNode = plugNode($messagePlug);
+    string $shaderType = `objectType $shaderNode`;
+    int $isInitialShader = ($shaderNode == `defaultShaderName`);
+
+    // Figure which menu item to select
+    //
+
+    int $select = 1;
+
+    string $items[] = `optionMenuGrp -q -itemListShort typeMenu`;
+
+    for ($i = 0; $i < size($items); $i += 1) {
+        if ($shaderType == $items[$i])
+            $select = $i + 1;
+    }
+
+    // Update the UI
+    //
+
+    string $parent = `setParent -q`;
+
+    optionMenuGrp -e
+        -select $select
+        -enable (!$isInitialShader)
+        -cc ("evalDeferred(\"AEshaderTypeCB " + $parent + " " + $shaderNode + "\")")
+        -dropCallback "AEshaderTypeDropCB"
+        -annotation $shaderNode // data for AEshaderTypeDropCB
+        typeMenu;
+}
+
+proc string getMaterialInfo( string $shaderNode )
+{
+    string $connections[] = `listConnections ($shaderNode+".message")`;
+
+    for ($item in $connections)
+        if (`objectType $item` == "materialInfo")
+            return $item;
+
+    return "";
+}
+
+proc disconnectMaterialInfo( string $shaderNode, 
+	string $newShaderNode )
+{
+	$materialInfoNode = getMaterialInfo($shaderNode);
+	if ($materialInfoNode == "")
+	{
+		// The materialInfoNode doesn't exist... fail silently.
+		return;
+	}
+
+	disconnectAttr ($shaderNode+".message") ($materialInfoNode+".material");
+}
+
+global proc AEshaderTypeDropCB( string $dragControl, string $dropControl,
+                                string $msgs[], int $x, int $y, int $type )
+{
+    if (size($msgs) == 1) {
+        string $shaderNode = `optionMenuGrp -q -annotation $dropControl`;
+
+        string $replaceNode = $msgs[0];
+
+		// Disconnect the materialInfo node.
+		disconnectMaterialInfo($shaderNode, $replaceNode);		
+		
+        replaceNode $shaderNode $replaceNode;
+
+        showEditor $replaceNode;
+    }
+}
+
+global proc AEshaderTypeCB( string $parent, string $shaderNode )
+{
+    setParent $parent;
+
+    int $select = `optionMenuGrp -q -select typeMenu`;
+    string $items[] = `optionMenuGrp -q -itemListShort typeMenu`;
+
+    if ($select - 1 < size($items)) {
+        string $replaceType = $items[$select - 1];
+
+        string $replaceNode = `createNode $replaceType`;
+
+		// Disconnect the materialInfo node.
+		disconnectMaterialInfo($shaderNode, $replaceNode);		
+
+        replaceNode $shaderNode $replaceNode;
+
+        showEditor $replaceNode;
+
+        delete $shaderNode;
+    }
+}

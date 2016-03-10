@@ -1,0 +1,177 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Mar 14, 1997
+//
+//
+//  Description:
+//      This script performs loft action on the selection list.
+//
+
+
+proc addOneToLoft( string $loft, int $index, string $curve, int $range )
+{
+	string $node[] = `duplicateCurve -rn $range -o false $curve`;
+	if( size($node) > 0 ) {
+		if( "nurbsCurve" == `nodeType $node[0]`) {
+			connectAttr ($curve + ".ws") ($loft + ".ic[" + $index + "]");
+		}
+		else {
+			connectAttr ($node[0] + ".oc") ($loft + ".ic[" + $index + "]");
+		}
+	}
+}
+
+proc int addToLoft( string $lofted, string $curves[], int $range )
+{
+	if( size($curves) < 1 ) return false;
+
+	string $hst[] = `listHistory -gl true -pdo true -lf true -f false $lofted `;
+	int $i, $n = size($hst);
+	if( $n < 1 ) return false;
+
+	string $hist[];
+
+	// tokenize && append.
+	//
+	for( $i = 0 ; $i < $n ; $i++ ) {
+		string $tmp[] ;
+		tokenize( $hst[$i], "|", $tmp );
+		int $l = size($tmp);
+		int $len = size($hist) ;
+		int $j ;
+		for( $j = 0 ; $j < $l ; $j++ ) {
+			$hist[$len+$j] = $tmp[$j] ;
+		}
+	}
+
+	string $loft = "";
+
+	// look for the first node which is of type "loft".
+	//
+	$n = size($hist) ;
+	for( $i=0; $i<$n; $i+=1 ) {
+		string $name = $hist[$i] ;
+		if( "loft" == `nodeType $name` ) {
+			$loft = $name;
+			break;
+		}
+	}
+
+	if( "" == $loft ) return false;
+
+	int $cntr = eval( "getAttr -s " + $loft + ".ic" );
+	$n = size($curves);
+	for( $i=0; $i<$n; $i+=1 ) {
+		addOneToLoft( $loft, $cntr, $curves[$i], $range );
+		$cntr += 1;
+	}
+
+	return true;
+}
+
+global proc doPerformLoft( string $version, string $args[] )
+{
+
+	if( 8 != size($args)) {
+		string $msg = (uiRes("m_doPerformLoft.kIncorrectNumber"));
+		error($msg);
+		return;
+	}
+
+	int $history = $args[0];
+	int $uniform = $args[1];
+	int $autoReverse = $args[2];
+	int $close = $args[3];
+	int $degree = $args[4];
+	int $spans = $args[5];
+	int $range = $args[6];
+	int $polys = $args[7];
+
+	// Get a list of each type of acceptable object type - 
+	// curves, and curves-on-surface.
+	//
+	global int $gSelectNurbsCurvesBit;
+	global int $gSelectIsoparmsBit;
+	global int $gSelectSurfaceEdgeBit;
+	global int $gSelectCurvesOnSurfacesBit;
+	global int $gSelectMeshEdge;
+
+	global int $gSelectNurbsSurfacesBit;
+	global int $gSelectMeshesBit;
+
+	string $curves[] = `filterExpand -ex true -sm $gSelectMeshEdge -sm $gSelectNurbsCurvesBit -sm $gSelectIsoparmsBit -sm $gSelectSurfaceEdgeBit -sm $gSelectCurvesOnSurfacesBit`;
+	string $lofted[] = `filterExpand -ex true -sm $gSelectNurbsSurfacesBit -sm $gSelectMeshesBit`;
+
+	int $added = false;
+	if( 1 == size($lofted) ) {
+		$added = addToLoft( $lofted[0], $curves, $range );
+		if( $added ) {
+			select -r $lofted[0];
+			return;
+		}
+	}
+
+	// Execute loft on all active curves.
+	//
+	int $i, $n;
+	$n = size($curves);
+	if( $n > 1 ) {
+		$cmd = "loft" + " -ch " + $history + 
+			" -u " + $uniform+
+			" -c " + $close + 
+			" -ar " + $autoReverse +
+			" -d " + $degree +
+			" -ss " + $spans +
+			" -rn " + $range +
+			" -po " + $polys +
+			" -rsn true";
+
+		for( $i=0; $i<$n; $i+=1 ) {
+			$cmd = $cmd + " \"" + $curves[$i] + "\"";
+		}
+
+		string $result[] = evalEcho($cmd);
+
+		if( 0 == size($result) ) {
+			warning((uiRes("m_doPerformLoft.kWarningNothingSelected")) );
+		}
+		else {
+			// Select all the results
+			//
+			select -cl;
+			int $len = size($result) ;
+			for( $i = 0 ; $i < $len ; $i++ ) {
+				if( $i == 0 ) select -r $result[$i] ;
+				else select -add $result[$i] ;
+			}
+		}
+	}
+	else {
+		if( !`optionVar -q modelWithToolLoft` ) {
+			string $msg = (uiRes("m_doPerformLoft.kInvalidSelection"));
+			error($msg);
+		}
+	}
+}
+

@@ -1,0 +1,143 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Sept. 22, 1998
+//
+//  Description:
+//      This script is doing the squareSurface work.
+//
+
+
+proc int isObjectFromSurface( string $selection )
+//
+//	Description:
+//		Determine if this selection item is a curve from a surface (e.g. an
+//		isoparm, curveOnSurface, trim edge, mesh edge, etc.).
+//
+{
+	int $isFromSrf = 0;
+
+	string $buffer[];
+	tokenize($selection, "->.", $buffer);
+	string $surface = $buffer[0];
+
+	string $dagObjects[] = `ls -dag $buffer[0]`;
+	int $numObj = size($dagObjects);
+	if (`objectType $dagObjects[$numObj-1]` == "nurbsSurface") $isFromSrf = 1;
+
+	return $isFromSrf;
+}
+
+global proc squareSrfPreset( int $doHistory, int $contType,
+							int $numChecks, int $polys, int $rebuild1,
+							int $rebuild2, int $rebuild3, int $rebuild4,
+							int $useGlobal, float $globalTol, float $localTol )
+{
+	// Get a list of each type of acceptable object type - 
+	// s, and s-on-surface.
+	//
+	global int $gSelectIsoparmsBit;
+	global int $gSelectNurbsCurvesBit;
+	global int $gSelectSurfaceEdgeBit;
+	global int $gSelectCurvesOnSurfacesBit;
+	global int $gSelectMeshEdge;
+
+	string $list[] = `filterExpand -ex true -sm $gSelectMeshEdge -sm $gSelectIsoparmsBit -sm $gSelectNurbsCurvesBit -sm $gSelectSurfaceEdgeBit -sm $gSelectCurvesOnSurfacesBit`;
+
+	// Execute squareSurface on all active items.
+	//
+	$cmd = "squareSurface" + " -ch " + $doHistory + " -po " + $polys;
+
+	if( $useGlobal ) {
+		$cmd += " -ept " + $globalTol;
+	}
+	else {
+		$cmd += " -ept " + $localTol;
+	}
+
+	int $i, $n = size($list);
+	if( $n > 4 ) {
+		string $msg = (uiRes("m_squareSrfPreset.kTooManyCurves"));
+		warning(`format -stringArg $n $msg`);
+		$n = 4;
+	}
+
+	if( $n < 3 ) {
+		string $msg = (uiRes("m_squareSrfPreset.kNotEnoughCurves"));
+		error(`format -stringArg $n $msg`);
+		return;
+	}
+
+	// set the tolerance for curve fit checkpoints
+	//
+	$cmd = $cmd + " -cfc " + $numChecks;
+
+	// set the continuity type flag - one for each selected curve. If
+	// the curve selected is not from a surface, then don't do tangent 
+	// type on it but do fixed instead
+	//
+	int $numTangent = 0;
+	for( $i=0; $i<$n; $i+=1 ) {
+		if ( $contType == 2 )
+		{
+			// make sure the curve is from a surface
+			//
+			if ( isObjectFromSurface($list[$i]) )
+			{
+				$cmd = $cmd + " -ct" + ($i+1) + " " + $contType;
+				$numTangent++;
+			}
+			else $cmd = $cmd + " -ct" + ($i+1) + " 1";
+		}
+		else $cmd = $cmd + " -ct" + ($i+1) + " " + $contType;
+	}
+
+	if ( $contType == 2 && $numTangent == 0 )
+	{
+		// there are no curves from a surface so warn the user that no
+		// tangent continuity will be done and do the defaults for order
+		// and insist end points
+		//
+		warning ((uiRes("m_squareSrfPreset.kNoCurvesSelected")) );
+	}
+
+	// add the rebuild flags to the command
+	//
+	$cmd = $cmd + " -rc1 " + $rebuild1;
+	$cmd = $cmd + " -rc2 " + $rebuild2;
+	$cmd = $cmd + " -rc3 " + $rebuild3;
+	if ( $n == 4 ) $cmd = $cmd + " -rc4 " + $rebuild4;
+
+	for( $i=0; $i<$n; $i+=1 ) {
+		$cmd = $cmd + " \"" + $list[$i] + "\"";
+	}
+	string $results[] = evalEcho($cmd);
+
+	int $numResults = size($results);
+	if( 0 == $numResults ) {
+		error ((uiRes("m_squareSrfPreset.kErrorOperationFailed")) );
+	}
+	else {
+		select -r $results;
+	}
+}

@@ -1,0 +1,144 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+// Description : A script to convert Bspline curve of arbitrary degree
+// in to Bezier segments. The Bezier segments are 1 span B-spline segments.
+// So, one would get as many shapes as the number of spans in the
+// B-spline curve.
+//
+
+proc string[] makeOneSpanSegments( 
+	string $crvName )
+//
+//	Description :
+//
+{
+
+	int $i ;
+	string $crvs[] ;
+
+	// 1. Extract the knots out.
+	//
+	select -r $crvName ;	
+	float $knots[] = nurbsCurveKnots() ;
+	if( size($knots) == 0 ) return $crvs ;
+
+	// get # of spans.
+	//
+	string $spansAttr = $crvName + ".spans" ;
+	int $ns = `getAttr $spansAttr` ;
+
+	string $degAttr = $crvName + ".degree" ;
+	int $d = `getAttr $degAttr` ;
+
+	string $subCurveNode ;
+	if( catch( $subCurveNode = `createNode subCurve` ) ) {
+		warning((uiRes("m_bsplineToBezier.kWarningSubCurveCreationFailed")) );
+		return $crvs ;
+	}
+
+	string $txfrmGeoNode ;
+	if( catch( $txfrmGeoNode = `createNode transformGeometry` ) ) {
+		warning((uiRes("m_bsplineToBezier.kWarningTransGeomCreationFailed")) );
+		delete $subCurveNode ;
+		return $crvs ;
+	}
+
+	string $tAttr = $crvName + ".l" ;	 // local curve.
+	string $ingAttr = $txfrmGeoNode + ".ig" ;
+	connectAttr $tAttr $ingAttr ;
+	$tAttr = $crvName + ".wm[0]" ;
+	$ingAttr = $txfrmGeoNode + ".transform" ;
+	connectAttr $tAttr $ingAttr ;
+		
+	int $oi = $d - 1 ;
+
+	string $inAttr1 = $txfrmGeoNode + ".og" ;
+	string $outAttr1 = $subCurveNode + ".ic" ;	
+	string $minAttr = $subCurveNode + ".minValue" ;	
+	string $maxAttr = $subCurveNode + ".maxValue" ;	
+	string $inAttr2 = $subCurveNode + ".oc" ;	
+	connectAttr $inAttr1  $outAttr1 ;
+	for( $i = 0 ; $i < $ns ; $i++ ) {
+
+		string $spanCrv ;
+		if( catch( $spanCrv = `createNode nurbsCurve` ) ) {
+			continue ;
+		}
+		setAttr $minAttr $knots[$i+$oi] ;
+		setAttr $maxAttr $knots[$i+$oi+1] ;
+		string $outAttr2 = $spanCrv + ".cr" ;
+		connectAttr  $inAttr2 $outAttr2 ;
+		string $dummy = $spanCrv + ".spans" ;
+		getAttr $dummy ;
+		disconnectAttr  $inAttr2 $outAttr2 ;
+		$crvs[$i] = $spanCrv ;
+	} // for.
+
+	delete $txfrmGeoNode ;
+	//delete $subCurveNode ;
+	return $crvs ;
+}
+
+global proc string[] bsplineToBezier( ) 
+{
+	string $crvs[] ;
+
+	// 0. Grab the select list.
+    //
+    string $selList[] ;
+    $selList = `ls -sl` ;
+
+	// 1. set filter to select only the nurbs curves out.
+	//
+	global int $gSelectNurbsCurvesBit ;
+
+	string $crvList[] ;
+    $crvList = `filterExpand -ex true -sm $gSelectNurbsCurvesBit $selList` ;
+
+	if( size($crvList) == 0 ) {
+		warning (uiRes("m_bsplineToBezier.kWarningSelectCurve"));
+		return $crvs;
+	}
+
+	// 2. we have NURBS curve selected.
+	//
+	int $len = size($crvList) ;
+    string $lastCrv = $crvList[$len-1] ;
+    if( $len != 1 ) {
+        string $w = (uiRes("m_bsplineToBezier.kWarningUsingLastCurve")) ;
+        warning `format -s $lastCrv $w` ;
+    }
+
+	// 3. Call local proc.   
+	//
+	$crvs =  makeOneSpanSegments( $lastCrv ) ;
+
+	if( size($crvs) > 0  ) {
+		select -r $crvs ;
+	} else {
+		warning (uiRes("m_bsplineToBezier.kWarningBsplineToBezierFailed"));
+	}
+	return $crvs ;
+}
+
+

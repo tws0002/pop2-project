@@ -1,0 +1,681 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Mar 24, 1997
+//
+//
+//  Description:
+//      This script is defines the option box for the extrude surface menu item.
+//
+//  Input Arguments:
+//      int action
+//		  0 - show the option box dialog
+//        1 - just execute the extrude operation
+//
+//  Return Value:
+//      None.
+//
+
+
+proc setOptionVars (int $forceFactorySettings)
+{
+    extrudeSetOptionVars( $forceFactorySettings );
+}
+
+global proc extrudeVisibility( string $parent, int $vector,
+							   int $style, int $direction )
+{
+    setParent $parent;
+
+	if( $style < 0 ) $style = `radioButtonGrp -q -sl style_B`;
+	switch( $style ) {
+	  case 1:
+		// distance
+		tabLayout -e -st distOptions_C swapOptions_T;
+		radioButtonGrp -e -en true degreeAlongLen_B;
+		break;
+
+	  case 2:
+		// flat
+		tabLayout -e -st extrudeTubeOptions_C swapOptions_T;
+		radioButtonGrp -e -en false pivot_B;
+		radioButtonGrp -e -en false dirType_RX;
+		radioButtonGrp -e -en false degreeAlongLen_B;
+		break;
+
+	  case 3:
+		// tube
+	  default:
+		tabLayout -e -st extrudeTubeOptions_C swapOptions_T;
+		radioButtonGrp -e -en true pivot_B;
+		radioButtonGrp -e -en true dirType_RX;
+		radioButtonGrp -e -en false degreeAlongLen_B;
+		break;
+	}
+
+	if( $direction < 0 ) $direction = `radioButtonGrp -q -sl dirType_R`;
+	switch( $direction ) {
+	  case 1:
+		// specify direction
+		//
+		radioButtonGrp -e -en true direction_R;
+		if( $vector < 0 ) $vector = `radioButtonGrp -q -select direction_R`;
+		switch( $vector ) {
+		  case 1:
+			// x axis
+			floatFieldGrp -e -en false -v1 1.0 -v2 0.0 -v3 0.0 userDir_F;
+			break;
+
+		  case 2:
+			// y axis
+			floatFieldGrp -e -en false -v1 0.0 -v2 1.0 -v3 0.0 userDir_F;
+			break;
+
+		  case 3:
+			// z axis
+			floatFieldGrp -e -en false -v1 0.0 -v2 0.0 -v3 1.0 userDir_F;
+			break;
+
+		  case 0:
+			// free axis
+		  default:
+			floatFieldGrp -e -en true userDir_F;
+			break;
+		}
+		break;
+	  case 2:
+		// use profile normal as direction
+		//
+	  default:
+		radioButtonGrp -e -en false direction_R;
+		floatFieldGrp -e -en false userDir_F;
+		break;
+	}
+}
+
+proc string assembleCmd()
+//
+//	Description :
+//		To assemble extrude proc.
+//
+{
+	setOptionVars(false);
+	string $cmd = "performSweepPreset";
+
+	int $history = `constructionHistory -q -tgl`;
+	int $range = `optionVar -q extrudeCurveRangePartial`;
+	int $pivotType = `optionVar -q extrudeUseComponentPivot`;
+	int $polygons = `optionVar -q extrudeOutputPolygons`;
+	if( ! `isTrue "SurfaceUIExists"` ) $polygons = 1;
+	int $extrudeType = `optionVar -q extrudeStyle`;
+	int $pathFixed = `optionVar -q extrudePathFixed`;
+	int $useProfileNormal = `optionVar -q extrudeUseProfileNormal`;
+
+	float $dirx = 0.0;
+	float $diry = 0.0;
+	float $dirz = 0.0;
+
+	int $dir = `optionVar -q extrudeDirectionType`;	
+	switch ($dir) {
+	  case 0 :
+		$dirx  = 1.0;
+		$diry  = 0.0;
+		$dirz  = 0.0;
+		break;
+	  case 1 :
+		$dirx  = 0.0;
+		$diry  = 1.0;
+		$dirz  = 0.0;
+		break;
+	  case 2 :
+		$dirx  = 0.0;
+		$diry  = 0.0;
+		$dirz  = 1.0;
+		break;
+	  default :
+		$dirx = `optionVar -q extrudeDirectionX`;	
+		$diry = `optionVar -q extrudeDirectionY`;	
+		$dirz = `optionVar -q extrudeDirectionZ`;	
+		break;
+	}
+
+	float $distance = 0.0;
+	$distance = `optionVar -q extrudeLength`;
+
+	int $advmod = `licenseCheck -m edit -typ model`;
+	float $rotation = 0.0;
+	if( $advmod ) {
+		$rotation = `optionVar -q extrudeRotation`;
+	}
+
+	float $scale = 1.0;
+	if( $advmod ) {
+		$scale = `optionVar -q extrudeScale`;
+	}
+
+	int $degreeAlongLen = `optionVar -q extrudeDegreeAlongLength`;
+
+	$cmd = $cmd + "(";  
+
+	$cmd = $cmd + $history;  
+	$cmd = $cmd + ",";  
+	$cmd = $cmd + $range;  
+	$cmd = $cmd + ",";  
+	$cmd = $cmd + $polygons;  
+	$cmd = $cmd + ",";  
+	$cmd = $cmd + $extrudeType;  
+	$cmd = $cmd + ",";  
+	$cmd = $cmd + $pivotType;
+	$cmd = $cmd + ",";  
+	$cmd = $cmd + $pathFixed;  
+	$cmd = $cmd + ",";  
+	$cmd = $cmd + $useProfileNormal;  
+	$cmd = $cmd + ",";  
+	$cmd = $cmd + $dirx;  
+	$cmd = $cmd + ",";  
+	$cmd = $cmd + $diry;  
+	$cmd = $cmd + ",";  
+	$cmd = $cmd + $dirz;  
+	$cmd = $cmd + ",";  
+	$cmd = $cmd + $distance;  
+	$cmd = $cmd + ",";  
+	$cmd = $cmd + $rotation;  
+	$cmd = $cmd + ",";  
+	$cmd = $cmd + $scale;  
+	$cmd = $cmd + ",";  
+	$cmd = $cmd + $degreeAlongLen;  
+	
+	$cmd = $cmd + ")";  
+	return $cmd;
+
+}
+proc extrudeOptions( int $inTheTool, string $goToTool )
+{
+	//	Name of the command for this option box.
+	//
+	string $commandName = "extrude";
+
+	//	Build the option box actions.
+	//
+	string $callback = ($commandName + "Callback");
+	string $setup = ($commandName + "Setup");
+
+	//	Step 1:  Get the option box.
+	//	============================
+	global string $gOptionBoxActionToolItem;
+	$gOptionBoxActionToolItem = "modelWithToolExtrude";
+	global string $gOptionBoxActionToolItemCB;
+	$gOptionBoxActionToolItemCB = "extrudeToolScript 3";
+
+	string $layout = getOptionBox();
+	setParent $layout;
+	
+	//	Step 2:  Pass the command name to the option box.
+	//	=================================================
+	setOptionBoxCommandName($commandName);
+	
+	//	Step 3:  Activate the default UI template.
+	//	==========================================
+	setUITemplate -pushTemplate DefaultTemplate;
+
+	//	Step 4: Create option box contents.
+	//	===================================
+	
+	//	Turn on the wait cursor.
+	//
+	waitCursor -state 1;
+
+	tabLayout -scr true -tv false;
+	
+	string $parent = `columnLayout -adjustableColumn 1`;
+	
+	radioButtonGrp -nrb 3 -sl 3  -label (uiRes("m_performExtrude.kStyle")) 
+		-label1 (uiRes("m_performExtrude.kDistance"))  -da1 0
+		-label2 (uiRes("m_performExtrude.kFlat"))  -da2 1
+		-label3 (uiRes("m_performExtrude.kTube"))  -da3 2
+		-on1 ("extrudeVisibility " + $parent + " -1 1 -1" )
+		-on2 ("extrudeVisibility " + $parent + " -1 2 -1" )
+		-on3 ("extrudeVisibility " + $parent + " -1 3 -1" )
+		style_B;
+
+	tabLayout -tabsVisible false swapOptions_T;
+		columnLayout distOptions_C;
+			floatSliderGrp -label (uiRes("m_performExtrude.kExtrudeLength")) 
+				-min 0.0 -max 10.0
+				-fmn -1e8 -fmx 1e8
+				length_F;
+
+			radioButtonGrp -nrb 2 -sl 2
+				-label (uiRes("m_performExtrude.kDirection")) 
+				-label1 (uiRes("m_performExtrude.kSpecify"))  -da1 0
+				-label2 (uiRes("m_performExtrude.kProfileNormal"))  -da2 1
+				-on1 ("radioButtonGrp -e -select 1 dirType_RX;" +
+					  "extrudeVisibility " + $parent + " -1 -1 1")
+				-on2 ("radioButtonGrp -e -select 2 dirType_RX;" +
+					  "extrudeVisibility " + $parent + " -1 -1 2")
+					 dirType_R;
+
+			radioButtonGrp -nrb 4 -label (uiRes("m_performExtrude.kDirectionVector")) 
+				-label1 (uiRes("m_performExtrude.kXAxis"))  
+				-label2 (uiRes("m_performExtrude.kYAxis"))  
+				-label3 (uiRes("m_performExtrude.kZAxis"))  
+				-label4 (uiRes("m_performExtrude.kFree")) 
+				-on1 ("extrudeVisibility " + $parent + " 1 -1 -1")
+				-on2 ("extrudeVisibility " + $parent + " 2 -1 -1")
+				-on3 ("extrudeVisibility " + $parent + " 3 -1 -1")
+				-on4 ("extrudeVisibility " + $parent + " 0 -1 -1")
+				direction_R;
+
+			floatFieldGrp -label "" -nf 3 userDir_F;
+
+			radioButtonGrp  -nrb 2 -label (uiRes("m_performExtrude.kSurfaceDegree"))
+				-label1 (uiRes("m_performExtrude.kLinear"))  
+				-label2 (uiRes("m_performExtrude.kCubic"))  
+				degreeAlongLen_B;
+		setParent ..;
+
+		columnLayout extrudeTubeOptions_C;		
+			radioButtonGrp -nrb 2 -sl 1
+				-label (uiRes("m_performExtrude.kResultPosition")) 
+				-label1 (uiRes("m_performExtrude.kAtProfile"))  -da1 0
+				-label2 (uiRes("m_performExtrude.kAtPath"))  -da2 1
+				path_B;
+
+			radioButtonGrp -nrb 2 -sl 1
+				-label (uiRes("m_performExtrude.kPivot")) 
+				-label1 (uiRes("m_performExtrude.kClosestEndPoint"))  -da1 0
+				-label2 (uiRes("m_performExtrude.kComponent"))  -da2 1
+				pivot_B;
+
+			radioButtonGrp -nrb 2 -sl 2
+				-label (uiRes("m_performExtrude.kOrientation")) 
+				-label1 (uiRes("m_performExtrude.kPathDirection"))  -da1 0
+				-label2 (uiRes("m_performExtrude.kOrientationProfile"))  -da2 1
+				-on1 ("radioButtonGrp -e -select 1 dirType_R;" +
+					  "extrudeVisibility " + $parent + " -1 -1 1")
+				-on2 ("radioButtonGrp -e -select 2 dirType_R;" +
+					  "extrudeVisibility " + $parent + " -1 -1 2")
+					 dirType_RX;
+        setParent ..;
+	setParent ..;
+
+	if( `licenseCheck -m edit -typ model` ) {
+		floatSliderGrp -label (uiRes("m_performExtrude.kRotation")) 
+		  -field true -min 0.0 -max 360.0 -fmn -1000000.0 -fmx 1000000.0
+		  extrudeRotateField;
+		floatSliderGrp -label (uiRes("m_performExtrude.kScale")) 
+		  -field true -min 0.0 -max 10.0 -fmn -1000.0 -fmx 1000.0
+		  extrudeScaleField;
+	}
+
+	// layout for add curve range, create as polygons.
+	//
+	separator;
+
+	radioButtonGrp -nrb 2 
+		-label (uiRes("m_performExtrude.kCurveRange")) 
+		-label1 (uiRes("m_performExtrude.kComplete"))  -da1 0
+		-label2 (uiRes("m_performExtrude.kPartial"))  -da2 1
+		range_R;
+
+	string $outputGeometry = (uiRes("m_performExtrude.kOutputGeometry"));
+	string $nurbs          = (uiRes("m_performExtrude.kNurbs"));
+	string $polygons       = (uiRes("m_performExtrude.kPolygons"));
+	string $bezier         = (uiRes("m_performExtrude.kBezier"));
+	if( `isTrue "SubdivUIExists"` ) {
+		radioButtonGrp -nrb 4
+		  -label $outputGeometry
+		  -label1 $nurbs
+		  -label2 $polygons
+		  -label3 (uiRes("m_performExtrude.kSubdiv")) 
+		  -label4 $bezier
+		  -cc1 "tabLayout -e -vis false polyOptions"	// there are currently no NURBS options
+		  -cc2 "tabLayout -e -vis true polyOptions"
+		  -cc3 "tabLayout -e -vis false polyOptions"	// there are currently no subdiv options
+		  -cc4 "tabLayout -e -vis false polyOptions"	// there are currently no bezier options
+		  poly_B;
+	}
+	else if( `isTrue "SurfaceUIExists"` ) {
+		radioButtonGrp -nrb 3
+		  -label $outputGeometry
+		  -label1 $nurbs 
+		  -label2 $polygons
+		  -label3 $bezier
+		  -cc1 "tabLayout -e -vis false polyOptions"	// there are currently no NURBS options
+		  -cc2 "tabLayout -e -vis true polyOptions"
+		  -cc3 "tabLayout -e -vis false polyOptions"	// there are currently no bezier options
+		  poly_B;
+	}
+
+    separator;
+
+    tabLayout -tabsVisible false polyOptions;
+      string $par = `columnLayout polyOptionsOK`;
+        nurbsToPolyAddOptions $par;
+      setParent ..;
+    setParent ..;
+
+	if( $inTheTool ) {
+		separator;
+		checkBoxGrp -ncb 2 -label (uiRes("m_performExtrude.kToolBehavior")) 
+		  -label1 (uiRes("m_performExtrude.kExitOnCompletion")) 
+		  -v1 off
+		  -on1 ("scriptCtx -e -euc true " + $goToTool)
+		  -of1 ("scriptCtx -e -euc false " + $goToTool)
+
+		  -label2 (uiRes("m_performExtrude.kAutoCompletion")) 
+		  -v2 on
+		  -on2 ("scriptCtx -e -lac true " + $goToTool)
+		  -of2 ("scriptCtx -e -lac false " + $goToTool)
+		  scriptToolExtraWidget;
+	}
+
+	//	Turn off the wait cursor.
+	//
+	waitCursor -state 0;
+	
+	//	Step 5: Deactivate the default UI template.
+	//  ===========================================
+	//
+	setUITemplate -popTemplate;
+
+	//	Step 6: Customize the buttons.  
+	//	==============================
+
+	//	'Apply' button.
+	//
+	string $applyBtn = getOptionBoxApplyBtn();
+	if( $inTheTool ) {
+		button -edit -label (uiRes("m_performExtrude.kExtrudeTool")) 
+		  -command ($callback + " " + $parent + " 3 \"" + $goToTool + "\"")
+		  $applyBtn;
+	}
+	else {
+		button -edit -label (uiRes("m_performExtrude.kExtrude")) 
+		  -command ($callback + " " + $parent + " 1 \"" + $goToTool + "\"")
+		  $applyBtn;
+	}
+
+	//	'Save' button.
+	//
+	string $saveBtn = getOptionBoxSaveBtn();
+	button -edit 
+		-command ($callback + " " + $parent + " 0 \"" +
+				  $goToTool + "\"; hideOptionBox")
+		$saveBtn;
+
+	//	'Reset' button.
+	//
+	string $resetBtn = getOptionBoxResetBtn();
+	button -edit 
+		-command ($setup + " " + $parent + " 1 \"" + $goToTool + "\"")
+		$resetBtn;
+
+	//	Step 7: Set the option box title.
+	//	=================================
+	//
+	if( $inTheTool ) {
+		setOptionBoxTitle (uiRes("m_performExtrude.kExtrudeToolOptions"));
+	}
+	else {
+		setOptionBoxTitle (uiRes("m_performExtrude.kExtrudeOptions"));
+	}
+
+	//	Step 8: Customize the 'Help' menu item text.
+	//	============================================
+	//
+	setOptionBoxHelpTag( "Extrude" );
+
+	//	Step 9: Set the current values of the option box.
+	//	=================================================
+	//
+	eval ($setup + " " + $parent + " 0 \"" + $goToTool + "\"");	
+	
+	//	Step 10: Show the option box.
+	//	=============================
+	//
+	showOptionBox();
+}
+
+proc string extrudeHelp()
+{
+	string $cmdHelp = "Command:<extrude>- create an extruded surface \n";
+	string $selectHelp = "Selection: One or more profile curves followed by the path curve along which to extrude.";
+    return $cmdHelp+$selectHelp;
+}
+
+global proc extrudeSetup( string $parent,
+						  int $forceFactorySettings,
+						  string $goToTool )
+{
+	// retrieve option settings.
+	//
+	setOptionVars($forceFactorySettings);	
+	extrudeToolSetup( $forceFactorySettings, $goToTool );
+
+	setParent $parent;	
+
+	// query all the option vars.
+	//
+	int $extrudeType = `optionVar -q extrudeStyle`;
+	int $pathFixed = `optionVar -q extrudePathFixed`;
+	int $range = `optionVar -q extrudeCurveRangePartial`;
+	int $polygons = `optionVar -q extrudeOutputPolygons`;
+	if( ! `isTrue "SurfaceUIExists"` ) $polygons = 1;
+
+	//set controls.
+	//
+	radioButtonGrp -edit -select ($extrudeType+1) style_B;		
+	radioButtonGrp -edit -select ($pathFixed+1) path_B;		
+	radioButtonGrp -edit -select ($range+1) range_R;		
+	if( `isTrue "SurfaceUIExists"` ) {
+		if( (3 == $polygons) && ! `isTrue "SubdivUIExists"` ) {
+			$polygons = 2;
+		}
+		radioButtonGrp -edit -select ($polygons+1) poly_B;
+	}
+
+	int $pivot = `optionVar -q extrudeUseComponentPivot`;
+	radioButtonGrp -edit -select ($pivot+1) pivot_B;
+
+	int $useProfileNormal = `optionVar -q extrudeUseProfileNormal`;
+	radioButtonGrp -edit -select ($useProfileNormal+1) dirType_R;
+	radioButtonGrp -edit -select ($useProfileNormal+1) dirType_RX;
+
+	// user specified normal ?
+	//
+	int $dirType = `optionVar -q extrudeDirectionType`;
+	radioButtonGrp -edit -select ($dirType+1) direction_R;
+
+	float $x = `optionVar -q extrudeDirectionX`;
+	float $y = `optionVar -q extrudeDirectionY`;
+	float $z = `optionVar -q extrudeDirectionZ`;
+	floatFieldGrp -e -v1 $x userDir_F;
+	floatFieldGrp -e -v2 $y userDir_F;
+	floatFieldGrp -e -v3 $z userDir_F;
+
+	float $length = `optionVar -q extrudeLength`;
+	floatSliderGrp -e -v $length length_F;
+
+	float $rotate = `optionVar -q extrudeRotation`;
+	float $scale = `optionVar -q extrudeScale`;
+
+	if( `licenseCheck -m edit -typ model` ) {
+		floatSliderGrp -e -v $rotate extrudeRotateField;
+		floatSliderGrp -e -v $scale extrudeScaleField;
+	}
+
+	int $degree = `optionVar -q extrudeDegreeAlongLength`;
+	switch( $degree ) {
+		case 1: $degree = 1; break;
+		case 3: $degree = 2; break;
+	}
+	radioButtonGrp -edit -select $degree degreeAlongLen_B;
+
+	extrudeVisibility $parent -1 -1 -1;
+
+	switch( $polygons ) {
+	  case 0:
+	  default:
+		tabLayout -e -vis false polyOptions;	// there are currently no NURBS options
+		break;
+	  case 1:
+		tabLayout -e -vis true polyOptions;
+		break;
+	  case 2:
+		tabLayout -e -vis false polyOptions;	// there are currently no subdiv options
+		break;
+	  case 3:
+		tabLayout -e -vis false polyOptions;	// there are currently no bezier options
+		break;
+	}
+
+	if( "" != $goToTool ) { 
+		checkBoxGrp -e -v1 `scriptCtx -q -euc $goToTool`
+		  scriptToolExtraWidget;
+		checkBoxGrp -e -v2 `scriptCtx -q -lac $goToTool`
+		  scriptToolExtraWidget;
+	}
+
+	nurbsToPolySetup( $parent, $forceFactorySettings );
+	nurbsToSubdivSetup( $parent, $forceFactorySettings );
+}
+
+global proc extrudeCallback( string $parent, int $doIt, string $goToTool )
+{
+	if( "" != $goToTool ) {
+		optionVar -iv extrudeEuc `scriptCtx -q -euc $goToTool`;
+		optionVar -iv extrudeLac `scriptCtx -q -lac $goToTool`;
+	}
+	setParent $parent;
+
+	// get Values from controls.
+	//
+	int $range = `radioButtonGrp -q -select range_R` - 1;
+	int $extrudeType = `radioButtonGrp -q -select style_B` - 1;
+	int $pathFixed = `radioButtonGrp -q -select path_B` - 1;
+	if( `isTrue "SurfaceUIExists"` ) {
+		int $polygons = `radioButtonGrp -q -select poly_B`;
+		if( (3 == $polygons) && ! `isTrue "SubdivUIExists"` ) {
+			$polygons = 4;
+		}
+		optionVar -intValue extrudeOutputPolygons ($polygons-1);
+	}
+	int $pivot = `radioButtonGrp -q -select  pivot_B` - 1;
+
+	int $useProfileNormal = `radioButtonGrp -q -select dirType_R` - 1;
+	optionVar -intValue extrudeUseProfileNormal $useProfileNormal;
+
+	if( $extrudeType == 0 ) {
+		if( $useProfileNormal == 0 ) {
+			int $direction = `radioButtonGrp -q -select direction_R` - 1;
+			optionVar -intValue extrudeDirectionType $direction;
+
+			// user specified direction.
+			//
+			if( $direction == 3 ) {
+				float $x = `floatFieldGrp -q -v1 userDir_F`;
+				float $y = `floatFieldGrp -q -v2 userDir_F`;
+				float $z = `floatFieldGrp -q -v3 userDir_F`;
+				optionVar -floatValue extrudeDirectionX $x;
+				optionVar -floatValue extrudeDirectionY $y;
+				optionVar -floatValue extrudeDirectionZ $z;
+			}
+		}
+
+		// extrude length.
+		//
+		float $length = `floatSliderGrp -q -v length_F`;
+		optionVar -floatValue extrudeLength $length;
+	}
+
+	if( `licenseCheck -m edit -typ model` ) {
+		float $rotate = `floatSliderGrp -q -v extrudeRotateField`;
+		float $scale = `floatSliderGrp -q -v extrudeScaleField`;
+
+		optionVar -floatValue extrudeRotation $rotate;
+		optionVar -floatValue extrudeScale $scale;
+	}
+ 
+	optionVar -intValue extrudeStyle $extrudeType;
+	optionVar -intValue extrudePathFixed $pathFixed;
+	optionVar -intValue extrudeCurveRangePartial $range;
+
+	// extrude Type is Tube.
+	//
+	if( $extrudeType == 2 ) {
+		 optionVar -intValue extrudeUseComponentPivot $pivot;
+	}
+
+	int $degree = `radioButtonGrp -q -sl degreeAlongLen_B`;
+	if( $degree == 1 ) $degree = 1; else $degree = 3;
+	optionVar -intValue extrudeDegreeAlongLength $degree;
+
+	nurbsToPolyCallback( $parent, 0 );
+	nurbsToSubdivCallback( $parent, 0 );
+	if( 1 == $doIt ) {
+		performExtrude( 0, $goToTool ); 
+		string $tmpCmd = "performExtrude( 0, \"" + $goToTool + "\")";
+		addToRecentCommandQueue $tmpCmd "Extrude";
+	}
+	else if( $doIt ) {
+		// The tool may not be there, if we switched
+		// the type, and need a different tool.  So,
+		// go with the tool script which will create
+		// the correct tool if it isn't there.
+		extrudeToolScript 4;
+	}
+}
+
+global proc string performExtrude( int $action,
+								   string $goToTool )
+//
+//	Description :
+//		$action = 0 ==> do the command.
+//		$action = 1 ==>show option box.
+//		$action = 2 ==>drag to shelf.
+//      3 - Show the tool option box dialog.
+{
+	int $inTheTool = false;
+	if( 3 == $action ) {
+		$action = 1;
+		$inTheTool = true;
+	}
+
+	string $cmd = "";
+	switch( $action ) {
+	  case 0:
+		$cmd = `assembleCmd`;
+		eval($cmd);
+		break;
+	  case 1:
+		extrudeOptions( $inTheTool, $goToTool );
+		break;
+	  case 2:
+	  default:
+		$cmd = `assembleCmd`;
+		break;
+	}
+	return $cmd;
+}
+

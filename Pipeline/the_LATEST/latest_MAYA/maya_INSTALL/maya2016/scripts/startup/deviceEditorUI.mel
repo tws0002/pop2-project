@@ -1,0 +1,625 @@
+// Copyright (C) 1997-2014 Autodesk, Inc., and/or its licensors.
+// All rights reserved.
+//
+// The coded instructions, statements, computer programs, and/or related
+// material (collectively the "Data") in these files contain unpublished
+// information proprietary to Autodesk, Inc. ("Autodesk") and/or its licensors,
+// which is protected by U.S. and Canadian federal copyright law and by
+// international treaties.
+//
+// The Data is provided for use exclusively by You. You have the right to use,
+// modify, and incorporate this Data into other products for purposes authorized 
+// by the Autodesk software license agreement, without fee.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND. AUTODESK
+// DOES NOT MAKE AND HEREBY DISCLAIMS ANY EXPRESS OR IMPLIED WARRANTIES
+// INCLUDING, BUT NOT LIMITED TO, THE WARRANTIES OF NON-INFRINGEMENT,
+// MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE, OR ARISING FROM A COURSE 
+// OF DEALING, USAGE, OR TRADE PRACTICE. IN NO EVENT WILL AUTODESK AND/OR ITS
+// LICENSORS BE LIABLE FOR ANY LOST REVENUES, DATA, OR PROFITS, OR SPECIAL,
+// DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES, EVEN IF AUTODESK AND/OR ITS
+// LICENSORS HAS BEEN ADVISED OF THE POSSIBILITY OR PROBABILITY OF SUCH DAMAGES.
+
+//
+//
+//  Creation Date:  Feb 20 2009
+//
+//  Description:
+//      Creates the script based version of the device editor.
+//  Input Arguments:
+//      None.
+//
+//  Return Value:
+//      None.
+//
+//	Note:
+//		None.
+// 
+
+
+global proc attachOptionsChanged()
+{
+    int $attachOption = `radioButtonGrp -q -select deviceEditorAttachTabOptions`;
+    if($attachOption == 1) //the "selection" option
+    {
+        textFieldGrp -e -enable 0 deviceEditorAttachTabNodeName;
+    }
+    else if($attachOption == 2) //the "object" option
+    { 
+        textFieldGrp -e -enable 1 deviceEditorAttachTabNodeName;
+    }
+}
+
+global proc int checkAttachmentParams(string $deviceName,string $axisName,string $nodeName,string $attrName)
+{
+    if($deviceName == "") 
+    {
+        error((uiRes("m_deviceEditorUI.kDeviceEditorNoDeviceName")));
+        return 0;
+    }
+    
+    if($axisName == "") 
+    {
+        error((uiRes("m_deviceEditorUI.kDeviceEditorNoAxisName")));
+        return 0;
+    }
+    
+    if($nodeName == "") 
+    {
+        error((uiRes("m_deviceEditorUI.kDeviceEditorNoNodeName")));
+        return 0;
+    }
+    
+    if($attrName == "") 
+    {
+        error((uiRes("m_deviceEditorUI.kDeviceEditorNoAttrName")));
+        return 0;
+    }
+    return 1;
+}
+global proc addAttachmentCallback()
+{
+    string $cmd = "attachDeviceAttr -d ";
+    string $deviceName = `textFieldGrp -q -text deviceEditorAttachTabDeviceName`;
+    string $axisName = `textFieldGrp -q -text deviceEditorAttachTabAxisName`;
+    string $node = `textFieldGrp -q -text deviceEditorAttachTabNodeName`;
+    string $attr = `textFieldGrp -q -text deviceEditorAttachTabAttrName`;    
+    
+    if(!checkAttachmentParams($deviceName,$axisName,$node,$attr))
+        return;
+    
+    $cmd += $deviceName;
+    $cmd += " -ax ";
+    $cmd += $axisName;
+    $cmd += " ";    
+    
+    int $attachOption = `radioButtonGrp -q -select deviceEditorAttachTabOptions`;
+    if($attachOption == 1) //the "selection" option
+    {
+        $cmd += "-sl -at ";
+        $cmd += $attr;
+    }
+    else if($attachOption == 2) //the "object" option
+    { 
+        string $plug = $node + "." + $attr;
+        $cmd += $plug;
+    }
+    
+    evalEcho $cmd;
+    initializeDeviceEditor();
+
+}
+
+global proc updateAttachmentCallback()
+{
+}
+
+global proc deleteAttachmentCallback()
+{
+
+    string $cmd = "detachDeviceAttr -d ";
+    string $treeItemSelected[] = `treeView -q -si deviceEditorTreeView`;
+    if(size($treeItemSelected) < 1)
+        return;
+    
+    string $output[];
+    tokenize($treeItemSelected[0],"#",$output);    
+    if(size($output)<1 || $output[0] != "<connection>") 
+    {
+        //something is wrong, bail.
+        return;
+    }
+            
+    string $deviceName = $output[1];
+    string $axisName = $output[2];
+    string $plug = $output[3];
+    
+    tokenize($plug,".",$output);
+    string $node = $output[0];
+    string $attr = $output[1];
+    
+    if(!checkAttachmentParams($deviceName,$axisName,$node,$attr))
+        return;
+            
+    $cmd += $deviceName;
+    $cmd += " -ax ";
+    $cmd += $axisName;
+    $cmd += " -at ";
+    $cmd += $attr;
+    $cmd += " ";
+    $cmd += $node;
+        
+    evalEcho $cmd;
+    initializeDeviceEditor();
+
+}
+
+
+global proc mappingTabMapCallback()
+{
+
+    string $deviceName = `textFieldGrp -q -text deviceEditorMappingTabDeviceName`;
+    string $axisName = `textFieldGrp -q -text deviceEditorMappingTabAxisName`;
+    string $node = `textFieldGrp -q -text deviceEditorMappingTabNodeName`;
+    string $attr = `textFieldGrp -q -text deviceEditorMappingTabAttrName`;    
+    float $scale = `textFieldGrp -q -text deviceEditorMappingTabScaleName`;
+    float $offset = `textFieldGrp -q -text deviceEditorMappingTabOffsetName`;
+    
+    int $absoluteRelative = `radioButtonGrp -q -select deviceEditorMappingTabAbsoluteRelative`;
+    int $worldView = `radioButtonGrp -q -select deviceEditorMappingTabWorldView`;
+    
+    string $treeItemSelected[] = `treeView -q -si deviceEditorTreeView`;
+    if(size($treeItemSelected) < 1)
+        return;
+    
+    string $output[];
+    tokenize($treeItemSelected[0],"#",$output);    
+    if(size($output)<1) 
+    {
+        //something is wrong, bail.
+        return;
+    }
+    
+    string $treeItemSelected[] = `treeView -q -si deviceEditorTreeView`;
+    if(size($treeItemSelected) < 1)
+        return;
+        
+    if($output[0] == "<axis>") 
+    {
+        string $cmd = "setInputDeviceMapping -d ";
+        $cmd += $deviceName;
+        $cmd += " -ax ";
+        $cmd += $axisName;
+        $cmd += " -s ";
+        $cmd += $scale;
+        $cmd += " -o ";
+        $cmd += $offset;   
+        if($absoluteRelative == 1)
+            $cmd += " -a ";
+        else
+            $cmd += " -r ";
+        
+        if($worldView == 1)
+            $cmd += " -w ";
+        else
+            $cmd += " -v";                 
+        
+        evalEcho $cmd;             
+    }
+    else if($output[0] == "<connection>") 
+    {
+        string $cmd = "setAttrMapping -d ";
+        $cmd += $deviceName;
+        $cmd += " -ax ";
+        $cmd += $axisName;
+        $cmd += " -at ";
+        $cmd += $attr;
+        $cmd += " -s ";
+        $cmd += $scale;
+        $cmd += " -o ";
+        $cmd += $offset;        
+        if($absoluteRelative == 1)
+            $cmd += " -a ";
+        else
+            $cmd += " -r ";
+        $cmd += $node;
+        evalEcho $cmd;     
+    }
+
+}
+
+global proc int deviceEditorOnSelect(string $item,int $itemSelected)
+{
+    if($itemSelected) {
+    
+        string $output[];
+        tokenize($item,"#",$output);    
+        if($output[0] == "<device>") {
+            
+        }
+        else if($output[0] == "<axis>") {
+            string $deviceName = $output[1];
+            string $axisName = $output[2];
+            int $deviceIndex = $output[3];
+            int $axisIndex = $output[4];
+            
+            //attachement tab
+            button -e -enable true deviceEditorAttachTabAddButton;
+            button -e -enable false deviceEditorAttachTabUpdateButton;
+            button -e -enable false deviceEditorAttachTabDeleteButton;
+            
+            textFieldGrp -e -text $deviceName deviceEditorAttachTabDeviceName;
+            textFieldGrp -e -text $axisName deviceEditorAttachTabAxisName;
+            
+            textFieldGrp -e -text "" deviceEditorAttachTabNodeName;
+            textFieldGrp -e -text "" deviceEditorAttachTabAttrName;            
+            
+            //mapping tab
+            textFieldGrp -e -enable false deviceEditorMappingTabNodeName;
+            textFieldGrp -e -enable false deviceEditorMappingTabAttrName;            
+            radioButtonGrp -e -enable true deviceEditorMappingTabWorldView;
+                                    
+            textFieldGrp -e -text $deviceName deviceEditorMappingTabDeviceName;
+            textFieldGrp -e -text $axisName deviceEditorMappingTabAxisName;                       
+            
+            float $scale = `deviceManager -axisScale -deviceIndex $deviceIndex -axisIndex $axisIndex -q`;
+            string $str = $scale;
+            textFieldGrp -e -text $str deviceEditorMappingTabScaleName;
+            
+            float $offset = `deviceManager -axisOffset -deviceIndex $deviceIndex -axisIndex $axisIndex -q`;
+            string $str = $offset;
+            textFieldGrp -e -text $str deviceEditorMappingTabOffsetName;
+            
+        }
+        else if($output[0] == "<connection>") {            
+                                                
+            string $deviceName = $output[1];
+            string $axisName = $output[2];
+            string $plug = $output[3];
+            int $deviceIndex = $output[4];
+            int $axisIndex = $output[5];
+            
+            tokenize($plug,".",$output);
+            string $node = $output[0];
+            string $attr = $output[1];
+            
+            //Attachment tab
+            button -e -enable false deviceEditorAttachTabAddButton;
+            button -e -enable false deviceEditorAttachTabUpdateButton;
+            button -e -enable true deviceEditorAttachTabDeleteButton;
+            
+            textFieldGrp -e -text $deviceName deviceEditorAttachTabDeviceName;
+            textFieldGrp -e -text $axisName deviceEditorAttachTabAxisName;
+            
+            textFieldGrp -e -text $node deviceEditorAttachTabNodeName;
+            textFieldGrp -e -text $attr deviceEditorAttachTabAttrName;            
+            
+            //Mapping tab
+            textFieldGrp -e -enable true deviceEditorMappingTabNodeName;
+            textFieldGrp -e -enable true deviceEditorMappingTabAttrName;            
+            radioButtonGrp -e -enable false deviceEditorMappingTabWorldView;
+            
+            textFieldGrp -e -text $deviceName deviceEditorMappingTabDeviceName;
+            textFieldGrp -e -text $axisName deviceEditorMappingTabAxisName;
+            textFieldGrp -e -text $node deviceEditorMappingTabNodeName;
+            textFieldGrp -e -text $attr deviceEditorMappingTabAttrName;
+            
+            float $scale = `deviceManager -axisScale -deviceIndex $deviceIndex -axisIndex $axisIndex -q`;
+            string $str = $scale;
+            textFieldGrp -e -text $str deviceEditorMappingTabScaleName;
+            
+            float $offset = `deviceManager -axisOffset -deviceIndex $deviceIndex -axisIndex $axisIndex -q`;
+            string $str = $offset;
+            textFieldGrp -e -text $str deviceEditorMappingTabOffsetName;
+                                               
+        }
+        
+        return true;
+    }
+    return true;
+}
+
+global proc initializeDeviceEditor()
+{
+    treeView -edit -removeAll deviceEditorTreeView;  
+    
+    int $numDevices = `deviceManager -ndv -q`;
+    for($ii=0;$ii<$numDevices;$ii++) {
+        string $deviceName = `deviceManager -deviceNameFromIndex $ii -q`;
+        string $deviceItem = "<device>#" + $deviceName;
+        treeView -edit -addItem $deviceItem "" deviceEditorTreeView;
+        treeView -edit -displayLabel $deviceItem $deviceName deviceEditorTreeView;        
+        int $numAxis = `deviceManager -numAxis -deviceIndex $ii -q`;
+        for($jj=0;$jj<$numAxis;$jj++) {
+            string $axisName = `deviceManager -axisName -deviceIndex $ii -axisIndex $jj -q`;
+            string $axisItem = "<axis>#" + $deviceName + "#" + $axisName + "#" + $ii + "#" + $jj;
+            treeView -edit -addItem $axisItem $deviceItem deviceEditorTreeView;
+            treeView -edit -displayLabel $axisItem $axisName deviceEditorTreeView;        
+            
+            string $drivenPlugs[] = `deviceManager -attachment -deviceIndex $ii -axisIndex $jj -q`;
+            for($drivenPlug in $drivenPlugs) {
+                string $connection = $deviceName + ":" + $axisName + "->" + $drivenPlug;
+                string $connectionItem = "<connection>#" + $deviceName + "#" + $axisName + "#" + $drivenPlug + "#" + $ii + "#" + $jj;
+                treeView -edit -addItem $connectionItem $axisItem deviceEditorTreeView;
+                treeView -edit -displayLabel $connectionItem $connection deviceEditorTreeView;        
+            }                                               
+            
+        }
+    }
+    textFieldGrp -e -text "" deviceEditorAttachTabDeviceName;
+    textFieldGrp -e -text "" deviceEditorAttachTabAxisName;
+    textFieldGrp -e -text "" deviceEditorAttachTabNodeName;
+    textFieldGrp -e -text "" deviceEditorAttachTabAttrName;            
+}
+
+global proc createMappingTab(string $tabs)
+{
+    // ---------------------------------------------------------------
+    //
+    //  Mapping Tab
+    //
+    // ---------------------------------------------------------------
+
+    string $mappingForm;
+    
+    setParent $tabs;
+    $mappingForm = `formLayout`;
+
+    int $spacing = 10;        
+    
+    int $textWidth = 70;
+    textFieldGrp
+            -label (uiRes("m_deviceEditorUI.kDeviceMappingDeviceLabel"))
+            -cw 1 $textWidth
+            -editable false deviceEditorMappingTabDeviceName;
+    textFieldGrp
+            -label (uiRes("m_deviceEditorUI.kDeviceMappingAxisLabel"))                
+            -cw 1 $textWidth
+           -editable false deviceEditorMappingTabAxisName;        
+            
+    textFieldGrp
+            -cw 1 $textWidth
+            -label (uiRes("m_deviceEditorUI.kDeviceMappingNodeLabel")) deviceEditorMappingTabNodeName;                
+    textFieldGrp
+            -cw 1 $textWidth
+            -label (uiRes("m_deviceEditorUI.kDeviceMappingAttrLabel")) deviceEditorMappingTabAttrName;                                             
+            
+    textFieldGrp
+            -cw 1 $textWidth
+            -label (uiRes("m_deviceEditorUI.kDeviceMappingScaleLabel")) deviceEditorMappingTabScaleName;                
+    textFieldGrp
+            -cw 1 $textWidth
+            -label (uiRes("m_deviceEditorUI.kDeviceMappingOffsetLabel")) deviceEditorMappingTabOffsetName;                                              
+                            
+    radioButtonGrp -numberOfRadioButtons 2
+            -labelArray2 (uiRes("m_deviceEditorUI.kDeviceMappingAbsoluteLabel")) 
+            (uiRes("m_deviceEditorUI.kDeviceMappingRelativeLabel"))                 
+            -select 1            
+            deviceEditorMappingTabAbsoluteRelative;
+    
+    radioButtonGrp -numberOfRadioButtons 2
+            -labelArray2 (uiRes("m_deviceEditorUI.kDeviceMappingWorldLabel")) 
+            (uiRes("m_deviceEditorUI.kDeviceMappingViewLabel"))                 
+            -select 1            
+            deviceEditorMappingTabWorldView;
+                           
+    string $mapButtonLabel = (uiRes("m_deviceEditorUI.kDeviceMappingMapLabel"));    
+    string $clearButtonLabel = (uiRes("m_deviceEditorUI.kDeviceMappingClearLabel"));
+            
+    button -label $mapButtonLabel -command "mappingTabMapCallback" deviceEditorMappingTabMapButton; 
+    //As far as I can tell the clear button does the same thing as the map button.  This 
+    //doesn't really make much sense, but it is the behavior in maya 2009.  I'll keep the
+    //same behavior for now until we can understand why it's done that way.   
+    button -label $clearButtonLabel -command "mappingTabMapCallback" deviceEditorMappingTabClearButton;
+    
+    formLayout -edit
+        -attachForm    "deviceEditorMappingTabDeviceName"  "top"    20
+        -attachForm    "deviceEditorMappingTabDeviceName"  "left"   0
+        -attachNone    "deviceEditorMappingTabDeviceName"  "bottom"
+        -attachNone    "deviceEditorMappingTabDeviceName"  "right"
+        
+        -attachForm    "deviceEditorMappingTabAxisName"  "top"    20
+        -attachControl "deviceEditorMappingTabAxisName"  "left"   $spacing "deviceEditorMappingTabDeviceName"
+        -attachNone    "deviceEditorMappingTabAxisName"  "bottom"
+        -attachNone    "deviceEditorMappingTabAxisName"  "right"
+                       
+        -attachControl "deviceEditorMappingTabNodeName"  "top"    $spacing "deviceEditorMappingTabDeviceName"
+        -attachNone    "deviceEditorMappingTabNodeName"  "left"
+        -attachNone    "deviceEditorMappingTabNodeName"  "bottom"
+        -attachNone    "deviceEditorMappingTabNodeName"  "right" 	        
+        
+        -attachControl "deviceEditorMappingTabAttrName"  "top"   $spacing "deviceEditorMappingTabDeviceName"
+        -attachControl "deviceEditorMappingTabAttrName"  "left"  $spacing "deviceEditorMappingTabNodeName"
+        -attachNone    "deviceEditorMappingTabAttrName"  "bottom"
+        -attachNone    "deviceEditorMappingTabAttrName"  "right" 	 
+        
+        -attachControl "deviceEditorMappingTabScaleName"  "top"    $spacing "deviceEditorMappingTabNodeName"
+        -attachNone    "deviceEditorMappingTabScaleName"  "left"
+        -attachNone    "deviceEditorMappingTabScaleName"  "bottom"
+        -attachNone    "deviceEditorMappingTabScaleName"  "right" 	 
+        
+        -attachControl "deviceEditorMappingTabOffsetName"  "top"   $spacing "deviceEditorMappingTabNodeName"
+        -attachControl "deviceEditorMappingTabOffsetName"  "left"  $spacing "deviceEditorMappingTabScaleName"
+        -attachNone    "deviceEditorMappingTabOffsetName"  "bottom"
+        -attachNone    "deviceEditorMappingTabOffsetName"  "right" 	                       
+        
+        -attachControl "deviceEditorMappingTabAbsoluteRelative"  "top"    $spacing "deviceEditorMappingTabScaleName"
+        -attachForm "deviceEditorMappingTabAbsoluteRelative"  "left"  30
+        -attachNone    "deviceEditorMappingTabAbsoluteRelative"  "bottom"
+        -attachNone    "deviceEditorMappingTabAbsoluteRelative"  "right" 	               
+        
+        -attachControl "deviceEditorMappingTabWorldView"  "top"    $spacing "deviceEditorMappingTabAbsoluteRelative"
+        -attachForm "deviceEditorMappingTabWorldView"  "left"  30
+        -attachNone    "deviceEditorMappingTabWorldView"  "bottom"
+        -attachNone    "deviceEditorMappingTabWorldView"  "right" 	               
+        
+        -attachControl "deviceEditorMappingTabMapButton"  "top"    $spacing "deviceEditorMappingTabWorldView"
+        -attachForm "deviceEditorMappingTabMapButton"  "left"  30
+        -attachNone    "deviceEditorMappingTabMapButton"  "bottom"
+        -attachNone    "deviceEditorMappingTabMapButton"  "right" 	                               
+        
+        -attachControl "deviceEditorMappingTabClearButton"  "top"    $spacing "deviceEditorMappingTabWorldView"
+        -attachControl "deviceEditorMappingTabClearButton"  "left"  $spacing "deviceEditorMappingTabMapButton"
+        -attachNone    "deviceEditorMappingTabClearButton"  "bottom"
+        -attachNone    "deviceEditorMappingTabClearButton"  "right" 	               
+        
+        $mappingForm;
+   
+    tabLayout -e -tabLabel $mappingForm (uiRes("m_deviceEditorUI.kDeviceMappingTab")) $tabs;
+
+}
+
+global proc createAttachmentTab(string $tabs)
+{
+    // ---------------------------------------------------------------
+    //
+    //  Attachment Tab
+    //
+    // ---------------------------------------------------------------
+
+    string $attachmentForm;
+    
+    setParent $tabs;
+    $attachmentForm = `formLayout`;
+
+    int $spacing = 10;        
+    
+    int $textWidth = 70;
+    textFieldGrp
+            -label (uiRes("m_deviceEditorUI.kDeviceAttachDeviceLabel"))
+            -cw 1 $textWidth
+            -editable false deviceEditorAttachTabDeviceName;
+    textFieldGrp
+            -label (uiRes("m_deviceEditorUI.kDeviceAttachAxisLabel"))                
+            -cw 1 $textWidth
+           -editable false deviceEditorAttachTabAxisName;        
+
+    optionMenuGrp 
+            -cw 1 $textWidth 
+            -label (uiRes("m_deviceEditorUI.kDeviceAttachClutchLabel")) deviceEditorAttachTabClutch;
+            
+    textFieldGrp
+            -cw 1 $textWidth
+            -label (uiRes("m_deviceEditorUI.kDeviceAttachNodeLabel")) deviceEditorAttachTabNodeName;                
+    textFieldGrp
+            -cw 1 $textWidth
+            -label (uiRes("m_deviceEditorUI.kDeviceAttachAttrLabel")) deviceEditorAttachTabAttrName;                                              
+                            
+    radioButtonGrp -numberOfRadioButtons 2
+            -labelArray2 (uiRes("m_deviceEditorUI.kDeviceAttachSelectionLabel")) 
+            (uiRes("m_deviceEditorUI.kDeviceAttachObjectLabel"))                 
+            -select 2
+            -changeCommand "attachOptionsChanged"
+            deviceEditorAttachTabOptions;
+                   
+    string $addButtonLabel = (uiRes("m_deviceEditorUI.kDeviceAttachAddLabel"));
+    string $updateButtonLabel = (uiRes("m_deviceEditorUI.kDeviceAttachUpdateLabel"));
+    string $deleteButtonLabel = (uiRes("m_deviceEditorUI.kDeviceAttachDeleteLabel"));
+            
+    button -label $addButtonLabel -command "addAttachmentCallback" deviceEditorAttachTabAddButton;
+    button -label $updateButtonLabel -command "updateAttachmentCallback" deviceEditorAttachTabUpdateButton;
+    button -label $deleteButtonLabel -command "deleteAttachmentCallback" deviceEditorAttachTabDeleteButton;
+    
+    formLayout -edit
+        -attachForm    "deviceEditorAttachTabDeviceName"  "top"    20
+        -attachForm    "deviceEditorAttachTabDeviceName"  "left"   0
+        -attachNone    "deviceEditorAttachTabDeviceName"  "bottom"
+        -attachNone    "deviceEditorAttachTabDeviceName"  "right"
+        
+        -attachForm    "deviceEditorAttachTabAxisName"  "top"    20
+        -attachControl "deviceEditorAttachTabAxisName"  "left"   $spacing "deviceEditorAttachTabDeviceName"
+        -attachNone    "deviceEditorAttachTabAxisName"  "bottom"
+        -attachNone    "deviceEditorAttachTabAxisName"  "right"
+        
+        -attachControl "deviceEditorAttachTabClutch"  "top"    $spacing "deviceEditorAttachTabDeviceName"
+        -attachNone    "deviceEditorAttachTabClutch"  "left"
+        -attachNone    "deviceEditorAttachTabClutch"  "bottom"
+        -attachNone    "deviceEditorAttachTabClutch"  "right"
+       
+        -attachControl "deviceEditorAttachTabNodeName"  "top"    $spacing "deviceEditorAttachTabClutch"
+        -attachNone    "deviceEditorAttachTabNodeName"  "left"
+        -attachNone    "deviceEditorAttachTabNodeName"  "bottom"
+        -attachNone    "deviceEditorAttachTabNodeName"  "right" 	        
+        
+        -attachControl "deviceEditorAttachTabAttrName"  "top"   $spacing "deviceEditorAttachTabClutch"
+        -attachControl "deviceEditorAttachTabAttrName"  "left"  $spacing "deviceEditorAttachTabNodeName"
+        -attachNone    "deviceEditorAttachTabAttrName"  "bottom"
+        -attachNone    "deviceEditorAttachTabAttrName"  "right" 	 
+        
+        -attachControl "deviceEditorAttachTabOptions"  "top"    $spacing "deviceEditorAttachTabNodeName"
+        -attachForm "deviceEditorAttachTabOptions"  "left"  30
+        -attachNone    "deviceEditorAttachTabOptions"  "bottom"
+        -attachNone    "deviceEditorAttachTabOptions"  "right" 	               
+        
+        -attachControl "deviceEditorAttachTabAddButton"  "top"    $spacing "deviceEditorAttachTabOptions"
+        -attachForm "deviceEditorAttachTabAddButton"  "left"  30
+        -attachNone    "deviceEditorAttachTabAddButton"  "bottom"
+        -attachNone    "deviceEditorAttachTabAddButton"  "right" 	               
+        
+        -attachControl "deviceEditorAttachTabUpdateButton"  "top"    $spacing "deviceEditorAttachTabOptions"
+        -attachControl "deviceEditorAttachTabUpdateButton"  "left"  $spacing "deviceEditorAttachTabAddButton"
+        -attachNone    "deviceEditorAttachTabUpdateButton"  "bottom"
+        -attachNone    "deviceEditorAttachTabUpdateButton"  "right" 	               
+        
+        -attachControl "deviceEditorAttachTabDeleteButton"  "top"    $spacing "deviceEditorAttachTabOptions"
+        -attachControl "deviceEditorAttachTabDeleteButton"  "left"  $spacing "deviceEditorAttachTabUpdateButton"
+        -attachNone    "deviceEditorAttachTabDeleteButton"  "bottom"
+        -attachNone    "deviceEditorAttachTabDeleteButton"  "right" 	               
+        
+        $attachmentForm;
+   
+    tabLayout -e -tabLabel $attachmentForm (uiRes("m_deviceEditorUI.kDeviceAttachmentTab")) $tabs;
+}
+
+global proc deviceEditorUI ()
+//
+//	Description:
+//		Create the Device Editor.
+//
+//
+{
+	global string $gDeviceEditorWnd = "deviceEditorWin";	
+	string $tabs;	
+
+	waitCursor -state on;
+	if (!`window -exists $gDeviceEditorWnd`) {
+
+		string $deviceEditorName = (uiRes("m_deviceEditorUI.kDeviceEditorWinName"));
+		window -title $deviceEditorName 
+			-menuBar true			
+			$gDeviceEditorWnd;
+		
+
+        string $layout = `formLayout`;
+
+        treeView -parent $layout -abr false deviceEditorTreeView;
+        treeView -edit -selectCommand "deviceEditorOnSelect" deviceEditorTreeView;
+
+        $tabs = `tabLayout`;	
+
+        createAttachmentTab($tabs);
+        createMappingTab($tabs);        
+        //-----------------------------------------------------------------------
+        
+        formLayout -e
+			        -attachPosition  deviceEditorTreeView "top" 2 0
+			        -attachPosition  deviceEditorTreeView "left" 2 0
+			        -attachPosition  deviceEditorTreeView "bottom" 10 50
+			        -attachPosition  deviceEditorTreeView "right" 2 100
+        			
+			        -attachPosition  $tabs "top" 0 50
+			        -attachForm  $tabs "left" 2
+			        -attachForm  $tabs "bottom" 2
+			        -attachForm  $tabs "right" 2
+		        $layout;
+        					        
+        
+
+	} else {
+		//
+		//	The window already exists.
+		//
+	}
+    initializeDeviceEditor();
+	waitCursor -state off;
+	showWindow $gDeviceEditorWnd;
+}
