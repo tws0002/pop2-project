@@ -5,7 +5,7 @@ Pipeline/the_LATEST folder contains the entire pipeline. All other folders are
 included simply to make the pipeline deployable so that hooks and directory
 references are less likely to fail.
 
-## On Using Software
+## On Using
 Currently, the pipeline was built mainly for Maya and Nuke. At SCAD, where
 users who are not administrators don't have basic permissions for setting
 users/groups/sym-links etc., I had to come up with a workaround. I was also
@@ -14,7 +14,7 @@ able to set environment variables was to create .bat (Windows)/.sh (Linux)
 files for every application that we needed to use. Even basic users can set
 variables on execution so it seemed like the best way to do it at the time. All
 of the .sh files used in the project are located under
-*"Pipeline/the_LATEST/latest_CONFIG/conf_SCRIPTS"* and, at the start of the
+[conf_SCRIPTS](Pipeline/the_LATEST/latest_CONFIG/conf_SCRIPTS) and, at the start of the
 project, I gave out the files to everyone in the group so, whenever there was a
 new update to the pipeline, all the user needs to do is restart their program
 and it'll source the the_LATEST and all of its files.
